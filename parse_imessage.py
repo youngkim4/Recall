@@ -19,7 +19,10 @@ Notes:
 """
 import argparse
 import logging
+import pathlib
+import re
 import sqlite3
+import sys
 from typing import Optional
 import pandas as pd
 
@@ -81,7 +84,6 @@ def extract_text_from_attributed_body(blob: bytes) -> Optional[str]:
         
         # Method 2: Fallback - try to find readable text between markers
         # Look for text that's surrounded by non-printable bytes
-        import re
         decoded = blob.decode('utf-8', errors='ignore')
         
         # Remove known metadata patterns
@@ -119,46 +121,47 @@ def extract_messages(db_path: str) -> pd.DataFrame:
       - service (iMessage/SMS)
     """
     conn = sqlite3.connect(db_path)
+    try:
+        # SQL projection maps core fields we need for analysis. The conversion below
+        # turns Apple's 2001-01-01 epoch into a standard local timestamp.
+        # Include attributedBody for messages where text is NULL (newer iMessage format)
+        query = """
+        SELECT
+            message.ROWID AS message_id,
+            datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime') AS timestamp,
+            handle.id AS sender,
+            message.text,
+            message.attributedBody,
+            chat.chat_identifier AS chat_id,
+            message.is_from_me AS is_from_me,
+            message.service AS service,
+            group_concat(attachment.mime_type, '|') AS attachment_types,
+            group_concat(attachment.filename, '|') AS attachment_files
+        FROM
+            message
+        LEFT JOIN
+            handle ON message.handle_id = handle.ROWID
+        LEFT JOIN
+            chat_message_join ON message.ROWID = chat_message_join.message_id
+        LEFT JOIN
+            chat ON chat.ROWID = chat_message_join.chat_id
+        LEFT JOIN
+            message_attachment_join ON message.ROWID = message_attachment_join.message_id
+        LEFT JOIN
+            attachment ON attachment.ROWID = message_attachment_join.attachment_id
+        WHERE
+            message.text IS NOT NULL
+            OR message.attributedBody IS NOT NULL
+            OR attachment.ROWID IS NOT NULL
+        GROUP BY
+            message.ROWID
+        ORDER BY
+            timestamp ASC;
+        """
 
-    # SQL projection maps core fields we need for analysis. The conversion below
-    # turns Apple's 2001-01-01 epoch into a standard local timestamp.
-    # Include attributedBody for messages where text is NULL (newer iMessage format)
-    query = """
-    SELECT
-        message.ROWID AS message_id,
-        datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime') AS timestamp,
-        handle.id AS sender,
-        message.text,
-        message.attributedBody,
-        chat.chat_identifier AS chat_id,
-        message.is_from_me AS is_from_me,
-        message.service AS service,
-        group_concat(attachment.mime_type, '|') AS attachment_types,
-        group_concat(attachment.filename, '|') AS attachment_files
-    FROM
-        message
-    LEFT JOIN
-        handle ON message.handle_id = handle.ROWID
-    LEFT JOIN
-        chat_message_join ON message.ROWID = chat_message_join.message_id
-    LEFT JOIN
-        chat ON chat.ROWID = chat_message_join.chat_id
-    LEFT JOIN
-        message_attachment_join ON message.ROWID = message_attachment_join.message_id
-    LEFT JOIN
-        attachment ON attachment.ROWID = message_attachment_join.attachment_id
-    WHERE
-        message.text IS NOT NULL
-        OR message.attributedBody IS NOT NULL
-        OR attachment.ROWID IS NOT NULL
-    GROUP BY
-        message.ROWID
-    ORDER BY
-        timestamp ASC;
-    """
-
-    df = pd.read_sql_query(query, conn)
-    conn.close()
+        df = pd.read_sql_query(query, conn)
+    finally:
+        conn.close()
     
     # Extract text from attributedBody where text is NULL
     def get_text(row):
@@ -197,23 +200,25 @@ def list_contacts(db_path: str, limit: int = 20) -> pd.DataFrame:
     Returns DataFrame with: chat_id, message_count, first_msg, last_msg, is_group
     """
     conn = sqlite3.connect(db_path)
-    query = """
-    SELECT
-        chat.chat_identifier AS chat_id,
-        COUNT(message.ROWID) AS message_count,
-        MIN(datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')) AS first_msg,
-        MAX(datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')) AS last_msg,
-        CASE WHEN chat.chat_identifier LIKE 'chat%' THEN 1 ELSE 0 END AS is_group
-    FROM message
-    LEFT JOIN chat_message_join ON message.ROWID = chat_message_join.message_id
-    LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
-    WHERE chat.chat_identifier IS NOT NULL
-    GROUP BY chat.chat_identifier
-    ORDER BY message_count DESC
-    LIMIT ?;
-    """
-    df = pd.read_sql_query(query, conn, params=(limit,))
-    conn.close()
+    try:
+        query = """
+        SELECT
+            chat.chat_identifier AS chat_id,
+            COUNT(message.ROWID) AS message_count,
+            MIN(datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')) AS first_msg,
+            MAX(datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')) AS last_msg,
+            CASE WHEN chat.chat_identifier LIKE 'chat%' THEN 1 ELSE 0 END AS is_group
+        FROM message
+        LEFT JOIN chat_message_join ON message.ROWID = chat_message_join.message_id
+        LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
+        WHERE chat.chat_identifier IS NOT NULL
+        GROUP BY chat.chat_identifier
+        ORDER BY message_count DESC
+        LIMIT ?;
+        """
+        df = pd.read_sql_query(query, conn, params=(limit,))
+    finally:
+        conn.close()
     return df
 
 
@@ -225,24 +230,26 @@ def extract_attachments(db_path: str) -> pd.DataFrame:
     total_bytes, is_from_me, timestamp
     """
     conn = sqlite3.connect(db_path)
-    query = """
-    SELECT
-        message.ROWID AS message_id,
-        chat.chat_identifier AS chat_id,
-        attachment.filename,
-        attachment.mime_type,
-        attachment.total_bytes,
-        message.is_from_me,
-        datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime') AS timestamp
-    FROM attachment
-    JOIN message_attachment_join ON attachment.ROWID = message_attachment_join.attachment_id
-    JOIN message ON message.ROWID = message_attachment_join.message_id
-    LEFT JOIN chat_message_join ON message.ROWID = chat_message_join.message_id
-    LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
-    ORDER BY timestamp ASC;
-    """
-    df = pd.read_sql_query(query, conn)
-    conn.close()
+    try:
+        query = """
+        SELECT
+            message.ROWID AS message_id,
+            chat.chat_identifier AS chat_id,
+            attachment.filename,
+            attachment.mime_type,
+            attachment.total_bytes,
+            message.is_from_me,
+            datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime') AS timestamp
+        FROM attachment
+        JOIN message_attachment_join ON attachment.ROWID = message_attachment_join.attachment_id
+        JOIN message ON message.ROWID = message_attachment_join.message_id
+        LEFT JOIN chat_message_join ON message.ROWID = chat_message_join.message_id
+        LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
+        ORDER BY timestamp ASC;
+        """
+        df = pd.read_sql_query(query, conn)
+    finally:
+        conn.close()
     
     # Categorize attachments
     def categorize(mime: Optional[str]) -> str:
@@ -274,22 +281,24 @@ def extract_reactions(db_path: str) -> pd.DataFrame:
     Types: 0=love, 1=like, 2=dislike, 3=laugh, 4=emphasis, 5=question
     """
     conn = sqlite3.connect(db_path)
-    query = """
-    SELECT
-        m.ROWID AS reaction_id,
-        m.associated_message_guid,
-        m.associated_message_type,
-        m.is_from_me,
-        chat.chat_identifier AS chat_id,
-        datetime(m.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime') AS timestamp
-    FROM message m
-    LEFT JOIN chat_message_join ON m.ROWID = chat_message_join.message_id
-    LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
-    WHERE m.associated_message_type BETWEEN 2000 AND 3005
-    ORDER BY timestamp ASC;
-    """
-    df = pd.read_sql_query(query, conn)
-    conn.close()
+    try:
+        query = """
+        SELECT
+            m.ROWID AS reaction_id,
+            m.associated_message_guid,
+            m.associated_message_type,
+            m.is_from_me,
+            chat.chat_identifier AS chat_id,
+            datetime(m.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime') AS timestamp
+        FROM message m
+        LEFT JOIN chat_message_join ON m.ROWID = chat_message_join.message_id
+        LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
+        WHERE m.associated_message_type BETWEEN 2000 AND 3005
+        ORDER BY timestamp ASC;
+        """
+        df = pd.read_sql_query(query, conn)
+    finally:
+        conn.close()
     
     # Decode reaction types
     reaction_names = {0: "love", 1: "like", 2: "dislike", 3: "laugh", 4: "emphasis", 5: "question"}
@@ -315,21 +324,23 @@ def search_contacts(db_path: str, query: str, limit: int = 10) -> pd.DataFrame:
     Search contacts by partial chat_id match.
     """
     conn = sqlite3.connect(db_path)
-    sql = """
-    SELECT
-        chat.chat_identifier AS chat_id,
-        COUNT(message.ROWID) AS message_count,
-        MAX(datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')) AS last_msg
-    FROM message
-    LEFT JOIN chat_message_join ON message.ROWID = chat_message_join.message_id
-    LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
-    WHERE chat.chat_identifier LIKE ?
-    GROUP BY chat.chat_identifier
-    ORDER BY message_count DESC
-    LIMIT ?;
-    """
-    df = pd.read_sql_query(sql, conn, params=(f"%{query}%", limit))
-    conn.close()
+    try:
+        sql = """
+        SELECT
+            chat.chat_identifier AS chat_id,
+            COUNT(message.ROWID) AS message_count,
+            MAX(datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')) AS last_msg
+        FROM message
+        LEFT JOIN chat_message_join ON message.ROWID = chat_message_join.message_id
+        LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
+        WHERE chat.chat_identifier LIKE ?
+        GROUP BY chat.chat_identifier
+        ORDER BY message_count DESC
+        LIMIT ?;
+        """
+        df = pd.read_sql_query(sql, conn, params=(f"%{query}%", limit))
+    finally:
+        conn.close()
     return df
 
 
@@ -360,14 +371,16 @@ def main():
         
         if args.attachments:
             df = extract_attachments(args.db_path)
-            out_path = args.out_csv.replace(".csv", "_attachments.csv")
+            p = pathlib.Path(args.out_csv)
+            out_path = str(p.with_name(p.stem + "_attachments.csv"))
             df.to_csv(out_path, index=False)
             print(f"✅ Exported {len(df):,} attachments to {out_path}")
             return
-        
+
         if args.reactions:
             df = extract_reactions(args.db_path)
-            out_path = args.out_csv.replace(".csv", "_reactions.csv")
+            p = pathlib.Path(args.out_csv)
+            out_path = str(p.with_name(p.stem + "_reactions.csv"))
             df.to_csv(out_path, index=False)
             print(f"✅ Exported {len(df):,} reactions to {out_path}")
             return
@@ -381,9 +394,13 @@ def main():
         df.to_csv(args.out_csv, index=False)
         print(f"✅ Exported messages to {args.out_csv}")
     except sqlite3.Error as e:
+        logger.error("SQLite error: %s", e)
         print(f"SQLite error: {e}")
+        sys.exit(1)
     except Exception as ex:
+        logger.exception("Unexpected error")
         print(f"An unexpected error occurred: {ex}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
