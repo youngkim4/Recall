@@ -14,6 +14,7 @@ import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Tuple, List, Dict
 
 import pandas as pd
@@ -28,6 +29,8 @@ load_dotenv()
 
 MAX_CONTEXT_TOKENS_EVENTS = 12000
 MAX_CONTEXT_TOKENS_SUMMARY = 20000
+TOKEN_BUDGET = 170_000
+SECONDS_PER_DAY = 86_400.0
 
 
 # =============================================================================
@@ -110,17 +113,19 @@ def load_messages(csv_path: str, since: datetime = None, until: datetime = None)
 
 def load_attachments(csv_path: str) -> pd.DataFrame:
     """Load attachments CSV if it exists."""
-    att_path = csv_path.replace(".csv", "_attachments.csv")
-    if os.path.exists(att_path):
-        return pd.read_csv(att_path)
+    p = Path(csv_path)
+    att_path = p.with_name(p.stem + "_attachments.csv")
+    if att_path.exists():
+        return pd.read_csv(str(att_path))
     return pd.DataFrame()
 
 
 def load_reactions(csv_path: str) -> pd.DataFrame:
     """Load reactions CSV if it exists."""
-    react_path = csv_path.replace(".csv", "_reactions.csv")
-    if os.path.exists(react_path):
-        return pd.read_csv(react_path)
+    p = Path(csv_path)
+    react_path = p.with_name(p.stem + "_reactions.csv")
+    if react_path.exists():
+        return pd.read_csv(str(react_path))
     return pd.DataFrame()
 
 
@@ -177,7 +182,7 @@ def compute_reaction_stats(reactions_df: pd.DataFrame, contact: str) -> Reaction
         return stats
     
     if "is_add" in filtered.columns:
-        filtered = filtered[filtered["is_add"] == True]
+        filtered = filtered[filtered["is_add"].eq(True)]
     
     stats.total = len(filtered)
     if "reaction_type" in filtered.columns:
@@ -210,7 +215,7 @@ def compute_stats(conv: pd.DataFrame, attachments_df: pd.DataFrame = None, react
     conv = conv.copy()
     conv["date"] = conv["timestamp"].dt.date
     total = len(conv)
-    direction_col = conv.get("is_from_me", pd.Series([pd.NA] * len(conv)))
+    direction_col = conv["is_from_me"] if "is_from_me" in conv.columns else pd.Series([pd.NA] * len(conv))
     known_direction = direction_col.dropna().astype(int)
     sent = int(known_direction.sum()) if not known_direction.empty else 0
     unknown_dir = total - len(known_direction)
@@ -228,7 +233,7 @@ def compute_stats(conv: pd.DataFrame, attachments_df: pd.DataFrame = None, react
         diffs = timestamps.diff()
         max_idx = int(diffs.idxmax())
         longest_gap = diffs.iloc[max_idx]
-        gap_days = float(longest_gap.total_seconds() / 86400.0)
+        gap_days = float(longest_gap.total_seconds() / SECONDS_PER_DAY)
         gap_start = pd.to_datetime(timestamps.iloc[max_idx - 1]) if max_idx - 1 >= 0 else None
         gap_end = pd.to_datetime(timestamps.iloc[max_idx])
     else:
@@ -268,7 +273,8 @@ def progression_series(conv: pd.DataFrame) -> pd.DataFrame:
 def format_all_messages(conv: pd.DataFrame) -> str:
     """Format all messages for GPT context."""
     conv = conv.copy()
-    conv["direction"] = conv.get("is_from_me").apply(
+    is_from_me = conv["is_from_me"] if "is_from_me" in conv.columns else pd.Series([pd.NA] * len(conv), index=conv.index)
+    conv["direction"] = is_from_me.apply(
         lambda x: "ME" if pd.notna(x) and int(x) == 1 else ("THEM" if pd.notna(x) and int(x) == 0 else "??")
     )
     conv["ts"] = conv["timestamp"].dt.strftime("%Y-%m-%d %H:%M")
@@ -294,7 +300,7 @@ def truncate_to_tokens(text: str, max_tokens: int) -> str:
     return _tokenizer.decode(tokens[-max_tokens:])
 
 
-def _call_openai(client, messages, model="gpt-5.2", max_retries=2):
+def _call_openai(client, messages, model="gpt-5-mini", max_retries=2) -> str:
     """Call OpenAI API with retry logic for transient errors."""
     for attempt in range(max_retries + 1):
         try:
@@ -302,29 +308,34 @@ def _call_openai(client, messages, model="gpt-5.2", max_retries=2):
                 model=model,
                 messages=messages,
             )
-            return resp.choices[0].message.content.strip()
-        except RateLimitError as e:
+            content = resp.choices[0].message.content
+            if content is None:
+                logger.warning("OpenAI returned None content")
+                return ""
+            return content.strip()
+        except RateLimitError:
             if attempt < max_retries:
                 wait = 2 ** attempt * 5
-                logger.warning(f"Rate limited, retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
+                logger.warning("Rate limited, retrying in %ss (attempt %s/%s)", wait, attempt + 1, max_retries)
                 time.sleep(wait)
             else:
-                logger.error(f"Rate limit exceeded after {max_retries} retries")
+                logger.error("Rate limit exceeded after %s retries", max_retries)
                 raise
         except (APIConnectionError, APITimeoutError) as e:
             if attempt < max_retries:
                 wait = 2 ** attempt * 2
-                logger.warning(f"Connection error, retrying in {wait}s (attempt {attempt + 1}/{max_retries})")
+                logger.warning("Connection error, retrying in %ss (attempt %s/%s)", wait, attempt + 1, max_retries)
                 time.sleep(wait)
             else:
-                logger.error(f"Connection failed after {max_retries} retries: {e}")
+                logger.error("Connection failed after %s retries: %s", max_retries, e)
                 raise
         except APIError as e:
-            logger.error(f"OpenAI API error: {e}")
+            logger.error("OpenAI API error: %s", e)
             raise
+    return ""
 
 
-def chunk_by_year(conv: pd.DataFrame, max_tokens: int = 170000) -> List[Tuple[str, pd.DataFrame, str]]:
+def chunk_by_year(conv: pd.DataFrame, max_tokens: int = TOKEN_BUDGET) -> List[Tuple[str, pd.DataFrame, str]]:
     """
     Split conversation by year. If a year exceeds token limit, split into smaller periods.
     Hierarchy: Year -> Half -> Quarter -> Month -> Weeks -> Days
@@ -332,7 +343,8 @@ def chunk_by_year(conv: pd.DataFrame, max_tokens: int = 170000) -> List[Tuple[st
     All messages are included - nothing is dropped.
     """
     conv = conv.copy()
-    conv["direction"] = conv.get("is_from_me").apply(
+    is_from_me = conv["is_from_me"] if "is_from_me" in conv.columns else pd.Series([pd.NA] * len(conv), index=conv.index)
+    conv["direction"] = is_from_me.apply(
         lambda x: "ME" if pd.notna(x) and int(x) == 1 else ("THEM" if pd.notna(x) and int(x) == 0 else "??")
     )
     conv["ts"] = conv["timestamp"].dt.strftime("%Y-%m-%d %H:%M")
@@ -431,7 +443,8 @@ def _extract_events_for_period(
     period_label: str,
     chunk_text: str,
     events_per_chunk: int,
-    prior_context: str = ""
+    prior_context: str = "",
+    model: str = "gpt-5-mini"
 ) -> List[Dict]:
     """Extract events from a single time period, with optional context from prior periods."""
     if prior_context:
@@ -463,7 +476,8 @@ def _extract_events_for_period(
     )
     
     content = _call_openai(
-        client, [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        client, [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        model=model,
     )
 
     return _parse_json_events(content)
@@ -484,8 +498,8 @@ def _parse_json_events(content: str) -> List[Dict]:
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse JSON from AI response: {e}")
-        logger.debug(f"Raw content: {content[:500]}")
+        logger.warning("Failed to parse JSON from AI response: %s", e)
+        logger.debug("Raw content: %s", content[:500])
         return []
 
     if isinstance(data, dict):
@@ -496,19 +510,20 @@ def _parse_json_events(content: str) -> List[Dict]:
         return events
     if isinstance(data, list):
         return data
-    logger.warning(f"Unexpected JSON structure from AI: {type(data)}")
+    logger.warning("Unexpected JSON structure from AI: %s", type(data))
     return []
 
 
 def ai_extract_events(
-    contact: str, 
-    stats: ConversationStats, 
+    contact: str,
+    stats: ConversationStats,
     conv: pd.DataFrame,
-    target_events: int, 
+    target_events: int,
     pbar: tqdm = None,
-    precomputed_chunks: List[Tuple[str, pd.DataFrame, str]] = None,
-    total_tokens: int = None,
-    all_messages: str = None
+    precomputed_chunks: Optional[List[Tuple[str, pd.DataFrame, str]]] = None,
+    total_tokens: Optional[int] = None,
+    all_messages: Optional[str] = None,
+    model: str = "gpt-5-mini"
 ) -> pd.DataFrame:
     """Extract key events, using year-based chunking for large conversations."""
 
@@ -520,7 +535,7 @@ def ai_extract_events(
         total_tokens = total_tokens or estimate_tokens(all_messages)
     
     # If small enough, do single request (170K limit with buffer for system/output)
-    if total_tokens < 170000:
+    if total_tokens < TOKEN_BUDGET:
         if pbar:
             pbar.set_description("Extracting events")
         
@@ -547,7 +562,8 @@ def ai_extract_events(
         )
         
         content = _call_openai(
-            client, [{"role": "system", "content": system}, {"role": "user", "content": user}]
+            client, [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            model=model,
         )
         items = _parse_json_events(content)
     else:
@@ -567,7 +583,8 @@ def ai_extract_events(
                 pbar.set_description(f"Events: {period_label}")
             
             chunk_events = _extract_events_for_period(
-                client, contact, period_label, chunk_text, events_per_chunk, prior_context
+                client, contact, period_label, chunk_text, events_per_chunk, prior_context,
+                model=model,
             )
             items.extend(chunk_events)
             
@@ -655,7 +672,8 @@ def _summarize_period(
     period_label: str,
     chunk_text: str,
     msg_count: int,
-    prior_context: str = ""
+    prior_context: str = "",
+    model: str = "gpt-5-mini"
 ) -> Tuple[str, str]:
     """
     Summarize a single time period, with optional context from prior periods.
@@ -693,7 +711,8 @@ def _summarize_period(
     )
     
     content = _call_openai(
-        client, [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        client, [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        model=model,
     )
 
     # Parse out the context section - try multiple header formats
@@ -724,14 +743,15 @@ def _summarize_period(
 
 
 def ai_summary(
-    contact: str, 
-    stats: ConversationStats, 
+    contact: str,
+    stats: ConversationStats,
     conv: pd.DataFrame,
     key_events: pd.DataFrame = None,
     pbar: tqdm = None,
-    precomputed_chunks: List[Tuple[str, pd.DataFrame, str]] = None,
-    total_tokens: int = None,
-    all_messages: str = None
+    precomputed_chunks: Optional[List[Tuple[str, pd.DataFrame, str]]] = None,
+    total_tokens: Optional[int] = None,
+    all_messages: Optional[str] = None,
+    model: str = "gpt-5-mini"
 ) -> str:
     """Generate narrative summary, using year-based chunking for large conversations."""
 
@@ -755,7 +775,7 @@ def ai_summary(
         events_context = f"\n\nKey events identified:\n{events_list}"
     
     # If small enough, do single request (170K limit with buffer for system/output)
-    if total_tokens < 170000:
+    if total_tokens < TOKEN_BUDGET:
         if pbar:
             pbar.set_description("Generating summary")
         
@@ -785,7 +805,8 @@ def ai_summary(
         )
         
         return _call_openai(
-            client, [{"role": "system", "content": system}, {"role": "user", "content": user}]
+            client, [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            model=model,
         )
 
     # Year-based chunking with cross-period context
@@ -803,7 +824,8 @@ def ai_summary(
             pbar.set_description(f"Summary: {period_label}")
         
         summary, context_for_next = _summarize_period(
-            client, contact, period_label, chunk_text, len(chunk_df), prior_context
+            client, contact, period_label, chunk_text, len(chunk_df), prior_context,
+            model=model,
         )
         period_summaries.append(f"## {period_label}\n\n{summary}")
         
@@ -840,7 +862,8 @@ def ai_summary(
     )
     
     return _call_openai(
-        client, [{"role": "system", "content": system}, {"role": "user", "content": user}]
+        client, [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        model=model,
     )
 
 
@@ -908,12 +931,13 @@ def write_markdown_report(
 # =============================================================================
 
 def run_cli(
-    messages_csv: str, 
-    contact: str, 
+    messages_csv: str,
+    contact: str,
     out_dir: str,
     since: datetime = None,
     until: datetime = None,
-    html: bool = False
+    html: bool = False,
+    model: str = "gpt-5-mini"
 ) -> Tuple[Optional[str], str, Optional[str], Optional[str]]:
     """Run single-contact analysis with full context."""
     df = load_messages(messages_csv, since, until)
@@ -934,7 +958,7 @@ def run_cli(
     total_tokens = estimate_tokens(all_messages)
     
     chunks = None
-    if total_tokens > 170000:
+    if total_tokens > TOKEN_BUDGET:
         chunks = chunk_by_year(conv)
         period_labels = [label for label, _, _ in chunks]
         print(f"📊 Large conversation ({len(conv):,} msgs, ~{total_tokens:,} tokens)")
@@ -947,14 +971,16 @@ def run_cli(
         target_events = min(100, max(20, len(conv) // 1000))
         events_df = ai_extract_events(
             contact, stats, conv, target_events, pbar,
-            precomputed_chunks=chunks, total_tokens=total_tokens, all_messages=all_messages
+            precomputed_chunks=chunks, total_tokens=total_tokens, all_messages=all_messages,
+            model=model,
         )
         pbar.update(1)
         
         # Generate summary (pass precomputed data)
         summary_text = ai_summary(
             contact, stats, conv, events_df, pbar,
-            precomputed_chunks=chunks, total_tokens=total_tokens, all_messages=all_messages
+            precomputed_chunks=chunks, total_tokens=total_tokens, all_messages=all_messages,
+            model=model,
         )
         pbar.update(1)
     
@@ -975,18 +1001,19 @@ def run_cli(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Analyze iMessage history with full context (GPT-5.2)")
+    parser = argparse.ArgumentParser(description="Analyze iMessage history with full context AI")
     parser.add_argument("--messages", default="messages.csv", help="Path to messages CSV")
     parser.add_argument("--contact", required=True, help="Contact chat_id")
     parser.add_argument("--out", default="out", help="Output directory")
     parser.add_argument("--since", type=lambda s: datetime.strptime(s, "%Y-%m-%d"), help="Start date")
     parser.add_argument("--until", type=lambda s: datetime.strptime(s, "%Y-%m-%d"), help="End date")
     parser.add_argument("--html", action="store_true", help="Generate HTML report")
+    parser.add_argument("--model", default="gpt-5-mini", help="OpenAI model (default: gpt-5-mini)")
     args = parser.parse_args()
 
     _, report_path, events_path, html_path = run_cli(
         args.messages, args.contact, args.out,
-        since=args.since, until=args.until, html=args.html
+        since=args.since, until=args.until, html=args.html, model=args.model,
     )
     print(f"✅ Report: {report_path}")
     if events_path:
