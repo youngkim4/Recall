@@ -1,4 +1,4 @@
-# imessage-memories
+# Recall
 
 Extract your iMessage history and generate AI-driven relationship analysis with visual reports.
 
