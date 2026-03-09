@@ -12,6 +12,7 @@ import logging
 import os
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -576,30 +577,25 @@ def ai_extract_events(
             pbar.set_description(f"Extracting events ({num_chunks} periods)")
         
         items = []
-        prior_context = ""  # Accumulate context from previous periods
-        
-        for i, (period_label, chunk_df, chunk_text) in enumerate(chunks):
-            if pbar:
-                pbar.set_description(f"Events: {period_label}")
-            
-            chunk_events = _extract_events_for_period(
-                client, contact, period_label, chunk_text, events_per_chunk, prior_context,
-                model=model,
-            )
-            items.extend(chunk_events)
-            
-            # Build richer context for next period from this period's events
-            if chunk_events:
-                # Include title, brief detail, and quote for top events
-                event_summaries = []
-                for e in chunk_events[:5]:
-                    summary = f"{e.get('date', '?')}: {e.get('title', 'event')}"
-                    if e.get('detail'):
-                        summary += f" — {str(e.get('detail', ''))[:100]}"
-                    if e.get('quote'):
-                        summary += f" (\"{str(e.get('quote', ''))[:50]}...\")"
-                    event_summaries.append(summary)
-                prior_context += f"\n**{period_label}**:\n" + "\n".join(f"  - {s}" for s in event_summaries)
+
+        # Parallel event extraction - each period is independent
+        max_workers = min(5, num_chunks)
+        futures = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            for period_label, chunk_df, chunk_text in chunks:
+                future = executor.submit(
+                    _extract_events_for_period,
+                    client, contact, period_label, chunk_text, events_per_chunk,
+                    "", model,
+                )
+                futures[future] = period_label
+
+            for future in as_completed(futures):
+                period_label = futures[future]
+                if pbar:
+                    pbar.set_description(f"Events: {period_label}")
+                chunk_events = future.result()
+                items.extend(chunk_events)
     
     # Parse all events with their source period
     rows = []
