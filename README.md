@@ -15,6 +15,7 @@ Extract iMessage history and generate AI relationship analysis with visual repor
 ```bash
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+echo "OPENAI_API_KEY=your-key-here" > .env # Need your own OpenAI API key
 ```
 
 ## Usage
