@@ -2,19 +2,15 @@
 
 Extract iMessage history and generate AI relationship analysis with visual reports.
 
-## What it does
+## Features
 
 - List top contacts by message volume and date range
-- Full-context AI analysis via OpenAI (entire conversation sent to GPT)
-- Key events extraction with verbatim quotes
+- Full-context AI analysis via GPT
+- Key event extraction with quotes
 - Attachment and reaction breakdowns
 - Monthly sent/received progression
-- Dark-themed HTML reports with Chart.js charts
+- Reports with Chart.js charts
 - Auto-chunking for conversations exceeding 170K tokens
-
-## Setup
-
-Requires macOS, Python 3.10+, Full Disk Access for Terminal, and an `OPENAI_API_KEY`.
 
 ```bash
 python -m venv venv && source venv/bin/activate
