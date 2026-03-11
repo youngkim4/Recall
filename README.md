@@ -1,34 +1,30 @@
 # Recall
 
-Extract your iMessage history and generate AI-driven relationship analysis with visual reports.
+Extract iMessage history and generate AI relationship analysis with visual reports.
 
-## Features
+## What it does
 
-- **Contact discovery** — list top contacts by message count, first/last dates, group vs 1:1
-- **Full-context AI analysis** — sends your entire conversation to GPT for deep relationship insights
-- **Key events extraction** — milestones, turning points, and memorable moments with verbatim quotes
-- **Attachment stats** — photos, videos, audio, GIFs, documents breakdown
-- **Reaction stats** — loves, likes, laughs, emphasis, questions
-- **Monthly progression** — sent/received volume and ratio over time
-- **HTML reports** — dark-themed visual reports with interactive Chart.js charts
-- **Smart chunking** — conversations exceeding 170K tokens are split by year/half/quarter/month automatically
+- List top contacts by message volume and date range
+- Full-context AI analysis via OpenAI (entire conversation sent to GPT)
+- Key events extraction with verbatim quotes
+- Attachment and reaction breakdowns
+- Monthly sent/received progression
+- Dark-themed HTML reports with Chart.js charts
+- Auto-chunking for conversations exceeding 170K tokens
 
-## Requirements
+## Setup
 
-- macOS with Messages data available
-- Python 3.10+
-- Full Disk Access granted to Terminal/IDE to read `~/Library/Messages/chat.db`
-- OpenAI API key (`OPENAI_API_KEY` in `.env` or environment)
+Requires macOS, Python 3.10+, Full Disk Access for Terminal, and an `OPENAI_API_KEY`.
 
 ```bash
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Quick Start
+## Usage
 
 ```bash
-# List your top contacts
+# List top contacts
 python cli.py --list-contacts --db ~/Library/Messages/chat.db
 
 # Analyze a contact
@@ -38,25 +34,11 @@ python cli.py --contact +12165551234 --db ~/Library/Messages/chat.db
 python cli.py --contact +12165551234 --db ~/Library/Messages/chat.db --html
 
 # Date range filter
-python cli.py --contact +12165551234 --db ~/Library/Messages/chat.db --since 2024-01-01 --until 2024-12-31
+python cli.py --contact +12165551234 --since 2024-01-01 --until 2024-12-31
 
 # Skip cost confirmation
-python cli.py --contact +12165551234 --db ~/Library/Messages/chat.db --no-confirm
-
-# Use a different model
-python cli.py --contact +12165551234 --db ~/Library/Messages/chat.db --model gpt-5
+python cli.py --contact +12165551234 --no-confirm
 ```
-
-## Outputs
-
-- `out/analysis_<contact>.md` — Markdown report with stats, events, and narrative summary
-- `out/analysis_<contact>.html` — Visual HTML report with charts (with `--html`)
-- `out/events_timeline_<contact>.csv` — Key events timeline
-- `messages.csv` — Extracted messages
-- `messages_attachments.csv` — Attachment metadata
-- `messages_reactions.csv` — Tapback reactions
-
-## CLI Options
 
 | Flag | Description |
 |------|-------------|
@@ -64,32 +46,25 @@ python cli.py --contact +12165551234 --db ~/Library/Messages/chat.db --model gpt
 | `--messages` | Path to pre-exported messages.csv |
 | `--contact` | Contact chat_id to analyze |
 | `--list-contacts` | List top contacts by message count |
-| `--since` | Start date filter (YYYY-MM-DD) |
-| `--until` | End date filter (YYYY-MM-DD) |
+| `--since` / `--until` | Date range filter (YYYY-MM-DD) |
 | `--html` | Generate HTML report with charts |
 | `--model` | OpenAI model (default: gpt-5-mini) |
 | `--no-confirm` | Skip cost estimate confirmation |
 | `--out` | Output directory (default: out) |
-| `--limit` | Number of contacts to show (default: 30) |
+| `--limit` | Contacts to show (default: 30) |
 
-## Notes on `chat_id`
+## Outputs
 
-For 1:1 chats, `chat_id` is usually the phone number (e.g., `+12165551234`). For group chats, it starts with `chat` followed by numbers. Use `--list-contacts` to discover available IDs.
+- `out/analysis_<contact>.md` -- Markdown report
+- `out/analysis_<contact>.html` -- HTML report (with `--html`)
+- `out/events_timeline_<contact>.csv` -- Key events timeline
+- `messages.csv`, `messages_attachments.csv`, `messages_reactions.csv` -- Extracted data
 
-## Troubleshooting
+## Notes
 
-- **DB locked**: Close Messages app or copy the DB first:
-  ```bash
-  cp ~/Library/Messages/chat.db ./chat.db
-  python cli.py --contact +12165551234 --db ./chat.db
-  ```
-- **Timestamp issues**: Assumes nanosecond timestamps (standard on modern macOS). Adjust the divisor in `parse_imessage.py` if your DB differs.
-
-## Data Privacy
-
-- All extraction and processing runs locally on your machine
-- Your full conversation history is sent to the OpenAI API for analysis — cost estimates are shown before any API call
-- Outputs contain sensitive message content; handle accordingly
+- `chat_id` is usually the phone number for 1:1 chats, or starts with `chat` for group chats. Use `--list-contacts` to discover IDs.
+- If the DB is locked, close Messages or copy it first: `cp ~/Library/Messages/chat.db ./chat.db`
+- Full conversation history is sent to the OpenAI API -- cost estimates are shown before any API call.
 
 ## License
 
