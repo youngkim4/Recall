@@ -15,6 +15,10 @@ import pandas as pd
 import markdown
 
 
+def _has_value(value) -> bool:
+    return value is not None and pd.notna(value) and str(value) != ""
+
+
 def write_html_report(
     out_dir: str,
     contact: str,
@@ -25,7 +29,7 @@ def write_html_report(
     events_df: pd.DataFrame = None
 ) -> str:
     """Generate an HTML report with charts."""
-    from analysis import sanitize_filename
+    from conversation import sanitize_filename
 
     os.makedirs(out_dir, exist_ok=True)
     fname = os.path.join(out_dir, f"analysis_{sanitize_filename(contact)}.html")
@@ -41,7 +45,7 @@ def write_html_report(
         events_cards = []
         for _, ev in events_df.iterrows():
             quote_block = ""
-            if ev.get('quote'):
+            if _has_value(ev.get('quote')):
                 quote_block = (
                     f'<blockquote class="event-quote">'
                     f'"{html_lib.escape(str(ev["quote"]))}"'
@@ -79,11 +83,11 @@ def write_html_report(
             width = (pt.score + 1) * 50
             bars.append(
                 f'<div class="sentiment-bar">'
-                f'  <span class="sentiment-period">{pt.month}</span>'
+                f'  <span class="sentiment-period">{html_lib.escape(str(pt.month))}</span>'
                 f'  <div class="sentiment-fill">'
                 f'    <div class="sentiment-fill-inner" style="width: {width}%; background: {color};"></div>'
                 f'  </div>'
-                f'  <span class="sentiment-summary">{pt.summary[:50]}...</span>'
+                f'  <span class="sentiment-summary">{html_lib.escape(str(pt.summary)[:50])}...</span>'
                 f'</div>'
             )
         sentiment_html = (
@@ -147,7 +151,7 @@ def write_html_report(
             '</section>'
         )
 
-    summary_rendered = markdown.markdown(summary_text, extensions=['extra'])
+    summary_rendered = markdown.markdown(html_lib.escape(summary_text or ""), extensions=['extra'])
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -567,12 +571,14 @@ def write_html_report(
             }},
             options: {{
                 responsive: true,
+                events: ['mousemove', 'mouseout', 'touchstart', 'touchmove'],
                 interaction: {{
                     intersect: false,
                     mode: 'index',
                 }},
                 plugins: {{
                     legend: {{
+                        onClick: () => {{}},
                         labels: {{
                             color: '#505050',
                             font: {{ family: "'Inter', sans-serif", size: 11, weight: '600' }},
