@@ -5,12 +5,13 @@ Extract iMessage history and generate AI relationship analysis with visual repor
 ## Features
 
 - List top contacts by message volume and date range
-- Full-context AI analysis via GPT
+- Full-context AI analysis via OpenAI Responses API
 - Key event extraction with quotes
 - Attachment and reaction breakdowns
 - Monthly sent/received progression
-- Reports with Chart.js charts
-- Auto-chunking for conversations exceeding 170K tokens
+- Desktop report reader with Story, Events, Patterns, Media, Activity, and Files sections
+- Local preview cache for faster conversation switching
+- Auto-chunking based on the selected model's context window
 
 ```bash
 python -m venv venv && source venv/bin/activate
@@ -19,6 +20,32 @@ echo "OPENAI_API_KEY=your-key-here" > .env # Need your own OpenAI API key
 ```
 
 ## Usage
+
+### Mac app
+
+Build a local macOS app wrapper:
+
+```bash
+scripts/build_macos_app.sh
+open saves/Recall.app
+```
+
+This creates `saves/Recall.app`, a native window that starts the Recall backend on a private local port and loads the UI inside the app. This developer build still depends on this checkout and `venv`; a distributable release should bundle the Python runtime/dependencies and be signed/notarized.
+
+The build script compiles the React UI from `app/` first when Node/npm is available. Set `NPM_BIN=/path/to/npm` if npm is not on your shell path.
+
+### Local UI
+
+```bash
+venv/bin/python ui_server.py
+open http://127.0.0.1:8765
+```
+
+The local server serves the React build from `app/dist` when present and falls back to the dependency-free `ui/` surface otherwise. The UI lets you browse conversations, preview message volume, estimate model cost, launch analysis, and open generated reports without memorizing CLI flags.
+
+Settings in the app can refresh Contacts names, rebuild the local message export, change the model preference, and clear the preview cache.
+
+### CLI
 
 ```bash
 # List top contacts
@@ -45,7 +72,7 @@ python cli.py --contact +12165551234 --no-confirm
 | `--list-contacts` | List top contacts by message count |
 | `--since` / `--until` | Date range filter (YYYY-MM-DD) |
 | `--html` | Generate HTML report with charts |
-| `--model` | OpenAI model (default: gpt-5-mini) |
+| `--model` | OpenAI model (default: gpt-5.5) |
 | `--no-confirm` | Skip cost estimate confirmation |
 | `--out` | Output directory (default: out) |
 | `--limit` | Contacts to show (default: 30) |
@@ -61,7 +88,7 @@ python cli.py --contact +12165551234 --no-confirm
 
 - `chat_id` is usually the phone number for 1:1 chats, or starts with `chat` for group chats. Use `--list-contacts` to discover IDs.
 - If the DB is locked, close Messages or copy it first: `cp ~/Library/Messages/chat.db ./chat.db`
-- Full conversation history is sent to the OpenAI API -- cost estimates are shown before any API call.
+- Full conversation history is sent to the OpenAI API with `store=false` -- cost estimates are shown before any API call.
 
 ## License
 
