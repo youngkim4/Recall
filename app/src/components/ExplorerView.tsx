@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { SearchIcon } from './Icons'
 import { recallApi } from '../lib/api'
-import { contactTitle, formatNumber, isOutbound, shortDateTime } from '../lib/format'
+import { contactTitle, formatNumber, isOutbound, prettyContactId, shortDateTime } from '../lib/format'
 import type { Contact, Defaults, SearchResult } from '../types'
 
 const BOOKMARKS_KEY = 'recall.bookmarks.v1'
@@ -23,6 +23,7 @@ export function ExplorerView({
   const [scope, setScope] = useState(selectedContact?.chat_id || '')
   const [results, setResults] = useState<SearchResult[]>([])
   const [searching, setSearching] = useState(false)
+  const [hasSearched, setHasSearched] = useState(false)
   const [error, setError] = useState('')
   const [bookmarks, setBookmarks] = useState<SearchResult[]>(() => readBookmarks())
 
@@ -34,6 +35,7 @@ export function ExplorerView({
   async function runSearch() {
     if (!defaults?.messagesPath) return
     setSearching(true)
+    setHasSearched(true)
     setError('')
     try {
       const response = await recallApi.search({
@@ -62,6 +64,9 @@ export function ExplorerView({
     const contact = contacts.find((item) => item.chat_id === result.chatId)
     if (contact) onSelectContact(contact)
   }
+
+  const showResults = searching || hasSearched || results.length > 0
+  const showBookmarks = bookmarks.length > 0
 
   return (
     <section className="explorer-view" aria-label="Explore messages">
@@ -104,31 +109,41 @@ export function ExplorerView({
 
       {error ? <div className="inline-error">{error}</div> : null}
 
-      <div className="explorer-grid">
-        <section className="results-panel">
-          <div className="block-heading">
-            <div>
-              <h2>Results</h2>
-              <p>
-                {results.length
-                  ? `${formatNumber(results.length)} messages${scopedContact ? ` in ${contactTitle(scopedContact)}` : ''}.`
-                  : 'Run a search to inspect messages.'}
-              </p>
-            </div>
-          </div>
-          <MessageResults results={results} onOpen={openResult} onBookmark={saveBookmark} />
-        </section>
+      {showResults || showBookmarks ? (
+        <div className={`explorer-grid ${showResults && showBookmarks ? '' : 'single'}`}>
+          {showResults ? (
+            <section className="results-panel">
+              <div className="block-heading">
+                <div>
+                  <h2>Results</h2>
+                  <p>
+                    {searching
+                      ? 'Searching...'
+                      : results.length
+                        ? `${formatNumber(results.length)} messages${scopedContact ? ` in ${contactTitle(scopedContact)}` : ''}.`
+                        : 'No matches found.'}
+                  </p>
+                </div>
+              </div>
+              {results.length ? (
+                <MessageResults results={results} onOpen={openResult} onBookmark={saveBookmark} />
+              ) : null}
+            </section>
+          ) : null}
 
-        <aside className="bookmark-panel">
-          <div className="block-heading">
-            <div>
-              <h2>Saved Moments</h2>
-              <p>{formatNumber(bookmarks.length)} local bookmarks.</p>
-            </div>
-          </div>
-          <MessageResults compact results={bookmarks} onOpen={openResult} onBookmark={saveBookmark} />
-        </aside>
-      </div>
+          {showBookmarks ? (
+            <aside className="bookmark-panel">
+              <div className="block-heading">
+                <div>
+                  <h2>Saved Moments</h2>
+                  <p>{formatNumber(bookmarks.length)} local bookmarks.</p>
+                </div>
+              </div>
+              <MessageResults compact results={bookmarks} onOpen={openResult} onBookmark={saveBookmark} />
+            </aside>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   )
 }
@@ -151,7 +166,7 @@ function MessageResults({
         <article key={bookmarkId(result)} className="search-result">
           <button type="button" className="search-result-main" onClick={() => onOpen(result)}>
             <span>
-              {result.displayName || result.chatId} / {shortDateTime(result.timestamp)}
+              {result.displayName || prettyContactId(result.chatId)} / {shortDateTime(result.timestamp)}
             </span>
             <p className={isOutbound(result) ? 'outbound' : ''}>{result.text || '(empty)'}</p>
           </button>
