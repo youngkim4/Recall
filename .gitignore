@@ -3,8 +3,23 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Local iMessage data (never commit — personal messages/contacts)
 chat.db
 messages.csv
+messages_attachments.csv
+messages_reactions.csv
+memories.csv
+
+# Generated reports and local app store / build artifacts
+out/
+saves/
+scripts/out/
+
+# OS / editor junk
+.DS_Store
+
+# Claude Code local settings (launch.json is shared)
+.claude/settings.local.json
 
 # C extensions
 *.so
