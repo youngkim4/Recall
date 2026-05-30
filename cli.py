@@ -20,7 +20,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from parse_imessage import extract_messages, list_contacts, extract_attachments, extract_reactions
-from analysis import run_cli
+from analysis import DEFAULT_MODEL, get_token_budget, run_cli
 
 
 def parse_date(date_str: str) -> datetime:
@@ -30,6 +30,10 @@ def parse_date(date_str: str) -> datetime:
 
 MODEL_PRICING = {
     # model: (input_per_1M, output_per_1M)
+    "gpt-5.5": (5.00, 30.00),
+    "gpt-5.4": (2.50, 15.00),
+    "gpt-5.4-mini": (0.75, 4.50),
+    "gpt-5.4-nano": (0.20, 1.25),
     "gpt-5-mini": (0.25, 2.00),
     "gpt-5-nano": (0.05, 0.40),
     "gpt-5": (1.25, 10.00),
@@ -40,25 +44,46 @@ MODEL_PRICING = {
     "gpt-4.1-nano": (0.10, 0.40),
 }
 
+LONG_CONTEXT_PRICING_THRESHOLD = 272_000
+LONG_CONTEXT_PRICED_MODELS = ("gpt-5.5", "gpt-5.4")
 
-def estimate_cost(messages_csv: str, contact: str, model: str = "gpt-5-mini") -> dict:
+
+def uses_long_context_pricing(model: str, input_tokens: int) -> bool:
+    model_name = (model or "").lower()
+    return input_tokens > LONG_CONTEXT_PRICING_THRESHOLD and any(
+        model_name == family or model_name.startswith(family + "-20")
+        for family in LONG_CONTEXT_PRICED_MODELS
+    )
+
+
+def get_model_pricing(model: str) -> tuple:
+    model_name = (model or "").lower()
+    if model_name in MODEL_PRICING:
+        return MODEL_PRICING[model_name]
+    for family in sorted(MODEL_PRICING, key=len, reverse=True):
+        if model_name.startswith(family + "-20"):
+            return MODEL_PRICING[family]
+    return MODEL_PRICING[DEFAULT_MODEL]
+
+
+def estimate_cost(messages_csv: str, contact: str, model: str = DEFAULT_MODEL, since=None, until=None) -> dict:
     """Estimate cost for full-context analysis using exact token counting."""
     from analysis import format_all_messages, estimate_tokens, filter_conversation, load_messages
 
-    df = load_messages(messages_csv)
+    df = load_messages(messages_csv, since=since, until=until)
     contact_df = filter_conversation(df, contact)
 
     msg_count = len(contact_df)
+    token_budget = get_token_budget(model)
     if msg_count == 0:
         return {"msg_count": 0, "input_tokens": 0, "output_tokens": 0,
-                "estimated_cost": 0, "needs_chunking": False, "years": []}
+                "estimated_cost": 0, "needs_chunking": False,
+                "token_budget": token_budget, "long_context_pricing": False, "years": []}
 
     all_text = format_all_messages(contact_df)
     input_tokens = estimate_tokens(all_text)
 
-    # Check if chunking needed (170K token limit with buffer for system/output)
-    from analysis import TOKEN_BUDGET
-    needs_chunking = input_tokens > TOKEN_BUDGET
+    needs_chunking = input_tokens > token_budget
 
     # Estimate periods (years, or half-years for large years)
     years = []
@@ -74,7 +99,11 @@ def estimate_cost(messages_csv: str, contact: str, model: str = "gpt-5-mini") ->
         effective_input = input_tokens
         output_tokens = 15000
 
-    input_rate, output_rate = MODEL_PRICING.get(model, (0.25, 2.00))
+    input_rate, output_rate = get_model_pricing(model)
+    long_context_pricing = uses_long_context_pricing(model, effective_input)
+    if long_context_pricing:
+        input_rate *= 2
+        output_rate *= 1.5
     estimated_cost = (effective_input / 1_000_000) * input_rate + (output_tokens / 1_000_000) * output_rate
 
     return {
@@ -83,6 +112,8 @@ def estimate_cost(messages_csv: str, contact: str, model: str = "gpt-5-mini") ->
         "output_tokens": output_tokens,
         "estimated_cost": estimated_cost,
         "needs_chunking": needs_chunking,
+        "token_budget": token_budget,
+        "long_context_pricing": long_context_pricing,
         "years": years,
     }
 
@@ -125,7 +156,7 @@ Examples:
     # Analysis options
     parser.add_argument("--no-confirm", action="store_true", help="Skip cost confirmation")
     parser.add_argument("--html", action="store_true", help="Generate HTML report")
-    parser.add_argument("--model", default="gpt-5-mini", help="OpenAI model (default: gpt-5-mini)")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"OpenAI model (default: {DEFAULT_MODEL})")
     
     args = parser.parse_args()
 
@@ -156,7 +187,9 @@ Examples:
             print("-" * 80)
             for _, row in df.iterrows():
                 group_tag = " [GROUP]" if row["is_group"] else ""
-                print(f"  {row['chat_id']}{group_tag}")
+                display_name = str(row.get("display_name") or "").strip()
+                label = f"{display_name} ({row['chat_id']})" if display_name else row["chat_id"]
+                print(f"  {label}{group_tag}")
                 print(f"    Messages: {row['message_count']:,}  |  {row['first_msg']} → {row['last_msg']}")
             print("-" * 80)
             print(f"\nUse --contact <chat_id> to analyze.")
@@ -203,11 +236,13 @@ Examples:
     print(f"\n🔍 Analyzing {args.contact}...")
     
     # Estimate cost
-    cost_info = estimate_cost(messages_csv, args.contact, model=args.model)
+    cost_info = estimate_cost(messages_csv, args.contact, model=args.model, since=args.since, until=args.until)
     print(f"\n📊 {cost_info['msg_count']:,} messages → ~{cost_info['input_tokens']:,} tokens")
     if cost_info['needs_chunking']:
         years_str = ", ".join(str(y) for y in cost_info['years'])
         print(f"   📅 Will analyze by year: {years_str}")
+    if cost_info.get("long_context_pricing"):
+        print("   ⚠️  Long-context pricing applies for this model/input size")
     print(f"💰 Estimated cost: ~${cost_info['estimated_cost']:.2f}")
     
     if not args.no_confirm:
