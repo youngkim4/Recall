@@ -4472,24 +4472,30 @@ input[readonly],
    CLEAN — strip boxed report tiles; whitespace + type do the work
    ============================================================ */
 
-/* Section containers: no box, just heading + content with air */
+/* Section containers: one quiet soft surface to group content —
+   no border, shadow, blur or glow (those read as "tiles"). */
 .visual-card,
 .visual-card:hover {
   border: 0;
-  border-radius: 0;
-  padding: 0;
-  background: none;
+  border-radius: 16px;
+  padding: 22px 24px;
+  background: rgba(255, 255, 255, 0.045);
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
 .visual-section {
-  gap: 44px;
+  gap: 16px;
 }
 
 .visual-grid {
-  gap: 40px 48px;
+  gap: 16px 18px;
+}
+
+/* equal-height panels so the columns line up cleanly */
+.visual-grid.two {
+  align-items: stretch;
 }
 
 /* Stat cells: a quiet label over a confident number, no tile */
