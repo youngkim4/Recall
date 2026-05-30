@@ -198,7 +198,17 @@ def companion_report_paths(report_path: Path, contact: str) -> tuple[Path | None
 
 
 def export_database(db_path: Path, messages_path: Path):
-    df = extract_messages(str(db_path))
+    try:
+        df = extract_messages(str(db_path))
+    except sqlite3.OperationalError as exc:
+        text = str(exc).lower()
+        if any(s in text for s in ("unable to open", "permission", "not permitted", "authoriz")):
+            raise PermissionError(
+                f"Couldn't read the Messages database at {db_path}. If this is your live database "
+                "(~/Library/Messages/chat.db), grant Full Disk Access to this app in "
+                "System Settings > Privacy & Security > Full Disk Access, then reopen Recall."
+            ) from exc
+        raise
     messages_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(messages_path, index=False)
 
