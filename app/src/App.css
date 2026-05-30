@@ -4614,3 +4614,28 @@ input[readonly],
   background: rgba(255, 255, 255, 0.03);
   transform: none;
 }
+
+/* Settings: live Messages DB hint */
+.settings-hint {
+  margin-top: 6px;
+}
+
+.settings-hint-button {
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  background: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-hint-button:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+.settings-hint-note {
+  color: var(--soft);
+  font-size: 12px;
+  line-height: 1.4;
+}

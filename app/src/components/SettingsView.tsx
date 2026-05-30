@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { Defaults, Job, PreviewCacheSummary, RuntimePaths } from '../types'
 import { formatNumber, shortDateTime } from '../lib/format'
 import { modelLabel } from '../lib/models'
+
+const LIVE_DB_PATH = '~/Library/Messages/chat.db'
 
 type SettingsViewProps = {
   defaults: Defaults | null
@@ -64,10 +66,23 @@ export function SettingsView({
       <div className="settings-table">
         <PathRow
           label="Messages database"
-          description="chat.db source used when rebuilding the export."
+          description="chat.db rebuilt into the export. Point at your live database for current messages."
           value={draftPaths.dbPath}
           placeholder={defaultPaths.dbPath || '/Users/.../Library/Messages/chat.db'}
           onChange={(value) => setDraftPaths((current) => ({ ...current, dbPath: value }))}
+          hint={
+            draftPaths.dbPath.trim() === LIVE_DB_PATH ? (
+              <span className="settings-hint-note">Live database — needs Full Disk Access for this app, then Apply paths + Refresh.</span>
+            ) : (
+              <button
+                type="button"
+                className="settings-hint-button"
+                onClick={() => setDraftPaths((current) => ({ ...current, dbPath: LIVE_DB_PATH }))}
+              >
+                Use live Messages database
+              </button>
+            )
+          }
         />
         <PathRow
           label="Message export"
@@ -191,18 +206,21 @@ function PathRow({
   value,
   placeholder,
   onChange,
+  hint,
 }: {
   label: string
   description: string
   value: string
   placeholder: string
   onChange: (value: string) => void
+  hint?: ReactNode
 }) {
   return (
     <label className="settings-row path-row">
       <div>
         <strong>{label}</strong>
         <span>{description}</span>
+        {hint ? <div className="settings-hint">{hint}</div> : null}
       </div>
       <input
         type="text"
