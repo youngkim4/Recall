@@ -803,18 +803,51 @@ def list_jobs() -> list[dict]:
     return sorted(jobs, key=lambda job: str(job.get("updatedAt", "")), reverse=True)
 
 
+def _row_str(row, key: str, default: str = "") -> str:
+    """NA/NaN-safe string extraction from a DataFrame row.
+
+    The messages CSV loads chat_id/sender as pandas "string" dtype, so missing
+    values are pd.NA. Using `value or ""` on pd.NA raises "boolean value of NA
+    is ambiguous" (outbound messages have no sender), so guard with pd.isna.
+    """
+    value = row.get(key, default)
+    if value is None:
+        return default
+    try:
+        if pd.isna(value):
+            return default
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
+def _is_from_me_value(value):
+    """Return a JSON-safe outbound flag (0/1) or None."""
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
 def message_row_payload(row, name_map: dict[str, str] | None = None) -> dict:
-    chat_id = str(row.get("chat_id", "") or "")
-    text = str(row.get("text", "") or "")
+    chat_id = _row_str(row, "chat_id")
+    text = _row_str(row, "text")
     display_name = (name_map or {}).get(chat_id, "")
     return {
-        "messageId": str(row.get("message_id", "") or ""),
+        "messageId": _row_str(row, "message_id"),
         "chatId": chat_id,
         "displayName": display_name,
-        "timestamp": row.get("timestamp"),
-        "sender": str(row.get("sender", "") or ""),
+        "timestamp": _row_str(row, "timestamp") or None,
+        "sender": _row_str(row, "sender"),
         "text": text[:600],
-        "isFromMe": row.get("is_from_me"),
+        "isFromMe": _is_from_me_value(row.get("is_from_me")),
     }
 
 
