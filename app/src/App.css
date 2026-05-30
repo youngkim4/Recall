@@ -4467,3 +4467,144 @@ input[readonly],
   color: var(--soft);
   font-size: 12px;
 }
+
+/* ============================================================
+   CLEAN — strip boxed report tiles; whitespace + type do the work
+   ============================================================ */
+
+/* Section containers: no box, just heading + content with air */
+.visual-card,
+.visual-card:hover {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.visual-section {
+  gap: 44px;
+}
+
+.visual-grid {
+  gap: 40px 48px;
+}
+
+/* Stat cells: a quiet label over a confident number, no tile */
+.visual-stat,
+.visual-stat:hover {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  transform: none;
+}
+
+.stats-mosaic {
+  gap: 24px 34px;
+}
+
+.visual-stat span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--soft);
+}
+
+.visual-stat strong {
+  margin-top: 6px;
+  font-size: 25px;
+}
+
+/* Nested mini-tiles → flat label/value pairs */
+.media-mini-stats div,
+.mini-meter,
+.balance-metric,
+.balance-metric:hover {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  box-shadow: none;
+}
+
+.media-mini-stats {
+  gap: 22px 28px;
+}
+
+/* sent/received kicker → plain colored label, no pill */
+.balance-kicker {
+  border: 0;
+  padding: 0;
+  background: none;
+}
+
+/* Signals tiles → plain label/value, no box, no accent bar */
+.pattern-visual,
+.pattern-visual-grid.compact .pattern-visual {
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  overflow: visible;
+}
+
+.pattern-visual i {
+  display: none;
+}
+
+.pattern-visual-grid,
+.pattern-visual-grid.compact {
+  gap: 22px 32px;
+}
+
+.signals-card .block-heading,
+.timeline-card .block-heading {
+  margin-bottom: 16px;
+}
+
+/* App-wide: flatten data cards + list rows (Analyze, Overview, Jobs) */
+.metrics-grid,
+.cost-row,
+.activity-chart,
+.metric-map,
+.status-row,
+.compact-row,
+.job-row,
+.report-card,
+.search-result-main {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.metric {
+  border-right: 0;
+}
+
+/* list rows: quiet hover + hairline separation instead of tiles */
+.status-row,
+.compact-row,
+.job-row {
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+
+.status-row:hover,
+.compact-row:hover,
+.job-row:hover,
+.report-card:hover,
+.search-result-main:hover {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  transform: none;
+}
