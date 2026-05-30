@@ -4339,6 +4339,7 @@ input[readonly],
 
 .ask-layout > .chat-view {
   height: 100%;
+  min-height: 0;
 }
 
 .chat-history {
