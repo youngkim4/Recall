@@ -89,6 +89,7 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             defer: false
         )
         window.title = "Recall"
+        window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.contentView = webView
         window.center()
