@@ -56,6 +56,18 @@ class TestWriteHtmlReport:
         assert "<script>alert" not in content
         assert "&lt;script&gt;" in content
 
+    def test_summary_xss_prevention(self, tmp_path, sample_messages_df):
+        stats = compute_stats(sample_messages_df)
+        monthly = progression_series(sample_messages_df)
+        malicious_summary = '**safe** <script>alert("xss")</script>'
+        path = write_html_report(
+            str(tmp_path), "+1234", stats, monthly, malicious_summary
+        )
+        content = Path(path).read_text()
+        assert "<strong>safe</strong>" in content
+        assert "<script>alert" not in content
+        assert "&lt;script&gt;" in content
+
     def test_events_rendered(self, tmp_path, sample_messages_df):
         stats = compute_stats(sample_messages_df)
         monthly = progression_series(sample_messages_df)

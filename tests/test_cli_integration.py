@@ -1,5 +1,6 @@
 """Tests for CLI estimate_cost and main argument parsing."""
 import os
+from datetime import datetime
 from unittest.mock import patch, MagicMock
 
 import pandas as pd
@@ -8,7 +9,7 @@ import pytest
 import sys
 sys.path.insert(0, ".")
 
-from cli import estimate_cost, MODEL_PRICING
+from cli import estimate_cost, MODEL_PRICING, get_model_pricing, uses_long_context_pricing
 
 
 class TestEstimateCost:
@@ -50,6 +51,17 @@ class TestEstimateCost:
     def test_unknown_model_uses_default_rate(self, messages_csv):
         result = estimate_cost(messages_csv, "chat123", model="unknown-model")
         assert result["estimated_cost"] >= 0
+
+    def test_date_filter_applies_to_estimate(self, messages_csv):
+        result = estimate_cost(messages_csv, "chat123", since=datetime(2024, 2, 1))
+        assert result["msg_count"] == 1
+
+    def test_long_context_pricing_for_latest_frontier_model(self):
+        assert uses_long_context_pricing("gpt-5.5", 300_000) is True
+        assert uses_long_context_pricing("gpt-5.4-mini", 300_000) is False
+
+    def test_snapshot_pricing_uses_base_family(self):
+        assert get_model_pricing("gpt-5.4-mini-2026-03-17") == MODEL_PRICING["gpt-5.4-mini"]
 
 
 class TestMainValidation:

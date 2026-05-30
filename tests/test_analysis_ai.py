@@ -23,14 +23,13 @@ from analysis import (
 
 def _mock_openai_response(content):
     resp = MagicMock()
-    resp.choices = [MagicMock()]
-    resp.choices[0].message.content = content
+    resp.output_text = content
     return resp
 
 
 def _make_client(content):
     client = MagicMock()
-    client.chat.completions.create.return_value = _mock_openai_response(content)
+    client.responses.create.return_value = _mock_openai_response(content)
     return client
 
 
@@ -48,9 +47,19 @@ class TestCallOpenai:
     def test_none_content_returns_empty(self):
         client = _make_client(None)
         # Override to return None
-        client.chat.completions.create.return_value.choices[0].message.content = None
+        client.responses.create.return_value.output_text = None
         result = _call_openai(client, [{"role": "user", "content": "hi"}])
         assert result == ""
+
+    def test_uses_responses_api_without_storage(self):
+        client = _make_client("ok")
+        result = _call_openai(client, [{"role": "system", "content": "rules"}, {"role": "user", "content": "hi"}])
+        assert result == "ok"
+        client.responses.create.assert_called_once()
+        kwargs = client.responses.create.call_args.kwargs
+        assert kwargs["store"] is False
+        assert kwargs["instructions"] == "rules"
+        assert kwargs["input"] == [{"role": "user", "content": "hi"}]
 
     def test_rate_limit_retry(self):
         from openai import RateLimitError
@@ -59,11 +68,11 @@ class TestCallOpenai:
         mock_response = MagicMock()
         mock_response.status_code = 429
         mock_response.headers = {}
-        client.chat.completions.create.side_effect = [
+        client.responses.create.side_effect = [
             RateLimitError("rate limited", response=mock_response, body=None),
             resp,
         ]
-        with patch("analysis.time.sleep"):
+        with patch("openai_client.time.sleep"):
             result = _call_openai(client, [{"role": "user", "content": "hi"}])
         assert result == "ok"
 
@@ -75,7 +84,7 @@ class TestCallOpenai:
             err = APIError("server error", response=MagicMock(), body=None)
         except TypeError:
             err = APIError(message="server error", request=MagicMock(), body=None)
-        client.chat.completions.create.side_effect = err
+        client.responses.create.side_effect = err
         with pytest.raises(APIError):
             _call_openai(client, [{"role": "user", "content": "hi"}])
 
@@ -94,7 +103,7 @@ class TestAiExtractEvents:
             "chat_id": ["+1234"] * 3,
         })
 
-    @patch("analysis.OpenAI")
+    @patch("ai_analysis.OpenAI")
     def test_small_conversation(self, mock_openai_cls, conv_df):
         events_json = json.dumps({
             "events": [{
@@ -114,7 +123,7 @@ class TestAiExtractEvents:
         assert not result.empty
         assert "title" in result.columns
 
-    @patch("analysis.OpenAI")
+    @patch("ai_analysis.OpenAI")
     def test_empty_response(self, mock_openai_cls, conv_df):
         client = _make_client(json.dumps({"events": []}))
         mock_openai_cls.return_value = client
@@ -123,7 +132,7 @@ class TestAiExtractEvents:
         result = ai_extract_events("+1234", stats, conv_df, target_events=5)
         assert result.empty
 
-    @patch("analysis.OpenAI")
+    @patch("ai_analysis.OpenAI")
     def test_chunked_conversation(self, mock_openai_cls, conv_df):
         events_json = json.dumps({
             "events": [{
@@ -143,7 +152,7 @@ class TestAiExtractEvents:
         # Force chunking by setting total_tokens above budget
         result = ai_extract_events(
             "+1234", stats, conv_df, target_events=5,
-            total_tokens=200_000, all_messages=all_messages,
+            total_tokens=1_000_000, all_messages=all_messages,
         )
         assert not result.empty
 
@@ -161,7 +170,7 @@ class TestAiSummary:
             "chat_id": ["+1234"] * 2,
         })
 
-    @patch("analysis.OpenAI")
+    @patch("ai_analysis.OpenAI")
     def test_small_conversation(self, mock_openai_cls, conv_df):
         client = _make_client("This is a great relationship summary.")
         mock_openai_cls.return_value = client
@@ -170,7 +179,7 @@ class TestAiSummary:
         result = ai_summary("+1234", stats, conv_df)
         assert "relationship" in result.lower() or "summary" in result.lower()
 
-    @patch("analysis.OpenAI")
+    @patch("ai_analysis.OpenAI")
     def test_chunked_summary(self, mock_openai_cls, conv_df):
         client = _make_client(
             "### SUMMARY\nGood period.\n\n### CONTEXT FOR NEXT PERIOD\nThey were close."
@@ -181,7 +190,7 @@ class TestAiSummary:
         all_messages = format_all_messages(conv_df)
         result = ai_summary(
             "+1234", stats, conv_df,
-            total_tokens=200_000, all_messages=all_messages,
+            total_tokens=1_000_000, all_messages=all_messages,
         )
         assert isinstance(result, str)
         assert len(result) > 0

@@ -23,6 +23,7 @@ from analysis import (
     estimate_tokens,
     truncate_to_tokens,
     chunk_by_year,
+    get_token_budget,
     _parse_json_events,
     write_markdown_report,
     ConversationStats,
@@ -364,6 +365,12 @@ class TestWriteMarkdownReport:
 class TestConstants:
     def test_token_budget(self):
         assert TOKEN_BUDGET == 170_000
+
+    def test_latest_model_budget_uses_long_context(self):
+        assert get_token_budget("gpt-5.5") > TOKEN_BUDGET
+
+    def test_mini_budget_does_not_match_larger_family(self):
+        assert get_token_budget("gpt-5.4-mini") < get_token_budget("gpt-5.4")
 
     def test_seconds_per_day(self):
         assert SECONDS_PER_DAY == 86_400.0

@@ -59,7 +59,7 @@ class TestExtractMessages:
 
     def test_expected_columns(self, mock_chat_db):
         df = extract_messages(mock_chat_db)
-        for col in ["message_id", "timestamp", "sender", "text", "chat_id", "is_from_me", "service"]:
+        for col in ["message_id", "timestamp", "sender", "text", "chat_id", "chat_display_name", "is_from_me", "service"]:
             assert col in df.columns
 
     def test_attributedBody_column_dropped(self, mock_chat_db):
@@ -71,6 +71,16 @@ class TestExtractMessages:
         texts = df["text"].tolist()
         assert "hello there" in texts
         assert "hey!" in texts
+
+    def test_seconds_timestamp_supported(self, mock_chat_db):
+        conn = sqlite3.connect(mock_chat_db)
+        conn.execute("UPDATE message SET date = ? WHERE ROWID = 1", (726915600,))
+        conn.commit()
+        conn.close()
+
+        df = extract_messages(mock_chat_db)
+        row = df[df["message_id"] == 1].iloc[0]
+        assert pd.to_datetime(row["timestamp"]).year == 2024
 
     def test_connection_closed_on_error(self, tmp_path):
         bad_db = str(tmp_path / "bad.db")
@@ -98,8 +108,27 @@ class TestListContacts:
 
     def test_columns_present(self, mock_chat_db):
         df = list_contacts(mock_chat_db)
-        for col in ["chat_id", "message_count", "first_msg", "last_msg", "is_group"]:
+        for col in ["chat_id", "display_name", "message_count", "first_msg", "last_msg", "is_group"]:
             assert col in df.columns
+
+    def test_group_display_name_included(self, mock_chat_db):
+        conn = sqlite3.connect(mock_chat_db)
+        conn.execute("ALTER TABLE chat ADD COLUMN display_name TEXT")
+        base_ns = 726915600 * 1_000_000_000
+        conn.execute("INSERT INTO chat (ROWID, chat_identifier, display_name) VALUES (2, 'chat123', 'Road Trip')")
+        conn.execute(
+            "INSERT INTO message VALUES (4, ?, 1, 'group hello', NULL, 0, 'iMessage', NULL, 0)",
+            (base_ns + 180_000_000_000,),
+        )
+        conn.execute("INSERT INTO chat_message_join VALUES (2, 4)")
+        conn.commit()
+        conn.close()
+
+        df = list_contacts(mock_chat_db, limit=10)
+
+        row = df[df["chat_id"] == "chat123"].iloc[0]
+        assert row["display_name"] == "Road Trip"
+        assert row["is_group"] == 1
 
 
 class TestExtractAttachments:
@@ -133,6 +162,20 @@ class TestExtractReactions:
         df = extract_reactions(mock_chat_db)
         if not df.empty:
             assert "love" in df["reaction_type"].values
+
+    def test_non_tapback_associated_message_ignored(self, mock_chat_db):
+        conn = sqlite3.connect(mock_chat_db)
+        base_ns = 726915600 * 1_000_000_000
+        conn.execute(
+            "INSERT INTO message VALUES (4, ?, 1, NULL, NULL, 0, 'iMessage', 'guid2', 2500)",
+            (base_ns + 180_000_000_000,),
+        )
+        conn.execute("INSERT INTO chat_message_join VALUES (1, 4)")
+        conn.commit()
+        conn.close()
+
+        df = extract_reactions(mock_chat_db)
+        assert 2500 not in set(df["associated_message_type"].astype(int))
 
 
 class TestSearchContacts:

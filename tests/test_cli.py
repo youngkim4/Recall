@@ -2,6 +2,8 @@ import sys
 sys.path.insert(0, ".")
 
 from cli import parse_date, MODEL_PRICING
+from analysis import DEFAULT_MODEL
+from ai_config import UI_MODEL_CHOICES
 
 
 class TestParseDate:
@@ -23,6 +25,9 @@ class TestParseDate:
 
 
 class TestModelPricing:
+    def test_default_model_present(self):
+        assert DEFAULT_MODEL in MODEL_PRICING
+
     def test_gpt5_mini_present(self):
         assert "gpt-5-mini" in MODEL_PRICING
 
@@ -36,3 +41,7 @@ class TestModelPricing:
         inp, out = MODEL_PRICING["gpt-5-mini"]
         assert inp == 0.25
         assert out == 2.00
+
+    def test_ui_model_choices_are_priced(self):
+        for model in UI_MODEL_CHOICES:
+            assert model in MODEL_PRICING
