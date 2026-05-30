@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Recall</title>
+    <script>
+      if (window.location.protocol === "file:") {
+        const target = new URL("http://127.0.0.1:8765/");
+        target.search = window.location.search || "?from=file";
+        window.location.replace(target.toString());
+      }
+    </script>
+    <link rel="stylesheet" href="/styles.css?v=design39" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <img class="brand-mark" src="/assets/recall-mark.svg?v=mark3" alt="" aria-hidden="true" />
+          <div>
+            <div class="brand-name">Recall</div>
+          </div>
+        </div>
+
+        <nav class="side-nav" aria-label="Workspace">
+          <button class="side-nav-item active" type="button" data-workspace-view="analysis">
+            <span class="icon" data-icon="layers"></span>
+            Analyze
+          </button>
+          <button class="side-nav-item" type="button" data-workspace-view="reports">
+            <span class="icon" data-icon="file"></span>
+            Reports
+          </button>
+        </nav>
+
+        <section class="sidebar-panel sidebar-library" aria-label="Library summary">
+          <div class="sidebar-section-title">Library</div>
+          <div class="sidebar-stat-row">
+            <span>Conversations</span>
+            <strong id="sidebarConversationCount">--</strong>
+          </div>
+          <div class="sidebar-stat-row">
+            <span>Named</span>
+            <strong id="sidebarNamedCount">--</strong>
+          </div>
+          <div class="sidebar-stat-row">
+            <span>Reports</span>
+            <strong id="sidebarReportCount">--</strong>
+          </div>
+        </section>
+
+        <section class="sidebar-panel sidebar-recents" aria-label="Recent reports">
+          <div class="sidebar-section-title">Recent</div>
+          <div id="sidebarRecentReports" class="sidebar-report-list">
+            <span class="sidebar-empty">No reports yet</span>
+          </div>
+        </section>
+
+        <details class="sidebar-advanced">
+          <summary>
+            <span class="icon" data-icon="settings"></span>
+            Settings
+          </summary>
+          <div class="settings-stack">
+            <label class="settings-field">
+              <span>Model</span>
+              <select id="modelSelect"></select>
+            </label>
+            <label class="settings-toggle">
+              <input id="htmlToggle" type="checkbox" checked />
+              <span>HTML report</span>
+            </label>
+            <details class="settings-group">
+              <summary>Sources</summary>
+              <label class="field source-field">
+                Messages database
+                <input id="dbPath" type="text" spellcheck="false" />
+              </label>
+              <label class="field source-field">
+                Messages CSV
+                <input id="messagesPath" type="text" spellcheck="false" />
+              </label>
+            </details>
+            <details class="settings-group">
+              <summary>Export</summary>
+              <label class="settings-toggle">
+                <input id="extractToggle" type="checkbox" />
+                <span>Rebuild before run</span>
+              </label>
+              <button id="exportBtn" class="button secondary full" type="button" title="Rebuild messages.csv from chat.db">
+                <span class="icon" data-icon="refresh"></span>
+                Rebuild CSV
+              </button>
+            </details>
+          </div>
+        </details>
+
+        <div class="privacy-note">
+          <span class="icon" data-icon="lock"></span>
+          <p>Reports save locally.</p>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1>Analyze</h1>
+            <p id="connectionText">Select a conversation or open a saved report.</p>
+          </div>
+          <button id="loadContactsBtn" class="button secondary" type="button" title="Reload conversations from the current CSV or database">
+            <span class="icon" data-icon="refresh"></span>
+            Refresh list
+          </button>
+        </header>
+
+        <section class="workspace-grid">
+          <section class="panel conversation-panel">
+            <div class="panel-header">
+              <div>
+                <h2>Conversations</h2>
+                <p id="contactCount">No conversations</p>
+              </div>
+              <button id="resolveContactsBtn" class="text-button contact-names-button" type="button">Use Contacts</button>
+            </div>
+
+            <div class="search-box">
+              <span class="icon" data-icon="search"></span>
+              <input id="contactSearch" type="search" placeholder="Search" />
+            </div>
+
+            <div id="contactList" class="contact-list" aria-live="polite"></div>
+          </section>
+
+          <section class="panel review-panel">
+            <div class="review-header">
+              <div>
+                <p class="section-label">Thread</p>
+                <h2 id="selectedTitle">Choose a conversation</h2>
+              </div>
+              <span id="threadRange" class="range-chip">Waiting</span>
+            </div>
+
+            <section id="latestReportShortcut" class="latest-report-shortcut" hidden>
+              <div>
+                <h3>Latest report</h3>
+                <p id="latestReportMeta">No saved Markdown report yet.</p>
+              </div>
+              <div class="latest-report-actions">
+                <button id="openLatestReportBtn" class="button primary" type="button">Open report</button>
+                <button id="showReportsShortcutBtn" class="button secondary" type="button">All reports</button>
+              </div>
+            </section>
+
+            <section class="review-section scope-section">
+              <div class="section-heading">
+                <div>
+                  <h3>Scope</h3>
+                  <p>Choose a date range.</p>
+                </div>
+              </div>
+              <div class="segmented" role="group" aria-label="Date scope">
+                <button class="segment active" type="button" data-scope="all">All time</button>
+                <button class="segment" type="button" data-scope="last-year">Last year</button>
+                <button class="segment" type="button" data-scope="custom">Custom</button>
+              </div>
+              <div id="customDates" class="date-grid" hidden>
+                <label class="field">
+                  Since
+                  <input id="sinceInput" type="date" />
+                </label>
+                <label class="field">
+                  Until
+                  <input id="untilInput" type="date" />
+                </label>
+              </div>
+            </section>
+
+            <section class="review-section preview-section">
+              <div class="section-heading">
+                <div>
+                  <h3>Preview</h3>
+                  <p id="previewSummary">Volume, cost, and recent messages.</p>
+                </div>
+              </div>
+
+              <div class="metrics-row">
+                <div class="metric">
+                  <span>Messages</span>
+                  <strong id="metricTotal">--</strong>
+                </div>
+                <div class="metric">
+                  <span>Sent</span>
+                  <strong id="metricSent">--</strong>
+                </div>
+                <div class="metric">
+                  <span>Received</span>
+                  <strong id="metricReceived">--</strong>
+                </div>
+                <div class="metric">
+                  <span>Active days</span>
+                  <strong id="metricDays">--</strong>
+                </div>
+              </div>
+
+              <div class="action-bar">
+                <div class="estimate-card">
+                  <span>Estimated cost</span>
+                  <strong id="costEstimate">--</strong>
+                  <p id="tokenEstimate">Select a conversation to calculate tokens.</p>
+                </div>
+                <button id="analyzeBtn" class="button primary" type="button" disabled>
+                  <span class="icon" data-icon="spark"></span>
+                  Run report
+                </button>
+              </div>
+
+              <div class="activity-card">
+                <div class="chart-header">
+                  <div>
+                    <h4>Monthly activity</h4>
+                    <p>Messages by month.</p>
+                  </div>
+                  <span id="chartLabel">No preview</span>
+                </div>
+                <svg id="volumeChart" viewBox="0 0 720 180" role="img" aria-label="Monthly message activity trend"></svg>
+              </div>
+
+              <div class="message-preview">
+                <div class="message-preview-header">
+                  <h4>Recent messages</h4>
+                  <span>Latest</span>
+                </div>
+                <div id="messageList" class="message-list"></div>
+              </div>
+            </section>
+
+            <section id="resultsPanel" class="results-panel" hidden>
+              <div class="section-heading">
+                <div>
+                  <h3>Report</h3>
+                  <p id="resultsSummary">Generated findings will appear here.</p>
+                </div>
+              </div>
+              <div class="result-tabs" role="tablist" aria-label="Report results">
+                <button class="result-tab active" type="button" data-result-tab="story">Story</button>
+                <button class="result-tab" type="button" data-result-tab="timeline">Events</button>
+                <button class="result-tab" type="button" data-result-tab="patterns">Patterns</button>
+                <button class="result-tab" type="button" data-result-tab="media">Media</button>
+                <button class="result-tab" type="button" data-result-tab="charts">Activity</button>
+                <button class="result-tab" type="button" data-result-tab="files">Files</button>
+              </div>
+              <div id="resultContent" class="result-content"></div>
+            </section>
+
+            <section id="reportSuccess" class="success-panel" hidden>
+              <div>
+                <h3>Saved reports</h3>
+                <p>Open a Markdown report in the app or export generated files.</p>
+              </div>
+              <button id="refreshReportsListBtn" class="button secondary" type="button">
+                <span class="icon" data-icon="refresh"></span>
+                Refresh
+              </button>
+              <div id="reportsReaderEntry" class="reports-reader-entry" hidden>
+                <span>Latest</span>
+                <strong id="reportsReaderTitle">No report selected</strong>
+                <button id="openLatestReportFromReportsBtn" class="button primary" type="button">Open report</button>
+              </div>
+              <div id="reportsList" class="reports-list"></div>
+            </section>
+
+            <details class="run-details">
+              <summary>Run log</summary>
+              <div class="job-card">
+                <div class="job-card-header">
+                  <span id="statusText">No active run</span>
+                  <button id="clearLogBtn" class="text-button" type="button">Clear log</button>
+                </div>
+                <div id="jobLog" class="job-log">No active run.</div>
+                <button id="refreshReportsBtn" class="text-button" type="button">Refresh reports</button>
+              </div>
+            </details>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script src="/app.js?v=design39" type="module"></script>
+  </body>
+</html>

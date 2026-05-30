@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Recall">
+  <rect x="64" y="64" width="896" height="896" rx="216" fill="#FFFFFF"/>
+  <rect x="64" y="64" width="896" height="896" rx="216" fill="none" stroke="#D8DAE2" stroke-width="20"/>
+  <path
+    fill="#2C2D31"
+    fill-rule="evenodd"
+    d="M292 236h256c73 0 132 19 175 58 43 38 65 89 65 153 0 55-16 101-49 137-31 34-74 56-129 68l178 136H640L480 658h-60v130H292V236Zm128 112v198h116c40 0 72-9 94-27 22-18 33-42 33-72 0-31-11-55-33-73-22-17-54-26-94-26H420Z"
+  />
+  <path d="M488 634h128l172 154H646L488 634Z" fill="#2563EB"/>
+  <path d="M420 348h116c40 0 72 9 94 26 22 18 33 42 33 73 0 30-11 54-33 72-22 18-54 27-94 27H420V348Z" fill="#FFFFFF"/>
+</svg>
