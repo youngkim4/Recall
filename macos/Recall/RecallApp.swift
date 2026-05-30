@@ -75,7 +75,8 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         }
 
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
+        // Persistent store so localStorage (saved chats, model/path/layout prefs) survives app restarts.
+        configuration.websiteDataStore = WKWebsiteDataStore.default()
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
