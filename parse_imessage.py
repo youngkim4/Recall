@@ -14,7 +14,7 @@ Usage:
   python parse_imessage.py --db ~/Library/Messages/chat.db --list-contacts
 
 Notes:
-- Timestamp conversion assumes nanoseconds since 2001-01-01; adjust divisor if your DB differs.
+- Timestamp conversion handles seconds, microseconds, and nanoseconds since 2001-01-01.
 - Ensure your shell/IDE has Full Disk Access to read chat.db.
 """
 import argparse
@@ -30,6 +30,31 @@ logger = logging.getLogger(__name__)
 
 # Apple's iMessage DB often lives at: ~/Library/Messages/chat.db
 # Ensure Terminal (or your IDE) has Full Disk Access to read it.
+
+
+def imessage_timestamp_sql(column: str) -> str:
+    """Build SQL that handles Apple's seconds, microseconds, or nanoseconds date values."""
+    seconds_expr = (
+        f"CASE "
+        f"WHEN {column} IS NULL THEN NULL "
+        f"WHEN ABS({column}) > 100000000000000 THEN {column} / 1000000000.0 "
+        f"WHEN ABS({column}) > 100000000000 THEN {column} / 1000000.0 "
+        f"ELSE {column} "
+        f"END"
+    )
+    return f"datetime(({seconds_expr}) + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')"
+
+
+def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    """Return column names for a SQLite table."""
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+
+
+def chat_display_name_sql(conn: sqlite3.Connection) -> str:
+    """Return a safe SQL expression for chat display names across schema versions."""
+    if "display_name" in table_columns(conn, "chat"):
+        return "NULLIF(TRIM(chat.display_name), '')"
+    return "NULL"
 
 def extract_text_from_attributed_body(blob: bytes) -> Optional[str]:
     """
@@ -107,9 +132,8 @@ def extract_messages(db_path: str) -> pd.DataFrame:
     """
     Extract messages from the iMessage SQLite database.
 
-    Apple's timestamps are stored as nanoseconds since 2001-01-01 on many systems.
-    This query converts them to local time. If your DB stores seconds instead of
-    nanoseconds, you may need to adjust the divisor accordingly.
+    Apple's timestamps are stored as seconds, microseconds, or nanoseconds since
+    2001-01-01 depending on OS version. This query converts them to local time.
 
     Returns a DataFrame with columns:
       - message_id
@@ -117,22 +141,25 @@ def extract_messages(db_path: str) -> pd.DataFrame:
       - sender (other party identifier)
       - text
       - chat_id (conversation identifier; for 1:1 this is typically the other party)
+      - chat_display_name (custom group chat title, when available)
       - is_from_me (1 if sent by you, 0 if received)
       - service (iMessage/SMS)
     """
     conn = sqlite3.connect(db_path)
     try:
+        display_name_expr = chat_display_name_sql(conn)
         # SQL projection maps core fields we need for analysis. The conversion below
         # turns Apple's 2001-01-01 epoch into a standard local timestamp.
         # Include attributedBody for messages where text is NULL (newer iMessage format)
-        query = """
+        query = f"""
         SELECT
             message.ROWID AS message_id,
-            datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime') AS timestamp,
+            {imessage_timestamp_sql("message.date")} AS timestamp,
             handle.id AS sender,
             message.text,
             message.attributedBody,
             chat.chat_identifier AS chat_id,
+            {display_name_expr} AS chat_display_name,
             message.is_from_me AS is_from_me,
             message.service AS service,
             group_concat(attachment.mime_type, '|') AS attachment_types,
@@ -197,16 +224,18 @@ def list_contacts(db_path: str, limit: int = 20) -> pd.DataFrame:
     """
     List top contacts by message count with stats.
     
-    Returns DataFrame with: chat_id, message_count, first_msg, last_msg, is_group
+    Returns DataFrame with: chat_id, display_name, message_count, first_msg, last_msg, is_group
     """
     conn = sqlite3.connect(db_path)
     try:
-        query = """
+        display_name_expr = chat_display_name_sql(conn)
+        query = f"""
         SELECT
             chat.chat_identifier AS chat_id,
+            MAX({display_name_expr}) AS display_name,
             COUNT(message.ROWID) AS message_count,
-            MIN(datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')) AS first_msg,
-            MAX(datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')) AS last_msg,
+            MIN({imessage_timestamp_sql("message.date")}) AS first_msg,
+            MAX({imessage_timestamp_sql("message.date")}) AS last_msg,
             CASE WHEN chat.chat_identifier LIKE 'chat%' THEN 1 ELSE 0 END AS is_group
         FROM message
         LEFT JOIN chat_message_join ON message.ROWID = chat_message_join.message_id
@@ -231,7 +260,7 @@ def extract_attachments(db_path: str) -> pd.DataFrame:
     """
     conn = sqlite3.connect(db_path)
     try:
-        query = """
+        query = f"""
         SELECT
             message.ROWID AS message_id,
             chat.chat_identifier AS chat_id,
@@ -239,7 +268,7 @@ def extract_attachments(db_path: str) -> pd.DataFrame:
             attachment.mime_type,
             attachment.total_bytes,
             message.is_from_me,
-            datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime') AS timestamp
+            {imessage_timestamp_sql("message.date")} AS timestamp
         FROM attachment
         JOIN message_attachment_join ON attachment.ROWID = message_attachment_join.attachment_id
         JOIN message ON message.ROWID = message_attachment_join.message_id
@@ -282,18 +311,19 @@ def extract_reactions(db_path: str) -> pd.DataFrame:
     """
     conn = sqlite3.connect(db_path)
     try:
-        query = """
+        query = f"""
         SELECT
             m.ROWID AS reaction_id,
             m.associated_message_guid,
             m.associated_message_type,
             m.is_from_me,
             chat.chat_identifier AS chat_id,
-            datetime(m.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime') AS timestamp
+            {imessage_timestamp_sql("m.date")} AS timestamp
         FROM message m
         LEFT JOIN chat_message_join ON m.ROWID = chat_message_join.message_id
         LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
-        WHERE m.associated_message_type BETWEEN 2000 AND 3005
+        WHERE (m.associated_message_type BETWEEN 2000 AND 2005)
+           OR (m.associated_message_type BETWEEN 3000 AND 3005)
         ORDER BY timestamp ASC;
         """
         df = pd.read_sql_query(query, conn)
@@ -321,24 +351,28 @@ def extract_reactions(db_path: str) -> pd.DataFrame:
 
 def search_contacts(db_path: str, query: str, limit: int = 10) -> pd.DataFrame:
     """
-    Search contacts by partial chat_id match.
+    Search contacts by partial chat_id or group display-name match.
     """
     conn = sqlite3.connect(db_path)
     try:
-        sql = """
+        display_name_expr = chat_display_name_sql(conn)
+        sql = f"""
         SELECT
             chat.chat_identifier AS chat_id,
+            MAX({display_name_expr}) AS display_name,
             COUNT(message.ROWID) AS message_count,
-            MAX(datetime(message.date / 1000000000 + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')) AS last_msg
+            MAX({imessage_timestamp_sql("message.date")}) AS last_msg
         FROM message
         LEFT JOIN chat_message_join ON message.ROWID = chat_message_join.message_id
         LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
         WHERE chat.chat_identifier LIKE ?
+           OR {display_name_expr} LIKE ?
         GROUP BY chat.chat_identifier
         ORDER BY message_count DESC
         LIMIT ?;
         """
-        df = pd.read_sql_query(sql, conn, params=(f"%{query}%", limit))
+        like_query = f"%{query}%"
+        df = pd.read_sql_query(sql, conn, params=(like_query, like_query, limit))
     finally:
         conn.close()
     return df
@@ -364,7 +398,9 @@ def main():
             print("-" * 70)
             for _, row in df.iterrows():
                 group_tag = " [GROUP]" if row["is_group"] else ""
-                print(f"  {row['chat_id']}{group_tag}")
+                display_name = str(row.get("display_name") or "").strip()
+                label = f"{display_name} ({row['chat_id']})" if display_name else row["chat_id"]
+                print(f"  {label}{group_tag}")
                 print(f"    Messages: {row['message_count']:,}  |  First: {row['first_msg']}  |  Last: {row['last_msg']}")
             print("-" * 70)
             return
