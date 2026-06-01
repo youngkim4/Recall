@@ -5,7 +5,6 @@ import {
   HomeIcon,
   LayersIcon,
   MessageIcon,
-  RecallMark,
   SettingsIcon,
 } from './Icons'
 import type { Defaults, ViewKey } from '../types'
@@ -40,13 +39,6 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <aside className="sidebar">
-      <div className="brand">
-        <RecallMark className="brand-mark" />
-        <div className="brand-copy">
-          <strong>Recall</strong>
-        </div>
-      </div>
-
       <nav className="side-nav" aria-label="Primary">
         {navItems.map((item) => {
           const Icon = item.icon

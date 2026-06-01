@@ -4639,3 +4639,14 @@ input[readonly],
   font-size: 12px;
   line-height: 1.4;
 }
+
+/* Brand removed: clean sidebar top, no stray divider */
+.side-nav {
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* macOS app: leave room for the native traffic lights */
+.is-mac-app .sidebar {
+  padding-top: 36px;
+}
