@@ -4744,3 +4744,169 @@ input[readonly],
   fill: var(--bg);
   stroke: var(--data-blue);
 }
+
+/* ============================================================
+   HOME — relationship-forward landing (remake increment 1)
+   ============================================================ */
+.home-section {
+  margin-top: 40px;
+}
+
+.home-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.home-section-head h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+}
+
+.link-button {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.link-button:hover {
+  color: var(--text);
+}
+
+.people-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.person-card {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  text-align: left;
+  transition:
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
+}
+
+.person-card:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+
+.person-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.person-avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  flex: none;
+}
+
+.person-id {
+  min-width: 0;
+}
+
+.person-id strong {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.person-id > span {
+  display: block;
+  margin-top: 2px;
+  color: var(--soft);
+  font-size: 11.5px;
+}
+
+.person-count {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.person-count small {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--soft);
+}
+
+.person-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.person-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--data-blue);
+}
+
+.report-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.report-grid .report-card {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.report-grid .report-card:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+  transform: none;
+}
+
+.report-grid .report-card strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 560;
+}
+
+.report-grid .report-card span {
+  color: var(--soft);
+  font-size: 12px;
+}
