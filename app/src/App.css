@@ -1,67 +1,68 @@
 :root {
-  /* Base surfaces — refined cool-neutral dark with a real elevation ladder */
-  --bg: #0a0a0d;
-  --bg-deep: #060608;
-  --surface: #101015;
-  --surface-2: #16161c;
-  --surface-3: #1d1d25;
-  --surface-hover: #22222b;
+  /* Linear-grounded: near-black "void" canvas, luminance-stacked surfaces.
+     Elevation comes from brighter surfaces + hairline borders, not dark shadows. */
+  --bg: #08090a;
+  --bg-deep: #050506;
+  --surface: #0f1011;
+  --surface-2: #16181b;
+  --surface-3: #1c1f23;
+  --surface-hover: #212429;
 
-  /* Hairline borders */
-  --line: rgba(255, 255, 255, 0.06);
+  /* Hairline white-overlay borders (Linear range 0.02–0.08) */
+  --line: rgba(255, 255, 255, 0.07);
   --line-strong: rgba(255, 255, 255, 0.11);
 
-  /* Text */
-  --text: #f4f5f8;
-  --muted: #9a9ca8;
-  --soft: #6a6c78;
+  /* Text — Linear neutral scale */
+  --text: #f7f8f8;
+  --muted: #8a8f98;
+  --soft: #62666d;
 
-  /* Accent — indigo / iris, the single restrained brand color */
-  --accent-rgb: 124, 108, 255;
+  /* Accent — Linear indigo (#5e6ad2): the single interactive signal */
+  --accent-rgb: 94, 106, 210;
   --accent: rgb(var(--accent-rgb));
-  --accent-hover: #8f80ff;
-  --accent-strong: #6452e6;
-  --accent-text: #bdb4ff;
-  --accent-soft: rgba(var(--accent-rgb), 0.13);
-  --accent-line: rgba(var(--accent-rgb), 0.32);
-  --accent-glow: rgba(var(--accent-rgb), 0.45);
+  --accent-hover: #6e79e0;
+  --accent-strong: #4f59bf;
+  --accent-text: #a7adea;
+  --accent-soft: rgba(var(--accent-rgb), 0.15);
+  --accent-line: rgba(var(--accent-rgb), 0.34);
+  --accent-glow: rgba(var(--accent-rgb), 0.4);
 
-  /* Semantic */
-  --success: #3fcf8e;
-  --success-soft: rgba(63, 207, 142, 0.13);
+  /* Semantic — functional color (a signal, never decoration) */
+  --success: #4cb782;
+  --success-soft: rgba(76, 183, 130, 0.14);
   --warning: #e3b341;
-  --warning-soft: rgba(227, 179, 65, 0.13);
-  --danger: #f0717c;
-  --danger-soft: rgba(240, 113, 124, 0.13);
+  --warning-soft: rgba(227, 179, 65, 0.14);
+  --danger: #eb5757;
+  --danger-soft: rgba(235, 87, 87, 0.14);
 
-  /* Data-viz categorical accents (charts + report stats) */
-  --accent-2: #c08bff;
-  --accent-3: #f5b14c;
-  --data-rose: #fb7793;
-  --data-violet: #c08bff;
-  --data-amber: #f5b14c;
-  --data-teal: #2dd4bf;
+  /* Data-viz categorical (rationed; charts + report stats only) */
+  --accent-2: #b39aff;
+  --accent-3: #f2c94c;
+  --data-rose: #f2789f;
+  --data-violet: #b39aff;
+  --data-amber: #f2c94c;
+  --data-teal: #4cc8b4;
 
-  /* Radii */
-  --radius-sm: 8px;
-  --radius: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
+  /* Radii — Linear is tight */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
   --radius-pill: 999px;
 
-  /* Elevation */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.38);
-  --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.5);
-  --shadow-accent: 0 8px 28px rgba(var(--accent-rgb), 0.32);
-  --focus-ring: 0 0 0 3px rgba(var(--accent-rgb), 0.32);
+  /* Elevation — luminance-first; shadows soft and sparing */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.32);
+  --shadow-lg: 0 16px 44px rgba(0, 0, 0, 0.46);
+  --shadow-accent: 0 6px 22px rgba(var(--accent-rgb), 0.3);
+  --focus-ring: 0 0 0 3px rgba(var(--accent-rgb), 0.36);
 
-  /* Glass */
-  --glass-bg: rgba(255, 255, 255, 0.04);
-  --glass-bg-strong: rgba(255, 255, 255, 0.06);
-  --glass-border: rgba(255, 255, 255, 0.09);
-  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.07);
-  --glass-blur: blur(22px) saturate(140%);
+  /* Glass (floating overlays only — composer, dropdowns) */
+  --glass-bg: rgba(255, 255, 255, 0.035);
+  --glass-bg-strong: rgba(255, 255, 255, 0.055);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glass-blur: blur(20px) saturate(140%);
 
   /* Motion */
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
@@ -4476,10 +4477,10 @@ input[readonly],
    no border, shadow, blur or glow (those read as "tiles"). */
 .visual-card,
 .visual-card:hover {
-  border: 0;
-  border-radius: 16px;
-  padding: 22px 24px;
-  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  background: var(--surface);
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
