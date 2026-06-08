@@ -20,12 +20,12 @@ type SidebarProps = {
 }
 
 const navItems: Array<{ key: ViewKey; label: string; icon: typeof LayersIcon }> = [
+  { key: 'home', label: 'Overview', icon: HomeIcon },
   { key: 'ask', label: 'Chat', icon: MessageIcon },
   { key: 'analyze', label: 'Analyze', icon: LayersIcon },
   { key: 'explore', label: 'Search', icon: CompassIcon },
   { key: 'reports', label: 'Reports', icon: FileIcon },
   { key: 'jobs', label: 'Jobs', icon: ClockIcon },
-  { key: 'home', label: 'Overview', icon: HomeIcon },
   { key: 'settings', label: 'Settings', icon: SettingsIcon },
 ]
 

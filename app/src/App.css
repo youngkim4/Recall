@@ -5092,6 +5092,7 @@ input[readonly],
 .ov-grid {
   display: grid;
   grid-template-columns: 1.5fr 1fr;
+  align-items: start;
   gap: 16px;
   margin-top: 16px;
 }
