@@ -5891,3 +5891,26 @@ button.bar-row:hover .bar-fill {
 *::-webkit-scrollbar-thumb:hover {
   background: rgba(43, 33, 24, 0.34);
 }
+
+/* ---- Activity chart: size to its natural aspect ratio. It was force-sized
+   to 380px tall, so the ~215px chart floated centered with big empty bands
+   above + below (the "too much space" before the monthly table). Also drop
+   the leftover dark chart-box background. ---- */
+.activity-chart {
+  border: 0;
+  padding: 0;
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.activity-card .activity-chart,
+.activity-overview-card .activity-chart {
+  min-height: 0;
+}
+
+.activity-chart svg,
+.activity-card .activity-chart svg,
+.activity-overview-card .activity-chart svg {
+  height: auto;
+}
