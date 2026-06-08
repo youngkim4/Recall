@@ -265,7 +265,6 @@ function renderReportSection(activeTab: ReportTab, analysis: AnalysisPayload) {
 }
 
 function ReportOverview({ analysis }: { analysis: AnalysisPayload }) {
-  const summary = compactSummary(analysis.summary || analysis.summaryHtml || '')
   const eventValues = eventCategoryValues(analysis.events || [])
   const attachmentValues = attachmentTypeValues(analysis)
   const attachmentTotal = metricTotal(attachmentValues, mediaStats(analysis, 'attachments').total)
@@ -311,12 +310,6 @@ function ReportOverview({ analysis }: { analysis: AnalysisPayload }) {
           <OverviewMediaSignals analysis={analysis} />
         </div>
       </div>
-      {summary ? (
-        <div className="visual-card summary-card">
-          <SectionHeading title="Short Read" meta="Condensed narrative" />
-          <p>{summary}</p>
-        </div>
-      ) : null}
     </section>
   )
 }
@@ -796,16 +789,6 @@ function topMetricLabel(values: Record<string, number>) {
 function formatDecimal(value?: number) {
   const number = Number(value || 0)
   return Number.isFinite(number) ? number.toFixed(number >= 10 ? 1 : 2).replace(/\.0$/, '') : '--'
-}
-
-function compactSummary(value: string) {
-  const text = value
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/[#*_`>-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (!text) return ''
-  return text.length > 420 ? `${text.slice(0, 420).trim()}...` : text
 }
 
 function displayPatternValue(value: string) {

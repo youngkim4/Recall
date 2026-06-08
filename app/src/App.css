@@ -5834,41 +5834,48 @@ button.bar-row:hover .bar-fill {
   gap: 18px;
 }
 
-/* ---- Tooltips/popovers: warm espresso ink + cream text (the cold-dark
-   versions would now show dark ink on dark = unreadable) ---- */
+/* ---- Tooltips/popovers: bright paper + ink, readable on the warm theme ---- */
 .balance-segment:hover::after,
 .balance-metric:hover::after,
 .metric-bar-row:hover::after {
-  color: var(--bg);
-  background: var(--text);
-  border-color: rgba(43, 33, 24, 0.5);
-  box-shadow: var(--shadow-md);
+  color: var(--text);
+  background: #fffdf8;
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-lg);
 }
 
 .chart-popover {
-  background: var(--text);
-  border-color: rgba(43, 33, 24, 0.5);
+  background: #fffdf8;
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-lg);
 }
 
 .chart-popover strong {
-  color: var(--bg);
+  color: var(--text);
 }
 
 .chart-popover span {
-  color: rgba(251, 246, 236, 0.72);
+  color: var(--muted);
 }
 
 .chart-tooltip rect {
-  fill: var(--text);
-  stroke: rgba(43, 33, 24, 0.5);
+  fill: #fffdf8;
+  stroke: var(--line-strong);
 }
 
 .chart-tooltip text {
-  fill: rgba(251, 246, 236, 0.82);
+  fill: var(--muted);
 }
 
 .chart-tooltip .chart-tooltip-title {
-  fill: var(--bg);
+  fill: var(--text);
+}
+
+/* ---- Timeline / pattern body text: readable warm ink (was #c7d0df) ---- */
+.event-row p,
+.event-row blockquote,
+.pattern-row p {
+  color: #423a2d;
 }
 
 /* Card hover stays warm, not cold dark */
