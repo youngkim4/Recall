@@ -5919,3 +5919,69 @@ button.bar-row:hover .bar-fill {
 .activity-overview-card .activity-chart svg {
   height: auto;
 }
+
+/* ============================================================
+   PREMIUM CHART CRAFT — Copilot-grade. Softer, roomier cards;
+   thicker rounded bars that breathe; a smooth confident chart line.
+   ============================================================ */
+
+/* Softer, roomier report cards (was sharp + tight) */
+.report-overview .visual-card,
+.visual-card {
+  border-radius: 16px;
+  padding: 22px 24px;
+}
+
+.report-overview .block-heading {
+  margin-bottom: 18px;
+}
+
+/* Thicker, rounded bars with room to breathe */
+.metric-bar-row {
+  column-gap: 14px;
+  padding: 5px 0;
+}
+
+.metric-bar-row > div {
+  height: 11px;
+  border-radius: 999px;
+  background: rgba(43, 33, 24, 0.07);
+  box-shadow: none;
+}
+
+.metric-bar-row i {
+  border-radius: 999px;
+}
+
+.metric-bar-row span {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.metric-bar-row strong {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-bars {
+  gap: 11px;
+}
+
+/* Smooth, confident chart line + calmer axes */
+.chart-line {
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chart-axis {
+  stroke: rgba(43, 33, 24, 0.1);
+}
+
+/* Balance + tapback meters get the same rounded, thicker treatment */
+.balance-meter,
+.balance-meter.compact {
+  height: 14px;
+  border-radius: 999px;
+}

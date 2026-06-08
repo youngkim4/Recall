@@ -25,8 +25,11 @@ export function ActivityChart({ data }: ActivityChartProps) {
     const y = padding.top + innerHeight - (point.total / max) * innerHeight
     return { ...point, x, y }
   })
-  const line = points.map((point) => `${point.x},${point.y}`).join(' ')
-  const area = `${padding.left},${height - padding.bottom} ${line} ${width - padding.right},${height - padding.bottom}`
+  const baseline = height - padding.bottom
+  const linePath = smoothPath(points)
+  const areaPath = points.length
+    ? `${linePath} L ${points[points.length - 1].x.toFixed(2)},${baseline} L ${points[0].x.toFixed(2)},${baseline} Z`
+    : ''
   const activePoint = activeIndex === null ? null : points[activeIndex]
   const tooltipWidth = 178
   const tooltipHeight = 78
@@ -91,8 +94,8 @@ export function ActivityChart({ data }: ActivityChartProps) {
           y1={padding.top}
           y2={height - padding.bottom}
         />
-        <polygon className="chart-area" points={area} />
-        <polyline className="chart-line" points={line} />
+        <path className="chart-area" d={areaPath} />
+        <path className="chart-line" d={linePath} fill="none" />
         {points.map((point, index) => (
           <g key={point.month}>
             <circle
@@ -166,4 +169,21 @@ export function ActivityChart({ data }: ActivityChartProps) {
       </svg>
     </figure>
   )
+}
+
+// smooth (Catmull-Rom -> cubic bezier) path through the points, for a
+// premium curved line instead of straight segments
+function smoothPath(pts: Array<{ x: number; y: number }>) {
+  if (pts.length < 2) return pts.length ? `M ${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)}` : ''
+  const segments = pts.slice(1).map((p2, index) => {
+    const p1 = pts[index]
+    const p0 = pts[index - 1] ?? p1
+    const p3 = pts[index + 2] ?? p2
+    const cp1x = p1.x + (p2.x - p0.x) / 6
+    const cp1y = p1.y + (p2.y - p0.y) / 6
+    const cp2x = p2.x - (p3.x - p1.x) / 6
+    const cp2y = p2.y - (p3.y - p1.y) / 6
+    return `C ${cp1x.toFixed(2)},${cp1y.toFixed(2)} ${cp2x.toFixed(2)},${cp2y.toFixed(2)} ${p2.x.toFixed(2)},${p2.y.toFixed(2)}`
+  })
+  return `M ${pts[0].x.toFixed(2)},${pts[0].y.toFixed(2)} ${segments.join(' ')}`
 }
