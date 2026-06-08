@@ -270,6 +270,7 @@ function ReportOverview({ analysis }: { analysis: AnalysisPayload }) {
   const attachmentTotal = metricTotal(attachmentValues, mediaStats(analysis, 'attachments').total)
   return (
     <section className="report-overview">
+      <ReportRead analysis={analysis} />
       <StatsMosaic stats={analysis.stats || {}} />
       <div className="visual-card activity-card activity-overview-card">
         <SectionHeading title="Activity" meta={`${formatNumber(analysis.monthly.length)} months`} />
@@ -351,14 +352,69 @@ function OverviewMediaSignals({ analysis }: { analysis: AnalysisPayload }) {
   )
 }
 
+function ReportRead({ analysis }: { analysis: AnalysisPayload }) {
+  const stats = analysis.stats || {}
+  const total =
+    Number(stats.totalMessages || 0) || Number(stats.sentCount || 0) + Number(stats.receivedCount || 0)
+  const label = analysis.contactDisplayName ? `Messages with ${analysis.contactDisplayName}` : 'Messages'
+  const line = composeRead(stats, readName(analysis.contactDisplayName))
+  return (
+    <div className="report-read">
+      <span className="report-read-label">{label}</span>
+      <strong className="report-read-number">{formatNumber(total)}</strong>
+      {line ? <p className="report-read-line">{line}</p> : null}
+    </div>
+  )
+}
+
+function readName(name?: string) {
+  const clean = (name || '').trim()
+  if (!clean || /unnamed|unknown|group|^\+?\d[\d\s().-]+$/i.test(clean)) return 'they'
+  return clean.split(/\s+/)[0]
+}
+
+function capitalize(word: string) {
+  return word ? word.charAt(0).toUpperCase() + word.slice(1) : word
+}
+
+// build a warm, deterministic one-liner that interprets the numbers
+function composeRead(stats: PreviewStats, name: string) {
+  const sent = Number(stats.sentCount || 0)
+  const received = Number(stats.receivedCount || 0)
+  const denom = sent + received || 1
+  const sentPct = Math.round((sent / denom) * 100)
+  const receivedPct = 100 - sentPct
+  const activeDays = Number(stats.activeDays || 0)
+  const avg = Number(stats.avgMessagesPerDay || (activeDays ? (sent + received) / activeDays : 0))
+  const gap = Math.round(Number(stats.longestGapDays || 0))
+
+  const parts: string[] = []
+  if (avg >= 1 && activeDays) {
+    const cadence =
+      avg >= 200 ? 'Almost constant' : avg >= 50 ? 'Nearly every day' : avg >= 10 ? 'A steady back-and-forth' : 'An occasional thread'
+    parts.push(`${cadence} — about ${formatNumber(Math.round(avg))} a day across ${formatNumber(activeDays)} active days.`)
+  }
+  if (sent && received) {
+    if (sentPct === receivedPct) {
+      parts.push('An even 50/50 split.')
+    } else if (sentPct > receivedPct) {
+      parts.push(`You carried a bit more — ${sentPct}% to ${receivedPct}%.`)
+    } else {
+      parts.push(`${capitalize(name)} carried a bit more — ${receivedPct}% to ${sentPct}%.`)
+    }
+  }
+  if (gap >= 1) {
+    parts.push(`Your longest quiet stretch was ${formatNumber(gap)} day${gap === 1 ? '' : 's'}.`)
+  }
+  return parts.join(' ')
+}
+
 function StatsMosaic({ stats }: { stats: PreviewStats }) {
-  const total = Number(stats.totalMessages || 0)
   const sent = Number(stats.sentCount || 0)
   const received = Number(stats.receivedCount || 0)
   const activeDays = Number(stats.activeDays || 0)
   return (
     <div className="stats-mosaic">
-      <VisualStat label="Messages" value={formatNumber(total)} />
       <VisualStat label="Sent" value={formatNumber(sent)} tone="teal" />
       <VisualStat label="Received" value={formatNumber(received)} tone="violet" />
       <VisualStat label="Active days" value={formatNumber(activeDays)} />
