@@ -419,6 +419,7 @@ function StatsMosaic({ stats }: { stats: PreviewStats }) {
       <VisualStat label="Received" value={formatNumber(received)} tone="violet" />
       <VisualStat label="Active days" value={formatNumber(activeDays)} />
       <VisualStat label="Avg / day" value={formatDecimal(stats.avgMessagesPerDay)} />
+      <VisualStat label="First message" value={stats.firstTimestamp ? shortDate(stats.firstTimestamp) : '--'} />
       <VisualStat label="Busiest day" value={stats.busiestDay ? shortDate(stats.busiestDay) : '--'} />
       <VisualStat label="Busiest volume" value={formatNumber(stats.busiestDayCount || 0)} tone="amber" />
       <VisualStat label="Longest gap" value={`${formatDecimal(stats.longestGapDays)}d`} />

@@ -5993,12 +5993,12 @@ button.bar-row:hover .bar-fill {
    ============================================================ */
 .report-read {
   display: grid;
-  gap: 8px;
-  padding: 30px 32px 32px;
+  gap: 6px;
+  padding: 20px 24px 22px;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 14px;
   background:
-    radial-gradient(130% 110% at 0% 0%, rgba(193, 60, 39, 0.08), rgba(193, 60, 39, 0) 55%),
+    radial-gradient(130% 110% at 0% 0%, rgba(193, 60, 39, 0.07), rgba(193, 60, 39, 0) 55%),
     var(--surface);
 }
 
@@ -6013,17 +6013,47 @@ button.bar-row:hover .bar-fill {
 .report-read-number {
   font-family: var(--font-display);
   font-weight: 500;
-  font-size: clamp(46px, 6vw, 72px);
-  line-height: 1;
-  letter-spacing: -0.022em;
+  font-size: clamp(34px, 3.6vw, 46px);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
   color: var(--text);
   font-variant-numeric: tabular-nums lining-nums;
 }
 
 .report-read-line {
-  max-width: 640px;
-  margin: 8px 0 0;
+  max-width: 600px;
+  margin: 6px 0 0;
   color: #423a2d;
-  font-size: 16.5px;
+  font-size: 15px;
   line-height: 1.5;
+}
+
+/* Hand-drawn line icons: delicate single weight (Stoic-style) */
+.nav-icon,
+.field-icon,
+.button-icon {
+  stroke-width: 1.7;
+}
+
+/* Overview "read": same narrated hero as reports, with actions alongside */
+.home-hero.ov-read {
+  align-items: flex-end;
+  gap: 24px;
+  margin-bottom: 16px;
+  padding: 22px 26px 24px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    radial-gradient(120% 130% at 0% 0%, rgba(193, 60, 39, 0.07), rgba(193, 60, 39, 0) 55%),
+    var(--surface);
+}
+
+.ov-read-main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.home-hero.ov-read .home-actions {
+  flex: none;
 }

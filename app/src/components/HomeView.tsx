@@ -64,12 +64,23 @@ export function HomeView({
 
   const recentReports = reports.filter((report) => report.kind === 'md').slice(0, 6)
 
+  const top = ranked[0]
+  const topPct = top && totalMessages ? Math.round((Number(top.message_count || 0) / totalMessages) * 100) : 0
+  const overviewRead = top
+    ? `Across ${formatNumber(contacts.length)} conversation${contacts.length === 1 ? '' : 's'}${
+        namedCount ? `, ${formatNumber(namedCount)} of them named` : ''
+      }. ${contactTitle(top)} leads with ${formatNumber(Number(top.message_count || 0))} — about ${topPct}% of everything${
+        ranked[1] ? `, then ${contactTitle(ranked[1])}` : ''
+      }.`
+    : ''
+
   return (
     <section className="home-view" aria-label="Overview">
-      <div className="home-hero">
-        <div>
-          <span className="eyebrow">Library</span>
-          <h2>Overview</h2>
+      <div className="home-hero ov-read">
+        <div className="ov-read-main">
+          <span className="report-read-label">Your message library</span>
+          <strong className="report-read-number">{formatNumber(totalMessages)}</strong>
+          {overviewRead ? <p className="report-read-line">{overviewRead}</p> : null}
         </div>
         <div className="home-actions">
           <button type="button" className="button primary" onClick={() => onViewChange('ask')}>
@@ -83,24 +94,24 @@ export function HomeView({
 
       <div className="kpi-strip">
         <div className="kpi-card">
-          <span className="kpi-label">Messages</span>
-          <span className="kpi-value">{formatNumber(totalMessages)}</span>
-          <span className="kpi-foot">
-            <span className="kpi-sub">across {formatNumber(contacts.length)} conversations</span>
-          </span>
-        </div>
-        <div className="kpi-card">
           <span className="kpi-label">Conversations</span>
           <span className="kpi-value">{formatNumber(contacts.length)}</span>
           <span className="kpi-foot">
-            <span className="kpi-sub">{formatNumber(namedCount)} named</span>
+            <span className="kpi-sub">in your archive</span>
+          </span>
+        </div>
+        <div className="kpi-card">
+          <span className="kpi-label">Named</span>
+          <span className="kpi-value">{formatNumber(namedCount)}</span>
+          <span className="kpi-foot">
+            <span className="kpi-sub">of {formatNumber(contacts.length)}</span>
           </span>
         </div>
         <div className="kpi-card">
           <span className="kpi-label">Top conversation</span>
-          <span className="kpi-value">{ranked[0] ? formatNumber(Number(ranked[0].message_count || 0)) : '0'}</span>
+          <span className="kpi-value">{top ? formatNumber(Number(top.message_count || 0)) : '0'}</span>
           <span className="kpi-foot">
-            <span className="kpi-sub">{ranked[0] ? contactTitle(ranked[0]) : 'No data'}</span>
+            <span className="kpi-sub">{top ? contactTitle(top) : 'No data'}</span>
           </span>
         </div>
         <div className="kpi-card">
