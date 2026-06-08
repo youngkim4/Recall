@@ -294,7 +294,7 @@ function ReportOverview({ analysis }: { analysis: AnalysisPayload }) {
           <VisualBreakdown values={eventValues} empty="No event categories yet." showLegend={false} />
         </div>
         <div className="visual-card attachments-card">
-          <SectionHeading title="Attachments" meta={`100% = ${formatNumber(attachmentTotal)} files`} />
+          <SectionHeading title="Attachments" meta={`${formatNumber(attachmentTotal)} files`} />
           <MediaBreakdown analysis={analysis} />
         </div>
       </div>
