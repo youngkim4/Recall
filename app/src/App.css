@@ -5490,7 +5490,8 @@ body::before {
 }
 
 .topbar {
-  background: transparent;
+  height: 56px;
+  background: var(--bg);
   border-bottom: 1px solid var(--line);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -5709,8 +5710,12 @@ button.bar-row:hover .bar-fill {
   border: 1px solid var(--line);
 }
 
-/* Report tabs: kill the leftover dark bar -> paper with a vermilion active */
+/* Report tabs: kill the leftover dark bar -> paper, pinned flush under the
+   56px topbar so they stay put (opaque) while the report scrolls beneath */
 .report-tabs {
+  position: sticky;
+  top: 56px;
+  z-index: 3;
   background: var(--bg);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
