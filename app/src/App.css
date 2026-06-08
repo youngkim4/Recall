@@ -1,70 +1,83 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,900;1,9..144,500&family=Hanken+Grotesk:wght@400;500;600;700&display=swap');
+
 :root {
-  /* Vercel / Geist stark dark — near-black canvas, neutral gray scale,
-     WHITE is the only interactive signal; color is reserved for charts.
-     "Premium from omission": no gradients, glows, or heavy shadows. */
-  --bg: #0a0a0a;
-  --bg-deep: #000000;
-  --surface: #131313;
-  --surface-2: #1a1a1a;
-  --surface-3: #232323;
-  --surface-hover: #2a2a2a;
+  /* "Warm paper memoir" — light editorial archive. Cream paper with a faint
+     grain, warm ink text, a single vermilion accent, muted analog data hues.
+     Fraunces serif for display, Hanken Grotesk for UI. The deliberate opposite
+     of a dark indigo dashboard. */
+  --bg: #f4eee2;
+  --bg-deep: #ece4d4;
+  --surface: #fbf6ec;
+  --surface-2: #f2ebdd;
+  --surface-3: #e9e0cf;
+  --surface-hover: #efe7d6;
 
-  /* Borders — neutral white overlays */
-  --line: rgba(255, 255, 255, 0.09);
-  --line-strong: rgba(255, 255, 255, 0.16);
+  /* Borders are warm ink hairlines (the editorial rule) */
+  --line: rgba(43, 33, 24, 0.14);
+  --line-strong: rgba(43, 33, 24, 0.28);
 
-  /* Text — Vercel neutral scale */
-  --text: #fafafa;
-  --muted: #a1a1a1;
-  --soft: #707070;
+  /* Text — warm ink scale */
+  --text: #2a2017;
+  --muted: #6e6253;
+  --soft: #9a8d78;
 
-  /* "Accent" = white (Vercel's primary signal). Chrome stays mono. */
-  --accent-rgb: 250, 250, 250;
+  /* Accent = vermilion (vintage red ink), used with intent */
+  --accent-rgb: 193, 60, 39;
   --accent: rgb(var(--accent-rgb));
-  --accent-hover: #ffffff;
-  --accent-strong: #d4d4d4;
-  --accent-text: #fafafa;
-  --accent-soft: rgba(255, 255, 255, 0.08);
-  --accent-line: rgba(255, 255, 255, 0.2);
-  --accent-glow: rgba(255, 255, 255, 0);
+  --accent-hover: #a8331f;
+  --accent-strong: #8f2c1a;
+  --accent-text: #fbf6ec;
+  --accent-soft: rgba(193, 60, 39, 0.12);
+  --accent-line: rgba(193, 60, 39, 0.38);
+  --accent-glow: rgba(0, 0, 0, 0);
+  --grad-accent: var(--accent);
+  --grad-accent-soft: var(--accent-soft);
+  --grad-text: var(--text);
+  --glow-accent: none;
 
-  /* Semantic — functional color only */
-  --success: #50e3c2;
-  --success-soft: rgba(80, 227, 194, 0.13);
-  --warning: #f5a623;
-  --warning-soft: rgba(245, 166, 35, 0.13);
-  --danger: #ff6166;
-  --danger-soft: rgba(255, 97, 102, 0.13);
+  /* Semantic — warm, muted */
+  --success: #5e7a3e;
+  --success-soft: rgba(94, 122, 62, 0.16);
+  --warning: #b07d1f;
+  --warning-soft: rgba(176, 125, 31, 0.16);
+  --danger: #b3402a;
+  --danger-soft: rgba(179, 64, 42, 0.14);
 
-  /* Data-viz categorical — the one place color lives (charts + report stats) */
-  --accent-2: #8e7bff;
-  --accent-3: #f5a623;
-  --data-rose: #ff6692;
-  --data-violet: #8e7bff;
-  --data-amber: #f5a623;
-  --data-teal: #50e3c2;
-  --data-blue: #0070f3;
+  /* Data-viz — muted analog palette that sits on cream paper */
+  --accent-2: #8a586b;
+  --accent-3: #c2871d;
+  --data-indigo: #6a5685;
+  --data-blue: #4e6b88;
+  --data-teal: #5d7b67;
+  --data-amber: #c2871d;
+  --data-rose: #c13c27;
+  --data-violet: #8a586b;
+  --data-green: #6f7d40;
 
-  /* Radii — Vercel is sharp */
-  --radius-sm: 4px;
-  --radius: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  /* Radii — printed, a touch sharper */
+  --radius-sm: 3px;
+  --radius: 5px;
+  --radius-lg: 7px;
+  --radius-xl: 10px;
   --radius-pill: 999px;
 
-  /* Elevation — minimal; premium from omission */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
-  --shadow-accent: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --focus-ring: 0 0 0 2px rgba(255, 255, 255, 0.5);
+  /* Elevation — warm, very subtle (paper, not glass) */
+  --shadow-sm: 0 1px 2px rgba(43, 33, 24, 0.06);
+  --shadow-md: 0 6px 18px rgba(43, 33, 24, 0.08);
+  --shadow-lg: 0 18px 44px rgba(43, 33, 24, 0.12);
+  --shadow-accent: none;
+  --focus-ring: 0 0 0 2px rgba(193, 60, 39, 0.45);
 
-  /* Glass kept minimal (Vercel omits heavy frost) */
-  --glass-bg: rgba(255, 255, 255, 0.03);
-  --glass-bg-strong: rgba(255, 255, 255, 0.05);
-  --glass-border: rgba(255, 255, 255, 0.1);
+  /* Glass kept minimal */
+  --glass-bg: rgba(43, 33, 24, 0.03);
+  --glass-bg-strong: rgba(43, 33, 24, 0.05);
+  --glass-border: rgba(43, 33, 24, 0.1);
   --glass-highlight: none;
-  --glass-blur: blur(12px);
+  --glass-blur: blur(10px);
+
+  /* Typography */
+  --font-display: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --font-ui: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 
   /* Motion */
   --ease: cubic-bezier(0.32, 0.72, 0, 1);
@@ -76,8 +89,7 @@
 
   color: var(--text);
   background: var(--bg);
-  font-family:
-    Geist, Inter, "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--font-ui);
   font-synthesis: none;
   letter-spacing: 0;
   text-rendering: optimizeLegibility;
@@ -4909,4 +4921,966 @@ input[readonly],
 .report-grid .report-card span {
   color: var(--soft);
   font-size: 12px;
+}
+
+/* ============================================================
+   CLEAN ANALYTICS — Linear / Vercel / Tremor lineage.
+   Borders not shadows, one restrained indigo accent, color only in
+   charts. KPI strip + bar list + donut are the real structure.
+   ============================================================ */
+
+/* Restrained primary actions — solid indigo, white ink, no glow */
+.button.primary,
+.button.secondary,
+.chat-send {
+  color: #fff;
+  border-color: transparent;
+  background: var(--accent);
+  box-shadow: none;
+}
+
+.button.primary:hover:not(:disabled),
+.button.secondary:hover:not(:disabled),
+.chat-send:hover:not(:disabled) {
+  color: #fff;
+  border-color: transparent;
+  background: var(--accent-strong);
+  box-shadow: none;
+}
+
+.side-nav-item.active {
+  color: var(--text);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.side-nav-item.active .nav-icon {
+  color: var(--accent-hover);
+  opacity: 1;
+}
+
+.chat-mark {
+  color: #fff;
+  background: var(--accent);
+  box-shadow: none;
+}
+
+/* Charts — single restrained hue, soft Tremor-style area fade, no glow */
+.chart-line {
+  stroke: var(--accent);
+  stroke-width: 2;
+  filter: none;
+}
+
+.chart-area {
+  fill: url(#chartAreaFill);
+}
+
+.chart-grid {
+  stroke: rgba(255, 255, 255, 0.05);
+}
+
+.chart-axis,
+.chart-tick {
+  stroke: rgba(255, 255, 255, 0.1);
+}
+
+.chart-point {
+  fill: var(--bg);
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.chart-point.active,
+.chart-active-dot {
+  fill: var(--accent);
+  stroke: #fff;
+}
+
+.chart-crosshair {
+  stroke: rgba(255, 255, 255, 0.18);
+}
+
+/* Overview header — slim, not a giant gradient number */
+.home-view {
+  background: transparent;
+}
+
+.home-hero {
+  align-items: flex-end;
+  margin-bottom: 22px;
+}
+
+.home-hero h2 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+/* KPI strip — bordered row of metric cards with hairline dividers */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.kpi-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 20px;
+  border-right: 1px solid var(--line);
+}
+
+.kpi-card:last-child {
+  border-right: 0;
+}
+
+.kpi-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.kpi-value {
+  color: var(--text);
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 16px;
+}
+
+.kpi-sub {
+  color: var(--soft);
+  font-size: 12px;
+}
+
+.kpi-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.kpi-delta.up {
+  color: var(--success);
+}
+
+.kpi-delta.down {
+  color: var(--danger);
+}
+
+.kpi-delta.flat {
+  color: var(--soft);
+}
+
+/* Overview body grid — bar list (wide) beside donut */
+.ov-grid {
+  display: grid;
+  grid-template-columns: 1.5fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+/* Bordered content panel (borders, not shadows) */
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  padding: 18px 20px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.panel-head h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Bar list — label sitting on a soft proportional bar (Tremor BarList) */
+.bar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bar-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  text-align: left;
+}
+
+.bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+}
+
+button.bar-row:hover .bar-fill {
+  background: rgba(99, 102, 241, 0.22);
+}
+
+.bar-label {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.bar-label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-rank {
+  color: var(--soft);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.bar-value {
+  position: relative;
+  z-index: 1;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+/* Donut — SVG ring with center total + legend */
+.donut {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 20px;
+  align-items: center;
+}
+
+.donut-svg {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  flex: none;
+}
+
+.donut-center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+}
+
+.donut-center strong {
+  display: block;
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.donut-center span {
+  color: var(--soft);
+  font-size: 11px;
+}
+
+.kp-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.legend-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.legend-row strong {
+  flex: none;
+  color: var(--text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Clean recent-report rows (no tiles) */
+.ov-reports {
+  display: flex;
+  flex-direction: column;
+}
+
+.ov-report-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 2px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+  text-align: left;
+}
+
+.ov-report-row:first-child {
+  border-top: 0;
+}
+
+.ov-report-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.ov-report-row strong {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ov-report-row span {
+  color: var(--soft);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Inline sparkline (used in Analyze / Report KPI cards where time data exists) */
+.sparkline {
+  display: block;
+  width: 100%;
+  height: 34px;
+  overflow: visible;
+}
+
+.sparkline-area {
+  fill: var(--accent-soft);
+}
+
+.sparkline-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+/* ============================================================
+   REPORTS — unify to clean analytics panels. Kills the vibe-coded
+   sectioned tiles, rainbow bars, nested boxes-in-boxes, and the
+   vivid 2-tone "Balance" meters. Matches the Overview's panel look.
+   ============================================================ */
+
+/* Every report section -> one consistent calm panel */
+.report-overview .visual-card,
+.visual-card,
+.visual-card.split-card,
+.visual-card.event-card,
+.visual-card.attachments-card,
+.visual-card.signals-card,
+.visual-card.media-detail-card,
+.visual-card.summary-card,
+.visual-card.activity-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: none;
+}
+
+.visual-card:hover {
+  transform: none;
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+.report-overview {
+  display: grid;
+  gap: 16px;
+}
+
+/* Tighter, lighter section headings (was big + heavy) */
+.report-overview .block-heading h2,
+.visual-card .block-heading h2 {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.report-overview .block-heading p,
+.visual-card .block-heading p {
+  color: var(--soft);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* All horizontal bars -> single restrained accent (Tremor BarList) */
+.metric-bar-row i {
+  background: var(--accent) !important;
+}
+
+.metric-bar-row > div {
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: none;
+}
+
+.metric-bar-row span,
+.mini-meter span,
+.mini-meter small,
+.balance-metric span,
+.balance-metric small,
+.media-mini-stats span {
+  font-weight: 500;
+}
+
+/* Signals readout bars restrained */
+.pattern-visual i {
+  background: var(--accent-soft);
+}
+
+/* Balance + direction meters -> monochrome indigo split, no vivid magenta */
+.balance-meter {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: none;
+}
+
+.balance-segment.sent {
+  background: var(--accent);
+}
+
+.balance-segment.received {
+  background: rgba(99, 102, 241, 0.32);
+}
+
+/* Flatten nested mini-boxes (boxes-inside-boxes read as vibe-coded) */
+.balance-metric,
+.balance-metric:hover,
+.balance-metric.violet:hover,
+.media-mini-stats div {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: none;
+  transform: none;
+}
+
+.balance-grid {
+  gap: 18px;
+}
+
+/* Narrow half-width cards: stack the media context so the Direction
+   meter gets full width instead of being crushed into ~60px */
+.media-context {
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.media-mini-stats {
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* Event Mix category list: keep label + value from colliding */
+.event-card .metric-bar-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+}
+
+.event-card .metric-bar-row > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.balance-metric.teal strong {
+  color: var(--data-teal);
+}
+
+.balance-metric.violet strong {
+  color: var(--accent);
+}
+
+/* ============================================================
+   WARM PAPER MEMOIR — light editorial archive. Authoritative tail:
+   paper + grain, Fraunces display serif, small-caps labels, vermilion
+   ink accent, ink hairlines. Re-skins the whole app away from the dark
+   indigo dashboard into a typeset memoir.
+   ============================================================ */
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+/* Faint paper grain over everything (analog warmth, not flat digital) */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.5;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.045'/%3E%3C/svg%3E");
+}
+
+.app-shell,
+.workspace,
+.home-view {
+  background: transparent;
+}
+
+/* Sidebar + topbar: paper with a single warm rule */
+.sidebar {
+  background: var(--bg-deep);
+  border-right: 1px solid var(--line);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.topbar {
+  background: transparent;
+  border-bottom: 1px solid var(--line);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* ---- Typography: Fraunces for display + big figures ---- */
+h1,
+h2,
+h3,
+.home-hero h2,
+.detail-header h1,
+.report-reader-header h1,
+.pane-heading h2,
+.block-heading h2,
+.panel-head h3,
+.home-section-head h3,
+.chat-empty h2,
+.settings-panel h2,
+.explorer-header h2 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+/* Big statistics set like editorial figures */
+.kpi-value,
+.person-count,
+.stats-mosaic strong,
+.visual-stat strong,
+.metric strong,
+.balance-copy strong,
+.balance-metric strong,
+.donut-center strong,
+.cost-row strong,
+.home-hero h2 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.report-reader-header h1,
+.detail-header h1 {
+  font-size: 30px;
+  font-weight: 600;
+}
+
+/* ---- Labels: small-caps editorial tracking ---- */
+.eyebrow,
+.section-label,
+.kpi-label,
+.topbar h1,
+.thread-label,
+.balance-kicker {
+  font-family: var(--font-ui);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* ---- A vermilion editorial rule under section heads ---- */
+.panel-head,
+.home-section-head,
+.block-heading {
+  border-bottom: 1px solid var(--accent-line);
+  padding-bottom: 10px;
+}
+
+/* ---- Primary actions: vermilion ink ---- */
+.button.primary,
+.button.secondary,
+.chat-send {
+  color: var(--accent-text);
+  background: var(--accent);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.button.primary:hover:not(:disabled),
+.button.secondary:hover:not(:disabled),
+.chat-send:hover:not(:disabled) {
+  color: var(--accent-text);
+  background: var(--accent-hover);
+}
+
+.button.ghost {
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+}
+
+.button.ghost:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--accent-line);
+}
+
+/* Active nav: vermilion ink + paper highlight */
+.side-nav-item.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.side-nav-item.active .nav-icon {
+  color: var(--accent);
+}
+
+.side-nav-item:hover:not(.active) {
+  background: rgba(43, 33, 24, 0.05);
+}
+
+.chat-mark {
+  color: var(--accent-text);
+  background: var(--accent);
+  box-shadow: none;
+}
+
+/* ---- Charts: vermilion ink on paper ---- */
+.chart-line {
+  stroke: var(--accent);
+  stroke-width: 2;
+  filter: none;
+}
+
+.chart-grid {
+  stroke: rgba(43, 33, 24, 0.08);
+}
+
+.chart-axis,
+.chart-tick {
+  stroke: rgba(43, 33, 24, 0.18);
+}
+
+.chart-tick-label,
+.chart-axis-title {
+  fill: var(--soft);
+}
+
+.chart-point {
+  fill: var(--bg);
+  stroke: var(--accent);
+}
+
+.chart-point.active,
+.chart-active-dot {
+  fill: var(--accent);
+  stroke: var(--bg);
+}
+
+.chart-crosshair {
+  stroke: var(--accent-line);
+}
+
+/* ---- Bars + meters: vermilion fill on ink track ---- */
+.metric-bar-row i {
+  background: var(--accent) !important;
+}
+
+.metric-bar-row > div,
+.person-bar,
+.bar-fill {
+  background: rgba(43, 33, 24, 0.08);
+}
+
+.person-bar span {
+  background: var(--accent);
+}
+
+button.bar-row:hover .bar-fill {
+  background: var(--accent-soft);
+}
+
+.balance-meter {
+  border-color: var(--line);
+  background: rgba(43, 33, 24, 0.06);
+}
+
+.balance-segment.sent {
+  background: var(--accent);
+}
+
+.balance-segment.received {
+  background: rgba(193, 60, 39, 0.3);
+}
+
+.pattern-visual i {
+  background: var(--accent-soft);
+}
+
+/* Replace dark hovers with warm ink */
+.metric-bar-row:hover,
+.status-row:hover,
+.compact-row:hover,
+.job-row:hover,
+.report-card:hover,
+.search-result-main:hover,
+.ov-report-row:hover {
+  background: rgba(43, 33, 24, 0.04);
+}
+
+/* Avatars: ink stamp, not gradient */
+.avatar,
+.person-avatar {
+  color: var(--accent-text);
+  background: var(--accent);
+  box-shadow: none;
+}
+
+/* Date pills / badges as printed marks */
+.date-pill {
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+/* Report tabs: kill the leftover dark bar -> paper with a vermilion active */
+.report-tabs {
+  background: var(--bg);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-bottom: 1px solid var(--line);
+}
+
+.report-tabs button {
+  color: var(--muted);
+  font-family: var(--font-ui);
+}
+
+.report-tabs button:hover {
+  color: var(--text);
+}
+
+.report-tabs button.active {
+  color: var(--accent);
+}
+
+.report-tabs button span {
+  color: var(--soft);
+}
+
+/* Event Mix: shrink the donut so category labels stop truncating to "Co..." */
+.event-card .visual-breakdown {
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 16px;
+}
+
+.event-card .donut-chart {
+  width: 112px;
+}
+
+.event-card .metric-bar-row > span:first-child {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+  line-height: 1.2;
+}
+
+/* ---- Donut center: cream paper + readable ink (was a dark hole) ---- */
+.donut-hole {
+  inset: 32px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.donut-hole strong {
+  font-family: var(--font-display);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.donut-hole span {
+  color: var(--muted);
+}
+
+/* ---- Body prose: readable warm ink (was a too-bright cool gray) ---- */
+.summary-card p,
+.report-prose p,
+.report-prose li {
+  color: #423a2d;
+}
+
+/* ---- Chat composer: clean paper panel, ChatGPT/Claude proportions ---- */
+.chat-composer {
+  width: min(720px, calc(100% - 48px));
+  gap: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.chat-composer:focus-within {
+  border-color: var(--accent-line);
+  box-shadow:
+    var(--shadow-md),
+    0 0 0 3px rgba(193, 60, 39, 0.1);
+}
+
+.chat-composer textarea {
+  min-height: 26px;
+  padding: 2px 2px 0;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 15px;
+}
+
+.chat-composer textarea::placeholder {
+  color: var(--soft);
+}
+
+.chat-composer-footer select {
+  height: 34px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* Suggestion chips align to the composer width */
+.prompt-grid {
+  width: min(720px, calc(100% - 48px));
+  margin-inline: auto;
+}
+
+/* Empty chat: tighter rhythm now that the mark + label are gone */
+.chat-view.is-empty {
+  gap: 0;
+}
+
+.chat-empty {
+  gap: 18px;
+}
+
+/* ---- Tooltips/popovers: warm espresso ink + cream text (the cold-dark
+   versions would now show dark ink on dark = unreadable) ---- */
+.balance-segment:hover::after,
+.balance-metric:hover::after,
+.metric-bar-row:hover::after {
+  color: var(--bg);
+  background: var(--text);
+  border-color: rgba(43, 33, 24, 0.5);
+  box-shadow: var(--shadow-md);
+}
+
+.chart-popover {
+  background: var(--text);
+  border-color: rgba(43, 33, 24, 0.5);
+}
+
+.chart-popover strong {
+  color: var(--bg);
+}
+
+.chart-popover span {
+  color: rgba(251, 246, 236, 0.72);
+}
+
+.chart-tooltip rect {
+  fill: var(--text);
+  stroke: rgba(43, 33, 24, 0.5);
+}
+
+.chart-tooltip text {
+  fill: rgba(251, 246, 236, 0.82);
+}
+
+.chart-tooltip .chart-tooltip-title {
+  fill: var(--bg);
+}
+
+/* Card hover stays warm, not cold dark */
+.visual-stat:hover {
+  background: var(--surface-2);
+}
+
+/* Warm paper scrollbar */
+*::-webkit-scrollbar-thumb {
+  background: rgba(43, 33, 24, 0.22);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(43, 33, 24, 0.34);
 }

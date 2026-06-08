@@ -59,6 +59,13 @@ export function ActivityChart({ data }: ActivityChartProps) {
         onPointerMove={(event) => updateActivePoint(event.clientX, event.currentTarget)}
         onPointerLeave={() => setActiveIndex(null)}
       >
+        <defs>
+          <linearGradient id="chartAreaFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#c13c27" stopOpacity="0.2" />
+            <stop offset="60%" stopColor="#c13c27" stopOpacity="0.06" />
+            <stop offset="100%" stopColor="#c13c27" stopOpacity="0" />
+          </linearGradient>
+        </defs>
         {yTicks.map((tick) => {
           const y = padding.top + innerHeight - (tick / max) * innerHeight
           return (

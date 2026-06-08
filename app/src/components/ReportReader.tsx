@@ -33,7 +33,7 @@ type MetricEntry = {
   color: string
 }
 
-const CHART_COLORS = ['#0070f3', '#50e3c2', '#8e7bff', '#f5a623', '#ff6692', '#7928ca', '#79ffe1', '#f7b955']
+const CHART_COLORS = ['#c13c27', '#c2871d', '#5d7b67', '#4e6b88', '#8a586b', '#6f7d40', '#a8551f', '#6a5685']
 
 const reportTabs: Array<{ key: ReportTab; label: string }> = [
   { key: 'overview', label: 'Overview' },

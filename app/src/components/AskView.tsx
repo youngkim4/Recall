@@ -267,10 +267,6 @@ export function AskView({ defaults, model, onModelChange, contacts, onSelectCont
             ))
           ) : (
             <div className="chat-empty">
-              <div className="chat-mark">
-                <SparkIcon className="button-icon" />
-              </div>
-              <span className="eyebrow">Recall</span>
               <h2>Chat with your message archive.</h2>
               <div className="prompt-grid">
                 {starterPrompts.map((prompt) => (
