@@ -197,6 +197,29 @@ def companion_report_paths(report_path: Path, contact: str) -> tuple[Path | None
     )
 
 
+def merge_snapshot_into(db_path: Path, messages_path: Path) -> int:
+    """Restore messages the live database has offloaded to iCloud ("Optimize
+    Storage") by merging the frozen chat.db snapshot into the just-written
+    export. Returns the count of recovered rows. Never raises — a refresh must
+    not fail because of the merge.
+    """
+    snapshot = ROOT / "chat.db"
+    try:
+        if not snapshot.exists() or snapshot.resolve() == db_path.resolve():
+            return 0
+        from merge_export import merge as _merge
+
+        merged, recovered = _merge(str(snapshot), str(messages_path))
+        count = int(len(recovered))
+        if count:
+            merged.to_csv(messages_path, index=False)
+            print(f"Recovered {count:,} message(s) from snapshot {snapshot.name}")
+        return count
+    except Exception as exc:  # noqa: BLE001 - export must survive merge failures
+        print(f"Snapshot merge skipped: {exc}")
+        return 0
+
+
 def export_database(db_path: Path, messages_path: Path):
     try:
         df = extract_messages(str(db_path))
@@ -212,6 +235,9 @@ def export_database(db_path: Path, messages_path: Path):
     messages_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(messages_path, index=False)
 
+    # Merge the frozen snapshot to recover messages the live DB has pruned.
+    recovered = merge_snapshot_into(db_path, messages_path)
+
     attachments_df = extract_attachments(str(db_path))
     if not attachments_df.empty:
         attachments_df.to_csv(messages_path.with_name(messages_path.stem + "_attachments.csv"), index=False)
@@ -221,7 +247,8 @@ def export_database(db_path: Path, messages_path: Path):
         reactions_df.to_csv(messages_path.with_name(messages_path.stem + "_reactions.csv"), index=False)
 
     return {
-        "messages": len(df),
+        "messages": len(df) + recovered,
+        "recovered": recovered,
         "attachments": len(attachments_df),
         "reactions": len(reactions_df),
         "messagesPath": str(messages_path),

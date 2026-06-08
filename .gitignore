@@ -5,9 +5,11 @@ __pycache__/
 
 # Local iMessage data (never commit — personal messages/contacts)
 chat.db
-messages.csv
-messages_attachments.csv
-messages_reactions.csv
+chat*.db
+messages*.csv
+*_attachments.csv
+*_reactions.csv
+*.backup-*.csv
 memories.csv
 
 # Generated reports and local app store / build artifacts
