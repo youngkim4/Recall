@@ -17,8 +17,10 @@ export function ResizeHandle({ label, value, min, max, onChange }: ResizeHandleP
     event.preventDefault()
     const startX = event.clientX
     const startValue = value
+    const handle = event.currentTarget
 
     document.body.classList.add('is-resizing')
+    handle.classList.add('is-dragging')
 
     function handlePointerMove(pointerEvent: PointerEvent) {
       onChange(clamp(startValue + pointerEvent.clientX - startX, min, max))
@@ -26,6 +28,7 @@ export function ResizeHandle({ label, value, min, max, onChange }: ResizeHandleP
 
     function handlePointerUp() {
       document.body.classList.remove('is-resizing')
+      handle.classList.remove('is-dragging')
       window.removeEventListener('pointermove', handlePointerMove)
       window.removeEventListener('pointerup', handlePointerUp)
     }
