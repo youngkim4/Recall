@@ -4527,6 +4527,8 @@ input[readonly],
 
 .stats-mosaic {
   gap: 24px 34px;
+  /* line the stat block up with the card content (hero number / graph title) */
+  padding: 0 25px;
 }
 
 .visual-stat span {
