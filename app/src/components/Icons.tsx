@@ -120,3 +120,12 @@ export function SparkIcon({ className }: IconProps) {
     </svg>
   )
 }
+
+export function PanelLeftIcon({ className }: IconProps) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="14" rx="2.6" />
+      <path d="M9.4 5.2v13.6" />
+    </svg>
+  )
+}

@@ -37,6 +37,7 @@ type LayoutState = {
   sidebarWidth: number
   listWidth: number
   reportListWidth: number
+  sidebarCollapsed: boolean
 }
 
 const emptyPaths: RuntimePaths = {
@@ -49,6 +50,7 @@ const defaultLayout: LayoutState = {
   sidebarWidth: 236,
   listWidth: 430,
   reportListWidth: 318,
+  sidebarCollapsed: false,
 }
 
 function preferredModel(models: string[], fallback: string) {
@@ -112,6 +114,7 @@ function readStoredLayout() {
       sidebarWidth: clampNumber(parsed.sidebarWidth, 220, 340, defaultLayout.sidebarWidth),
       listWidth: clampNumber(parsed.listWidth, 360, 720, defaultLayout.listWidth),
       reportListWidth: clampNumber(parsed.reportListWidth, 280, 560, defaultLayout.reportListWidth),
+      sidebarCollapsed: Boolean(parsed.sidebarCollapsed),
     }
   } catch {
     return defaultLayout
@@ -190,6 +193,14 @@ function App() {
   const updateLayoutValue = useCallback((key: keyof LayoutState, value: number) => {
     setLayout((current) => {
       const next = { ...current, [key]: value }
+      storeLayout(next)
+      return next
+    })
+  }, [])
+
+  const toggleSidebar = useCallback(() => {
+    setLayout((current) => {
+      const next = { ...current, sidebarCollapsed: !current.sidebarCollapsed }
       storeLayout(next)
       return next
     })
@@ -540,13 +551,15 @@ function App() {
   }, [])
 
   return (
-    <main className="app-shell" style={shellStyle}>
+    <main className={`app-shell ${layout.sidebarCollapsed ? 'sidebar-collapsed' : ''}`} style={shellStyle}>
       <Sidebar
         activeView={activeView}
         defaults={effectiveDefaults}
         namedCount={contactNameCount}
         conversationCount={contacts.length}
         reportCount={reportGroupCount}
+        collapsed={layout.sidebarCollapsed}
+        onToggleCollapse={toggleSidebar}
         onViewChange={handleViewChange}
       />
       <ResizeHandle

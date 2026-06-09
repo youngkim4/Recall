@@ -5,6 +5,7 @@ import {
   HomeIcon,
   LayersIcon,
   MessageIcon,
+  PanelLeftIcon,
   SettingsIcon,
 } from './Icons'
 import type { Defaults, ViewKey } from '../types'
@@ -16,6 +17,8 @@ type SidebarProps = {
   namedCount: number
   conversationCount: number
   reportCount: number
+  collapsed: boolean
+  onToggleCollapse: () => void
   onViewChange: (view: ViewKey) => void
 }
 
@@ -35,10 +38,25 @@ export function Sidebar({
   namedCount,
   conversationCount,
   reportCount,
+  collapsed,
+  onToggleCollapse,
   onViewChange,
 }: SidebarProps) {
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${collapsed ? 'is-collapsed' : ''}`}>
+      <div className="sidebar-head">
+        <button
+          type="button"
+          className="sidebar-toggle"
+          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-expanded={!collapsed}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          onClick={onToggleCollapse}
+        >
+          <PanelLeftIcon className="nav-icon" />
+        </button>
+      </div>
+
       <nav className="side-nav" aria-label="Primary">
         {navItems.map((item) => {
           const Icon = item.icon
@@ -47,6 +65,7 @@ export function Sidebar({
               key={item.key}
               type="button"
               className={`side-nav-item ${activeView === item.key ? 'active' : ''}`}
+              title={collapsed ? item.label : undefined}
               onClick={() => onViewChange(item.key)}
             >
               <Icon className="nav-icon" />
