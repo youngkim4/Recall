@@ -1,5 +1,6 @@
 import { ActivityChart } from './ActivityChart'
-import { CalendarIcon, SparkIcon } from './Icons'
+import { SparkIcon } from './Icons'
+import { DateField } from './DateField'
 import type { Contact, Defaults, Job, PreviewPayload, ReportFile } from '../types'
 import {
   contactTitle,
@@ -106,29 +107,19 @@ export function AnalyzePanel({
         </label>
         <label>
           <span>Start date</span>
-          <div className="calendar-input">
-            <input
-              type="date"
-              className={scope.since ? 'has-date' : ''}
-              value={scope.since}
-              aria-label="Start date"
-              onChange={(event) => onScopeChange({ ...scope, since: event.target.value })}
-            />
-            <CalendarIcon className="calendar-icon" />
-          </div>
+          <DateField
+            value={scope.since}
+            ariaLabel="Start date"
+            onChange={(since) => onScopeChange({ ...scope, since })}
+          />
         </label>
         <label>
           <span>End date</span>
-          <div className="calendar-input">
-            <input
-              type="date"
-              className={scope.until ? 'has-date' : ''}
-              value={scope.until}
-              aria-label="End date"
-              onChange={(event) => onScopeChange({ ...scope, until: event.target.value })}
-            />
-            <CalendarIcon className="calendar-icon" />
-          </div>
+          <DateField
+            value={scope.until}
+            ariaLabel="End date"
+            onChange={(until) => onScopeChange({ ...scope, until })}
+          />
         </label>
       </div>
 
