@@ -1022,12 +1022,75 @@ def local_ask_answer(terms: list[str], citations: list[dict]) -> str:
     return lead + "\n\n" + "\n".join(f"- {highlight}" for highlight in highlights)
 
 
+def build_context_windows(df: pd.DataFrame, matches: pd.DataFrame, radius: int = 6, cap: int = 14) -> list[dict]:
+    """For each hit, grab the surrounding conversation (radius messages each side)
+    so the model sees the situation and nuance, not an isolated keyword match."""
+    if matches is None or matches.empty or "chat_id" not in df.columns:
+        return []
+    top = matches.head(cap)
+    convos: dict[str, pd.DataFrame] = {}
+    for cid in top["chat_id"].dropna().astype(str).unique():
+        convos[cid] = (
+            df[df["chat_id"].astype(str) == cid]
+            .sort_values("timestamp", kind="stable")
+            .reset_index(drop=True)
+        )
+    windows = []
+    for index, (_, hit) in enumerate(top.iterrows(), start=1):
+        cid = _row_str(hit, "chat_id")
+        convo = convos.get(cid)
+        if convo is None or convo.empty:
+            continue
+        mid = _row_str(hit, "message_id")
+        pos = convo.index[convo["message_id"].astype(str) == mid].tolist()
+        if not pos:
+            ts = _row_str(hit, "timestamp")
+            pos = convo.index[convo["timestamp"].astype(str) == ts].tolist()
+        if not pos:
+            continue
+        center = int(pos[0])
+        lo = max(0, center - radius)
+        hi = min(len(convo), center + radius + 1)
+        windows.append(
+            {
+                "n": index,
+                "chat_id": cid,
+                "rows": convo.iloc[lo:hi],
+                "hit_pos": center - lo,
+                "timestamp": _row_str(hit, "timestamp"),
+            }
+        )
+    return windows
+
+
+def format_context_windows(windows: list[dict], name_map=None, sender_map=None) -> str:
+    """Render each window as a conversation snippet with the matched line marked."""
+    blocks = []
+    for window in windows:
+        cid = window["chat_id"]
+        label = (name_map or {}).get(cid) or contact_label({"chatId": cid})
+        date = str(window.get("timestamp") or "")[:10]
+        header = f"=== Moment [{window['n']}] -- with {label}" + (f", around {date}" if date else "") + " ==="
+        lines = [header]
+        for offset, (_, row) in enumerate(window["rows"].iterrows()):
+            text = _row_str(row, "text").replace("\n", " ").strip()[:280]
+            if not text:
+                continue
+            outbound = str(_is_from_me_value(row.get("is_from_me"))).strip() in {"1", "true", "True"}
+            who = "You" if outbound else ((sender_map or {}).get(_row_str(row, "sender"), "") or label)
+            marker = f"   <<< highlighted [{window['n']}]" if offset == window["hit_pos"] else ""
+            lines.append(f"{who}: {text}{marker}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
 def ai_ask_answer(
     question: str,
     citations: list[dict],
     scope_label: str,
     model: str,
     intent: str = "general",
+    context: str = "",
 ) -> str:
     if not os.environ.get("OPENAI_API_KEY") or not citations:
         return ""
@@ -1037,6 +1100,9 @@ def ai_ask_answer(
         "Answer like a sharp, helpful chatbot: reason over the message excerpts to actually answer the "
         "question -- infer what they imply (who people are, relationships, what happened), don't just restate them. "
         "Ground every claim in the excerpts and separate what is directly stated from what you are inferring. "
+        "Each highlighted line is shown inside the surrounding conversation -- read the whole exchange to "
+        "understand the situation (what led to it, who was involved, the nuance) and explain the moment, "
+        "not just the highlighted line. "
         "The archive belongs to the person you are talking to: refer to them as 'you', never as 'me' or by a "
         "name -- messages labeled 'You' are theirs. Refer to everyone else by the name shown before each excerpt. "
         "Never output a raw phone number or email address as a person's identity; "
@@ -1052,18 +1118,23 @@ def ai_ask_answer(
             "about them. Do not invent a name the messages don't support, but don't refuse just because no one "
             "states a name outright -- infer from context."
         )
+    body = context or citation_context(citations)
+    intro = (
+        "Conversations around each moment (the highlighted line is the matched message):\n"
+        if context
+        else "Message excerpts:\n"
+    )
     user = (
         f"Question: {question}\n"
         f"Scope: {scope_label}\n\n"
-        "Message excerpts:\n"
-        f"{citation_context(citations)}"
+        f"{intro}{body}"
     )
     return _call_openai(
         OpenAI(),
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         model=model or DEFAULT_MODEL,
         max_retries=1,
-        reasoning_effort="medium" if intent == "identity" else "low",
+        reasoning_effort="medium" if (intent == "identity" or context) else "low",
         verbosity="low",
     )
 
@@ -1281,18 +1352,32 @@ def ask_messages_payload(
         matches = _select_messages(df, terms, cap)
 
     name_map = resolve_contact_names(matches["chat_id"].dropna().astype(str).unique()) if not matches.empty else {}
-    sender_map: dict[str, str] = {}
-    if person_focus and not matches.empty and "sender" in matches.columns:
-        senders = matches.loc[matches["sender"].astype(str).str.len() > 0, "sender"].astype(str).unique()
-        if len(senders):
-            sender_map = resolve_contact_names(senders)
+    windows = build_context_windows(df, matches) if (use_ai and not matches.empty) else []
+
+    # resolve names for everyone who speaks in the matches or the surrounding windows
+    sender_handles: set[str] = set()
+    if not matches.empty and "sender" in matches.columns:
+        sender_handles.update(s for s in matches["sender"].dropna().astype(str) if s)
+    for window in windows:
+        if "sender" in window["rows"].columns:
+            sender_handles.update(s for s in window["rows"]["sender"].dropna().astype(str) if s)
+    sender_map = resolve_contact_names(list(sender_handles)) if sender_handles else {}
+
     citations = [message_row_payload(row, name_map, sender_map) for _, row in matches.iterrows()]
+    window_context = format_context_windows(windows, name_map, sender_map) if windows else ""
     scope_label = name_map.get(contact, contact) if contact else "All conversations"
     answer_mode = "local"
     answer = ""
     if use_ai:
         try:
-            answer = ai_ask_answer(str(question or "").strip(), citations, scope_label, model, intent=intent)
+            answer = ai_ask_answer(
+                str(question or "").strip(),
+                citations,
+                scope_label,
+                model,
+                intent=intent,
+                context=window_context,
+            )
             if answer:
                 answer_mode = "ai"
                 answer, citations = _renumber_citations(answer, citations)
