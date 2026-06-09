@@ -52,8 +52,17 @@ PLAN_TEXT_FORMAT = {
                 ),
             },
             "prefer_recent": {"type": "boolean"},
+            "person_focus": {
+                "type": "boolean",
+                "description": (
+                    "True when the question centers on a specific person (who they are, what they are "
+                    "like, what they think or did). When true, gather that person's messages across "
+                    "every chat they appear in -- their direct thread AND the group chats they are in -- "
+                    "not just one conversation."
+                ),
+            },
         },
-        "required": ["intent", "conversation_ids", "search_terms", "prefer_recent"],
+        "required": ["intent", "conversation_ids", "search_terms", "prefer_recent", "person_focus"],
     },
 }
 
@@ -179,6 +188,8 @@ def plan_retrieval(
         "and what to look for, based on the MEANING of the question, not its literal words. "
         "If they ask 'who is this <number>' or about an area code, pick the conversation whose handle matches. "
         "If they describe a person ('my old roommate', 'the recruiter'), pick the best-matching conversation(s). "
+        "Set person_focus true whenever the question is about a specific person, so we also pull what they "
+        "say in the group chats they are in, not just their direct thread. "
         "For topical questions, expand into related search terms (synonyms and associated words), "
         "never just repeat the question's own words. "
         "Return catalog ids like 'c3'. Empty conversation_ids means search across everything."
@@ -216,4 +227,5 @@ def plan_retrieval(
         "chat_ids": chat_ids,
         "search_terms": terms[:12],
         "prefer_recent": bool(plan.get("prefer_recent", False)),
+        "person_focus": bool(plan.get("person_focus", False)),
     }

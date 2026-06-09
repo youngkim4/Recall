@@ -214,7 +214,11 @@ export function AskView({ defaults, model, onModelChange, contacts, onSelectCont
                             <span className="chat-ref-index">{idx + 1}</span>
                             <span className="chat-ref-body">
                               <span className="chat-ref-head">
-                                {contactLabel(citation.displayName, citation.chatId)} ·{' '}
+                                {citation.senderName || contactLabel(citation.displayName, citation.chatId)}
+                                {citation.senderName && (citation.chatId || '').startsWith('chat')
+                                  ? ` · ${contactLabel(citation.displayName, citation.chatId)}`
+                                  : ''}
+                                {' · '}
                                 {shortDateTime(citation.timestamp)}
                               </span>
                               <span className={`chat-ref-text ${isOutbound(citation) ? 'outbound' : ''}`}>

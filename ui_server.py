@@ -874,18 +874,32 @@ def _is_from_me_value(value):
         return value
 
 
-def message_row_payload(row, name_map: dict[str, str] | None = None) -> dict:
+def message_row_payload(
+    row,
+    name_map: dict[str, str] | None = None,
+    sender_map: dict[str, str] | None = None,
+) -> dict:
     chat_id = _row_str(row, "chat_id")
     text = _row_str(row, "text")
+    sender = _row_str(row, "sender")
     display_name = (name_map or {}).get(chat_id, "")
+    from_me = _is_from_me_value(row.get("is_from_me"))
+    outbound = str(from_me).strip() in {"1", "true", "True"}
+    # who actually said it (matters in group chats); blank for my own messages
+    sender_name = ""
+    if not outbound and sender:
+        sender_name = (sender_map or {}).get(sender, "")
+        if not sender_name and chat_id.startswith("chat"):
+            sender_name = contact_label({"chatId": sender})
     return {
         "messageId": _row_str(row, "message_id"),
         "chatId": chat_id,
         "displayName": display_name,
+        "senderName": sender_name,
         "timestamp": _row_str(row, "timestamp") or None,
-        "sender": _row_str(row, "sender"),
+        "sender": sender,
         "text": text[:600],
-        "isFromMe": _is_from_me_value(row.get("is_from_me")),
+        "isFromMe": from_me,
     }
 
 
@@ -976,7 +990,7 @@ def contact_label(citation: dict) -> str:
 def citation_context(citations: list[dict]) -> str:
     lines = []
     for idx, citation in enumerate(citations, start=1):
-        name = contact_label(citation)
+        name = citation.get("senderName") or contact_label(citation)
         timestamp = citation.get("timestamp") or "unknown time"
         speaker = "me" if str(citation.get("isFromMe")).lower() in {"1", "true"} else "them"
         text = str(citation.get("text") or "").replace("\n", " ").strip()
@@ -1136,6 +1150,61 @@ def _identity_messages(df: pd.DataFrame, cap: int) -> pd.DataFrame:
     return combined.sort_values("timestamp", ascending=False).head(cap)
 
 
+def _canon_handle(value: str) -> str:
+    """Canonical key for a handle/sender: last-10 digits for phones, lowercased email."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if "@" in text:
+        return text.lower()
+    digits = re.sub(r"\D", "", text)
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _canon_series(series: pd.Series) -> pd.Series:
+    s = series.fillna("").astype(str)
+    email = s.str.contains("@", regex=False)
+    digits = s.str.replace(r"\D", "", regex=True)
+    last10 = digits.str[-10:].where(digits.str.len() >= 10, digits)
+    return last10.where(~email, s.str.strip().str.lower())
+
+
+def _person_scope(df: pd.DataFrame, chat_ids: list[str], handles: list[str]) -> pd.DataFrame:
+    """Every chat the person appears in: the planner's picks plus any group chat
+    where the person sends. Group context is where identity clues often live."""
+    scope = {str(cid) for cid in chat_ids}
+    person_keys = {key for key in (_canon_handle(h) for h in handles) if key}
+    cids = df["chat_id"].astype(str)
+    if person_keys and "sender" in df.columns:
+        sent = _canon_series(df["sender"]).isin(person_keys)
+        scope |= set(cids[sent & cids.str.startswith("chat")].unique())
+    return df[cids.isin(scope)]
+
+
+def _person_messages(df: pd.DataFrame, person_keys: set[str], name_tokens: list[str], cap: int) -> pd.DataFrame:
+    """Within the person's chats, prefer messages they sent, messages that name
+    them, and identity-signal lines; fill with a representative spread."""
+    real = df[df["text"].fillna("").astype(str).str.strip() != ""].copy()
+    if real.empty:
+        return _representative_messages(df, cap)
+    text = real["text"].astype(str)
+    sent_by = _canon_series(real["sender"]).isin(person_keys).astype(int) if "sender" in real.columns else 0
+    name_hit = 0
+    if name_tokens:
+        pattern = r"\b(" + "|".join(re.escape(tok) for tok in name_tokens) + r")\b"
+        name_hit = text.str.contains(pattern, case=False, na=False, regex=True).astype(int)
+    hint = text.str.contains(IDENTITY_HINT_RE, na=False).astype(int)
+    real["_sig"] = sent_by * 2 + name_hit * 2 + hint
+    strong = real[real["_sig"] > 0].sort_values(["_sig", "timestamp"], ascending=[False, False]).head(cap)
+    spread = _representative_messages(real.drop(columns=["_sig"]), max(4, cap // 3))
+    combined = pd.concat([strong.drop(columns=["_sig"]), spread])
+    if "message_id" in combined.columns:
+        combined = combined.drop_duplicates(subset=["message_id"])
+    else:
+        combined = combined.drop_duplicates()
+    return combined.sort_values("timestamp", ascending=False).head(cap)
+
+
 def _renumber_citations(answer: str, citations: list[dict]) -> tuple[str, list[dict]]:
     """Keep only the citations the answer actually cites, renumbered [1..k] in
     first-cited order, and rewrite the answer's bracket markers to match. Stops
@@ -1179,19 +1248,41 @@ def ask_messages_payload(
     # Retrieve by MEANING, not literal query words: when AI is on, let the planner
     # route to the right conversation(s) and expand the query into related terms.
     plan = _plan_retrieval_safe(df, question, model) if use_ai else None
-    if plan and plan.get("chat_ids"):
-        df = df[df["chat_id"].astype(str).isin(set(plan["chat_ids"]))]
-
+    plan_ids = (plan or {}).get("chat_ids") or []
     intent = (plan or {}).get("intent", "general")
+    handles = [cid for cid in plan_ids if cid and not str(cid).startswith("chat")]
+    person_focus = bool((plan or {}).get("person_focus")) or intent == "identity"
+
+    if plan_ids:
+        if person_focus and handles:
+            # the person across every chat they're in, not just one conversation
+            df = _person_scope(df, plan_ids, handles)
+        else:
+            df = df[df["chat_id"].astype(str).isin(set(plan_ids))]
+
     terms = (plan or {}).get("search_terms") or query_terms(question)
-    if intent == "identity":
+    if person_focus and handles:
+        person_keys = {key for key in (_canon_handle(h) for h in handles) if key}
+        person_names = resolve_contact_names(handles)
+        name_tokens = sorted(
+            {tok for nm in person_names.values() for tok in re.findall(r"[a-z]{4,}", str(nm).lower())}
+        )
+        cap = max(1, min(max(int(limit or 8), 24), 30))
+        matches = _person_messages(df, person_keys, name_tokens, cap)
+    elif person_focus:
         cap = max(1, min(max(int(limit or 8), 24), 30))
         matches = _identity_messages(df, cap)
     else:
         cap = max(1, min(int(limit or 8), 20))
         matches = _select_messages(df, terms, cap)
+
     name_map = resolve_contact_names(matches["chat_id"].dropna().astype(str).unique()) if not matches.empty else {}
-    citations = [message_row_payload(row, name_map) for _, row in matches.iterrows()]
+    sender_map: dict[str, str] = {}
+    if person_focus and not matches.empty and "sender" in matches.columns:
+        senders = matches.loc[matches["sender"].astype(str).str.len() > 0, "sender"].astype(str).unique()
+        if len(senders):
+            sender_map = resolve_contact_names(senders)
+    citations = [message_row_payload(row, name_map, sender_map) for _, row in matches.iterrows()]
     scope_label = name_map.get(contact, contact) if contact else "All conversations"
     answer_mode = "local"
     answer = ""

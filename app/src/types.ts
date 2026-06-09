@@ -106,6 +106,7 @@ export type SearchResult = {
   messageId?: string
   chatId: string
   displayName?: string
+  senderName?: string
   timestamp: string
   sender?: string
   text: string
