@@ -68,7 +68,12 @@ PLAN_TEXT_FORMAT = {
 
 
 def _digit_runs(text: str) -> list[str]:
-    return re.findall(r"\d{3,}", str(text or ""))
+    """Digit fragments that could be part of a phone handle. Years are not handles."""
+    return [
+        run
+        for run in re.findall(r"\d{3,}", str(text or ""))
+        if not (len(run) == 4 and 1990 <= int(run) <= 2035)
+    ]
 
 
 NAME_STOPWORDS = {
@@ -118,7 +123,8 @@ def build_catalog(
     runs = _digit_runs(question)
     if runs:
         digits = convo["chat_id"].map(lambda cid: re.sub(r"\D", "", cid))
-        selected = pd.concat([selected, convo[digits.map(lambda d: any(run in d for run in runs))]])
+        matched_digits = convo[digits.map(lambda d: any(run in d for run in runs))]
+        selected = pd.concat([selected, matched_digits.head(10)])
 
     tokens = _name_tokens(question)
     if tokens and names:
@@ -172,6 +178,7 @@ def plan_retrieval(
     catalog: pd.DataFrame,
     client: Optional[OpenAI] = None,
     model: str = DEFAULT_MODEL,
+    history_text: str = "",
 ) -> Optional[dict]:
     """Ask the model which conversations + meaning-expanded terms to retrieve.
 
@@ -188,13 +195,20 @@ def plan_retrieval(
         "and what to look for, based on the MEANING of the question, not its literal words. "
         "If they ask 'who is this <number>' or about an area code, pick the conversation whose handle matches. "
         "If they describe a person ('my old roommate', 'the recruiter'), pick the best-matching conversation(s). "
+        "If the question uses pronouns or references ('her', 'that group', 'what about him'), resolve them "
+        "from the recent conversation provided and plan for the person/topic they refer to. "
+        "When you resolve who is meant, you MUST also select that person's conversation from the catalog "
+        "(match their name against the catalog's name field) and return its id -- never leave "
+        "conversation_ids empty for a question about a specific person who is in the catalog. "
         "Set person_focus true whenever the question is about a specific person, so we also pull what they "
         "say in the group chats they are in, not just their direct thread. "
         "For topical questions, expand into related search terms (synonyms and associated words), "
         "never just repeat the question's own words. "
         "Return catalog ids like 'c3'. Empty conversation_ids means search across everything."
     )
+    history_block = f"Recent conversation with the user:\n{history_text}\n\n" if history_text else ""
     user = (
+        f"{history_block}"
         f"Question: {question}\n\n"
         f"Conversation catalog (JSON array):\n{json.dumps(rows, ensure_ascii=False)}"
     )

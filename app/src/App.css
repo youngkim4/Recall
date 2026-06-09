@@ -6611,3 +6611,13 @@ body.is-resizing .app-shell {
   transform: translateX(-50%);
   background: var(--line);
 }
+
+/* shown when the AI answer failed and the reply is a plain keyword match */
+.chat-mode-note {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--soft);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-style: italic;
+}

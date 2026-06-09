@@ -23,7 +23,7 @@ import markdown as markdown_lib
 import pandas as pd
 from openai import OpenAI
 
-from ai_config import DEFAULT_MODEL, UI_MODEL_CHOICES
+from ai_config import DEFAULT_MODEL, PLANNER_MODEL, UI_MODEL_CHOICES
 from analysis import run_cli
 from cli import estimate_cost
 from contact_names import (
@@ -93,13 +93,40 @@ def json_default(value):
 
 
 def send_json(handler, status: int, payload: dict):
+    # no CORS headers on purpose: the UI is same-origin (served by this server,
+    # or behind the Vite /api proxy in dev), so no cross-origin page may read these
     data = json.dumps(payload, default=json_default).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(data)))
-    handler.send_header("Access-Control-Allow-Origin", "*")
     handler.end_headers()
     handler.wfile.write(data)
+
+
+LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
+
+
+def _header_hostname(value: str) -> str:
+    try:
+        return urlparse(f"//{value}").hostname or ""
+    except ValueError:
+        return ""
+
+
+def is_local_api_request(handler) -> bool:
+    """Block cross-site access to the archive: a non-local Host means DNS
+    rebinding, and browsers attach Origin to cross-origin requests. curl and
+    the same-origin app (incl. the Vite /api dev proxy) pass both checks."""
+    if _header_hostname(str(handler.headers.get("Host") or "")) not in LOCAL_HOSTNAMES:
+        return False
+    origin = str(handler.headers.get("Origin") or "").strip()
+    if not origin:
+        return True
+    try:
+        parsed = urlparse(origin)
+        return parsed.scheme == "http" and (parsed.hostname or "") in LOCAL_HOSTNAMES
+    except ValueError:
+        return False
 
 
 def parse_body(handler) -> dict:
@@ -935,29 +962,16 @@ def search_messages_payload(messages_path: Path, query: str = "", contact: str =
 
 
 ASK_STOPWORDS = {
-    "about",
-    "after",
-    "again",
-    "before",
-    "could",
-    "does",
-    "from",
-    "have",
-    "into",
-    "like",
-    "messages",
-    "that",
-    "their",
-    "there",
-    "they",
-    "this",
-    "thread",
-    "what",
-    "when",
-    "where",
-    "which",
-    "with",
-    "would",
+    "about", "after", "again", "all", "and", "any", "are", "back", "been", "before",
+    "being", "between", "but", "can", "could", "did", "does", "ever", "every", "for",
+    "from", "get", "going", "got", "had", "has", "have", "her", "him", "his", "how",
+    "into", "just", "like", "made", "make", "messages", "more", "most", "much", "not",
+    "off", "only", "other", "our", "out", "over", "really", "said", "say", "says",
+    "she", "should", "some", "talk", "talked", "tell", "text", "texted", "than",
+    "that", "the", "their", "them", "then", "there", "these", "they", "thing",
+    "things", "this", "those", "thread", "time", "told", "very", "was", "were",
+    "what", "when", "where", "which", "who", "why", "will", "with", "would", "you",
+    "your",
 }
 
 
@@ -968,7 +982,20 @@ def query_terms(question: str) -> list[str]:
             continue
         if term not in terms:
             terms.append(term)
-    return terms[:8]
+    # longer words carry the topic; keep them when capping
+    return sorted(terms, key=len, reverse=True)[:8]
+
+
+def _term_scores(text: pd.Series, terms: list[str]) -> pd.Series:
+    """Whole-word hit count per row ('who' must not match 'whole')."""
+    scores = pd.Series(0, index=text.index)
+    for term in terms:
+        if re.fullmatch(r"[\w']+", term):
+            pattern = r"\b" + re.escape(term) + r"\b"
+        else:
+            pattern = re.escape(term)
+        scores = scores + text.str.contains(pattern, case=False, na=False, regex=True).astype(int)
+    return scores
 
 
 def contact_label(citation: dict) -> str:
@@ -1022,9 +1049,11 @@ def local_ask_answer(terms: list[str], citations: list[dict]) -> str:
     return lead + "\n\n" + "\n".join(f"- {highlight}" for highlight in highlights)
 
 
-def build_context_windows(df: pd.DataFrame, matches: pd.DataFrame, radius: int = 6, cap: int = 14) -> list[dict]:
+def build_context_windows(df: pd.DataFrame, matches: pd.DataFrame, radius: int = 6, cap: int = 30) -> list[dict]:
     """For each hit, grab the surrounding conversation (radius messages each side)
-    so the model sees the situation and nuance, not an isolated keyword match."""
+    so the model sees the situation and nuance, not an isolated keyword match.
+    Hits that fall inside an existing window merge into it (multiple highlights)
+    instead of duplicating overlapping snippets."""
     if matches is None or matches.empty or "chat_id" not in df.columns:
         return []
     top = matches.head(cap)
@@ -1035,7 +1064,7 @@ def build_context_windows(df: pd.DataFrame, matches: pd.DataFrame, radius: int =
             .sort_values("timestamp", kind="stable")
             .reset_index(drop=True)
         )
-    windows = []
+    windows: list[dict] = []
     for index, (_, hit) in enumerate(top.iterrows(), start=1):
         cid = _row_str(hit, "chat_id")
         convo = convos.get(cid)
@@ -1049,14 +1078,24 @@ def build_context_windows(df: pd.DataFrame, matches: pd.DataFrame, radius: int =
         if not pos:
             continue
         center = int(pos[0])
+        merged = False
+        for window in windows:
+            if window["chat_id"] == cid and window["lo"] <= center < window["hi"]:
+                window["hits"].setdefault(center - window["lo"], []).append(index)
+                merged = True
+                break
+        if merged:
+            continue
         lo = max(0, center - radius)
         hi = min(len(convo), center + radius + 1)
         windows.append(
             {
-                "n": index,
+                "ns": [index],
                 "chat_id": cid,
+                "lo": lo,
+                "hi": hi,
                 "rows": convo.iloc[lo:hi],
-                "hit_pos": center - lo,
+                "hits": {center - lo: [index]},
                 "timestamp": _row_str(hit, "timestamp"),
             }
         )
@@ -1064,22 +1103,36 @@ def build_context_windows(df: pd.DataFrame, matches: pd.DataFrame, radius: int =
 
 
 def format_context_windows(windows: list[dict], name_map=None, sender_map=None) -> str:
-    """Render each window as a conversation snippet with the matched line marked."""
+    """Render each window as a dated conversation snippet with matched lines marked."""
     blocks = []
     for window in windows:
         cid = window["chat_id"]
+        is_group = cid.startswith("chat")
         label = (name_map or {}).get(cid) or contact_label({"chatId": cid})
         date = str(window.get("timestamp") or "")[:10]
-        header = f"=== Moment [{window['n']}] -- with {label}" + (f", around {date}" if date else "") + " ==="
+        all_ns = sorted({n for ns in window["hits"].values() for n in ns})
+        moment = "".join(f"[{n}]" for n in all_ns)
+        header = f"=== Moment {moment} -- with {label}" + (f", around {date}" if date else "") + " ==="
         lines = [header]
         for offset, (_, row) in enumerate(window["rows"].iterrows()):
             text = _row_str(row, "text").replace("\n", " ").strip()[:280]
             if not text:
                 continue
             outbound = str(_is_from_me_value(row.get("is_from_me"))).strip() in {"1", "true", "True"}
-            who = "You" if outbound else ((sender_map or {}).get(_row_str(row, "sender"), "") or label)
-            marker = f"   <<< highlighted [{window['n']}]" if offset == window["hit_pos"] else ""
-            lines.append(f"{who}: {text}{marker}")
+            if outbound:
+                who = "You"
+            else:
+                sender = _row_str(row, "sender")
+                who = (sender_map or {}).get(sender, "")
+                if not who:
+                    # in a group, an unresolved sender must NOT collapse into the
+                    # group label -- that misattributes quotes to the wrong person
+                    who = contact_label({"chatId": sender}) if (is_group and sender) else label
+            ts = _row_str(row, "timestamp")[:10]
+            marker = ""
+            if offset in window["hits"]:
+                marker = "   <<< highlighted " + "".join(f"[{n}]" for n in window["hits"][offset])
+            lines.append(f"[{ts}] {who}: {text}{marker}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
@@ -1091,6 +1144,7 @@ def ai_ask_answer(
     model: str,
     intent: str = "general",
     context: str = "",
+    history: list[dict] | None = None,
 ) -> str:
     if not os.environ.get("OPENAI_API_KEY") or not citations:
         return ""
@@ -1107,7 +1161,8 @@ def ai_ask_answer(
         "name -- messages labeled 'You' are theirs. Refer to everyone else by the name shown before each excerpt. "
         "Never output a raw phone number or email address as a person's identity; "
         "if someone has no saved contact name, call them an unsaved contact. "
-        "Cite evidence inline with bracket numbers like [1]. Keep the answer concise unless the user asks for detail."
+        "Cite evidence inline with individual bracket numbers like [1] or [2][5] -- never ranges like [2-5] "
+        "or lists like [1, 3]. Keep the answer concise unless the user asks for detail."
     )
     if intent == "identity":
         system += (
@@ -1129,9 +1184,16 @@ def ai_ask_answer(
         f"Scope: {scope_label}\n\n"
         f"{intro}{body}"
     )
+    messages = [{"role": "system", "content": system}]
+    for turn in (history or [])[-6:]:
+        role = "assistant" if str(turn.get("role")) == "assistant" else "user"
+        content = str(turn.get("content") or "").strip()[:600]
+        if content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": user})
     return _call_openai(
         OpenAI(),
-        [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        messages,
         model=model or DEFAULT_MODEL,
         max_retries=1,
         reasoning_effort="medium" if (intent == "identity" or context) else "low",
@@ -1140,24 +1202,72 @@ def ai_ask_answer(
 
 
 def _conversation_catalog(df: pd.DataFrame) -> pd.DataFrame:
-    """Per-conversation rollup (chat_id, message_count, last_msg) for the planner."""
+    """Per-conversation rollup (chat_id, message_count, last_msg, display_name)."""
     convo = df[df["chat_id"].notna()].copy() if "chat_id" in df.columns else pd.DataFrame()
     if convo.empty:
-        return pd.DataFrame(columns=["chat_id", "message_count", "last_msg"])
+        return pd.DataFrame(columns=["chat_id", "message_count", "last_msg", "display_name"])
     convo["chat_id"] = convo["chat_id"].astype(str)
-    return (
-        convo.groupby("chat_id")
-        .agg(message_count=("chat_id", "size"), last_msg=("timestamp", "max"))
-        .reset_index()
-    )
+    aggregations = {
+        "message_count": ("chat_id", "size"),
+        "last_msg": ("timestamp", "max"),
+    }
+    if "chat_display_name" in convo.columns:
+        convo["chat_display_name"] = convo["chat_display_name"].fillna("").astype(str).str.strip()
+        aggregations["display_name"] = ("chat_display_name", first_nonempty)
+    grouped = convo.groupby("chat_id").agg(**aggregations).reset_index()
+    if "display_name" not in grouped.columns:
+        grouped["display_name"] = ""
+    return grouped
 
 
-def _plan_retrieval_safe(df: pd.DataFrame, question: str, model: str) -> dict | None:
-    """Build a catalog from the loaded df and ask the planner. Never raises."""
+# Ask-pipeline cache: the messages CSV is ~75MB / 760k rows; re-parsing it (plus the
+# catalog groupby and full contact-name resolution) on every question costs seconds
+# before any model call. Keyed on the file signature so refreshes invalidate it.
+_ASK_CACHE_LOCK = threading.Lock()
+_ASK_CACHE: dict = {"sig": None, "df": None, "catalog": None, "names": None}
+
+
+def cached_messages_bundle(messages_path: Path) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """(messages df, conversation catalog, display-name map) cached on file signature."""
+    sig = file_cache_signature(messages_path)
+    with _ASK_CACHE_LOCK:
+        if sig and _ASK_CACHE["sig"] == sig and _ASK_CACHE["df"] is not None:
+            return _ASK_CACHE["df"], _ASK_CACHE["catalog"], _ASK_CACHE["names"]
+    df = load_messages(str(messages_path))
+    if "text" not in df.columns:
+        df["text"] = ""
+    catalog = _conversation_catalog(df)
+    names: dict[str, str] = {}
+    if not catalog.empty:
+        names = dict(resolve_contact_names(catalog["chat_id"].tolist()))
+        # groups have no Contacts entry; their iMessage display name is the label
+        for _, row in catalog.iterrows():
+            cid = str(row["chat_id"])
+            display = str(row.get("display_name") or "").strip()
+            if display and not names.get(cid):
+                names[cid] = display
+    with _ASK_CACHE_LOCK:
+        _ASK_CACHE.update({"sig": sig, "df": df, "catalog": catalog, "names": names})
+    return df, catalog, names
+
+
+def _plan_retrieval_safe(
+    catalog: pd.DataFrame,
+    names: dict,
+    question: str,
+    history_text: str = "",
+) -> dict | None:
+    """Ask the planner over a prebuilt catalog. Never raises."""
     try:
-        catalog = build_catalog(_conversation_catalog(df), question, name_lookup=resolve_contact_names)
-        return plan_retrieval(str(question or "").strip(), catalog, model=model)
-    except Exception:
+        selected = build_catalog(catalog, question, name_lookup=lambda _ids: names)
+        return plan_retrieval(
+            str(question or "").strip(),
+            selected,
+            model=PLANNER_MODEL,
+            history_text=history_text,
+        )
+    except Exception as exc:
+        print(f"[ask] planner failed: {exc}", file=sys.__stderr__)
         return None
 
 
@@ -1185,9 +1295,7 @@ def _select_messages(df: pd.DataFrame, terms: list[str], cap: int) -> pd.DataFra
         return df
     text = df["text"].fillna("").astype(str)
     if terms:
-        scores = pd.Series(0, index=df.index)
-        for term in terms:
-            scores = scores + text.str.contains(term, case=False, na=False, regex=False).astype(int)
+        scores = _term_scores(text, terms)
         hits = df[scores > 0].copy()
         if not hits.empty:
             hits["score"] = scores[scores > 0]
@@ -1196,7 +1304,7 @@ def _select_messages(df: pd.DataFrame, terms: list[str], cap: int) -> pd.DataFra
 
 
 IDENTITY_HINT_RE = re.compile(
-    r"\b(i['’]?m|i am|my name|name['’]?s|this is|it['’]?s me|roommate|girlfriend|boyfriend|"
+    r"\b(?:i['’]?m|i am|my name|name['’]?s|this is|it['’]?s me|roommate|girlfriend|boyfriend|"
     r"friend|brother|sister|mom|dad|mother|father|cousin|wife|husband|partner|"
     r"we met|met (?:you|at)|works?|working|school|class|major|dorm|team|club|lives?)\b",
     re.I,
@@ -1204,9 +1312,10 @@ IDENTITY_HINT_RE = re.compile(
 NAME_TOKEN_RE = re.compile(r"\b[A-Z][a-z]{2,}\b")
 
 
-def _identity_messages(df: pd.DataFrame, cap: int) -> pd.DataFrame:
+def _identity_messages(df: pd.DataFrame, cap: int, terms: list[str] | None = None) -> pd.DataFrame:
     """For 'who is this' questions: pull a richer context, weighted toward messages
-    carrying identity signals (intro / relationship words, mentioned names)."""
+    carrying identity signals (intro / relationship words, mentioned names) and,
+    when the question has a topic, messages matching it."""
     real = df[df["text"].fillna("").astype(str).str.strip() != ""].copy()
     if real.empty:
         return _representative_messages(df, cap)
@@ -1215,6 +1324,8 @@ def _identity_messages(df: pd.DataFrame, cap: int) -> pd.DataFrame:
         text.str.contains(IDENTITY_HINT_RE).astype(int) * 2
         + text.str.contains(NAME_TOKEN_RE).astype(int)
     )
+    if terms:
+        real["_sig"] = real["_sig"] + _term_scores(text, terms) * 3
     strong = real[real["_sig"] > 0].sort_values(["_sig", "timestamp"], ascending=[False, False]).head(cap)
     spread = _representative_messages(real.drop(columns=["_sig"]), max(4, cap // 3))
     combined = pd.concat([strong.drop(columns=["_sig"]), spread])
@@ -1222,7 +1333,9 @@ def _identity_messages(df: pd.DataFrame, cap: int) -> pd.DataFrame:
         combined = combined.drop_duplicates(subset=["message_id"])
     else:
         combined = combined.drop_duplicates()
-    return combined.sort_values("timestamp", ascending=False).head(cap)
+    # cut by signal priority (strong rows first), then present newest-first
+    combined = combined.head(cap)
+    return combined.sort_values("timestamp", ascending=False)
 
 
 def _canon_handle(value: str) -> str:
@@ -1256,9 +1369,17 @@ def _person_scope(df: pd.DataFrame, chat_ids: list[str], handles: list[str]) -> 
     return df[cids.isin(scope)]
 
 
-def _person_messages(df: pd.DataFrame, person_keys: set[str], name_tokens: list[str], cap: int) -> pd.DataFrame:
-    """Within the person's chats, prefer messages they sent, messages that name
-    them, and identity-signal lines; fill with a representative spread."""
+def _person_messages(
+    df: pd.DataFrame,
+    person_keys: set[str],
+    name_tokens: list[str],
+    cap: int,
+    terms: list[str] | None = None,
+) -> pd.DataFrame:
+    """Within the person's chats, prefer messages about the question's TOPIC,
+    then messages they sent / that name them / identity-signal lines; fill with
+    a representative spread. Without the topic component, 'what did X say about
+    Y' degenerates into X's most recent messages."""
     real = df[df["text"].fillna("").astype(str).str.strip() != ""].copy()
     if real.empty:
         return _representative_messages(df, cap)
@@ -1266,10 +1387,12 @@ def _person_messages(df: pd.DataFrame, person_keys: set[str], name_tokens: list[
     sent_by = _canon_series(real["sender"]).isin(person_keys).astype(int) if "sender" in real.columns else 0
     name_hit = 0
     if name_tokens:
-        pattern = r"\b(" + "|".join(re.escape(tok) for tok in name_tokens) + r")\b"
+        pattern = r"\b(?:" + "|".join(re.escape(tok) for tok in name_tokens) + r")\b"
         name_hit = text.str.contains(pattern, case=False, na=False, regex=True).astype(int)
     hint = text.str.contains(IDENTITY_HINT_RE, na=False).astype(int)
     real["_sig"] = sent_by * 2 + name_hit * 2 + hint
+    if terms:
+        real["_sig"] = real["_sig"] + _term_scores(text, terms) * 3
     strong = real[real["_sig"] > 0].sort_values(["_sig", "timestamp"], ascending=[False, False]).head(cap)
     spread = _representative_messages(real.drop(columns=["_sig"]), max(4, cap // 3))
     combined = pd.concat([strong.drop(columns=["_sig"]), spread])
@@ -1277,7 +1400,28 @@ def _person_messages(df: pd.DataFrame, person_keys: set[str], name_tokens: list[
         combined = combined.drop_duplicates(subset=["message_id"])
     else:
         combined = combined.drop_duplicates()
-    return combined.sort_values("timestamp", ascending=False).head(cap)
+    # cut by signal priority (strong rows first), then present newest-first
+    combined = combined.head(cap)
+    return combined.sort_values("timestamp", ascending=False)
+
+
+def _expand_citation_markers(answer: str) -> str:
+    """Normalize range/list markers the model may emit despite instructions:
+    [2-5] -> [2][3][4][5], [1, 3] -> [1][3]. Keeps renumbering exact."""
+
+    def expand_range(match: re.Match) -> str:
+        start, end = int(match.group(1)), int(match.group(2))
+        if 0 < start <= end and end - start <= 40:
+            return "".join(f"[{n}]" for n in range(start, end + 1))
+        return match.group(0)
+
+    out = re.sub(r"\[(\d+)\s*[-–—]\s*(\d+)\]", expand_range, answer)
+    out = re.sub(
+        r"\[(\d+(?:\s*,\s*\d+)+)\]",
+        lambda m: "".join(f"[{n}]" for n in re.split(r"\s*,\s*", m.group(1))),
+        out,
+    )
+    return out
 
 
 def _renumber_citations(answer: str, citations: list[dict]) -> tuple[str, list[dict]]:
@@ -1286,13 +1430,16 @@ def _renumber_citations(answer: str, citations: list[dict]) -> tuple[str, list[d
     a broad identity retrieval from showing a wall of unrelated messages."""
     if not answer or not citations:
         return answer, citations
+    answer = _expand_citation_markers(answer)
     order: list[int] = []
     for match in re.finditer(r"\[(\d+)\]", answer):
         n = int(match.group(1))
         if 1 <= n <= len(citations) and n not in order:
             order.append(n)
     if not order:
-        return answer, citations
+        # the model cited nothing concrete -- show a small sample, not the
+        # whole retrieval set
+        return answer, citations[:6]
     mapping = {old: idx + 1 for idx, old in enumerate(order)}
     rewritten = re.sub(
         r"\[(\d+)\]",
@@ -1310,23 +1457,49 @@ def ask_messages_payload(
     limit: int = 8,
     model: str = DEFAULT_MODEL,
     use_ai: bool = False,
+    history: list[dict] | None = None,
 ) -> dict:
     if not path_exists(messages_path):
         raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
 
-    df = load_messages(str(messages_path))
-    if contact:
-        df = filter_conversation(df, contact)
-    if "text" not in df.columns:
-        df["text"] = ""
+    full_df, catalog, catalog_names = cached_messages_bundle(messages_path)
+    df = filter_conversation(full_df, contact) if contact else full_df
+
+    history = [turn for turn in (history or []) if isinstance(turn, dict)][-6:]
+    history_text = "\n".join(
+        f"{'assistant' if str(t.get('role')) == 'assistant' else 'user'}: "
+        f"{str(t.get('content') or '').strip()[:200]}"
+        for t in history[-4:]
+        if str(t.get("content") or "").strip()
+    )
 
     # Retrieve by MEANING, not literal query words: when AI is on, let the planner
     # route to the right conversation(s) and expand the query into related terms.
-    plan = _plan_retrieval_safe(df, question, model) if use_ai else None
+    plan = _plan_retrieval_safe(catalog, catalog_names, question, history_text) if use_ai else None
     plan_ids = (plan or {}).get("chat_ids") or []
     intent = (plan or {}).get("intent", "general")
-    handles = [cid for cid in plan_ids if cid and not str(cid).startswith("chat")]
     person_focus = bool((plan or {}).get("person_focus")) or intent == "identity"
+
+    if use_ai and person_focus and not plan_ids:
+        # backstop: the planner resolved a person but didn't map them to a
+        # conversation id -- recover it by matching contact names against the
+        # question, the planner's terms, and the recent conversation
+        blob = " ".join(
+            [str(question or ""), " ".join((plan or {}).get("search_terms") or []), history_text]
+        ).lower()
+        blob_words = set(re.findall(r"[a-z]{3,}", blob))
+        exact, partial = [], []
+        for cid, nm in catalog_names.items():
+            label = str(nm or "").strip().lower()
+            if not label or len(label) < 4:
+                continue
+            if label in blob:
+                exact.append(cid)
+            elif any(tok in blob_words for tok in re.findall(r"[a-z]{4,}", label)):
+                partial.append(cid)
+        plan_ids = (exact or partial)[:3]
+
+    handles = [cid for cid in plan_ids if cid and not str(cid).startswith("chat")]
 
     if plan_ids:
         if person_focus and handles:
@@ -1336,6 +1509,7 @@ def ask_messages_payload(
             df = df[df["chat_id"].astype(str).isin(set(plan_ids))]
 
     terms = (plan or {}).get("search_terms") or query_terms(question)
+    scoped = bool(contact or plan_ids)
     if person_focus and handles:
         person_keys = {key for key in (_canon_handle(h) for h in handles) if key}
         person_names = resolve_contact_names(handles)
@@ -1343,16 +1517,23 @@ def ask_messages_payload(
             {tok for nm in person_names.values() for tok in re.findall(r"[a-z]{4,}", str(nm).lower())}
         )
         cap = max(1, min(max(int(limit or 8), 24), 30))
-        matches = _person_messages(df, person_keys, name_tokens, cap)
-    elif person_focus:
+        matches = _person_messages(df, person_keys, name_tokens, cap, terms=terms)
+    elif person_focus and scoped:
         cap = max(1, min(max(int(limit or 8), 24), 30))
-        matches = _identity_messages(df, cap)
+        matches = _identity_messages(df, cap, terms=terms)
     else:
+        # an identity question with no scoped conversation must not harvest
+        # "I'm/my name is" lines from the whole archive -- fall back to terms
         cap = max(1, min(int(limit or 8), 20))
         matches = _select_messages(df, terms, cap)
 
     name_map = resolve_contact_names(matches["chat_id"].dropna().astype(str).unique()) if not matches.empty else {}
-    windows = build_context_windows(df, matches) if (use_ai and not matches.empty) else []
+    for cid in set(matches["chat_id"].dropna().astype(str)) if not matches.empty else set():
+        if not name_map.get(cid) and catalog_names.get(cid):
+            name_map[cid] = catalog_names[cid]
+    windows = (
+        build_context_windows(df, matches, cap=cap) if (use_ai and not matches.empty) else []
+    )
 
     # resolve names for everyone who speaks in the matches or the surrounding windows
     sender_handles: set[str] = set()
@@ -1365,7 +1546,11 @@ def ask_messages_payload(
 
     citations = [message_row_payload(row, name_map, sender_map) for _, row in matches.iterrows()]
     window_context = format_context_windows(windows, name_map, sender_map) if windows else ""
-    scope_label = name_map.get(contact, contact) if contact else "All conversations"
+    scope_label = (
+        contact_label({"chatId": contact, "displayName": name_map.get(contact, "") or catalog_names.get(contact, "")})
+        if contact
+        else "All conversations"
+    )
     answer_mode = "local"
     answer = ""
     if use_ai:
@@ -1377,11 +1562,13 @@ def ask_messages_payload(
                 model,
                 intent=intent,
                 context=window_context,
+                history=history,
             )
             if answer:
                 answer_mode = "ai"
                 answer, citations = _renumber_citations(answer, citations)
-        except Exception:
+        except Exception as exc:
+            print(f"[ask] AI answer failed: {exc}", file=sys.__stderr__)
             answer = ""
     if not answer:
         answer = local_ask_answer(terms, citations)
@@ -1406,16 +1593,19 @@ class RecallHandler(BaseHTTPRequestHandler):
         )
 
     def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        # no CORS grant: the UI is same-origin, so a preflight can only come
+        # from a cross-origin page probing the archive
+        self.send_response(403)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self):
         parsed = urlparse(self.path)
         try:
             if parsed.path.startswith("/api/"):
+                if not is_local_api_request(self):
+                    send_json(self, 403, {"error": "Forbidden: non-local origin"})
+                    return
                 self.handle_api_get(parsed)
             else:
                 self.serve_static(parsed.path)
@@ -1435,6 +1625,9 @@ class RecallHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         try:
+            if not is_local_api_request(self):
+                send_json(self, 403, {"error": "Forbidden: non-local origin"})
+                return
             if parsed.path == "/api/jobs":
                 payload = parse_body(self)
                 action = payload.get("action", "analyze")
@@ -1457,6 +1650,7 @@ class RecallHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/ask":
                 payload = parse_body(self)
                 messages_path = safe_path(payload.get("messagesPath"), ROOT / "messages.csv")
+                raw_history = payload.get("history")
                 send_json(self, 200, ask_messages_payload(
                     messages_path,
                     payload.get("question", ""),
@@ -1464,6 +1658,7 @@ class RecallHandler(BaseHTTPRequestHandler):
                     limit=int(payload.get("limit", 8) or 8),
                     model=payload.get("model", DEFAULT_MODEL),
                     use_ai=str(payload.get("ai", True)).lower() not in {"0", "false", "no", "off"},
+                    history=raw_history if isinstance(raw_history, list) else None,
                 ))
             else:
                 send_json(self, 404, {"error": "Not found"})

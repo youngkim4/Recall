@@ -195,6 +195,9 @@ export function AskView({ defaults, model, onModelChange, contacts, onSelectCont
                   ) : (
                     <p>{message.content}</p>
                   )}
+                  {message.role === 'assistant' && message.response?.mode === 'local' ? (
+                    <span className="chat-mode-note">Keyword match — the AI answer was unavailable.</span>
+                  ) : null}
                   {message.role === 'assistant' &&
                   message.response &&
                   message.response.citations.length ? (

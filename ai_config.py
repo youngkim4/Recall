@@ -1,6 +1,8 @@
 """Shared OpenAI model and token-budget configuration."""
 
 DEFAULT_MODEL = "gpt-5.5"
+# routing/planning is a small structured decision -- the mini model is faster and ~10x cheaper
+PLANNER_MODEL = "gpt-5.4-mini"
 DEFAULT_REASONING_EFFORT = "medium"
 DEFAULT_VERBOSITY = "medium"
 UI_MODEL_CHOICES = (

@@ -121,6 +121,11 @@ export const chatStore = {
     const userMessage: ChatMessage = { id: makeId('user'), role: 'user', content: text }
 
     let chatId = state.activeChatId
+    // prior turns let the backend resolve follow-ups ("what about her?")
+    const priorChat = chatId ? state.chats.find((chat) => chat.id === chatId) : null
+    const history = (priorChat?.messages ?? [])
+      .slice(-6)
+      .map((message) => ({ role: message.role, content: message.content }))
     if (chatId && chatExists(chatId)) {
       const chats = state.chats.map((chat) =>
         chat.id === chatId
@@ -152,7 +157,7 @@ export const chatStore = {
     })
 
     try {
-      const payload = await recallApi.ask(ask)
+      const payload = await recallApi.ask({ ...ask, history })
       if (chatExists(targetId)) {
         const assistant: ChatMessage = {
           id: makeId('assistant'),

@@ -91,7 +91,14 @@ export const recallApi = {
       })}`,
     ),
 
-  ask: (input: { messagesPath: string; question: string; contact?: string; model?: string; limit?: number }) =>
+  ask: (input: {
+    messagesPath: string
+    question: string
+    contact?: string
+    model?: string
+    limit?: number
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>
+  }) =>
     request<AskResponse>('/api/ask', {
       method: 'POST',
       body: JSON.stringify({
@@ -100,6 +107,7 @@ export const recallApi = {
         contact: input.contact,
         model: input.model,
         limit: input.limit ?? 8,
+        history: input.history,
       }),
     }),
 
