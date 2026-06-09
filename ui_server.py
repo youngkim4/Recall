@@ -45,6 +45,7 @@ from conversation import (
 )
 from openai_client import _call_openai
 from parse_imessage import extract_attachments, extract_messages, extract_reactions, list_contacts
+from retrieval_planner import build_catalog, plan_retrieval
 
 ROOT = Path(__file__).resolve().parent
 UI_DIR = ROOT / "ui"
@@ -956,10 +957,26 @@ def query_terms(question: str) -> list[str]:
     return terms[:8]
 
 
+def contact_label(citation: dict) -> str:
+    """Human label for a citation's contact. Never expose a raw handle/number."""
+    name = str(citation.get("displayName") or "").strip()
+    if name:
+        return name
+    handle = str(citation.get("chatId") or "").strip()
+    if not handle:
+        return "an unsaved contact"
+    if handle.startswith("chat"):
+        return "a group chat"
+    digits = re.sub(r"\D", "", handle)
+    if digits:
+        return f"an unsaved contact (ending {digits[-4:]})"
+    return "an unsaved contact"
+
+
 def citation_context(citations: list[dict]) -> str:
     lines = []
     for idx, citation in enumerate(citations, start=1):
-        name = citation.get("displayName") or citation.get("chatId") or "conversation"
+        name = contact_label(citation)
         timestamp = citation.get("timestamp") or "unknown time"
         speaker = "me" if str(citation.get("isFromMe")).lower() in {"1", "true"} else "them"
         text = str(citation.get("text") or "").replace("\n", " ").strip()
@@ -978,7 +995,7 @@ def local_ask_answer(terms: list[str], citations: list[dict]) -> str:
 
     highlights = []
     for citation in citations[:3]:
-        name = citation.get("displayName") or citation.get("chatId") or "conversation"
+        name = contact_label(citation)
         text = str(citation.get("text") or "").replace("\n", " ").strip()
         if text:
             highlights.append(f"{name}: {text[:180]}")
@@ -988,16 +1005,35 @@ def local_ask_answer(terms: list[str], citations: list[dict]) -> str:
     return lead + "\n\n" + "\n".join(f"- {highlight}" for highlight in highlights)
 
 
-def ai_ask_answer(question: str, citations: list[dict], scope_label: str, model: str) -> str:
+def ai_ask_answer(
+    question: str,
+    citations: list[dict],
+    scope_label: str,
+    model: str,
+    intent: str = "general",
+) -> str:
     if not os.environ.get("OPENAI_API_KEY") or not citations:
         return ""
 
     system = (
         "You are Recall, a private iMessage archive assistant. "
-        "Answer like a careful chatbot: direct, natural, and useful. "
-        "Use only the provided message excerpts. If the excerpts are not enough, say what the evidence can and cannot support. "
+        "Answer like a sharp, helpful chatbot: reason over the message excerpts to actually answer the "
+        "question -- infer what they imply (who people are, relationships, what happened), don't just restate them. "
+        "Ground every claim in the excerpts and separate what is directly stated from what you are inferring. "
+        "Refer to people only by the label shown before each excerpt. "
+        "Never output a raw phone number or email address as a person's identity; "
+        "if someone has no saved contact name, call them an unsaved contact. "
         "Cite evidence inline with bracket numbers like [1]. Keep the answer concise unless the user asks for detail."
     )
+    if intent == "identity":
+        system += (
+            " This is a 'who is this' question. Work out who the person most likely is by reasoning over the "
+            "clues in the thread: names they or others mention, people / places / events referenced, relationships, "
+            "how they are addressed, school or work, and what they talk about. Give your best-supported conclusion "
+            "about who they are and the reasoning behind it; if you can only narrow it down, say what you can tell "
+            "about them. Do not invent a name the messages don't support, but don't refuse just because no one "
+            "states a name outright -- infer from context."
+        )
     user = (
         f"Question: {question}\n"
         f"Scope: {scope_label}\n\n"
@@ -1009,9 +1045,118 @@ def ai_ask_answer(question: str, citations: list[dict], scope_label: str, model:
         [{"role": "system", "content": system}, {"role": "user", "content": user}],
         model=model or DEFAULT_MODEL,
         max_retries=1,
-        reasoning_effort="low",
+        reasoning_effort="medium" if intent == "identity" else "low",
         verbosity="low",
     )
+
+
+def _conversation_catalog(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-conversation rollup (chat_id, message_count, last_msg) for the planner."""
+    convo = df[df["chat_id"].notna()].copy() if "chat_id" in df.columns else pd.DataFrame()
+    if convo.empty:
+        return pd.DataFrame(columns=["chat_id", "message_count", "last_msg"])
+    convo["chat_id"] = convo["chat_id"].astype(str)
+    return (
+        convo.groupby("chat_id")
+        .agg(message_count=("chat_id", "size"), last_msg=("timestamp", "max"))
+        .reset_index()
+    )
+
+
+def _plan_retrieval_safe(df: pd.DataFrame, question: str, model: str) -> dict | None:
+    """Build a catalog from the loaded df and ask the planner. Never raises."""
+    try:
+        catalog = build_catalog(_conversation_catalog(df), question, name_lookup=resolve_contact_names)
+        return plan_retrieval(str(question or "").strip(), catalog, model=model)
+    except Exception:
+        return None
+
+
+def _representative_messages(df: pd.DataFrame, cap: int) -> pd.DataFrame:
+    """A useful spread (recent-weighted with some earliest) of real-text messages."""
+    real = df[df["text"].fillna("").astype(str).str.strip() != ""]
+    if real.empty:
+        real = df
+    ordered = real.sort_values("timestamp")
+    if len(ordered) <= cap:
+        return ordered.sort_values("timestamp", ascending=False)
+    recent = ordered.tail(max(1, cap - cap // 3))
+    earliest = ordered.head(cap // 3)
+    return (
+        pd.concat([recent, earliest])
+        .drop_duplicates()
+        .sort_values("timestamp", ascending=False)
+        .head(cap)
+    )
+
+
+def _select_messages(df: pd.DataFrame, terms: list[str], cap: int) -> pd.DataFrame:
+    """Score by (meaning-expanded) terms; fall back to a representative spread."""
+    if df.empty:
+        return df
+    text = df["text"].fillna("").astype(str)
+    if terms:
+        scores = pd.Series(0, index=df.index)
+        for term in terms:
+            scores = scores + text.str.contains(term, case=False, na=False, regex=False).astype(int)
+        hits = df[scores > 0].copy()
+        if not hits.empty:
+            hits["score"] = scores[scores > 0]
+            return hits.sort_values(["score", "timestamp"], ascending=[False, False]).head(cap)
+    return _representative_messages(df, cap)
+
+
+IDENTITY_HINT_RE = re.compile(
+    r"\b(i['’]?m|i am|my name|name['’]?s|this is|it['’]?s me|roommate|girlfriend|boyfriend|"
+    r"friend|brother|sister|mom|dad|mother|father|cousin|wife|husband|partner|"
+    r"we met|met (?:you|at)|works?|working|school|class|major|dorm|team|club|lives?)\b",
+    re.I,
+)
+NAME_TOKEN_RE = re.compile(r"\b[A-Z][a-z]{2,}\b")
+
+
+def _identity_messages(df: pd.DataFrame, cap: int) -> pd.DataFrame:
+    """For 'who is this' questions: pull a richer context, weighted toward messages
+    carrying identity signals (intro / relationship words, mentioned names)."""
+    real = df[df["text"].fillna("").astype(str).str.strip() != ""].copy()
+    if real.empty:
+        return _representative_messages(df, cap)
+    text = real["text"].astype(str)
+    real["_sig"] = (
+        text.str.contains(IDENTITY_HINT_RE).astype(int) * 2
+        + text.str.contains(NAME_TOKEN_RE).astype(int)
+    )
+    strong = real[real["_sig"] > 0].sort_values(["_sig", "timestamp"], ascending=[False, False]).head(cap)
+    spread = _representative_messages(real.drop(columns=["_sig"]), max(4, cap // 3))
+    combined = pd.concat([strong.drop(columns=["_sig"]), spread])
+    if "message_id" in combined.columns:
+        combined = combined.drop_duplicates(subset=["message_id"])
+    else:
+        combined = combined.drop_duplicates()
+    return combined.sort_values("timestamp", ascending=False).head(cap)
+
+
+def _renumber_citations(answer: str, citations: list[dict]) -> tuple[str, list[dict]]:
+    """Keep only the citations the answer actually cites, renumbered [1..k] in
+    first-cited order, and rewrite the answer's bracket markers to match. Stops
+    a broad identity retrieval from showing a wall of unrelated messages."""
+    if not answer or not citations:
+        return answer, citations
+    order: list[int] = []
+    for match in re.finditer(r"\[(\d+)\]", answer):
+        n = int(match.group(1))
+        if 1 <= n <= len(citations) and n not in order:
+            order.append(n)
+    if not order:
+        return answer, citations
+    mapping = {old: idx + 1 for idx, old in enumerate(order)}
+    rewritten = re.sub(
+        r"\[(\d+)\]",
+        lambda m: f"[{mapping[int(m.group(1))]}]" if int(m.group(1)) in mapping else m.group(0),
+        answer,
+    )
+    kept = [citations[old - 1] for old in order]
+    return rewritten, kept
 
 
 def ask_messages_payload(
@@ -1025,28 +1170,26 @@ def ask_messages_payload(
     if not path_exists(messages_path):
         raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
 
-    terms = query_terms(question)
     df = load_messages(str(messages_path))
     if contact:
         df = filter_conversation(df, contact)
     if "text" not in df.columns:
         df["text"] = ""
 
-    text = df["text"].fillna("").astype(str)
-    if terms:
-        scores = pd.Series(0, index=df.index)
-        for term in terms:
-            scores = scores + text.str.contains(term, case=False, na=False, regex=False).astype(int)
-        matches = df[scores > 0].copy()
-        if not matches.empty:
-            matches["score"] = scores[scores > 0]
-            matches = matches.sort_values(["score", "timestamp"], ascending=[False, False])
-        else:
-            matches = df.tail(limit).copy().sort_values("timestamp", ascending=False)
-    else:
-        matches = df.tail(limit).copy().sort_values("timestamp", ascending=False)
+    # Retrieve by MEANING, not literal query words: when AI is on, let the planner
+    # route to the right conversation(s) and expand the query into related terms.
+    plan = _plan_retrieval_safe(df, question, model) if use_ai else None
+    if plan and plan.get("chat_ids"):
+        df = df[df["chat_id"].astype(str).isin(set(plan["chat_ids"]))]
 
-    matches = matches.head(max(1, min(int(limit or 8), 20)))
+    intent = (plan or {}).get("intent", "general")
+    terms = (plan or {}).get("search_terms") or query_terms(question)
+    if intent == "identity":
+        cap = max(1, min(max(int(limit or 8), 24), 30))
+        matches = _identity_messages(df, cap)
+    else:
+        cap = max(1, min(int(limit or 8), 20))
+        matches = _select_messages(df, terms, cap)
     name_map = resolve_contact_names(matches["chat_id"].dropna().astype(str).unique()) if not matches.empty else {}
     citations = [message_row_payload(row, name_map) for _, row in matches.iterrows()]
     scope_label = name_map.get(contact, contact) if contact else "All conversations"
@@ -1054,9 +1197,10 @@ def ask_messages_payload(
     answer = ""
     if use_ai:
         try:
-            answer = ai_ask_answer(str(question or "").strip(), citations, scope_label, model)
+            answer = ai_ask_answer(str(question or "").strip(), citations, scope_label, model, intent=intent)
             if answer:
                 answer_mode = "ai"
+                answer, citations = _renumber_citations(answer, citations)
         except Exception:
             answer = ""
     if not answer:
