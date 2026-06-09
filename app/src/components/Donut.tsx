@@ -10,49 +10,49 @@ type DonutProps = {
   centerLabel: string
   centerSub?: string
   formatValue?: (value: number) => string
+  size?: number
 }
 
-const SIZE = 132
-const RADIUS = 54
-const STROKE = 14
-const CENTER = SIZE / 2
-const CIRC = 2 * Math.PI * RADIUS
-
 // SVG ring with a center total + legend (Tremor DonutChart)
-export function Donut({ segments, centerLabel, centerSub, formatValue }: DonutProps) {
+export function Donut({ segments, centerLabel, centerSub, formatValue, size = 132 }: DonutProps) {
+  const radius = size * 0.41
+  const stroke = size * 0.106
+  const center = size / 2
+  const circ = 2 * Math.PI * radius
+
   const sum = segments.reduce((total, seg) => total + seg.value, 0) || 1
-  const lengths = segments.map((seg) => (seg.value / sum) * CIRC)
+  const lengths = segments.map((seg) => (seg.value / sum) * circ)
   // cumulative start offset per segment, computed immutably
   const offsets = lengths.map((_, index) => lengths.slice(0, index).reduce((a, b) => a + b, 0))
 
   return (
     <div className="donut">
-      <div className="donut-svg">
-        <svg viewBox={`0 0 ${SIZE} ${SIZE}`} role="img" aria-label="Share by segment">
+      <div className="donut-svg" style={{ width: size, height: size }}>
+        <svg viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Share by segment">
           <circle
-            cx={CENTER}
-            cy={CENTER}
-            r={RADIUS}
+            cx={center}
+            cy={center}
+            r={radius}
             fill="none"
             stroke="var(--surface-3)"
-            strokeWidth={STROKE}
+            strokeWidth={stroke}
           />
           {segments.map((seg, index) => {
             const length = lengths[index]
-            const dashArray = `${length} ${CIRC - length}`
+            const dashArray = `${length} ${circ - length}`
             const dashOffset = -offsets[index]
             return (
               <circle
                 key={seg.key}
-                cx={CENTER}
-                cy={CENTER}
-                r={RADIUS}
+                cx={center}
+                cy={center}
+                r={radius}
                 fill="none"
                 stroke={seg.color}
-                strokeWidth={STROKE}
+                strokeWidth={stroke}
                 strokeDasharray={dashArray}
                 strokeDashoffset={dashOffset}
-                transform={`rotate(-90 ${CENTER} ${CENTER})`}
+                transform={`rotate(-90 ${center} ${center})`}
               />
             )
           })}

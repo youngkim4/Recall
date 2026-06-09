@@ -66,6 +66,9 @@ export function HomeView({
 
   const top = ranked[0]
   const topPct = top && totalMessages ? Math.round((Number(top.message_count || 0) / totalMessages) * 100) : 0
+  const topSixTotal = topSix.reduce((sum, contact) => sum + Number(contact.message_count || 0), 0)
+  const topSixShare = totalMessages ? Math.round((topSixTotal / totalMessages) * 100) : 0
+  const topLabel = top ? contactTitle(top) : '—'
   const overviewRead = top
     ? `Across ${formatNumber(contacts.length)} conversation${contacts.length === 1 ? '' : 's'}${
         namedCount ? `, ${formatNumber(namedCount)} of them named` : ''
@@ -141,17 +144,34 @@ export function HomeView({
           )}
         </section>
 
-        <section className="panel">
+        <section className="panel ov-share">
           <div className="panel-head">
             <h3>Share of messages</h3>
           </div>
           {donutSegments.length ? (
-            <Donut
-              segments={donutSegments}
-              centerLabel={formatNumber(totalMessages)}
-              centerSub="messages"
-              formatValue={sharePercent}
-            />
+            <div className="ov-share-body">
+              <Donut
+                segments={donutSegments}
+                centerLabel={formatNumber(totalMessages)}
+                centerSub="messages"
+                formatValue={sharePercent}
+                size={150}
+              />
+              <div className="share-insight">
+                <div className="share-stat">
+                  <span>Most active</span>
+                  <strong>{topLabel} · {topPct}%</strong>
+                </div>
+                <div className="share-stat">
+                  <span>Top 6 share</span>
+                  <strong>{topSixShare}%</strong>
+                </div>
+                <div className="share-stat">
+                  <span>Conversations</span>
+                  <strong>{formatNumber(contacts.length)}</strong>
+                </div>
+              </div>
+            </div>
           ) : (
             <div className="empty-state tall">
               <strong>No data yet.</strong>
