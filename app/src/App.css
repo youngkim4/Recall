@@ -6467,3 +6467,24 @@ button.bar-row:hover .bar-fill {
 .calendar-clear:hover {
   color: var(--accent);
 }
+
+/* Analyze: the conversation list scrolls on its own (below the sticky topbar)
+   while the thread detail scrolls with the page. The heading + search stay
+   pinned; only the rows scroll. */
+.analyze-layout > .conversation-pane {
+  position: sticky;
+  top: 56px;
+  align-self: start;
+  height: calc(100vh - 56px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.analyze-layout .conversation-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+}
