@@ -51,7 +51,24 @@ PLAN_TEXT_FORMAT = {
                     "NOT the literal words of the question. Empty for pure identity lookups."
                 ),
             },
-            "prefer_recent": {"type": "boolean"},
+            "prefer_recent": {
+                "type": "boolean",
+                "description": (
+                    "True unless the user asks about the FIRST or EARLIEST time something "
+                    "happened, in which case false (oldest matches surface first)."
+                ),
+            },
+            "date_from": {
+                "type": "string",
+                "description": (
+                    "YYYY-MM-DD start of the time range the question refers to ('last summer', "
+                    "'in 2023', 'around March'). Empty string when the question has no time anchor."
+                ),
+            },
+            "date_to": {
+                "type": "string",
+                "description": "YYYY-MM-DD end of the time range, or empty string.",
+            },
             "person_focus": {
                 "type": "boolean",
                 "description": (
@@ -62,7 +79,10 @@ PLAN_TEXT_FORMAT = {
                 ),
             },
         },
-        "required": ["intent", "conversation_ids", "search_terms", "prefer_recent", "person_focus"],
+        "required": [
+            "intent", "conversation_ids", "search_terms", "prefer_recent",
+            "date_from", "date_to", "person_focus",
+        ],
     },
 }
 
@@ -204,6 +224,9 @@ def plan_retrieval(
         "say in the group chats they are in, not just their direct thread. "
         "For topical questions, expand into related search terms (synonyms and associated words), "
         "never just repeat the question's own words. "
+        "When the question is anchored in time ('last summer', 'in 2023', 'when did we first...'), "
+        "fill date_from/date_to with the range it refers to, and set prefer_recent false only for "
+        "first/earliest questions. "
         "Return catalog ids like 'c3'. Empty conversation_ids means search across everything."
     )
     history_block = f"Recent conversation with the user:\n{history_text}\n\n" if history_text else ""
@@ -236,10 +259,17 @@ def plan_retrieval(
         if alias in alias_map
     ]
     terms = [str(term).strip() for term in plan.get("search_terms", []) if str(term).strip()]
+
+    def _valid_date(value) -> str:
+        text = str(value or "").strip()
+        return text if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) else ""
+
     return {
         "intent": str(plan.get("intent") or "general"),
         "chat_ids": chat_ids,
         "search_terms": terms[:12],
-        "prefer_recent": bool(plan.get("prefer_recent", False)),
+        "prefer_recent": bool(plan.get("prefer_recent", True)),
+        "date_from": _valid_date(plan.get("date_from")),
+        "date_to": _valid_date(plan.get("date_to")),
         "person_focus": bool(plan.get("person_focus", False)),
     }

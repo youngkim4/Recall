@@ -1300,8 +1300,9 @@ def _representative_messages(df: pd.DataFrame, cap: int) -> pd.DataFrame:
     )
 
 
-def _select_messages(df: pd.DataFrame, terms: list[str], cap: int) -> pd.DataFrame:
-    """Score by (meaning-expanded) terms; fall back to a representative spread."""
+def _select_messages(df: pd.DataFrame, terms: list[str], cap: int, prefer_recent: bool = True) -> pd.DataFrame:
+    """Score by (meaning-expanded) terms; fall back to a representative spread.
+    prefer_recent=False surfaces the EARLIEST matches ("when did we first...")."""
     if df.empty:
         return df
     text = df["text"].fillna("").astype(str)
@@ -1310,7 +1311,7 @@ def _select_messages(df: pd.DataFrame, terms: list[str], cap: int) -> pd.DataFra
         hits = df[scores > 0].copy()
         if not hits.empty:
             hits["score"] = scores[scores > 0]
-            return hits.sort_values(["score", "timestamp"], ascending=[False, False]).head(cap)
+            return hits.sort_values(["score", "timestamp"], ascending=[False, not prefer_recent]).head(cap)
     return _representative_messages(df, cap)
 
 
@@ -1527,6 +1528,16 @@ def ask_messages_payload(
         else:
             df = df[df["chat_id"].astype(str).isin(set(plan_ids))]
 
+    # time-anchored questions ("last summer", "when did we first...") narrow the
+    # range; prefer_recent=false surfaces the earliest matches first
+    date_from = (plan or {}).get("date_from") or ""
+    date_to = (plan or {}).get("date_to") or ""
+    if date_from:
+        df = df[df["timestamp"] >= pd.Timestamp(date_from)]
+    if date_to:
+        df = df[df["timestamp"] < pd.Timestamp(date_to) + pd.Timedelta(days=1)]
+    prefer_recent = bool((plan or {}).get("prefer_recent", True))
+
     emit("status", "Searching your messages…")
     terms = (plan or {}).get("search_terms") or query_terms(question)
     scoped = bool(contact or plan_ids)
@@ -1545,7 +1556,7 @@ def ask_messages_payload(
         # an identity question with no scoped conversation must not harvest
         # "I'm/my name is" lines from the whole archive -- fall back to terms
         cap = max(1, min(int(limit or 8), 20))
-        matches = _select_messages(df, terms, cap)
+        matches = _select_messages(df, terms, cap, prefer_recent=prefer_recent)
 
     name_map = resolve_contact_names(matches["chat_id"].dropna().astype(str).unique()) if not matches.empty else {}
     for cid in set(matches["chat_id"].dropna().astype(str)) if not matches.empty else set():
