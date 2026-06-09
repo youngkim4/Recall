@@ -451,12 +451,12 @@ body.is-resizing .resize-handle::after {
 }
 
 .search-field input:hover {
-  border-color: #bfc5d1;
+  border-color: var(--line);
 }
 
 .search-field input:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(47, 98, 232, 0.12);
+  box-shadow: 0 0 0 3px rgba(193, 60, 39, 0.15);
 }
 
 .field-icon {
@@ -503,8 +503,8 @@ body.is-resizing .resize-handle::after {
 
 .conversation-row.active,
 .report-row.active {
-  background: #f2f5ff;
-  border-color: #cfd9ff;
+  background: rgba(193, 60, 39, 0.06);
+  border-color: rgba(193, 60, 39, 0.28);
 }
 
 .avatar {
@@ -622,7 +622,7 @@ body.is-resizing .resize-handle::after {
 }
 
 .button:hover:not(:disabled) {
-  border-color: #b9c0cd;
+  border-color: var(--line);
   box-shadow: 0 1px 4px rgba(22, 25, 31, 0.07);
 }
 
@@ -652,8 +652,8 @@ body.is-resizing .resize-handle::after {
 
 .button.primary:hover:not(:disabled),
 .button.secondary:hover:not(:disabled) {
-  background: #2457da;
-  border-color: #2457da;
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .button.ghost {
@@ -739,7 +739,7 @@ select:hover,
 input[type="text"]:hover,
 input[type="date"]:hover,
 textarea:hover {
-  border-color: #bfc5d1;
+  border-color: var(--line);
 }
 
 select:focus,
@@ -747,7 +747,7 @@ input[type="text"]:focus,
 input[type="date"]:focus,
 textarea:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(47, 98, 232, 0.12);
+  box-shadow: 0 0 0 3px rgba(193, 60, 39, 0.15);
 }
 
 textarea {
@@ -843,7 +843,7 @@ textarea {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 12px;
-  background: rgba(17, 24, 36, 0.42);
+  background: var(--surface);
   backdrop-filter: blur(18px);
 }
 
@@ -854,7 +854,7 @@ textarea {
 
 .chart-grid {
   fill: none;
-  stroke: rgba(148, 163, 184, 0.14);
+  stroke: rgba(43, 33, 24, 0.10);
   stroke-width: 1;
 }
 
@@ -870,7 +870,7 @@ textarea {
 
 .chart-line {
   fill: none;
-  stroke: #8ea2f5;
+  stroke: var(--accent);
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 3.5;
@@ -900,7 +900,7 @@ textarea {
 }
 
 .chart-crosshair {
-  stroke: #b9c4f5;
+  stroke: var(--accent);
   stroke-dasharray: 4 5;
   stroke-width: 1;
 }
@@ -933,19 +933,19 @@ textarea {
 }
 
 .activity-chart text {
-  fill: #8a93a3;
+  fill: var(--soft);
   font-size: 12px;
   font-weight: 600;
 }
 
 .activity-chart .chart-tick-label {
-  fill: #8a93a3;
+  fill: var(--soft);
   font-size: 10.5px;
   font-weight: 500;
 }
 
 .activity-chart .chart-axis-title {
-  fill: #68707f;
+  fill: var(--muted);
   font-size: 11px;
   font-weight: 600;
 }
@@ -1064,7 +1064,7 @@ textarea {
 
 .report-format-actions a:hover {
   color: var(--accent);
-  border-color: #cfd9ff;
+  border-color: rgba(193, 60, 39, 0.28);
   background: var(--accent-soft);
 }
 
@@ -1494,7 +1494,7 @@ textarea {
 
 .compact-row:hover:not(.static),
 .report-card:hover {
-  border-color: #cfd9ff;
+  border-color: rgba(193, 60, 39, 0.28);
   background: #fbfcff;
   box-shadow: 0 1px 4px rgba(22, 25, 31, 0.06);
 }
@@ -1579,7 +1579,7 @@ textarea {
 
 .search-result-main:hover,
 .citation-row:hover {
-  border-color: #cfd9ff;
+  border-color: rgba(193, 60, 39, 0.28);
   background: #fbfcff;
   box-shadow: 0 1px 4px rgba(22, 25, 31, 0.06);
 }
@@ -1622,7 +1622,7 @@ textarea {
 
 .mini-button:hover {
   color: var(--accent);
-  border-color: #cfd9ff;
+  border-color: rgba(193, 60, 39, 0.28);
   background: var(--accent-soft);
 }
 
@@ -2304,7 +2304,7 @@ select {
 .search-field input::placeholder,
 input::placeholder,
 textarea::placeholder {
-  color: #677386;
+  color: var(--soft);
 }
 
 .search-field input:hover,
@@ -2472,7 +2472,7 @@ textarea:focus {
 .button.primary:hover:not(:disabled),
 .button.secondary:hover:not(:disabled) {
   border-color: transparent;
-  background: linear-gradient(180deg, #9b8fff, var(--accent-hover));
+  background: linear-gradient(180deg, var(--accent), var(--accent-hover));
   box-shadow:
     0 10px 30px rgba(var(--accent-rgb), 0.45),
     inset 0 1px 0 rgba(255, 255, 255, 0.22);
@@ -2485,7 +2485,7 @@ textarea:focus {
 .button:disabled,
 .button.primary:disabled,
 .button.secondary:disabled {
-  color: #647082;
+  color: var(--soft);
   border-color: var(--line);
   background: rgba(255, 255, 255, 0.035);
 }
@@ -2538,12 +2538,12 @@ textarea:focus {
 }
 
 .chart-grid {
-  stroke: rgba(148, 163, 184, 0.12);
+  stroke: rgba(43, 33, 24, 0.09);
 }
 
 .chart-axis,
 .chart-tick {
-  stroke: rgba(148, 163, 184, 0.32);
+  stroke: rgba(43, 33, 24, 0.16);
 }
 
 .chart-area {
@@ -2601,7 +2601,7 @@ textarea:focus {
 .event-row p,
 .event-row blockquote,
 .pattern-row p {
-  color: #c7d0df;
+  color: #423a2d;
 }
 
 .report-tabs {
@@ -2731,7 +2731,7 @@ textarea:focus {
 ::-webkit-scrollbar-thumb {
   border: 2px solid var(--bg);
   border-radius: 999px;
-  background: rgba(148, 163, 184, 0.32);
+  background: rgba(43, 33, 24, 0.16);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -2893,7 +2893,7 @@ textarea:focus {
 
 .chat-bubble p {
   margin: 0;
-  color: #d7dfeb;
+  color: #423a2d;
   font-size: 14px;
   line-height: 1.52;
   white-space: pre-wrap;
@@ -3076,9 +3076,9 @@ textarea:focus {
 
 .visual-stat,
 .visual-card {
-  border: 1px solid rgba(198, 210, 232, 0.14);
+  border: 1px solid rgba(43, 33, 24, 0.12);
   border-radius: 14px;
-  background: rgba(17, 24, 36, 0.48);
+  background: var(--surface);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045), 0 18px 46px rgba(0, 0, 0, 0.18);
   backdrop-filter: blur(18px);
   transition: border-color 140ms ease, background-color 140ms ease;
@@ -3086,8 +3086,8 @@ textarea:focus {
 
 .visual-card:hover,
 .visual-stat:hover {
-  border-color: rgba(198, 210, 232, 0.24);
-  background: rgba(20, 28, 42, 0.56);
+  border-color: rgba(43, 33, 24, 0.2);
+  background: var(--surface-2);
 }
 
 .visual-stat {
@@ -3191,7 +3191,7 @@ textarea:focus {
 .overview-monthly-table {
   align-content: start;
   margin-top: 0;
-  border: 1px solid rgba(198, 210, 232, 0.13);
+  border: 1px solid rgba(43, 33, 24, 0.12);
   border-radius: 12px;
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.03);
@@ -3234,7 +3234,7 @@ textarea:focus {
 .summary-card p {
   max-width: 900px;
   margin: 0;
-  color: #c7d0df;
+  color: #423a2d;
   font-size: 14px;
   line-height: 1.55;
 }
@@ -3271,14 +3271,14 @@ textarea:focus {
 
 .balance-kicker.teal {
   color: var(--data-teal);
-  border-color: rgba(45, 212, 191, 0.28);
-  background: rgba(45, 212, 191, 0.1);
+  border-color: rgba(93, 123, 103, 0.28);
+  background: rgba(93, 123, 103, 0.1);
 }
 
 .balance-kicker.violet {
   color: var(--accent-2);
-  border-color: rgba(192, 139, 255, 0.28);
-  background: rgba(192, 139, 255, 0.1);
+  border-color: rgba(138, 88, 107, 0.28);
+  background: rgba(138, 88, 107, 0.1);
 }
 
 .balance-copy strong {
@@ -3369,7 +3369,7 @@ textarea:focus {
   display: grid;
   gap: 5px;
   min-height: 78px;
-  border: 1px solid rgba(198, 210, 232, 0.13);
+  border: 1px solid rgba(43, 33, 24, 0.12);
   border-radius: 10px;
   padding: 12px;
   background: rgba(255, 255, 255, 0.045);
@@ -3383,7 +3383,7 @@ textarea:focus {
 }
 
 .balance-metric.violet:hover {
-  border-color: rgba(192, 139, 255, 0.4);
+  border-color: rgba(138, 88, 107, 0.4);
 }
 
 .balance-metric span,
@@ -3501,7 +3501,7 @@ textarea:focus {
 .media-mini-stats div {
   display: grid;
   gap: 4px;
-  border: 1px solid rgba(198, 210, 232, 0.13);
+  border: 1px solid rgba(43, 33, 24, 0.12);
   border-radius: 9px;
   padding: 10px;
   background: rgba(255, 255, 255, 0.04);
@@ -3603,7 +3603,7 @@ textarea:focus {
   inset: 34px;
   display: grid;
   place-content: center;
-  border: 1px solid rgba(198, 210, 232, 0.18);
+  border: 1px solid rgba(43, 33, 24, 0.16);
   border-radius: 999px;
   background: rgba(10, 15, 24, 0.78);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
@@ -3837,7 +3837,7 @@ textarea:focus {
   -webkit-line-clamp: 2;
   overflow: hidden;
   margin: 8px 0 0;
-  color: #c7d0df;
+  color: #423a2d;
   font-size: 13px;
   line-height: 1.42;
 }
@@ -3848,7 +3848,7 @@ textarea:focus {
   bottom: 0;
   height: 3px;
   border-radius: 999px 0 0 999px;
-  background: rgba(192, 139, 255, 0.82);
+  background: rgba(138, 88, 107, 0.82);
 }
 
 .timeline-card,
@@ -4749,7 +4749,7 @@ input[readonly],
 }
 
 .chart-area {
-  fill: rgba(0, 112, 243, 0.13);
+  fill: rgba(193, 60, 39, 0.13);
 }
 
 .chart-point {
@@ -5092,9 +5092,58 @@ input[readonly],
 .ov-grid {
   display: grid;
   grid-template-columns: 1.5fr 1fr;
-  align-items: start;
+  align-items: stretch;
   gap: 16px;
   margin-top: 16px;
+}
+
+/* Share card: fill the height beside the taller list — donut + insight,
+   vertically centered so the space reads as intentional, not a gap. */
+.ov-share {
+  display: flex;
+  flex-direction: column;
+}
+
+.ov-share-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 22px;
+  padding-top: 4px;
+}
+
+.share-insight {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+
+.share-stat {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.share-stat span {
+  color: var(--soft);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.share-stat strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Bordered content panel (borders, not shadows) */
@@ -5149,7 +5198,7 @@ input[readonly],
 }
 
 button.bar-row:hover .bar-fill {
-  background: rgba(99, 102, 241, 0.22);
+  background: rgba(193, 60, 39, 0.22);
 }
 
 .bar-label {
@@ -5400,7 +5449,7 @@ button.bar-row:hover .bar-fill {
 }
 
 .balance-segment.received {
-  background: rgba(99, 102, 241, 0.32);
+  background: rgba(138, 88, 107, 0.32);
 }
 
 /* Flatten nested mini-boxes (boxes-inside-boxes read as vibe-coded) */
@@ -5877,7 +5926,7 @@ button.bar-row:hover .bar-fill {
   fill: var(--text);
 }
 
-/* ---- Timeline / pattern body text: readable warm ink (was #c7d0df) ---- */
+/* ---- Timeline / pattern body text: readable warm ink (was #423a2d) ---- */
 .event-row p,
 .event-row blockquote,
 .pattern-row p {
@@ -6057,4 +6106,364 @@ button.bar-row:hover .bar-fill {
 
 .home-hero.ov-read .home-actions {
   flex: none;
+}
+
+/* ============================================================
+   Chat view — warm paper. Conversational answer is the hero;
+   source messages are brought up on demand, never dumped.
+   ============================================================ */
+
+/* assistant reads as clean prose on paper, not a boxed bubble */
+.chat-message.assistant .chat-bubble {
+  border: none;
+  padding: 2px 0 0;
+  background: none;
+}
+
+.chat-message.assistant .chat-bubble.typing {
+  padding: 8px 2px;
+}
+
+/* the question keeps a soft accent pill */
+.chat-message.user .chat-bubble {
+  border-color: rgba(var(--accent-rgb), 0.22);
+  background: rgba(var(--accent-rgb), 0.08);
+}
+
+/* avatar mark stays legible on the accent chip */
+.chat-avatar,
+.chat-message.assistant .chat-avatar {
+  color: #fff8f0;
+}
+
+/* answer + question text in warm ink (kills the leftover blue) */
+.chat-bubble p,
+.answer-body p,
+.answer-body li {
+  margin: 0;
+  color: var(--text);
+  font-size: 14.5px;
+  line-height: 1.62;
+  white-space: normal;
+}
+
+.answer-body {
+  display: grid;
+  gap: 10px;
+}
+
+.answer-body strong {
+  color: var(--text);
+  font-weight: 680;
+}
+
+.answer-body .answer-list {
+  display: grid;
+  gap: 4px;
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+
+/* inline citation marker — a quiet nod, not a literal excerpt */
+.cite-ref {
+  margin-left: 2px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 680;
+  line-height: 1.6;
+  vertical-align: super;
+}
+
+/* "N referenced messages" — collapsed by default */
+.chat-refs {
+  margin-top: 14px;
+}
+
+.chat-refs > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  list-style: none;
+  cursor: pointer;
+}
+
+.chat-refs > summary::-webkit-details-marker {
+  display: none;
+}
+
+.chat-refs > summary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform 140ms ease;
+}
+
+.chat-refs[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.chat-refs > summary:hover {
+  color: var(--accent);
+}
+
+.chat-refs-count {
+  display: grid;
+  place-items: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent);
+  font-size: 10px;
+}
+
+.chat-refs-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.chat-ref-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 9px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.chat-ref-row:hover {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  background: rgba(var(--accent-rgb), 0.04);
+}
+
+.chat-ref-index {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: rgba(var(--accent-rgb), 0.1);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.chat-ref-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.chat-ref-head {
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.chat-ref-text {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.chat-ref-text.outbound {
+  color: var(--accent);
+}
+
+/* ============================================================
+   DateField — themed date picker + calendar popover (replaces
+   the native browser calendar, which couldn't be themed).
+   ============================================================ */
+
+.datefield {
+  position: relative;
+  width: 100%;
+}
+
+.datefield-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.datefield-trigger:hover {
+  border-color: rgba(var(--accent-rgb), 0.4);
+}
+
+.datefield-trigger.is-open {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.15);
+}
+
+.datefield-placeholder {
+  color: var(--soft);
+}
+
+.datefield .calendar-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+}
+
+.calendar-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  width: 268px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 18px 44px rgba(43, 33, 24, 0.16);
+}
+
+.calendar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.calendar-head strong {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.calendar-nav {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color 140ms ease, color 140ms ease;
+}
+
+.calendar-nav:hover {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  color: var(--accent);
+}
+
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 4px;
+}
+
+.calendar-weekdays span {
+  padding: 4px 0;
+  color: var(--soft);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-align: center;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.calendar-day {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.calendar-day:hover {
+  background: rgba(var(--accent-rgb), 0.1);
+}
+
+.calendar-day.outside {
+  color: var(--soft);
+}
+
+.calendar-day.today {
+  color: var(--accent);
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.45);
+}
+
+.calendar-day.selected {
+  background: var(--accent);
+  color: #fff8f0;
+  font-weight: 600;
+}
+
+.calendar-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.calendar-clear {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.calendar-clear:hover {
+  color: var(--accent);
 }
