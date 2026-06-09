@@ -57,6 +57,22 @@ export function prettyContactId(value?: string) {
   return value
 }
 
+// Label for a contact that is NOT saved in Contacts. Never shows a full
+// number — keeps last 4 digits so the user can still recognize the thread.
+export function contactLabel(displayName?: string, chatId?: string) {
+  const name = (displayName || '').trim()
+  if (name) return name
+  const id = (chatId || '').trim()
+  if (!id) return 'Unsaved contact'
+  if (id.startsWith('chat')) {
+    const tail = id.replace(/\D/g, '').slice(-4)
+    return tail ? `Group ${tail}` : 'Group chat'
+  }
+  if (id.includes('@')) return 'Unsaved contact'
+  const digits = id.replace(/\D/g, '')
+  return digits ? `Unsaved contact ·${digits.slice(-4)}` : 'Unsaved contact'
+}
+
 export function contactTitle(contact?: Contact) {
   if (!contact) return 'Select a conversation'
   return contact.display_name || contact.displayName || displayContact(contact.chat_id)

@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { SparkIcon } from './Icons'
-import { recallApi } from '../lib/api'
-import { contactTitle, isOutbound, prettyContactId, shortDateTime } from '../lib/format'
+import { contactLabel, contactTitle, isOutbound, shortDateTime } from '../lib/format'
 import { modelLabel } from '../lib/models'
-import type { AskResponse, Contact, Defaults } from '../types'
+import { chatStore } from '../lib/chatStore'
+import type { Contact, Defaults } from '../types'
 
 type AskViewProps = {
   defaults: Defaults | null
@@ -13,57 +13,12 @@ type AskViewProps = {
   onSelectContact: (contact: Contact) => void
 }
 
-type ChatMessage = {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  response?: AskResponse
-}
-
-type SavedChat = {
-  id: string
-  title: string
-  scope: string
-  messages: ChatMessage[]
-  createdAt: number
-  updatedAt: number
-}
-
-const CHATS_KEY = 'recall.chats.v1'
-
 const starterPrompts = [
   'What changed between us over time?',
   'Find moments where trust came up.',
   'What did we talk about around travel?',
   'Summarize the most emotional messages.',
 ]
-
-function readChats(): SavedChat[] {
-  try {
-    const raw = window.localStorage.getItem(CHATS_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as SavedChat[]
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-function storeChats(chats: SavedChat[]) {
-  try {
-    window.localStorage.setItem(CHATS_KEY, JSON.stringify(chats))
-  } catch {
-    // Chat history is best-effort; the app still works without storage.
-  }
-}
-
-function makeId(prefix: string) {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-function nowMs() {
-  return Date.now()
-}
 
 function relativeTime(ms: number) {
   const diff = Date.now() - ms
@@ -77,13 +32,68 @@ function relativeTime(ms: number) {
   return new Date(ms).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
+const INLINE_PATTERN = /(\*\*[^*]+\*\*|\[\d+\])/g
+
+// minimal inline formatter: **bold** and [n] citation markers -> react nodes
+function renderInline(text: string, keyBase: string): ReactNode[] {
+  return text.split(INLINE_PATTERN).map((part, index) => {
+    if (!part) return null
+    const bold = /^\*\*([^*]+)\*\*$/.exec(part)
+    if (bold) return <strong key={`${keyBase}-b${index}`}>{bold[1]}</strong>
+    const cite = /^\[(\d+)\]$/.exec(part)
+    if (cite)
+      return (
+        <sup key={`${keyBase}-c${index}`} className="cite-ref">
+          {cite[1]}
+        </sup>
+      )
+    return <span key={`${keyBase}-t${index}`}>{part}</span>
+  })
+}
+
+// render the assistant answer as conversational prose: paragraphs, soft
+// line breaks, simple bullet lists, inline bold and citation markers
+function AnswerBody({ text }: { text: string }) {
+  const blocks = text.trim().split(/\n{2,}/).filter(Boolean)
+  return (
+    <div className="answer-body">
+      {blocks.map((block, bi) => {
+        const lines = block.split('\n')
+        const isList = lines.length > 0 && lines.every((line) => /^\s*[-*]\s+/.test(line))
+        if (isList) {
+          return (
+            <ul key={`blk-${bi}`} className="answer-list">
+              {lines.map((line, li) => (
+                <li key={`blk-${bi}-li-${li}`}>
+                  {renderInline(line.replace(/^\s*[-*]\s+/, ''), `blk-${bi}-${li}`)}
+                </li>
+              ))}
+            </ul>
+          )
+        }
+        return (
+          <p key={`blk-${bi}`}>
+            {lines.map((line, li) => (
+              <span key={`blk-${bi}-ln-${li}`}>
+                {renderInline(line, `blk-${bi}-${li}`)}
+                {li < lines.length - 1 ? <br /> : null}
+              </span>
+            ))}
+          </p>
+        )
+      })}
+    </div>
+  )
+}
+
 export function AskView({ defaults, model, onModelChange, contacts, onSelectContact }: AskViewProps) {
-  const [chats, setChats] = useState<SavedChat[]>(() => readChats())
-  const [activeChatId, setActiveChatId] = useState<string | null>(null)
+  const { chats, activeChatId, pending, errors } = useSyncExternalStore(
+    chatStore.subscribe,
+    chatStore.getState,
+  )
   const [draft, setDraft] = useState('')
   const [scope, setScope] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [scopeChatId, setScopeChatId] = useState<string | null>(activeChatId)
   const threadRef = useRef<HTMLDivElement | null>(null)
 
   const activeChat = useMemo(
@@ -91,97 +101,45 @@ export function AskView({ defaults, model, onModelChange, contacts, onSelectCont
     [chats, activeChatId],
   )
   const messages = activeChat?.messages ?? []
+  const isPending = activeChatId ? Boolean(pending[activeChatId]) : false
+  const error = activeChatId ? errors[activeChatId] ?? '' : ''
+
+  // reset the composer scope when the active chat changes (no effect needed)
+  if (activeChatId !== scopeChatId) {
+    setScopeChatId(activeChatId)
+    setScope(activeChat?.scope ?? '')
+  }
 
   useEffect(() => {
     threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages.length, loading])
+  }, [messages.length, isPending])
 
   function newChat() {
-    setActiveChatId(null)
+    chatStore.setActive(null)
     setDraft('')
-    setError('')
   }
 
   function openChat(id: string) {
-    const chat = chats.find((item) => item.id === id)
-    setActiveChatId(id)
-    setScope(chat?.scope ?? '')
+    chatStore.setActive(id)
     setDraft('')
-    setError('')
   }
 
   function deleteChat(id: string) {
-    setChats((current) => {
-      const next = current.filter((chat) => chat.id !== id)
-      storeChats(next)
-      return next
-    })
-    if (activeChatId === id) setActiveChatId(null)
+    chatStore.deleteChat(id)
   }
 
-  async function submit(nextQuestion = draft) {
+  function submit(nextQuestion = draft) {
     const question = nextQuestion.trim()
-    if (!defaults?.messagesPath || !question || loading) return
-
-    const userMessage: ChatMessage = { id: makeId('user'), role: 'user', content: question }
-    const now = nowMs()
-    const chatId = activeChat ? activeChat.id : makeId('chat')
-
-    setChats((current) => {
-      const exists = current.some((chat) => chat.id === chatId)
-      const next = exists
-        ? current.map((chat) =>
-            chat.id === chatId
-              ? { ...chat, messages: [...chat.messages, userMessage], updatedAt: now }
-              : chat,
-          )
-        : [
-            {
-              id: chatId,
-              title: question.slice(0, 60),
-              scope,
-              messages: [userMessage],
-              createdAt: now,
-              updatedAt: now,
-            },
-            ...current,
-          ]
-      storeChats(next)
-      return next
-    })
-    setActiveChatId(chatId)
+    if (!defaults?.messagesPath || !question) return
+    if (activeChatId && pending[activeChatId]) return
     setDraft('')
-    setLoading(true)
-    setError('')
-
-    try {
-      const payload = await recallApi.ask({
-        messagesPath: defaults.messagesPath,
-        question,
-        contact: scope,
-        model,
-        limit: 10,
-      })
-      const assistantMessage: ChatMessage = {
-        id: makeId('assistant'),
-        role: 'assistant',
-        content: payload.answer,
-        response: payload,
-      }
-      setChats((current) => {
-        const next = current.map((chat) =>
-          chat.id === chatId
-            ? { ...chat, messages: [...chat.messages, assistantMessage], updatedAt: nowMs() }
-            : chat,
-        )
-        storeChats(next)
-        return next
-      })
-    } catch (apiError) {
-      setError(apiError instanceof Error ? apiError.message : 'Unable to query messages.')
-    } finally {
-      setLoading(false)
-    }
+    void chatStore.send(question, scope, {
+      messagesPath: defaults.messagesPath,
+      question,
+      contact: scope,
+      model,
+      limit: 10,
+    })
   }
 
   function openCitation(chatId: string) {
@@ -232,35 +190,41 @@ export function AskView({ defaults, model, onModelChange, contacts, onSelectCont
                   <div className="chat-meta">
                     <strong>{message.role === 'user' ? 'You' : 'Recall'}</strong>
                   </div>
-                  <p>{message.content}</p>
-                  {message.response ? (
-                    <div className="chat-evidence">
-                      {message.response.terms.length ? (
-                        <div className="term-list">
-                          {message.response.terms.map((term) => (
-                            <span key={term}>{term}</span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {message.response.citations.length ? (
-                        <div className="citation-list compact">
-                          {message.response.citations.map((citation) => (
-                            <button
-                              key={`${citation.chatId}-${citation.timestamp}-${citation.text.slice(0, 20)}`}
-                              type="button"
-                              className="citation-row"
-                              onClick={() => openCitation(citation.chatId)}
-                            >
-                              <span>
-                                {citation.displayName || prettyContactId(citation.chatId)}{' '}
-                                / {shortDateTime(citation.timestamp)}
+                  {message.role === 'assistant' ? (
+                    <AnswerBody text={message.content} />
+                  ) : (
+                    <p>{message.content}</p>
+                  )}
+                  {message.role === 'assistant' &&
+                  message.response &&
+                  message.response.citations.length ? (
+                    <details className="chat-refs">
+                      <summary>
+                        <span className="chat-refs-count">{message.response.citations.length}</span>
+                        referenced {message.response.citations.length === 1 ? 'message' : 'messages'}
+                      </summary>
+                      <div className="chat-refs-list">
+                        {message.response.citations.map((citation, idx) => (
+                          <button
+                            key={`${citation.chatId}-${citation.timestamp}-${idx}`}
+                            type="button"
+                            className="chat-ref-row"
+                            onClick={() => openCitation(citation.chatId)}
+                          >
+                            <span className="chat-ref-index">{idx + 1}</span>
+                            <span className="chat-ref-body">
+                              <span className="chat-ref-head">
+                                {contactLabel(citation.displayName, citation.chatId)} ·{' '}
+                                {shortDateTime(citation.timestamp)}
                               </span>
-                              <p className={isOutbound(citation) ? 'outbound' : ''}>{citation.text || '(empty)'}</p>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
+                              <span className={`chat-ref-text ${isOutbound(citation) ? 'outbound' : ''}`}>
+                                {citation.text || '(empty)'}
+                              </span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </details>
                   ) : null}
                 </div>
               </article>
@@ -278,7 +242,7 @@ export function AskView({ defaults, model, onModelChange, contacts, onSelectCont
             </div>
           )}
 
-          {loading ? (
+          {isPending ? (
             <article className="chat-message assistant">
               <div className="chat-avatar">R</div>
               <div className="chat-bubble typing">
@@ -332,7 +296,7 @@ export function AskView({ defaults, model, onModelChange, contacts, onSelectCont
             <button
               type="submit"
               className="chat-send"
-              disabled={!defaults?.messagesPath || !draft.trim() || loading}
+              disabled={!defaults?.messagesPath || !draft.trim() || isPending}
               aria-label="Send message"
             >
               <SparkIcon className="button-icon" />
