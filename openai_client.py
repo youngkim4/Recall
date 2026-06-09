@@ -80,9 +80,21 @@ def _call_openai(
 
             resp = client.responses.create(**kwargs)
             content = response_output_text(resp)
-            if not content:
-                logger.warning("OpenAI returned None content")
-                return ""
+            status = getattr(resp, "status", None)
+            bad_status = isinstance(status, str) and status in {"incomplete", "failed", "cancelled"}
+            # an empty or truncated response silently drops data downstream
+            # (whole report periods vanish) -- treat it as retryable
+            if not content or bad_status:
+                if attempt < max_retries:
+                    wait = 2 ** attempt * 2
+                    logger.warning(
+                        "OpenAI returned %s response (status=%s); retrying in %ss",
+                        "empty" if not content else "incomplete", status, wait,
+                    )
+                    time.sleep(wait)
+                    continue
+                logger.warning("OpenAI returned empty/incomplete content after retries (status=%s)", status)
+                return content or ""
             return content
         except RateLimitError:
             if attempt < max_retries:

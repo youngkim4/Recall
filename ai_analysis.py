@@ -27,6 +27,14 @@ from openai_client import _call_openai
 
 logger = logging.getLogger(__name__)
 
+# Same voice + privacy contract as the chat pipeline: the report belongs to the
+# archive's owner, and raw handles must never appear in prose.
+VOICE_PRIVACY_PROMPT = (
+    " Write for the archive's owner: address them as 'you' (lines marked ME are theirs), and refer to "
+    "the other person by their name. Never output a raw phone number or email address in the analysis; "
+    "use the person's name, or 'an unsaved contact' if there is none."
+)
+
 
 def _parse_json_events(content: str) -> List[Dict]:
     """Parse JSON events from AI response, handling markdown code fences."""
@@ -78,6 +86,7 @@ def _extract_events_for_period(
         "You are analyzing a specific time period of an iMessage conversation. "
         "Identify the most significant events, turning points, and meaningful moments. "
         "If context from previous periods is provided, use it to understand ongoing themes and references."
+        + VOICE_PRIVACY_PROMPT
     )
     user = (
         f"# Event Extraction - {period_label}\n\n"
@@ -126,6 +135,7 @@ def ai_extract_events(
         system = (
             "You are analyzing a complete iMessage conversation to identify the most significant events. "
             "You have access to every message. Identify real turning points, not just busy days."
+            + VOICE_PRIVACY_PROMPT
         )
         user = (
             f"# Event Extraction Request\n\n"
@@ -169,8 +179,14 @@ def ai_extract_events(
                 period_label = futures[future]
                 if pbar:
                     pbar.set_description(f"Events: {period_label}")
-                chunk_events = future.result()
-                items.extend(chunk_events)
+                try:
+                    items.extend(future.result())
+                except Exception as exc:
+                    # one failed period must not destroy the whole (expensive) report
+                    logger.warning(
+                        "Event extraction failed for %s: %s -- continuing without it",
+                        period_label, exc,
+                    )
 
     rows = []
     for it in items:
@@ -253,6 +269,7 @@ def _summarize_period(
         "You are analyzing a specific time period of an iMessage conversation. "
         "Provide an insightful summary that captures the essence of this period. "
         "If context from previous periods is provided, note how themes continue, evolve, or change."
+        + VOICE_PRIVACY_PROMPT
     )
     user = (
         f"# {period_label} - {contact}\n\n"
@@ -341,6 +358,7 @@ def ai_summary(
         system = (
             "You are analyzing a complete iMessage conversation history. You have access to every message. "
             "Produce a deeply insightful, emotionally intelligent analysis of this relationship."
+            + VOICE_PRIVACY_PROMPT
         )
         user = (
             f"# Conversation Analysis Request\n\n"
@@ -381,10 +399,15 @@ def ai_summary(
         if pbar:
             pbar.set_description(f"Summary: {period_label}")
 
-        summary, context_for_next = _summarize_period(
-            client, contact, period_label, chunk_text, len(chunk_df), prior_context,
-            model=model,
-        )
+        try:
+            summary, context_for_next = _summarize_period(
+                client, contact, period_label, chunk_text, len(chunk_df), prior_context,
+                model=model,
+            )
+        except Exception as exc:
+            # keep the report alive; flag the gap instead of losing everything
+            logger.warning("Summary failed for %s: %s -- continuing without it", period_label, exc)
+            summary, context_for_next = f"*(Analysis for {period_label} could not be generated.)*", ""
         period_summaries.append(f"## {period_label}\n\n{summary}")
 
         if context_for_next:
@@ -398,6 +421,7 @@ def ai_summary(
     system = (
         "You are synthesizing yearly summaries of an iMessage conversation into a cohesive analysis. "
         "Create a unified narrative that captures the full arc of the relationship over time."
+        + VOICE_PRIVACY_PROMPT
     )
     user = (
         f"# Final Synthesis - {contact}\n\n"

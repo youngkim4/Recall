@@ -102,17 +102,26 @@ def run_cli(
     else:
         print(f"📊 Sending {len(conv):,} messages to GPT (~{total_tokens:,} tokens)...")
 
+    # prompts get the saved contact name, never the raw handle; file paths keep
+    # using the raw id so report locations stay stable
+    try:
+        from contact_names import resolve_contact_names
+
+        contact_display = resolve_contact_names([contact]).get(contact, "") or contact
+    except Exception:
+        contact_display = contact
+
     with tqdm(total=2, desc="Analyzing", unit="step") as pbar:
         target_events = min(100, max(20, len(conv) // 1000))
         events_df = ai_extract_events(
-            contact, stats, conv, target_events, pbar,
+            contact_display, stats, conv, target_events, pbar,
             precomputed_chunks=chunks, total_tokens=total_tokens, all_messages=all_messages,
             model=model,
         )
         pbar.update(1)
 
         summary_text = ai_summary(
-            contact, stats, conv, events_df, pbar,
+            contact_display, stats, conv, events_df, pbar,
             precomputed_chunks=chunks, total_tokens=total_tokens, all_messages=all_messages,
             model=model,
         )
