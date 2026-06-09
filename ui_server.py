@@ -990,11 +990,14 @@ def contact_label(citation: dict) -> str:
 def citation_context(citations: list[dict]) -> str:
     lines = []
     for idx, citation in enumerate(citations, start=1):
-        name = citation.get("senderName") or contact_label(citation)
+        outbound = str(citation.get("isFromMe")).strip().lower() in {"1", "true"}
+        convo = contact_label(citation)
+        speaker = "You" if outbound else (citation.get("senderName") or convo)
         timestamp = citation.get("timestamp") or "unknown time"
-        speaker = "me" if str(citation.get("isFromMe")).lower() in {"1", "true"} else "them"
         text = str(citation.get("text") or "").replace("\n", " ").strip()
-        lines.append(f"[{idx}] {name} / {timestamp} / {speaker}: {text}")
+        # name the conversation only when it adds info (a group, or You speaking)
+        location = f" in {convo}" if (outbound or (convo and convo != speaker)) else ""
+        lines.append(f"[{idx}] {speaker}{location} ({timestamp}): {text}")
     return "\n".join(lines)
 
 
@@ -1034,7 +1037,8 @@ def ai_ask_answer(
         "Answer like a sharp, helpful chatbot: reason over the message excerpts to actually answer the "
         "question -- infer what they imply (who people are, relationships, what happened), don't just restate them. "
         "Ground every claim in the excerpts and separate what is directly stated from what you are inferring. "
-        "Refer to people only by the label shown before each excerpt. "
+        "The archive belongs to the person you are talking to: refer to them as 'you', never as 'me' or by a "
+        "name -- messages labeled 'You' are theirs. Refer to everyone else by the name shown before each excerpt. "
         "Never output a raw phone number or email address as a person's identity; "
         "if someone has no saved contact name, call them an unsaved contact. "
         "Cite evidence inline with bracket numbers like [1]. Keep the answer concise unless the user asks for detail."
