@@ -1,9 +1,10 @@
 """Conversation loading, normalization, statistics, formatting, and chunking."""
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import tiktoken
@@ -260,17 +261,56 @@ def progression_series(conv: pd.DataFrame) -> pd.DataFrame:
     return monthly.sort_index().reset_index()
 
 
-def format_all_messages(conv: pd.DataFrame) -> str:
-    """Format all messages for GPT context."""
-    conv = conv.copy()
+def _speaker_labels(conv: pd.DataFrame, sender_names: Optional[Dict[str, str]] = None) -> pd.Series:
+    """Per-row speaker labels: ME for the owner; everyone else by resolved name.
+    In multi-party (group) chats an unresolved sender gets a masked per-person
+    label so distinct people never collapse into one 'THEM'."""
     is_from_me = conv["is_from_me"] if "is_from_me" in conv.columns else pd.Series([pd.NA] * len(conv), index=conv.index)
-    conv["direction"] = is_from_me.apply(direction_label)
-    conv["ts"] = conv["timestamp"].dt.strftime("%Y-%m-%d %H:%M")
-    lines = conv.apply(lambda r: f"[{r['ts']}] {r['direction']}: {str(r['text'])}", axis=1).tolist()
-    return "\n".join(lines)
+    direction = is_from_me.apply(direction_label)
+    senders = (
+        conv["sender"].fillna("").astype(str)
+        if "sender" in conv.columns
+        else pd.Series([""] * len(conv), index=conv.index)
+    )
+    multi_party = senders[senders != ""].nunique() > 1
+
+    def label(index) -> str:
+        if direction.loc[index] == "ME":
+            return "ME"
+        sender = senders.loc[index]
+        if sender_names and sender:
+            name = str(sender_names.get(sender) or "").strip()
+            if name:
+                return name
+        if multi_party and sender:
+            digits = re.sub(r"\D", "", sender)
+            return f"Unsaved (…{digits[-4:]})" if digits else "Unsaved"
+        return direction.loc[index]
+
+    return pd.Series([label(i) for i in conv.index], index=conv.index)
 
 
-_tokenizer = tiktoken.get_encoding("cl100k_base")
+def _formatted_lines(conv: pd.DataFrame, sender_names: Optional[Dict[str, str]] = None) -> pd.Series:
+    ts = conv["timestamp"].dt.strftime("%Y-%m-%d %H:%M")
+    who = _speaker_labels(conv, sender_names)
+    text = conv["text"].astype(str)
+    return "[" + ts + "] " + who + ": " + text
+
+
+def format_all_messages(conv: pd.DataFrame, sender_names: Optional[Dict[str, str]] = None) -> str:
+    """Format all messages for GPT context."""
+    return "\n".join(_formatted_lines(conv, sender_names).tolist())
+
+
+def _load_tokenizer():
+    try:
+        # gpt-5.x / gpt-4o tokenizer; cl100k overcounts these models ~10-20%
+        return tiktoken.get_encoding("o200k_base")
+    except Exception:
+        return tiktoken.get_encoding("cl100k_base")
+
+
+_tokenizer = _load_tokenizer()
 
 
 def estimate_tokens(text: str) -> int:
@@ -288,18 +328,22 @@ def truncate_to_tokens(text: str, max_tokens: int) -> str:
     return _tokenizer.decode(tokens[-max_tokens:])
 
 
-def chunk_by_year(conv: pd.DataFrame, max_tokens: int = TOKEN_BUDGET) -> List[Tuple[str, pd.DataFrame, str]]:
+def chunk_by_year(
+    conv: pd.DataFrame,
+    max_tokens: int = TOKEN_BUDGET,
+    sender_names: Optional[Dict[str, str]] = None,
+) -> List[Tuple[str, pd.DataFrame, str]]:
     """
-    Split conversation by year. If a year exceeds token limit, split into smaller periods.
-    Hierarchy: Year -> Half -> Quarter -> Month -> Weeks -> Days
+    Split conversation into chronological chunks that fit the token budget.
+    Years are the base unit (split Year -> Half -> Quarter -> Month -> Weeks ->
+    Days when one year alone exceeds the budget), then consecutive small
+    periods are PACKED together up to the budget -- a 12-year history becomes a
+    few large chunks instead of 12 tiny calls, keeping cross-year arcs intact.
     Returns list of (period_label, dataframe, formatted_text) tuples.
     All messages are included - nothing is dropped.
     """
     conv = conv.copy()
-    is_from_me = conv["is_from_me"] if "is_from_me" in conv.columns else pd.Series([pd.NA] * len(conv), index=conv.index)
-    conv["direction"] = is_from_me.apply(direction_label)
-    conv["ts"] = conv["timestamp"].dt.strftime("%Y-%m-%d %H:%M")
-    conv["formatted"] = conv.apply(lambda r: f"[{r['ts']}] {r['direction']}: {str(r['text'])}", axis=1)
+    conv["formatted"] = _formatted_lines(conv, sender_names)
     conv["year"] = conv["timestamp"].dt.year
     conv["month"] = conv["timestamp"].dt.month
     conv["week"] = conv["timestamp"].dt.isocalendar().week.astype(int)
@@ -380,4 +424,26 @@ def chunk_by_year(conv: pd.DataFrame, max_tokens: int = TOKEN_BUDGET) -> List[Tu
                             continue
                         add_quarter_chunk(f"{year} Q{q}", q_df)
 
-    return chunks
+    return _pack_chunks(chunks, max_tokens)
+
+
+def _pack_chunks(
+    chunks: List[Tuple[str, pd.DataFrame, str]],
+    max_tokens: int,
+) -> List[Tuple[str, pd.DataFrame, str]]:
+    """Greedily merge consecutive chunks up to the budget so the model sees
+    multi-year arcs in one pass instead of fragmented per-year calls."""
+    packed: List[List] = []
+    for label, df, text in chunks:
+        tokens = estimate_tokens(text)
+        if packed and packed[-1][3] + tokens + 1 <= max_tokens:
+            first_label = packed[-1][0].split(" – ")[0]
+            packed[-1] = [
+                f"{first_label} – {label}",
+                pd.concat([packed[-1][1], df]),
+                packed[-1][2] + "\n" + text,
+                packed[-1][3] + tokens + 1,
+            ]
+        else:
+            packed.append([label, df, text, tokens])
+    return [(label, df, text) for label, df, text, _ in packed]

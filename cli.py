@@ -85,22 +85,30 @@ def estimate_cost(messages_csv: str, contact: str, model: str = DEFAULT_MODEL, s
 
     needs_chunking = input_tokens > token_budget
 
-    # Estimate periods (years, or half-years for large years)
+    # years are display-only; packed chunks fill the budget, so the request
+    # count tracks input/budget rather than the number of calendar years
     years = []
     if needs_chunking and not contact_df.empty:
         years = sorted(contact_df["timestamp"].dt.year.dropna().unique())
-    num_periods = len(years) if years else 1
 
-    # With chunking: each period gets processed, plus synthesis calls
+    # The pipeline sends the conversation TWICE (event extraction + summary).
     if needs_chunking:
-        effective_input = input_tokens + (num_periods * 5000)
-        output_tokens = num_periods * 3000 + 5000
+        num_requests = max(1, -(-input_tokens // token_budget))
+        prompt_overhead = 2 * num_requests * 4000
+        synthesis_input = num_requests * 3500 + 8000
+        effective_input = 2 * input_tokens + prompt_overhead + synthesis_input
+        visible_output = num_requests * 6000 + 8000
+        per_request_input = min(input_tokens, token_budget)
     else:
-        effective_input = input_tokens
-        output_tokens = 15000
+        effective_input = 2 * input_tokens + 8000
+        visible_output = 18000
+        per_request_input = input_tokens
+    # reasoning tokens bill as output and routinely dwarf the visible text at
+    # the default medium effort
+    output_tokens = visible_output * 3
 
     input_rate, output_rate = get_model_pricing(model)
-    long_context_pricing = uses_long_context_pricing(model, effective_input)
+    long_context_pricing = uses_long_context_pricing(model, per_request_input)
     if long_context_pricing:
         input_rate *= 2
         output_rate *= 1.5

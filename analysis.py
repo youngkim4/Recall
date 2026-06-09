@@ -89,27 +89,35 @@ def run_cli(
 
     os.makedirs(out_dir, exist_ok=True)
 
-    all_messages = format_all_messages(conv)
+    # prompts get saved names, never raw handles; file paths keep using the raw
+    # id so report locations stay stable. Senders resolve too, so group-chat
+    # transcripts attribute each line to its actual speaker.
+    sender_names: dict = {}
+    try:
+        from contact_names import resolve_contact_names
+
+        senders = (
+            conv["sender"].dropna().astype(str).unique().tolist()
+            if "sender" in conv.columns
+            else []
+        )
+        sender_names = dict(resolve_contact_names(sorted(set(senders + [contact]))))
+        contact_display = sender_names.get(contact, "") or contact
+    except Exception:
+        contact_display = contact
+
+    all_messages = format_all_messages(conv, sender_names)
     total_tokens = estimate_tokens(all_messages)
 
     chunks = None
     token_budget = get_token_budget(model)
     if total_tokens > token_budget:
-        chunks = chunk_by_year(conv, max_tokens=token_budget)
+        chunks = chunk_by_year(conv, max_tokens=token_budget, sender_names=sender_names)
         period_labels = [label for label, _, _ in chunks]
         print(f"📊 Large conversation ({len(conv):,} msgs, ~{total_tokens:,} tokens)")
         print(f"   Will analyze by period: {', '.join(period_labels)}")
     else:
         print(f"📊 Sending {len(conv):,} messages to GPT (~{total_tokens:,} tokens)...")
-
-    # prompts get the saved contact name, never the raw handle; file paths keep
-    # using the raw id so report locations stay stable
-    try:
-        from contact_names import resolve_contact_names
-
-        contact_display = resolve_contact_names([contact]).get(contact, "") or contact
-    except Exception:
-        contact_display = contact
 
     with tqdm(total=2, desc="Analyzing", unit="step") as pbar:
         target_events = min(100, max(20, len(conv) // 1000))

@@ -281,7 +281,7 @@ class TestChunkByYear:
         assert label == "2024"
         assert len(df) == 5
 
-    def test_multi_year(self):
+    def test_multi_year_packs_small_years_together(self):
         df = pd.DataFrame({
             "timestamp": pd.to_datetime([
                 "2023-06-01 10:00",
@@ -292,10 +292,19 @@ class TestChunkByYear:
             "is_from_me": [0, 1, 0],
             "chat_id": ["+1234"] * 3,
         })
+        # default budget: consecutive small years pack into one chunk so the
+        # model sees the cross-year arc in a single pass
         chunks = chunk_by_year(df)
-        labels = [c[0] for c in chunks]
-        assert "2023" in labels
-        assert "2024" in labels
+        assert [c[0] for c in chunks] == ["2023 – 2024"]
+        assert sum(len(cdf) for _, cdf, _ in chunks) == 3
+
+        # budget that fits each year alone but not both: years stay separate
+        year_tokens = [
+            estimate_tokens(format_all_messages(df[df["timestamp"].dt.year == y]))
+            for y in (2023, 2024)
+        ]
+        split = chunk_by_year(df, max_tokens=max(year_tokens))
+        assert [c[0] for c in split] == ["2023", "2024"]
 
     def test_all_messages_included(self, sample_messages_df):
         chunks = chunk_by_year(sample_messages_df)
