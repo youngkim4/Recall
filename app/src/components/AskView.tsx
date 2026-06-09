@@ -87,7 +87,7 @@ function AnswerBody({ text }: { text: string }) {
 }
 
 export function AskView({ defaults, model, onModelChange, contacts, onSelectContact }: AskViewProps) {
-  const { chats, activeChatId, pending, errors } = useSyncExternalStore(
+  const { chats, activeChatId, pending, errors, status } = useSyncExternalStore(
     chatStore.subscribe,
     chatStore.getState,
   )
@@ -103,6 +103,9 @@ export function AskView({ defaults, model, onModelChange, contacts, onSelectCont
   const messages = activeChat?.messages ?? []
   const isPending = activeChatId ? Boolean(pending[activeChatId]) : false
   const error = activeChatId ? errors[activeChatId] ?? '' : ''
+  const pendingStatus = activeChatId ? status[activeChatId] ?? '' : ''
+  // once the answer starts streaming, the growing message replaces the dots
+  const isStreamingAnswer = isPending && messages.some((message) => message.streaming)
 
   // reset the composer scope when the active chat changes (no effect needed)
   if (activeChatId !== scopeChatId) {
@@ -195,6 +198,7 @@ export function AskView({ defaults, model, onModelChange, contacts, onSelectCont
                   ) : (
                     <p>{message.content}</p>
                   )}
+                  {message.streaming ? <span className="stream-caret" aria-hidden /> : null}
                   {message.role === 'assistant' && message.response?.mode === 'local' ? (
                     <span className="chat-mode-note">Keyword match — the AI answer was unavailable.</span>
                   ) : null}
@@ -249,13 +253,14 @@ export function AskView({ defaults, model, onModelChange, contacts, onSelectCont
             </div>
           )}
 
-          {isPending ? (
+          {isPending && !isStreamingAnswer ? (
             <article className="chat-message assistant">
               <div className="chat-avatar">R</div>
               <div className="chat-bubble typing">
                 <span />
                 <span />
                 <span />
+                {pendingStatus ? <em className="chat-status">{pendingStatus}</em> : null}
               </div>
             </article>
           ) : null}

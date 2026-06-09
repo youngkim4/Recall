@@ -6621,3 +6621,34 @@ body.is-resizing .app-shell {
   font-size: 11px;
   font-style: italic;
 }
+
+/* live stage line beside the typing dots ("Searching your messages…") */
+.chat-bubble.typing {
+  align-items: center;
+}
+
+.chat-status {
+  margin-left: 8px;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-style: normal;
+}
+
+/* caret at the end of a streaming answer */
+.stream-caret {
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  margin-left: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: caretBlink 900ms steps(2, start) infinite;
+}
+
+@keyframes caretBlink {
+  to {
+    visibility: hidden;
+  }
+}

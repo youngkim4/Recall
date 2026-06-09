@@ -43,7 +43,7 @@ from conversation import (
     progression_series,
     sanitize_filename,
 )
-from openai_client import _call_openai
+from openai_client import _call_openai, _call_openai_stream
 from parse_imessage import extract_attachments, extract_messages, extract_reactions, list_contacts
 from retrieval_planner import build_catalog, plan_retrieval
 
@@ -1145,6 +1145,7 @@ def ai_ask_answer(
     intent: str = "general",
     context: str = "",
     history: list[dict] | None = None,
+    on_delta=None,
 ) -> str:
     if not os.environ.get("OPENAI_API_KEY") or not citations:
         return ""
@@ -1191,12 +1192,22 @@ def ai_ask_answer(
         if content:
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user})
+    effort = "medium" if (intent == "identity" or context) else "low"
+    if on_delta is not None:
+        return _call_openai_stream(
+            OpenAI(),
+            messages,
+            on_delta,
+            model=model or DEFAULT_MODEL,
+            reasoning_effort=effort,
+            verbosity="low",
+        )
     return _call_openai(
         OpenAI(),
         messages,
         model=model or DEFAULT_MODEL,
         max_retries=1,
-        reasoning_effort="medium" if (intent == "identity" or context) else "low",
+        reasoning_effort=effort,
         verbosity="low",
     )
 
@@ -1458,10 +1469,16 @@ def ask_messages_payload(
     model: str = DEFAULT_MODEL,
     use_ai: bool = False,
     history: list[dict] | None = None,
+    on_event=None,
 ) -> dict:
     if not path_exists(messages_path):
         raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
 
+    def emit(kind: str, text: str) -> None:
+        if on_event is not None:
+            on_event(kind, text)
+
+    emit("status", "Reading your archive…")
     full_df, catalog, catalog_names = cached_messages_bundle(messages_path)
     df = filter_conversation(full_df, contact) if contact else full_df
 
@@ -1475,6 +1492,8 @@ def ask_messages_payload(
 
     # Retrieve by MEANING, not literal query words: when AI is on, let the planner
     # route to the right conversation(s) and expand the query into related terms.
+    if use_ai:
+        emit("status", "Working out where to look…")
     plan = _plan_retrieval_safe(catalog, catalog_names, question, history_text) if use_ai else None
     plan_ids = (plan or {}).get("chat_ids") or []
     intent = (plan or {}).get("intent", "general")
@@ -1508,6 +1527,7 @@ def ask_messages_payload(
         else:
             df = df[df["chat_id"].astype(str).isin(set(plan_ids))]
 
+    emit("status", "Searching your messages…")
     terms = (plan or {}).get("search_terms") or query_terms(question)
     scoped = bool(contact or plan_ids)
     if person_focus and handles:
@@ -1555,6 +1575,8 @@ def ask_messages_payload(
     answer = ""
     if use_ai:
         try:
+            if windows:
+                emit("status", f"Reading the conversation around {len(windows)} moments…")
             answer = ai_ask_answer(
                 str(question or "").strip(),
                 citations,
@@ -1563,6 +1585,7 @@ def ask_messages_payload(
                 intent=intent,
                 context=window_context,
                 history=history,
+                on_delta=(lambda text: emit("delta", text)) if on_event is not None else None,
             )
             if answer:
                 answer_mode = "ai"
@@ -1660,10 +1683,49 @@ class RecallHandler(BaseHTTPRequestHandler):
                     use_ai=str(payload.get("ai", True)).lower() not in {"0", "false", "no", "off"},
                     history=raw_history if isinstance(raw_history, list) else None,
                 ))
+            elif parsed.path == "/api/ask/stream":
+                payload = parse_body(self)
+                self.handle_ask_stream(payload)
             else:
                 send_json(self, 404, {"error": "Not found"})
         except Exception as exc:
             send_json(self, 500, {"error": str(exc)})
+
+    def handle_ask_stream(self, payload: dict):
+        """Server-sent events for /api/ask: status updates while retrieving,
+        answer text deltas as the model writes, then the full payload."""
+        messages_path = safe_path(payload.get("messagesPath"), ROOT / "messages.csv")
+        raw_history = payload.get("history")
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+
+        def write_event(data: dict) -> None:
+            frame = f"data: {json.dumps(data, default=json_default)}\n\n"
+            self.wfile.write(frame.encode("utf-8"))
+            self.wfile.flush()
+
+        try:
+            result = ask_messages_payload(
+                messages_path,
+                payload.get("question", ""),
+                contact=payload.get("contact", ""),
+                limit=int(payload.get("limit", 8) or 8),
+                model=payload.get("model", DEFAULT_MODEL),
+                use_ai=str(payload.get("ai", True)).lower() not in {"0", "false", "no", "off"},
+                history=raw_history if isinstance(raw_history, list) else None,
+                on_event=lambda kind, text: write_event({"type": kind, "text": text}),
+            )
+            write_event({"type": "done", "payload": result})
+        except (BrokenPipeError, ConnectionResetError):
+            # client navigated away or cancelled; nothing left to tell it
+            pass
+        except Exception as exc:
+            print(f"[ask] stream failed: {exc}", file=sys.__stderr__)
+            with contextlib.suppress(Exception):
+                write_event({"type": "error", "error": str(exc)})
 
     def handle_api_get(self, parsed):
         query = {k: v[0] for k, v in parse_qs(parsed.query).items()}

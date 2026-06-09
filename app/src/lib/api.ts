@@ -48,6 +48,31 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
+type AskInput = {
+  messagesPath: string
+  question: string
+  contact?: string
+  model?: string
+  limit?: number
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>
+}
+
+type AskStreamHandlers = {
+  onStatus?: (text: string) => void
+  onDelta?: (text: string) => void
+}
+
+function askBody(input: AskInput) {
+  return {
+    messagesPath: input.messagesPath,
+    question: input.question,
+    contact: input.contact,
+    model: input.model,
+    limit: input.limit ?? 8,
+    history: input.history,
+  }
+}
+
 export const recallApi = {
   defaults: () => request<Defaults>('/api/defaults'),
 
@@ -91,25 +116,62 @@ export const recallApi = {
       })}`,
     ),
 
-  ask: (input: {
-    messagesPath: string
-    question: string
-    contact?: string
-    model?: string
-    limit?: number
-    history?: Array<{ role: 'user' | 'assistant'; content: string }>
-  }) =>
+  ask: (input: AskInput) =>
     request<AskResponse>('/api/ask', {
       method: 'POST',
-      body: JSON.stringify({
-        messagesPath: input.messagesPath,
-        question: input.question,
-        contact: input.contact,
-        model: input.model,
-        limit: input.limit ?? 8,
-        history: input.history,
-      }),
+      body: JSON.stringify(askBody(input)),
     }),
+
+  // Streams the answer: status lines while retrieving, then text deltas as the
+  // model writes, then the final payload. Resolves with the same AskResponse
+  // shape as ask().
+  askStream: async (input: AskInput, handlers: AskStreamHandlers): Promise<AskResponse> => {
+    const response = await fetch(`${apiBase}/api/ask/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(askBody(input)),
+    })
+    if (!response.ok || !response.body) {
+      throw new Error(`${response.status} ${response.statusText}`)
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let finalPayload: AskResponse | null = null
+
+    const handleFrame = (frame: string) => {
+      const line = frame.split('\n').find((l) => l.startsWith('data: '))
+      if (!line) return
+      const event = JSON.parse(line.slice(6)) as {
+        type: 'status' | 'delta' | 'done' | 'error'
+        text?: string
+        payload?: AskResponse
+        error?: string
+      }
+      if (event.type === 'status' && event.text) handlers.onStatus?.(event.text)
+      else if (event.type === 'delta' && event.text) handlers.onDelta?.(event.text)
+      else if (event.type === 'done' && event.payload) finalPayload = event.payload
+      else if (event.type === 'error') throw new Error(event.error || 'Ask failed.')
+    }
+
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let boundary = buffer.indexOf('\n\n')
+      while (boundary !== -1) {
+        const frame = buffer.slice(0, boundary)
+        buffer = buffer.slice(boundary + 2)
+        handleFrame(frame)
+        boundary = buffer.indexOf('\n\n')
+      }
+    }
+    if (buffer.trim()) handleFrame(buffer)
+
+    if (!finalPayload) throw new Error('The answer stream ended unexpectedly.')
+    return finalPayload
+  },
 
   analysis: (input: { messagesPath: string; model: string; reportPath: string; contact?: string }) =>
     request<{ analysis: AnalysisPayload; cached?: boolean }>(

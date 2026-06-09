@@ -116,3 +116,53 @@ def _call_openai(
             logger.error("OpenAI API error: %s", e)
             raise
     return ""
+
+
+def _call_openai_stream(
+    client,
+    messages,
+    on_delta,
+    model=DEFAULT_MODEL,
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT,
+    verbosity: str = DEFAULT_VERBOSITY,
+) -> str:
+    """Stream a Responses API call, invoking on_delta(text) per text fragment.
+
+    Returns the full accumulated text. Retries once only if nothing has been
+    streamed yet -- after the first delta the partial text is already on the
+    user's screen, so mid-stream failures propagate.
+    """
+    instructions, input_items = _prepare_responses_input(messages)
+    kwargs = {
+        "model": model,
+        "input": input_items,
+        "store": False,
+        "stream": True,
+    }
+    if instructions:
+        kwargs["instructions"] = instructions
+    if supports_reasoning_controls(model) and reasoning_effort:
+        kwargs["reasoning"] = {"effort": reasoning_effort}
+    if supports_reasoning_controls(model) and verbosity:
+        kwargs["text"] = {"verbosity": verbosity}
+
+    for attempt in range(2):
+        parts: List[str] = []
+        try:
+            stream = client.responses.create(**kwargs)
+            for event in stream:
+                event_type = getattr(event, "type", "")
+                if event_type == "response.output_text.delta":
+                    delta = getattr(event, "delta", "") or ""
+                    if delta:
+                        parts.append(delta)
+                        on_delta(delta)
+                elif event_type in {"response.failed", "error"}:
+                    raise RuntimeError(str(getattr(event, "error", None) or "stream failed"))
+            return "".join(parts).strip()
+        except (RateLimitError, APIConnectionError, APITimeoutError) as e:
+            if parts or attempt >= 1:
+                raise
+            logger.warning("Stream failed before first token (%s); retrying", type(e).__name__)
+            time.sleep(2)
+    return ""

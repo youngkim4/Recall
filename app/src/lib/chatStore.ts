@@ -10,6 +10,7 @@ export type ChatMessage = {
   role: 'user' | 'assistant'
   content: string
   response?: AskResponse
+  streaming?: boolean
 }
 
 export type SavedChat = {
@@ -34,6 +35,7 @@ type ChatState = {
   activeChatId: string | null
   pending: Record<string, boolean>
   errors: Record<string, string>
+  status: Record<string, string>
 }
 
 const CHATS_KEY = 'recall.chats.v1'
@@ -72,6 +74,7 @@ let state: ChatState = {
   activeChatId: null,
   pending: {},
   errors: {},
+  status: {},
 }
 
 const listeners = new Set<() => void>()
@@ -108,6 +111,7 @@ export const chatStore = {
       chats,
       pending: omitKey(state.pending, id),
       errors: omitKey(state.errors, id),
+      status: omitKey(state.status, id),
       activeChatId: state.activeChatId === id ? null : state.activeChatId,
     })
   },
@@ -154,32 +158,103 @@ export const chatStore = {
       activeChatId: targetId,
       pending: { ...state.pending, [targetId]: true },
       errors: omitKey(state.errors, targetId),
+      status: { ...state.status, [targetId]: 'Thinking…' },
     })
 
+    // created on the first streamed token, then grows in place
+    let assistantId: string | null = null
+
+    const appendDelta = (delta: string) => {
+      if (!chatExists(targetId)) return // chat deleted mid-stream
+      if (!assistantId) {
+        const id = makeId('assistant')
+        assistantId = id
+        const opener: ChatMessage = { id, role: 'assistant', content: delta, streaming: true }
+        const chats = state.chats.map((chat) =>
+          chat.id === targetId ? { ...chat, messages: [...chat.messages, opener] } : chat,
+        )
+        set({ chats, status: omitKey(state.status, targetId) })
+        return
+      }
+      const chats = state.chats.map((chat) =>
+        chat.id === targetId
+          ? {
+              ...chat,
+              messages: chat.messages.map((message) =>
+                message.id === assistantId
+                  ? { ...message, content: message.content + delta }
+                  : message,
+              ),
+            }
+          : chat,
+      )
+      set({ chats })
+    }
+
     try {
-      const payload = await recallApi.ask({ ...ask, history })
+      const payload = await recallApi.askStream(
+        { ...ask, history },
+        {
+          onStatus: (text) => {
+            if (chatExists(targetId) && state.pending[targetId]) {
+              set({ status: { ...state.status, [targetId]: text } })
+            }
+          },
+          onDelta: appendDelta,
+        },
+      )
       if (chatExists(targetId)) {
-        const assistant: ChatMessage = {
-          id: makeId('assistant'),
+        // swap in the canonical answer (citations renumbered server-side)
+        const final: ChatMessage = {
+          id: assistantId ?? makeId('assistant'),
           role: 'assistant',
           content: payload.answer,
           response: payload,
         }
         const chats = state.chats.map((chat) =>
           chat.id === targetId
-            ? { ...chat, messages: [...chat.messages, assistant], updatedAt: Date.now() }
+            ? {
+                ...chat,
+                updatedAt: Date.now(),
+                messages: assistantId
+                  ? chat.messages.map((message) => (message.id === assistantId ? final : message))
+                  : [...chat.messages, final],
+              }
             : chat,
         )
         persist(chats)
-        set({ chats, pending: omitKey(state.pending, targetId) })
+        set({
+          chats,
+          pending: omitKey(state.pending, targetId),
+          status: omitKey(state.status, targetId),
+        })
       } else {
         // chat was deleted mid-flight — discard the answer
-        set({ pending: omitKey(state.pending, targetId) })
+        set({
+          pending: omitKey(state.pending, targetId),
+          status: omitKey(state.status, targetId),
+        })
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to query messages.'
+      // keep any partial text, but stop marking it as streaming
+      const chats = assistantId
+        ? state.chats.map((chat) =>
+            chat.id === targetId
+              ? {
+                  ...chat,
+                  messages: chat.messages.map((msg) =>
+                    msg.id === assistantId ? { ...msg, streaming: undefined } : msg,
+                  ),
+                }
+              : chat,
+          )
+        : state.chats
+      if (assistantId) persist(chats)
       set({
+        chats,
         pending: omitKey(state.pending, targetId),
+        status: omitKey(state.status, targetId),
         errors: chatExists(targetId)
           ? { ...state.errors, [targetId]: message }
           : omitKey(state.errors, targetId),
