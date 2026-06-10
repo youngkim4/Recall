@@ -289,14 +289,17 @@ function MemoriesSection({
       </div>
       <div className="memories-row">
         {cards.map((card) => {
-          const contact = contacts.find((item) => item.chat_id === card.chatId)
+          // every card navigates -- contacts outside the top-80 list get a
+          // synthetic Contact so the click never silently does nothing
+          const contact =
+            contacts.find((item) => item.chat_id === card.chatId) ??
+            ({ chat_id: card.chatId, display_name: card.name } as Contact)
           return (
             <button
               key={card.key}
               type="button"
               className={`memory-card ${card.tone}`}
-              disabled={!contact}
-              onClick={() => contact && onSelectContact(contact)}
+              onClick={() => onSelectContact(contact)}
             >
               <span className="memory-kicker">{card.kicker}</span>
               <strong>{card.name}</strong>

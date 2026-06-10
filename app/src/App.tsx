@@ -398,7 +398,11 @@ function App() {
               const reportPath = job.result.reportPath
               const report = nextReports.find((item) => item.path === reportPath) || nextReports[0]
               setSelectedReport(report || null)
-              setActiveView('reports')
+              // only auto-open the report if the user is still where they
+              // started it -- never yank them out of Chat/Search mid-thought
+              setActiveView((current) =>
+                current === 'analyze' || current === 'reports' ? 'reports' : current,
+              )
             }
           }
         })

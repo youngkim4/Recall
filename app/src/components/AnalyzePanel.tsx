@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { ActivityChart } from './ActivityChart'
 import { SparkIcon } from './Icons'
 import { DateField } from './DateField'
@@ -144,7 +145,7 @@ export function AnalyzePanel({
           <Metric label="Active days" value={formatNumber(stats?.activeDays)} />
         </div>
 
-        <DynamicsRow dynamics={preview?.dynamics} />
+        <DynamicsRow dynamics={preview?.dynamics} lastTimestamp={stats?.lastTimestamp} />
 
         <div className="cost-row">
           <div>
@@ -231,7 +232,8 @@ function lastLog(logs: Array<string | { message?: string }> = []) {
   return ''
 }
 
-function DynamicsRow({ dynamics }: { dynamics?: Dynamics }) {
+function DynamicsRow({ dynamics, lastTimestamp }: { dynamics?: Dynamics; lastTimestamp?: string }) {
+  const [renderedAt] = useState(() => Date.now())
   if (!dynamics) return null
   const pct = (value?: number | null) =>
     typeof value === 'number' ? `${Math.round(value * 100)}%` : null
@@ -240,6 +242,12 @@ function DynamicsRow({ dynamics }: { dynamics?: Dynamics }) {
   const initiation = pct(dynamics.initiationRecent ?? dynamics.initiationLifetime)
   const trend = dynamics.volumeTrendPct
   const speakers = dynamics.topSpeakers ?? []
+  // derive the quiet streak live -- the cached payload's value freezes and
+  // drifts a day behind per day
+  const lastMs = lastTimestamp ? Date.parse(lastTimestamp) : NaN
+  const quietDays = Number.isFinite(lastMs)
+    ? Math.max(0, Math.floor((renderedAt - lastMs) / 86_400_000))
+    : dynamics.quietDays
 
   const hasAnything = balance || initiation || typeof trend === 'number' || speakers.length
   if (!hasAnything) return null
@@ -276,10 +284,10 @@ function DynamicsRow({ dynamics }: { dynamics?: Dynamics }) {
             <small>last 3 months vs lifetime</small>
           </div>
         ) : null}
-        {typeof dynamics.quietDays === 'number' && dynamics.quietDays > 30 ? (
+        {typeof quietDays === 'number' && quietDays > 30 ? (
           <div className="dynamic-stat">
             <span>Quiet for</span>
-            <strong>{formatNumber(dynamics.quietDays)}d</strong>
+            <strong>{formatNumber(quietDays)}d</strong>
             <small>since the last message</small>
           </div>
         ) : null}

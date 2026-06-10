@@ -113,9 +113,20 @@ export function AskView({ defaults, model, onModelChange, contacts, onSelectCont
     setScope(activeChat?.scope ?? '')
   }
 
+  // follow the answer as it streams: track content growth, not just message
+  // count, and only auto-scroll when the user is already near the bottom (so
+  // scrolling up to reread is never hijacked)
+  const lastContentLength = messages.length
+    ? messages[messages.length - 1].content.length
+    : 0
   useEffect(() => {
-    threadRef.current?.scrollTo({ top: threadRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages.length, isPending])
+    const thread = threadRef.current
+    if (!thread) return
+    const nearBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 160
+    if (nearBottom || !isStreamingAnswer) {
+      thread.scrollTo({ top: thread.scrollHeight, behavior: isStreamingAnswer ? 'auto' : 'smooth' })
+    }
+  }, [messages.length, isPending, lastContentLength, isStreamingAnswer])
 
   function newChat() {
     chatStore.setActive(null)
@@ -199,7 +210,9 @@ export function AskView({ defaults, model, onModelChange, contacts, onSelectCont
                     <p>{message.content}</p>
                   )}
                   {message.streaming ? <span className="stream-caret" aria-hidden /> : null}
-                  {message.role === 'assistant' && message.response?.mode === 'local' ? (
+                  {message.role === 'assistant' &&
+                  message.response?.mode === 'local' &&
+                  message.response.citations.length > 0 ? (
                     <span className="chat-mode-note">Keyword match — the AI answer was unavailable.</span>
                   ) : null}
                   {message.role === 'assistant' &&

@@ -192,14 +192,16 @@ export function SettingsView({
 
       <SemanticIndexCard
         messagesPath={paths.messagesPath || defaults?.messagesPath || ''}
+        refreshKey={utilityJob?.status === 'completed' ? utilityJob.id : ''}
       />
     </section>
   )
 }
 
-function SemanticIndexCard({ messagesPath }: { messagesPath: string }) {
+function SemanticIndexCard({ messagesPath, refreshKey }: { messagesPath: string; refreshKey: string }) {
   const [status, setStatus] = useState<SemanticStatus | null>(null)
   const [building, setBuilding] = useState(false)
+  const [buildJobId, setBuildJobId] = useState('')
   const [note, setNote] = useState('')
 
   const refresh = useCallback(async () => {
@@ -213,6 +215,8 @@ function SemanticIndexCard({ messagesPath }: { messagesPath: string }) {
     }
   }, [messagesPath])
 
+  // refetch on mount AND whenever a maintenance job (refresh export) finishes
+  // -- that's the moment the index silently goes stale
   useEffect(() => {
     if (!messagesPath) return
     let cancelled = false
@@ -227,20 +231,37 @@ function SemanticIndexCard({ messagesPath }: { messagesPath: string }) {
     return () => {
       cancelled = true
     }
-  }, [messagesPath])
+  }, [messagesPath, refreshKey])
 
   useEffect(() => {
     if (!building) return
-    const timer = window.setInterval(() => void refresh(), 4000)
+    const timer = window.setInterval(() => {
+      void refresh()
+      if (buildJobId) {
+        recallApi
+          .jobs()
+          .then(({ jobs }) => {
+            const job = jobs.find((item) => item.id === buildJobId)
+            if (job?.status === 'failed') {
+              setBuilding(false)
+              setNote(job.error || 'The index build failed — see Jobs for details.')
+            }
+          })
+          .catch(() => {
+            // polling is best-effort
+          })
+      }
+    }, 4000)
     return () => window.clearInterval(timer)
-  }, [building, refresh])
+  }, [building, buildJobId, refresh])
 
   async function build() {
     if (!messagesPath || building) return
     setBuilding(true)
     setNote('Building — progress in Jobs.')
     try {
-      await recallApi.createSemanticJob({ messagesPath })
+      const response = await recallApi.createSemanticJob({ messagesPath })
+      setBuildJobId(response.job.id)
     } catch (error) {
       setBuilding(false)
       setNote(error instanceof Error ? error.message : 'Could not start the build.')

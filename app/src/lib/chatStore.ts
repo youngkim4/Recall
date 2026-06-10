@@ -204,12 +204,23 @@ export const chatStore = {
         },
       )
       if (chatExists(targetId)) {
-        // swap in the canonical answer (citations renumbered server-side)
+        // If the model failed AFTER text streamed, the server falls back to a
+        // keyword summary (mode 'local'). Never replace prose the user has
+        // already read with that — keep the streamed text, trim the citation
+        // dump, and let the note explain.
+        const streamedContent = assistantId
+          ? state.chats
+              .find((chat) => chat.id === targetId)
+              ?.messages.find((message) => message.id === assistantId)?.content ?? ''
+          : ''
+        const keepStreamed = payload.mode === 'local' && streamedContent.length > 80
         const final: ChatMessage = {
           id: assistantId ?? makeId('assistant'),
           role: 'assistant',
-          content: payload.answer,
-          response: payload,
+          content: keepStreamed ? streamedContent : payload.answer,
+          response: keepStreamed
+            ? { ...payload, mode: 'ai', citations: payload.citations.slice(0, 6) }
+            : payload,
         }
         const chats = state.chats.map((chat) =>
           chat.id === targetId
