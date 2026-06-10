@@ -1068,6 +1068,9 @@ ASK_STOPWORDS = {
     "things", "this", "those", "thread", "time", "told", "very", "was", "were",
     "what", "when", "where", "which", "who", "why", "will", "with", "would", "you",
     "your",
+    # contraction fragments and filler that word-boundary-match everywhere
+    "its", "hed", "hes", "shes", "thats", "whats", "youre", "theyre", "weve",
+    "gonna", "wanna", "kinda", "yeah",
 }
 
 
@@ -1092,6 +1095,36 @@ def _term_scores(text: pd.Series, terms: list[str]) -> pd.Series:
             pattern = re.escape(term)
         scores = scores + text.str.contains(pattern, case=False, na=False, regex=True).astype(int)
     return scores
+
+
+def _burst_scores(df: pd.DataFrame, terms: list[str], window: int = 5) -> pd.Series:
+    """Score each message by the conversation BURST around it, not the lone text.
+    People text in fragments -- 'front' and '10k' land in adjacent messages --
+    so distinct terms co-occurring within a few messages is the strongest
+    signal a moment matches the question. Score = 2x distinct terms present in
+    the surrounding window + the row's own hits (so the exact line outranks
+    its neighbors)."""
+    if df.empty or not terms:
+        return pd.Series(0, index=df.index)
+    ordered = df.sort_values(["chat_id", "timestamp"], kind="stable")
+    text = ordered["text"].fillna("").astype(str)
+    chats = ordered["chat_id"].astype(str).values
+    distinct = pd.Series(0.0, index=ordered.index)
+    own = pd.Series(0, index=ordered.index)
+    for term in terms:
+        if re.fullmatch(r"[\w']+", term):
+            pattern = r"\b" + re.escape(term) + r"\b"
+        else:
+            pattern = re.escape(term)
+        mask = text.str.contains(pattern, case=False, na=False, regex=True)
+        own = own + mask.astype(int)
+        nearby = (
+            mask.astype(float)
+            .groupby(chats)
+            .transform(lambda s: s.rolling(window, center=True, min_periods=1).max())
+        )
+        distinct = distinct + nearby
+    return (distinct * 2 + own).reindex(df.index)
 
 
 def contact_label(citation: dict) -> str:
@@ -1551,16 +1584,17 @@ def _representative_messages(df: pd.DataFrame, cap: int) -> pd.DataFrame:
 
 
 def _select_messages(df: pd.DataFrame, terms: list[str], cap: int, prefer_recent: bool = True) -> pd.DataFrame:
-    """Score by (meaning-expanded) terms; fall back to a representative spread.
-    prefer_recent=False surfaces the EARLIEST matches ("when did we first...")."""
+    """Score by conversation bursts of (meaning-expanded) terms; fall back to a
+    representative spread. prefer_recent=False surfaces the EARLIEST matches."""
     if df.empty:
         return df
-    text = df["text"].fillna("").astype(str)
     if terms:
-        scores = _term_scores(text, terms)
-        hits = df[scores > 0].copy()
+        scores = _burst_scores(df, terms)
+        # >= 3 keeps rows that themselves hit a term; pure neighbors of a
+        # single hit (score 2) are recovered later by the context windows
+        hits = df[scores >= 3].copy()
         if not hits.empty:
-            hits["score"] = scores[scores > 0]
+            hits["score"] = scores[scores >= 3]
             return hits.sort_values(["score", "timestamp"], ascending=[False, not prefer_recent]).head(cap)
     return _representative_messages(df, cap)
 
@@ -1587,7 +1621,7 @@ def _identity_messages(df: pd.DataFrame, cap: int, terms: list[str] | None = Non
         + text.str.contains(NAME_TOKEN_RE).astype(int)
     )
     if terms:
-        real["_sig"] = real["_sig"] + _term_scores(text, terms) * 3
+        real["_sig"] = real["_sig"] + _burst_scores(real, terms)
     strong = real[real["_sig"] > 0].sort_values(["_sig", "timestamp"], ascending=[False, False]).head(cap)
     spread = _representative_messages(real.drop(columns=["_sig"]), max(4, cap // 3))
     combined = pd.concat([strong.drop(columns=["_sig"]), spread])
@@ -1654,7 +1688,7 @@ def _person_messages(
     hint = text.str.contains(IDENTITY_HINT_RE, na=False).astype(int)
     real["_sig"] = sent_by * 2 + name_hit * 2 + hint
     if terms:
-        real["_sig"] = real["_sig"] + _term_scores(text, terms) * 3
+        real["_sig"] = real["_sig"] + _burst_scores(real, terms)
     strong = real[real["_sig"] > 0].sort_values(["_sig", "timestamp"], ascending=[False, False]).head(cap)
     spread = _representative_messages(real.drop(columns=["_sig"]), max(4, cap // 3))
     combined = pd.concat([strong.drop(columns=["_sig"]), spread])
@@ -1789,7 +1823,14 @@ def ask_messages_payload(
     prefer_recent = bool((plan or {}).get("prefer_recent", True))
 
     emit("status", "Searching your messages…")
-    terms = (plan or {}).get("search_terms") or query_terms(question)
+    # the question's own distinctive words are the highest-precision matches
+    # ("front", "10k"); the planner's expansions widen recall around them.
+    # Union both -- expansions must never REPLACE the literals.
+    literal_terms = query_terms(question)
+    plan_terms = (plan or {}).get("search_terms") or []
+    seen_terms = {t.lower() for t in literal_terms}
+    terms = literal_terms + [t for t in plan_terms if t.lower() not in seen_terms]
+    terms = terms[:14]
     scoped = bool(contact or plan_ids)
     if person_focus and handles:
         person_keys = {key for key in (_canon_handle(h) for h in handles) if key}

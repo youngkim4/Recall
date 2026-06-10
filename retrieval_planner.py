@@ -47,8 +47,10 @@ PLAN_TEXT_FORMAT = {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Meaning-expanded keywords (synonyms / related words) to find relevant messages. "
-                    "NOT the literal words of the question. Empty for pure identity lookups."
+                    "Keywords to find relevant messages: the question's DISTINCTIVE literal tokens "
+                    "(amounts like '10k', names, unusual verbs like 'front') PLUS meaning-expanded "
+                    "synonyms and related words. Distinctive literals are the highest-precision "
+                    "matches -- never drop them in favor of synonyms. Empty for pure identity lookups."
                 ),
             },
             "prefer_recent": {
@@ -222,8 +224,9 @@ def plan_retrieval(
         "conversation_ids empty for a question about a specific person who is in the catalog. "
         "Set person_focus true whenever the question is about a specific person, so we also pull what they "
         "say in the group chats they are in, not just their direct thread. "
-        "For topical questions, expand into related search terms (synonyms and associated words), "
-        "never just repeat the question's own words. "
+        "For topical questions, search_terms must KEEP the question's distinctive literal tokens -- "
+        "amounts ('10k', '$50'), names, and unusual words ('front', 'vesting') are the highest-precision "
+        "matches -- and ADD meaning-expanded synonyms around them. "
         "When the question is anchored in time ('last summer', 'in 2023', 'when did we first...'), "
         "fill date_from/date_to with the range it refers to, and set prefer_recent false only for "
         "first/earliest questions. "
