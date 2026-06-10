@@ -66,11 +66,13 @@ def get_model_pricing(model: str) -> tuple:
     return MODEL_PRICING[DEFAULT_MODEL]
 
 
-def estimate_cost(messages_csv: str, contact: str, model: str = DEFAULT_MODEL, since=None, until=None) -> dict:
-    """Estimate cost for full-context analysis using exact token counting."""
+def estimate_cost(messages_csv: str, contact: str, model: str = DEFAULT_MODEL, since=None, until=None, frame=None) -> dict:
+    """Estimate cost for full-context analysis using exact token counting.
+    Pass `frame` (an already-loaded, date-filtered DataFrame) to skip the
+    multi-second CSV parse -- the server's preview path uses its warm cache."""
     from analysis import format_all_messages, estimate_tokens, filter_conversation, load_messages
 
-    df = load_messages(messages_csv, since=since, until=until)
+    df = frame if frame is not None else load_messages(messages_csv, since=since, until=until)
     contact_df = filter_conversation(df, contact)
 
     msg_count = len(contact_df)

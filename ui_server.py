@@ -286,10 +286,14 @@ def export_database(db_path: Path, messages_path: Path):
             ) from exc
         raise
     messages_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(messages_path, index=False)
+    # write to a temp file and swap in atomically: requests served during the
+    # export keep reading the complete old file instead of a half-written one
+    tmp_path = messages_path.with_name(messages_path.stem + ".tmp-export" + messages_path.suffix)
+    df.to_csv(tmp_path, index=False)
 
     # Merge the frozen snapshot to recover messages the live DB has pruned.
-    recovered = merge_snapshot_into(db_path, messages_path)
+    recovered = merge_snapshot_into(db_path, tmp_path)
+    os.replace(tmp_path, messages_path)
 
     attachments_df = extract_attachments(str(db_path))
     if not attachments_df.empty:
@@ -322,17 +326,65 @@ def create_job(action: str, payload: dict) -> dict:
     }
     with JOBS_LOCK:
         JOBS[job_id] = job
+        # prune finished jobs so a long session doesn't grow memory unbounded
+        if len(JOBS) > 60:
+            for old_id in [
+                j["id"]
+                for j in sorted(JOBS.values(), key=lambda j: str(j.get("createdAt", "")))
+                if j["status"] in {"completed", "failed"}
+            ][: len(JOBS) - 60]:
+                JOBS.pop(old_id, None)
 
     thread = threading.Thread(target=run_job, args=(job_id, action, payload), daemon=True)
     thread.start()
     return job
 
 
+class _JobStreamRouter(io.TextIOBase):
+    """Per-thread stdout/stderr routing for concurrent jobs. A global
+    redirect_stdout(writer) would interleave two jobs' logs; this routes each
+    job thread to its own JobWriter. Worker threads a job spawns (parallel
+    chunk extraction) fall through to the only active job when there is
+    exactly one, else to the real stream."""
+
+    def __init__(self, fallback):
+        self._fallback = fallback
+        self._writers: dict[int, JobWriter] = {}
+        self._lock = threading.Lock()
+
+    def register(self, writer: JobWriter):
+        with self._lock:
+            self._writers[threading.get_ident()] = writer
+
+    def unregister(self):
+        with self._lock:
+            self._writers.pop(threading.get_ident(), None)
+
+    def _target(self):
+        with self._lock:
+            writer = self._writers.get(threading.get_ident())
+            if writer is None and len(self._writers) == 1:
+                writer = next(iter(self._writers.values()))
+        return writer or self._fallback
+
+    def write(self, text):
+        return self._target().write(text)
+
+    def flush(self):
+        self._target().flush()
+
+
+_JOB_STDOUT = _JobStreamRouter(sys.stdout)
+_JOB_STDERR = _JobStreamRouter(sys.stderr)
+
+
 def run_job(job_id: str, action: str, payload: dict):
     update_job(job_id, status="running")
     writer = JobWriter(job_id)
+    _JOB_STDOUT.register(writer)
+    _JOB_STDERR.register(writer)
     try:
-        with contextlib.redirect_stdout(writer), contextlib.redirect_stderr(writer):
+        with contextlib.redirect_stdout(_JOB_STDOUT), contextlib.redirect_stderr(_JOB_STDERR):
             if action == "export":
                 db_path = safe_path(payload.get("dbPath"))
                 messages_path = safe_path(payload.get("messagesPath"), ROOT / "messages.csv")
@@ -389,6 +441,15 @@ def run_job(job_id: str, action: str, payload: dict):
                 messages_path = safe_path(payload.get("messagesPath"), ROOT / "messages.csv")
                 if not path_exists(messages_path):
                     raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
+                with JOBS_LOCK:
+                    duplicate = any(
+                        j["id"] != job_id
+                        and j["action"] == "semantic"
+                        and j["status"] in {"queued", "running"}
+                        for j in JOBS.values()
+                    )
+                if duplicate:
+                    raise ValueError("A semantic index build is already running.")
                 append_log(job_id, "Building semantic index")
                 df, _, _ = cached_messages_bundle(messages_path)
                 summary = sem.build_index(
@@ -407,6 +468,9 @@ def run_job(job_id: str, action: str, payload: dict):
         writer.flush()
         append_log(job_id, traceback.format_exc())
         update_job(job_id, status="failed", error=str(exc))
+    finally:
+        _JOB_STDOUT.unregister()
+        _JOB_STDERR.unregister()
 
 
 def parse_optional_date(value):
@@ -468,7 +532,16 @@ def compute_dynamics(conv: pd.DataFrame) -> dict:
 
 
 def preview_payload(messages_path: Path, contact: str, model: str, since=None, until=None):
-    df = load_messages(str(messages_path), parse_optional_date(since), parse_optional_date(until))
+    # the warm bundle replaces what used to be TWO full CSV parses per preview
+    # (one here, one inside estimate_cost) -- ~4s of dead 'Calculating...' time
+    full_df, _, _ = cached_messages_bundle(messages_path)
+    df = full_df
+    since_dt = parse_optional_date(since)
+    until_dt = parse_optional_date(until)
+    if since_dt:
+        df = df[df["timestamp"] >= pd.Timestamp(since_dt)]
+    if until_dt:
+        df = df[df["timestamp"] <= pd.Timestamp(until_dt)]
     conv = filter_conversation(df, contact)
     if conv.empty:
         raise ValueError(f"No messages found for contact '{contact}'")
@@ -477,7 +550,10 @@ def preview_payload(messages_path: Path, contact: str, model: str, since=None, u
     reactions_df = load_reactions(str(messages_path))
     stats = compute_stats(conv, attachments_df, reactions_df)
     monthly = progression_series(conv).tail(72)
-    estimate = estimate_cost(str(messages_path), contact, model=model, since=parse_optional_date(since), until=parse_optional_date(until))
+    estimate = estimate_cost(
+        str(messages_path), contact, model=model,
+        since=since_dt, until=until_dt, frame=df,
+    )
     recent = conv.tail(18)
 
     return {
@@ -921,7 +997,7 @@ def fill_group_display_names(df: pd.DataFrame, db_path: Path | None = None) -> p
 
 def contacts_from_messages(messages_path: Path, limit: int = 40, name_lookup=None, db_path: Path | None = None) -> pd.DataFrame:
     """List conversations from the same messages CSV used for preview/reporting."""
-    df = load_messages(str(messages_path))
+    df, _, _ = cached_messages_bundle(messages_path)
     if "chat_id" not in df.columns:
         raise ValueError("messages CSV must contain a 'chat_id' column")
 
@@ -1031,11 +1107,9 @@ def search_messages_payload(messages_path: Path, query: str = "", contact: str =
         raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
 
     limit = max(1, min(int(limit or 60), 200))
-    df = load_messages(str(messages_path))
+    df, _, _ = cached_messages_bundle(messages_path)
     if contact:
         df = filter_conversation(df, contact)
-    if "text" not in df.columns:
-        df["text"] = ""
 
     needle = str(query or "").strip()
     if needle:
@@ -1097,34 +1171,65 @@ def _term_scores(text: pd.Series, terms: list[str]) -> pd.Series:
     return scores
 
 
+def _term_pattern(term: str) -> str:
+    if re.fullmatch(r"[\w']+", term):
+        return r"\b" + re.escape(term) + r"\b"
+    return re.escape(term)
+
+
 def _burst_scores(df: pd.DataFrame, terms: list[str], window: int = 5) -> pd.Series:
     """Score each message by the conversation BURST around it, not the lone text.
     People text in fragments -- 'front' and '10k' land in adjacent messages --
     so distinct terms co-occurring within a few messages is the strongest
     signal a moment matches the question. Score = 2x distinct terms present in
     the surrounding window + the row's own hits (so the exact line outranks
-    its neighbors)."""
+    its neighbors).
+
+    One combined regex pass prunes the archive to candidate neighborhoods;
+    per-term masks then run only on that small subset (an unscoped 760k-row
+    ask used to spend ~8s here in per-group Python rolling)."""
     if df.empty or not terms:
         return pd.Series(0, index=df.index)
+    import numpy as np
+
     ordered = df.sort_values(["chat_id", "timestamp"], kind="stable")
     text = ordered["text"].fillna("").astype(str)
     chats = ordered["chat_id"].astype(str).values
-    distinct = pd.Series(0.0, index=ordered.index)
-    own = pd.Series(0, index=ordered.index)
-    for term in terms:
-        if re.fullmatch(r"[\w']+", term):
-            pattern = r"\b" + re.escape(term) + r"\b"
-        else:
-            pattern = re.escape(term)
-        mask = text.str.contains(pattern, case=False, na=False, regex=True)
-        own = own + mask.astype(int)
-        nearby = (
-            mask.astype(float)
-            .groupby(chats)
-            .transform(lambda s: s.rolling(window, center=True, min_periods=1).max())
-        )
-        distinct = distinct + nearby
-    return (distinct * 2 + own).reindex(df.index)
+
+    combined = "|".join(_term_pattern(t) for t in terms)
+    hit = text.str.contains(combined, case=False, na=False, regex=True).values
+    if not hit.any():
+        return pd.Series(0, index=df.index)
+
+    # candidate set = every hit row plus its in-chat neighbors within the window
+    half = window // 2
+    near = hit.copy()
+    for k in range(1, half + 1):
+        same = chats[k:] == chats[:-k]
+        near[k:] |= hit[:-k] & same
+        near[:-k] |= hit[k:] & same
+
+    idx = np.where(near)[0]
+    pos = idx
+    chat_sub = chats[idx]
+    sub_text = text.iloc[idx]
+    masks = np.stack(
+        [sub_text.str.contains(_term_pattern(t), case=False, na=False, regex=True).values for t in terms]
+    )  # shape: (terms, candidates)
+    own = masks.sum(axis=0).astype(np.int32)
+    distinct = masks.astype(np.float32).copy()
+    for k in range(1, half + 1):
+        # candidate neighborhoods are contiguous runs, so an original-order
+        # neighbor at distance k is a subset neighbor at offset k when the
+        # position delta and chat both line up
+        ok = (pos[k:] - pos[:-k] == k) & (chat_sub[k:] == chat_sub[:-k])
+        distinct[:, k:] = np.maximum(distinct[:, k:], masks[:, :-k] * ok)
+        distinct[:, :-k] = np.maximum(distinct[:, :-k], masks[:, k:] * ok)
+    score_sub = distinct.sum(axis=0) * 2 + own
+
+    scores = pd.Series(0.0, index=ordered.index)
+    scores.iloc[idx] = score_sub
+    return scores.reindex(df.index)
 
 
 def contact_label(citation: dict) -> str:
@@ -1522,27 +1627,40 @@ def memories_payload(messages_path: Path) -> dict:
 
 
 def cached_messages_bundle(messages_path: Path) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """(messages df, conversation catalog, display-name map) cached on file signature."""
+    """(messages df, conversation catalog, display-name map) cached on file signature.
+    Concurrent cold callers wait for the first loader instead of each parsing
+    the 75MB CSV in parallel (app launch fires four endpoints at once)."""
     sig = file_cache_signature(messages_path)
-    with _ASK_CACHE_LOCK:
-        if sig and _ASK_CACHE["sig"] == sig and _ASK_CACHE["df"] is not None:
-            return _ASK_CACHE["df"], _ASK_CACHE["catalog"], _ASK_CACHE["names"]
-    df = load_messages(str(messages_path))
-    if "text" not in df.columns:
-        df["text"] = ""
-    catalog = _conversation_catalog(df)
-    names: dict[str, str] = {}
-    if not catalog.empty:
-        names = dict(resolve_contact_names(catalog["chat_id"].tolist()))
-        # groups have no Contacts entry; their iMessage display name is the label
-        for _, row in catalog.iterrows():
-            cid = str(row["chat_id"])
-            display = str(row.get("display_name") or "").strip()
-            if display and not names.get(cid):
-                names[cid] = display
-    with _ASK_CACHE_LOCK:
-        _ASK_CACHE.update({"sig": sig, "df": df, "catalog": catalog, "names": names})
-    return df, catalog, names
+    while True:
+        with _ASK_CACHE_LOCK:
+            if sig and _ASK_CACHE["sig"] == sig and _ASK_CACHE["df"] is not None:
+                return _ASK_CACHE["df"], _ASK_CACHE["catalog"], _ASK_CACHE["names"]
+            loading = _ASK_CACHE.get("loading")
+            if loading is None or loading.is_set():
+                loading = threading.Event()
+                _ASK_CACHE["loading"] = loading
+                break  # this thread builds; everyone else waits below
+        loading.wait(timeout=180)
+
+    try:
+        df = load_messages(str(messages_path))
+        if "text" not in df.columns:
+            df["text"] = ""
+        catalog = _conversation_catalog(df)
+        names: dict[str, str] = {}
+        if not catalog.empty:
+            names = dict(resolve_contact_names(catalog["chat_id"].tolist()))
+            # groups have no Contacts entry; their iMessage display name is the label
+            for _, row in catalog.iterrows():
+                cid = str(row["chat_id"])
+                display = str(row.get("display_name") or "").strip()
+                if display and not names.get(cid):
+                    names[cid] = display
+        with _ASK_CACHE_LOCK:
+            _ASK_CACHE.update({"sig": sig, "df": df, "catalog": catalog, "names": names})
+        return df, catalog, names
+    finally:
+        loading.set()
 
 
 def _plan_retrieval_safe(
@@ -1629,9 +1747,10 @@ def _identity_messages(df: pd.DataFrame, cap: int, terms: list[str] | None = Non
         combined = combined.drop_duplicates(subset=["message_id"])
     else:
         combined = combined.drop_duplicates()
-    # cut by signal priority (strong rows first), then present newest-first
-    combined = combined.head(cap)
-    return combined.sort_values("timestamp", ascending=False)
+    # keep SIGNAL order: downstream trims (semantic blend head()) must cut the
+    # weakest rows, not the oldest -- the earliest intro lines are often the
+    # strongest identity evidence
+    return combined.head(cap)
 
 
 def _canon_handle(value: str) -> str:
@@ -1696,9 +1815,10 @@ def _person_messages(
         combined = combined.drop_duplicates(subset=["message_id"])
     else:
         combined = combined.drop_duplicates()
-    # cut by signal priority (strong rows first), then present newest-first
-    combined = combined.head(cap)
-    return combined.sort_values("timestamp", ascending=False)
+    # keep SIGNAL order: downstream trims (semantic blend head()) must cut the
+    # weakest rows, not the oldest -- the earliest intro lines are often the
+    # strongest identity evidence
+    return combined.head(cap)
 
 
 def _expand_citation_markers(answer: str) -> str:
@@ -1784,24 +1904,39 @@ def ask_messages_payload(
     intent = (plan or {}).get("intent", "general")
     person_focus = bool((plan or {}).get("person_focus")) or intent == "identity"
 
-    if use_ai and person_focus and not plan_ids:
+    if use_ai and person_focus and not plan_ids and not contact:
         # backstop: the planner resolved a person but didn't map them to a
-        # conversation id -- recover it by matching contact names against the
-        # question, the planner's terms, and the recent conversation
-        blob = " ".join(
-            [str(question or ""), " ".join((plan or {}).get("search_terms") or []), history_text]
-        ).lower()
-        blob_words = set(re.findall(r"[a-z]{3,}", blob))
+        # conversation id. Recover it by WORD-BOUNDARY matching contact names
+        # against the question and the latest user turn only (assistant
+        # answers name other people and would pollute the match). Ambiguous
+        # matches are skipped -- guessing the wrong person is worse than a
+        # broad search.
+        last_user = next(
+            (str(t.get("content") or "") for t in reversed(history) if str(t.get("role")) != "assistant"),
+            "",
+        )
+        blob = f"{question} {last_user}".lower()
         exact, partial = [], []
         for cid, nm in catalog_names.items():
             label = str(nm or "").strip().lower()
-            if not label or len(label) < 4:
+            if len(label) < 4:
                 continue
-            if label in blob:
-                exact.append(cid)
-            elif any(tok in blob_words for tok in re.findall(r"[a-z]{4,}", label)):
-                partial.append(cid)
-        plan_ids = (exact or partial)[:3]
+            if re.search(r"\b" + re.escape(label) + r"\b", blob):
+                exact.append((len(label), cid))
+                continue
+            tokens = [tok for tok in re.findall(r"[a-z]{4,}", label) if tok not in ASK_STOPWORDS]
+            if tokens and any(re.search(r"\b" + re.escape(tok) + r"\b", blob) for tok in tokens):
+                partial.append((len(label), cid))
+        if exact:
+            plan_ids = [max(exact)[1]]
+        elif len(partial) == 1:
+            plan_ids = [partial[0][1]]
+
+    if contact:
+        # the user's scope selection is authoritative: the planner contributes
+        # terms/dates/intent, never a different conversation -- intersecting
+        # its picks with the scope silently empties retrieval
+        plan_ids = []
 
     handles = [cid for cid in plan_ids if cid and not str(cid).startswith("chat")]
 
@@ -1816,10 +1951,15 @@ def ask_messages_payload(
     # range; prefer_recent=false surfaces the earliest matches first
     date_from = (plan or {}).get("date_from") or ""
     date_to = (plan or {}).get("date_to") or ""
-    if date_from:
-        df = df[df["timestamp"] >= pd.Timestamp(date_from)]
-    if date_to:
-        df = df[df["timestamp"] < pd.Timestamp(date_to) + pd.Timedelta(days=1)]
+    try:
+        if date_from:
+            df = df[df["timestamp"] >= pd.Timestamp(date_from)]
+        if date_to:
+            df = df[df["timestamp"] < pd.Timestamp(date_to) + pd.Timedelta(days=1)]
+    except (ValueError, OverflowError):
+        # the planner can emit impossible calendar dates; a bad date must
+        # degrade to an unfiltered search, never crash the question
+        date_from = date_to = ""
     prefer_recent = bool((plan or {}).get("prefer_recent", True))
 
     emit("status", "Searching your messages…")
@@ -1874,14 +2014,22 @@ def ask_messages_payload(
                 )
                 anchor_ids = [h["anchor_id"] for h in hits if h["anchor_id"]]
                 if anchor_ids:
-                    sem_rows = df[df["message_id"].astype(str).isin(anchor_ids)]
+                    sem_rows = df[df["message_id"].astype(str).isin(anchor_ids)].copy()
                     if not sem_rows.empty:
-                        keep = max(cap - min(8, len(sem_rows)), cap // 2)
+                        # keep the index's score order -- df row order would
+                        # arbitrarily discard the best-ranked windows when
+                        # trimming below
+                        rank = {aid: i for i, aid in enumerate(anchor_ids)}
+                        sem_rows["_rank"] = sem_rows["message_id"].astype(str).map(rank)
+                        sem_rows = sem_rows.sort_values("_rank").drop(columns=["_rank"])
+                        take = min(8, len(sem_rows), max(1, cap // 3))
+                        keep = max(cap - take, cap // 2)
+                        # matches arrive in SIGNAL order, so head(keep) cuts the
+                        # weakest keyword rows, not the oldest
                         matches = (
-                            pd.concat([matches.head(keep), sem_rows])
+                            pd.concat([matches.head(keep), sem_rows.head(take)])
                             .drop_duplicates(subset=["message_id"])
                             .head(cap)
-                            .sort_values("timestamp", ascending=False)
                         )
             except Exception as exc:
                 print(f"[ask] semantic search failed: {exc}", file=sys.__stderr__)

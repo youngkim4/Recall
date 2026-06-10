@@ -103,15 +103,15 @@ def build_index(
         raise ValueError("No text messages to index")
     say(f"{len(windows):,} windows to embed")
 
+    import os
     import time
 
-    from openai import APIConnectionError, APITimeoutError, RateLimitError
+    from openai import APIConnectionError, APITimeoutError, BadRequestError, RateLimitError
 
-    vectors = np.zeros((len(windows), EMBED_DIM), dtype=np.float16)
-    done = 0
-    for start in range(0, len(windows), BATCH_WINDOWS):
-        batch = windows[start:start + BATCH_WINDOWS]
-        response = None
+    def embed_batch(batch: list[dict], start: int) -> list:
+        """Embed one batch with rate-limit patience; bisect on token-cap 400s
+        (a dense batch can exceed the per-request limit -- failing the whole
+        multi-minute build over one batch would discard all paid progress)."""
         for attempt in range(10):
             try:
                 response = client.embeddings.create(
@@ -119,17 +119,27 @@ def build_index(
                     input=[w["text"] for w in batch],
                     dimensions=EMBED_DIM,
                 )
-                break
+                return list(response.data)
+            except BadRequestError:
+                if len(batch) == 1:
+                    raise
+                mid = len(batch) // 2
+                say(f"Batch at {start:,} too large for one request; splitting…")
+                return embed_batch(batch[:mid], start) + embed_batch(batch[mid:], start + mid)
             except RateLimitError:
                 # the TPM window resets within a minute; wait it out
                 wait = min(45, 6 * (attempt + 1))
-                say(f"Rate limited at {done:,}/{len(windows):,}; waiting {wait}s…")
+                say(f"Rate limited at {start:,}/{len(windows):,}; waiting {wait}s…")
                 time.sleep(wait)
             except (APIConnectionError, APITimeoutError):
                 time.sleep(4)
-        if response is None:
-            raise RuntimeError(f"Embedding batch failed after retries at window {start}")
-        for offset, item in enumerate(response.data):
+        raise RuntimeError(f"Embedding batch failed after retries at window {start}")
+
+    vectors = np.zeros((len(windows), EMBED_DIM), dtype=np.float16)
+    done = 0
+    for start in range(0, len(windows), BATCH_WINDOWS):
+        batch = windows[start:start + BATCH_WINDOWS]
+        for offset, item in enumerate(embed_batch(batch, start)):
             vec = np.asarray(item.embedding, dtype=np.float32)
             norm = float(np.linalg.norm(vec)) or 1.0
             vectors[start + offset] = (vec / norm).astype(np.float16)
@@ -138,7 +148,6 @@ def build_index(
             say(f"Embedded {done:,}/{len(windows):,} windows")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    np.save(out_dir / VECTORS_FILE, vectors)
     meta = {
         "signature": list(signature) if signature else None,
         "model": EMBED_MODEL,
@@ -146,7 +155,14 @@ def build_index(
         "builtAt": pd.Timestamp.now().isoformat(timespec="seconds"),
         "windows": [{k: w[k] for k in ("c", "a", "t0", "t1")} for w in windows],
     }
-    (out_dir / META_FILE).write_text(json.dumps(meta), encoding="utf-8")
+    # write to temp names and swap atomically: a chat request loading the index
+    # mid-build must never see half-written vectors or mismatched meta
+    tmp_vectors = out_dir / (VECTORS_FILE + ".tmp.npy")
+    np.save(tmp_vectors, vectors)
+    tmp_meta = out_dir / (META_FILE + ".tmp")
+    tmp_meta.write_text(json.dumps(meta), encoding="utf-8")
+    os.replace(tmp_vectors, out_dir / VECTORS_FILE)
+    os.replace(tmp_meta, out_dir / META_FILE)
     say(f"Index saved: {len(windows):,} windows, {vectors.nbytes / 1e6:.1f} MB")
     return {"windows": len(windows), "sizeMB": round(vectors.nbytes / 1e6, 1), "builtAt": meta["builtAt"]}
 
@@ -227,10 +243,20 @@ def index_status(out_dir: Path, signature: tuple | list | None) -> dict:
 
 
 def embed_query(text: str, client=None) -> np.ndarray:
-    from openai import OpenAI
+    import time
+
+    from openai import APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 
     client = client or OpenAI()
-    response = client.embeddings.create(model=EMBED_MODEL, input=[text[:2000]], dimensions=EMBED_DIM)
-    vec = np.asarray(response.data[0].embedding, dtype=np.float32)
-    norm = float(np.linalg.norm(vec)) or 1.0
-    return vec / norm
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            response = client.embeddings.create(model=EMBED_MODEL, input=[text[:2000]], dimensions=EMBED_DIM)
+            vec = np.asarray(response.data[0].embedding, dtype=np.float32)
+            norm = float(np.linalg.norm(vec)) or 1.0
+            return vec / norm
+        except (RateLimitError, APIConnectionError, APITimeoutError) as exc:
+            last_error = exc
+            if attempt == 0:
+                time.sleep(1.5)
+    raise last_error if last_error else RuntimeError("embed_query failed")
