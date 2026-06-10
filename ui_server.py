@@ -40,12 +40,14 @@ from conversation import (
     load_attachments,
     load_messages,
     load_reactions,
+    parse_boolish,
     progression_series,
     sanitize_filename,
 )
 from openai_client import _call_openai, _call_openai_stream
 from parse_imessage import extract_attachments, extract_messages, extract_reactions, list_contacts
 from retrieval_planner import build_catalog, plan_retrieval
+import semantic_index as sem
 
 ROOT = Path(__file__).resolve().parent
 UI_DIR = ROOT / "ui"
@@ -383,6 +385,20 @@ def run_job(job_id: str, action: str, payload: dict):
                     "analysis": analysis,
                     "reports": list_report_files(),
                 }
+            elif action == "semantic":
+                messages_path = safe_path(payload.get("messagesPath"), ROOT / "messages.csv")
+                if not path_exists(messages_path):
+                    raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
+                append_log(job_id, "Building semantic index")
+                df, _, _ = cached_messages_bundle(messages_path)
+                summary = sem.build_index(
+                    df,
+                    file_cache_signature(messages_path),
+                    SEMANTIC_DIR,
+                    progress=lambda message: append_log(job_id, message),
+                )
+                invalidate_semantic_cache()
+                result = {"semantic": summary}
             else:
                 raise ValueError(f"Unknown job action: {action}")
         writer.flush()
@@ -397,6 +413,58 @@ def parse_optional_date(value):
     if not value:
         return None
     return datetime.strptime(value, "%Y-%m-%d")
+
+
+def compute_dynamics(conv: pd.DataFrame) -> dict:
+    """Relationship dynamics for the Analyze preview: balance drift, who texts
+    first, volume trend, and per-speaker shares for group chats."""
+    out: dict = {}
+    if conv.empty or "timestamp" not in conv.columns:
+        return out
+    frame = conv.dropna(subset=["timestamp"]).sort_values("timestamp")
+    if frame.empty:
+        return out
+    last_ts = frame["timestamp"].max()
+    cutoff = last_ts - pd.Timedelta(days=90)
+
+    def sent_share(rows: pd.DataFrame):
+        if rows.empty or "is_from_me" not in rows.columns:
+            return None
+        direction = rows["is_from_me"].apply(parse_boolish).dropna()
+        if not len(direction):
+            return None
+        return round(float((direction.astype(int) == 1).mean()), 3)
+
+    out["balanceLifetime"] = sent_share(frame)
+    out["balanceRecent"] = sent_share(frame[frame["timestamp"] >= cutoff])
+
+    # who opens the day: the first message of each active day
+    daily_first = frame.groupby(frame["timestamp"].dt.date, as_index=False).head(1)
+    out["initiationLifetime"] = sent_share(daily_first)
+    out["initiationRecent"] = sent_share(daily_first[daily_first["timestamp"] >= cutoff])
+
+    monthly_counts = frame.groupby(frame["timestamp"].dt.to_period("M")).size()
+    if len(monthly_counts) >= 2 and float(monthly_counts.mean()) > 0:
+        lifetime_avg = float(monthly_counts.mean())
+        recent_avg = float(monthly_counts.tail(3).mean())
+        out["volumeTrendPct"] = int(round((recent_avg - lifetime_avg) / lifetime_avg * 100))
+    out["quietDays"] = int((pd.Timestamp.now() - last_ts).days)
+
+    if "sender" in frame.columns:
+        inbound = frame[frame["sender"].fillna("").astype(str) != ""]
+        if not inbound.empty and inbound["sender"].astype(str).nunique() > 1:
+            shares = inbound.groupby(inbound["sender"].astype(str)).size().sort_values(ascending=False)
+            total = int(shares.sum())
+            speaker_names = resolve_contact_names(list(shares.index[:5]))
+            out["topSpeakers"] = [
+                {
+                    "name": speaker_names.get(sender) or contact_label({"chatId": sender}),
+                    "count": int(count),
+                    "share": round(int(count) / total, 3),
+                }
+                for sender, count in shares.head(5).items()
+            ]
+    return out
 
 
 def preview_payload(messages_path: Path, contact: str, model: str, since=None, until=None):
@@ -430,6 +498,7 @@ def preview_payload(messages_path: Path, contact: str, model: str, since=None, u
             "reactions": stats.reactions.__dict__,
         },
         "estimate": estimate,
+        "dynamics": compute_dynamics(conv),
         "monthly": [
             {
                 "month": row["month"].strftime("%Y-%m"),
@@ -1264,6 +1333,140 @@ def _conversation_catalog(df: pd.DataFrame) -> pd.DataFrame:
 _ASK_CACHE_LOCK = threading.Lock()
 _ASK_CACHE: dict = {"sig": None, "df": None, "catalog": None, "names": None}
 
+SEMANTIC_DIR = ROOT / "saves" / "semantic"
+_SEM_CACHE_LOCK = threading.Lock()
+_SEM_CACHE: dict = {"sig": None, "index": None}
+
+
+def get_semantic_index(messages_path: Path):
+    """The semantic index for the CURRENT messages file, or None (missing/stale)."""
+    sig = file_cache_signature(messages_path)
+    with _SEM_CACHE_LOCK:
+        if sig and _SEM_CACHE["sig"] == sig:
+            return _SEM_CACHE["index"]
+    index = sem.load_index(SEMANTIC_DIR, sig)
+    with _SEM_CACHE_LOCK:
+        _SEM_CACHE.update({"sig": sig, "index": index})
+    return index
+
+
+def invalidate_semantic_cache():
+    with _SEM_CACHE_LOCK:
+        _SEM_CACHE.update({"sig": None, "index": None})
+
+
+def memories_payload(messages_path: Path) -> dict:
+    """Proactive memories computed from the cached dataframe -- no AI calls.
+    On-this-day moments from past years, upcoming first-message anniversaries,
+    and reconnect nudges for high-volume conversations gone quiet."""
+    empty = {"onThisDay": [], "anniversaries": [], "reconnect": []}
+    if not path_exists(messages_path):
+        return empty
+    df, _catalog, names = cached_messages_bundle(messages_path)
+    if df.empty or "timestamp" not in df.columns:
+        return empty
+
+    now = pd.Timestamp.now()
+    cids = df["chat_id"].astype(str)
+
+    def label(cid: str) -> str:
+        return names.get(cid) or contact_label({"chatId": cid})
+
+    # --- on this day, in past years ---
+    on_this_day: list[dict] = []
+    ts = df["timestamp"]
+    day_mask = (
+        (ts.dt.month == now.month)
+        & (ts.dt.day == now.day)
+        & (ts.dt.year < now.year)
+        & df["text"].fillna("").astype(str).str.strip().ne("")
+    )
+    past_today = df[day_mask]
+    if not past_today.empty:
+        grouped = (
+            past_today.groupby(
+                [past_today["timestamp"].dt.year.rename("year"), cids[day_mask].rename("cid")]
+            )
+            .size()
+            .rename("count")
+            .reset_index()
+            .sort_values("count", ascending=False)
+            .head(6)
+        )
+        for _, row in grouped.iterrows():
+            year, cid, count = int(row["year"]), str(row["cid"]), int(row["count"])
+            day_rows = past_today[
+                (past_today["timestamp"].dt.year == year) & (cids[day_mask] == cid)
+            ]
+            texts = day_rows["text"].astype(str)
+            preview = texts.loc[texts.str.len().idxmax()][:120] if not texts.empty else ""
+            on_this_day.append(
+                {
+                    "chatId": cid,
+                    "name": label(cid),
+                    "year": year,
+                    "yearsAgo": int(now.year - year),
+                    "count": count,
+                    "preview": preview,
+                }
+            )
+
+    firsts = df.groupby(cids)["timestamp"].min()
+    lasts = df.groupby(cids)["timestamp"].max()
+    counts = df.groupby(cids).size()
+
+    # --- first-message anniversaries in the next week (named contacts only) ---
+    anniversaries: list[dict] = []
+    for cid, first in firsts.items():
+        if int(counts.get(cid, 0)) < 300 or not names.get(str(cid)):
+            continue
+        years = int(now.year - first.year)
+        if years < 1:
+            continue
+        try:
+            next_anniversary = first.replace(year=now.year)
+        except ValueError:  # Feb 29 origin
+            continue
+        in_days = int((next_anniversary.normalize() - now.normalize()).days)
+        if 0 <= in_days <= 7:
+            anniversaries.append(
+                {
+                    "chatId": str(cid),
+                    "name": names[str(cid)],
+                    "years": years,
+                    "date": str(first)[:10],
+                    "inDays": in_days,
+                    "count": int(counts[cid]),
+                }
+            )
+    anniversaries.sort(key=lambda item: (item["inDays"], -item["count"]))
+
+    # --- reconnect: big 1:1 threads gone quiet ---
+    reconnect: list[dict] = []
+    for cid, last in lasts.items():
+        cid = str(cid)
+        if cid.startswith("chat") or int(counts.get(cid, 0)) < 1000:
+            continue
+        quiet_days = int((now - last).days)
+        if quiet_days < 90:
+            continue
+        reconnect.append(
+            {
+                "chatId": cid,
+                "name": label(cid),
+                "count": int(counts[cid]),
+                "quietDays": quiet_days,
+                "lastDate": str(last)[:10],
+            }
+        )
+    reconnect.sort(key=lambda item: -(item["count"] * min(item["quietDays"], 365)))
+
+    return {
+        "onThisDay": on_this_day,
+        "anniversaries": anniversaries[:4],
+        "reconnect": reconnect[:5],
+    }
+
 
 def cached_messages_bundle(messages_path: Path) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """(messages df, conversation catalog, display-name map) cached on file signature."""
@@ -1585,6 +1788,43 @@ def ask_messages_payload(
         cap = max(1, min(int(limit or 8), 20))
         matches = _select_messages(df, terms, cap, prefer_recent=prefer_recent)
 
+    # Semantic recall: blend in windows that match the question's MEANING, so
+    # paraphrases surface even when no keyword hits ("falling out" finds the
+    # fight nobody called a fight). Skips silently when the index is missing,
+    # stale, or the embeddings call fails.
+    if use_ai and not df.empty:
+        try:
+            index = get_semantic_index(messages_path)
+        except Exception:
+            index = None
+        if index is not None:
+            emit("status", "Searching by meaning…")
+            try:
+                query_text = " ".join([str(question or "")] + list(terms or [])[:6])
+                query_vec = sem.embed_query(query_text)
+                scope_ids = (
+                    set(df["chat_id"].dropna().astype(str).unique())
+                    if (contact or plan_ids)
+                    else None
+                )
+                hits = index.search(
+                    query_vec, k=10, chat_ids=scope_ids,
+                    date_from=date_from, date_to=date_to,
+                )
+                anchor_ids = [h["anchor_id"] for h in hits if h["anchor_id"]]
+                if anchor_ids:
+                    sem_rows = df[df["message_id"].astype(str).isin(anchor_ids)]
+                    if not sem_rows.empty:
+                        keep = max(cap - min(8, len(sem_rows)), cap // 2)
+                        matches = (
+                            pd.concat([matches.head(keep), sem_rows])
+                            .drop_duplicates(subset=["message_id"])
+                            .head(cap)
+                            .sort_values("timestamp", ascending=False)
+                        )
+            except Exception as exc:
+                print(f"[ask] semantic search failed: {exc}", file=sys.__stderr__)
+
     name_map = resolve_contact_names(matches["chat_id"].dropna().astype(str).unique()) if not matches.empty else {}
     for cid in set(matches["chat_id"].dropna().astype(str)) if not matches.empty else set():
         if not name_map.get(cid) and catalog_names.get(cid):
@@ -1781,6 +2021,16 @@ class RecallHandler(BaseHTTPRequestHandler):
                 "reports": list_report_files(),
                 "contactNames": contacts_cache_summary(),
             })
+        elif parsed.path == "/api/semantic":
+            messages_path = safe_path(query.get("messagesPath"), ROOT / "messages.csv")
+            status = sem.index_status(SEMANTIC_DIR, file_cache_signature(messages_path))
+            if path_exists(messages_path):
+                df, _, _ = cached_messages_bundle(messages_path)
+                status["estimate"] = sem.estimate_build(df)
+            send_json(self, 200, {"semantic": status})
+        elif parsed.path == "/api/memories":
+            messages_path = safe_path(query.get("messagesPath"), ROOT / "messages.csv")
+            send_json(self, 200, {"memories": memories_payload(messages_path)})
         elif parsed.path == "/api/contacts":
             db_path = safe_path(query.get("dbPath"))
             messages_path = safe_path(query.get("messagesPath"), ROOT / "messages.csv")

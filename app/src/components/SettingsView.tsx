@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from 'react'
-import type { Defaults, Job, PreviewCacheSummary, RuntimePaths } from '../types'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import type { Defaults, Job, PreviewCacheSummary, RuntimePaths, SemanticStatus } from '../types'
 import { formatNumber, shortDateTime } from '../lib/format'
 import { modelLabel } from '../lib/models'
+import { recallApi } from '../lib/api'
 
 const LIVE_DB_PATH = '~/Library/Messages/chat.db'
 
@@ -188,7 +189,93 @@ export function SettingsView({
           <span>{utilityJob?.error || utilityMessage}</span>
         </div>
       ) : null}
+
+      <SemanticIndexCard
+        messagesPath={paths.messagesPath || defaults?.messagesPath || ''}
+      />
     </section>
+  )
+}
+
+function SemanticIndexCard({ messagesPath }: { messagesPath: string }) {
+  const [status, setStatus] = useState<SemanticStatus | null>(null)
+  const [building, setBuilding] = useState(false)
+  const [note, setNote] = useState('')
+
+  const refresh = useCallback(async () => {
+    if (!messagesPath) return
+    try {
+      const response = await recallApi.semanticStatus({ messagesPath })
+      setStatus(response.semantic)
+      if (response.semantic.state === 'fresh') setBuilding(false)
+    } catch {
+      // status is best-effort; the card just shows unknown
+    }
+  }, [messagesPath])
+
+  useEffect(() => {
+    if (!messagesPath) return
+    let cancelled = false
+    recallApi
+      .semanticStatus({ messagesPath })
+      .then((response) => {
+        if (!cancelled) setStatus(response.semantic)
+      })
+      .catch(() => {
+        // status is best-effort; the card just shows unknown
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [messagesPath])
+
+  useEffect(() => {
+    if (!building) return
+    const timer = window.setInterval(() => void refresh(), 4000)
+    return () => window.clearInterval(timer)
+  }, [building, refresh])
+
+  async function build() {
+    if (!messagesPath || building) return
+    setBuilding(true)
+    setNote('Building — progress in Jobs.')
+    try {
+      await recallApi.createSemanticJob({ messagesPath })
+    } catch (error) {
+      setBuilding(false)
+      setNote(error instanceof Error ? error.message : 'Could not start the build.')
+    }
+  }
+
+  const state = status?.state ?? 'none'
+  const cost = status?.estimate?.estimatedCost
+  const statusLine =
+    state === 'fresh'
+      ? `Up to date — ${formatNumber(status?.windows || 0)} moments indexed${status?.builtAt ? `, built ${shortDateTime(status.builtAt)}` : ''}.`
+      : state === 'stale'
+        ? 'Out of date — the message export changed since the last build. Chat falls back to keyword search until rebuilt.'
+        : 'Not built yet — chat retrieves by keywords only. Build it so questions match by meaning, not exact words.'
+
+  return (
+    <div className="semantic-card">
+      <div className="semantic-card-main">
+        <h3>Semantic memory index</h3>
+        <p>{statusLine}</p>
+        {note ? <p className="semantic-note">{note}</p> : null}
+      </div>
+      <button
+        type="button"
+        className="button secondary"
+        disabled={!messagesPath || building || state === 'fresh'}
+        onClick={() => void build()}
+      >
+        {building
+          ? 'Building…'
+          : state === 'fresh'
+            ? 'Built'
+            : `${state === 'stale' ? 'Rebuild' : 'Build'} index${typeof cost === 'number' ? ` (~$${cost.toFixed(2)})` : ''}`}
+      </button>
+    </div>
   )
 }
 

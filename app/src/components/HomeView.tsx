@@ -1,5 +1,7 @@
-import type { Contact, Defaults, Job, ReportFile, ViewKey } from '../types'
+import { useEffect, useMemo, useState } from 'react'
+import type { Contact, Defaults, Job, MemoriesPayload, ReportFile, ViewKey } from '../types'
 import { contactTitle, formatNumber, reportTitle, shortDateTime } from '../lib/format'
+import { recallApi } from '../lib/api'
 import { BarList } from './BarList'
 import { Donut } from './Donut'
 
@@ -26,6 +28,7 @@ const DONUT_COLORS = [
 const OTHER_COLOR = '#c7bca8'
 
 export function HomeView({
+  defaults,
   contacts,
   reports,
   reportCount,
@@ -126,6 +129,12 @@ export function HomeView({
         </div>
       </div>
 
+      <MemoriesSection
+        messagesPath={defaults?.messagesPath || ''}
+        contacts={contacts}
+        onSelectContact={onSelectContact}
+      />
+
       <div className="ov-grid">
         <section className="panel">
           <div className="panel-head">
@@ -208,6 +217,91 @@ export function HomeView({
           </div>
         )}
       </section>
+    </section>
+  )
+}
+
+function MemoriesSection({
+  messagesPath,
+  contacts,
+  onSelectContact,
+}: {
+  messagesPath: string
+  contacts: Contact[]
+  onSelectContact: (contact: Contact) => void
+}) {
+  const [memories, setMemories] = useState<MemoriesPayload | null>(null)
+
+  useEffect(() => {
+    if (!messagesPath) return
+    let cancelled = false
+    recallApi
+      .memories({ messagesPath })
+      .then((response) => {
+        if (!cancelled) setMemories(response.memories)
+      })
+      .catch(() => {
+        // memories are a bonus; the overview works without them
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [messagesPath])
+
+  const cards = useMemo(() => {
+    if (!memories) return []
+    const anniversary = memories.anniversaries.slice(0, 2).map((item) => ({
+      key: `anni-${item.chatId}`,
+      kicker: item.inDays === 0 ? 'Anniversary today' : `Anniversary in ${item.inDays}d`,
+      tone: 'anniversary',
+      name: item.name,
+      line: `${item.years} ${item.years === 1 ? 'year' : 'years'} since your first message (${item.date}).`,
+      chatId: item.chatId,
+    }))
+    const onThisDay = memories.onThisDay.slice(0, 3).map((item) => ({
+      key: `otd-${item.chatId}-${item.year}`,
+      kicker: `On this day · ${item.year}`,
+      tone: 'onthisday',
+      name: item.name,
+      line: item.preview ? `“${item.preview}”` : `${formatNumber(item.count)} messages that day.`,
+      chatId: item.chatId,
+    }))
+    const reconnect = memories.reconnect.slice(0, 2).map((item) => ({
+      key: `rec-${item.chatId}`,
+      kicker: 'Been a while',
+      tone: 'reconnect',
+      name: item.name,
+      line: `${formatNumber(item.count)} messages together — quiet since ${item.lastDate}.`,
+      chatId: item.chatId,
+    }))
+    return [...anniversary, ...onThisDay, ...reconnect].slice(0, 6)
+  }, [memories])
+
+  if (!cards.length) return null
+
+  return (
+    <section className="panel memories-panel">
+      <div className="panel-head">
+        <h3>Memories</h3>
+      </div>
+      <div className="memories-row">
+        {cards.map((card) => {
+          const contact = contacts.find((item) => item.chat_id === card.chatId)
+          return (
+            <button
+              key={card.key}
+              type="button"
+              className={`memory-card ${card.tone}`}
+              disabled={!contact}
+              onClick={() => contact && onSelectContact(contact)}
+            >
+              <span className="memory-kicker">{card.kicker}</span>
+              <strong>{card.name}</strong>
+              <p>{card.line}</p>
+            </button>
+          )
+        })}
+      </div>
     </section>
   )
 }

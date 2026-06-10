@@ -5,9 +5,11 @@ import type {
   ContactsResponse,
   Defaults,
   Job,
+  MemoriesPayload,
   PreviewPayload,
   ReportFile,
   SearchResponse,
+  SemanticStatus,
 } from '../types'
 
 const apiBase = import.meta.env.VITE_RECALL_API_BASE?.replace(/\/$/, '') ?? ''
@@ -203,6 +205,22 @@ export const recallApi = {
     request<{ job: Job }>('/api/jobs', {
       method: 'POST',
       body: JSON.stringify({ action: 'export', ...input }),
+    }),
+
+  memories: (input: { messagesPath?: string }) =>
+    request<{ memories: MemoriesPayload }>(
+      `/api/memories${queryString({ messagesPath: input.messagesPath })}`,
+    ),
+
+  semanticStatus: (input: { messagesPath?: string }) =>
+    request<{ semantic: SemanticStatus }>(
+      `/api/semantic${queryString({ messagesPath: input.messagesPath })}`,
+    ),
+
+  createSemanticJob: (input: { messagesPath: string }) =>
+    request<{ job: Job }>('/api/jobs', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'semantic', ...input }),
     }),
 
   refreshContactNames: () =>

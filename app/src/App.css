@@ -6652,3 +6652,190 @@ body.is-resizing .app-shell {
     visibility: hidden;
   }
 }
+
+/* Settings: semantic memory index card */
+.semantic-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px 18px;
+  background: var(--surface);
+}
+
+.semantic-card-main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.semantic-card h3 {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.semantic-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.semantic-card .semantic-note {
+  color: var(--accent);
+}
+
+.semantic-card .button {
+  flex: none;
+}
+
+/* Overview: proactive memories row */
+.memories-panel {
+  margin-top: 16px;
+}
+
+.memories-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.memory-card {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 13px 14px;
+  background: var(--surface-2);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.memory-card:hover:not(:disabled) {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  background: rgba(var(--accent-rgb), 0.05);
+  transform: translateY(-1px);
+}
+
+.memory-card:disabled {
+  cursor: default;
+}
+
+.memory-kicker {
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.memory-card.reconnect .memory-kicker {
+  color: var(--data-teal);
+}
+
+.memory-card.anniversary .memory-kicker {
+  color: var(--data-amber);
+}
+
+.memory-card strong {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.memory-card p {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* Analyze: relationship dynamics row */
+.dynamics-block {
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+
+.dynamics-label {
+  color: var(--soft);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dynamics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.dynamic-stat {
+  display: grid;
+  gap: 2px;
+}
+
+.dynamic-stat span {
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 11px;
+}
+
+.dynamic-stat strong {
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.dynamic-stat strong.down {
+  color: var(--accent);
+}
+
+.dynamic-stat strong.up {
+  color: var(--data-teal);
+}
+
+.dynamic-stat small {
+  color: var(--soft);
+  font-size: 10.5px;
+}
+
+.dynamics-speakers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.speaker-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+}
+
+.speaker-chip em {
+  color: var(--muted);
+  font-style: normal;
+}

@@ -1,7 +1,7 @@
 import { ActivityChart } from './ActivityChart'
 import { SparkIcon } from './Icons'
 import { DateField } from './DateField'
-import type { Contact, Defaults, Job, PreviewPayload, ReportFile } from '../types'
+import type { Contact, Defaults, Dynamics, Job, PreviewPayload, ReportFile } from '../types'
 import {
   contactTitle,
   formatMoney,
@@ -144,6 +144,8 @@ export function AnalyzePanel({
           <Metric label="Active days" value={formatNumber(stats?.activeDays)} />
         </div>
 
+        <DynamicsRow dynamics={preview?.dynamics} />
+
         <div className="cost-row">
           <div>
             <span>Estimated cost</span>
@@ -227,4 +229,70 @@ function lastLog(logs: Array<string | { message?: string }> = []) {
     if (message && !message.startsWith('127.0.0.1 - -')) return message
   }
   return ''
+}
+
+function DynamicsRow({ dynamics }: { dynamics?: Dynamics }) {
+  if (!dynamics) return null
+  const pct = (value?: number | null) =>
+    typeof value === 'number' ? `${Math.round(value * 100)}%` : null
+  const balance = pct(dynamics.balanceRecent ?? dynamics.balanceLifetime)
+  const balanceLifetime = pct(dynamics.balanceLifetime)
+  const initiation = pct(dynamics.initiationRecent ?? dynamics.initiationLifetime)
+  const trend = dynamics.volumeTrendPct
+  const speakers = dynamics.topSpeakers ?? []
+
+  const hasAnything = balance || initiation || typeof trend === 'number' || speakers.length
+  if (!hasAnything) return null
+
+  return (
+    <div className="dynamics-block">
+      <span className="dynamics-label">Dynamics</span>
+      <div className="dynamics-grid">
+        {balance ? (
+          <div className="dynamic-stat">
+            <span>You carry</span>
+            <strong>{balance}</strong>
+            <small>
+              {balanceLifetime && balanceLifetime !== balance
+                ? `of recent messages · ${balanceLifetime} lifetime`
+                : 'of the messages'}
+            </small>
+          </div>
+        ) : null}
+        {initiation ? (
+          <div className="dynamic-stat">
+            <span>You open the day</span>
+            <strong>{initiation}</strong>
+            <small>of active days, last 90d</small>
+          </div>
+        ) : null}
+        {typeof trend === 'number' ? (
+          <div className="dynamic-stat">
+            <span>Volume trend</span>
+            <strong className={trend < 0 ? 'down' : 'up'}>
+              {trend > 0 ? '+' : ''}
+              {trend}%
+            </strong>
+            <small>last 3 months vs lifetime</small>
+          </div>
+        ) : null}
+        {typeof dynamics.quietDays === 'number' && dynamics.quietDays > 30 ? (
+          <div className="dynamic-stat">
+            <span>Quiet for</span>
+            <strong>{formatNumber(dynamics.quietDays)}d</strong>
+            <small>since the last message</small>
+          </div>
+        ) : null}
+      </div>
+      {speakers.length ? (
+        <div className="dynamics-speakers">
+          {speakers.map((speaker) => (
+            <span key={speaker.name} className="speaker-chip">
+              {speaker.name} <em>{Math.round(speaker.share * 100)}%</em>
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
 }

@@ -120,6 +120,44 @@ export type SearchResponse = {
   results: SearchResult[]
 }
 
+export type MemoriesPayload = {
+  onThisDay: Array<{
+    chatId: string
+    name: string
+    year: number
+    yearsAgo: number
+    count: number
+    preview: string
+  }>
+  anniversaries: Array<{
+    chatId: string
+    name: string
+    years: number
+    date: string
+    inDays: number
+    count: number
+  }>
+  reconnect: Array<{
+    chatId: string
+    name: string
+    count: number
+    quietDays: number
+    lastDate: string
+  }>
+}
+
+export type SemanticStatus = {
+  state: 'none' | 'stale' | 'fresh'
+  windows?: number
+  builtAt?: string
+  model?: string
+  estimate?: {
+    windows: number
+    tokens: number
+    estimatedCost: number
+  }
+}
+
 export type AskResponse = {
   question: string
   contact?: string
@@ -129,11 +167,22 @@ export type AskResponse = {
   citations: SearchResult[]
 }
 
+export type Dynamics = {
+  balanceLifetime?: number | null
+  balanceRecent?: number | null
+  initiationLifetime?: number | null
+  initiationRecent?: number | null
+  volumeTrendPct?: number
+  quietDays?: number
+  topSpeakers?: Array<{ name: string; count: number; share: number }>
+}
+
 export type PreviewPayload = {
   stats: PreviewStats
   estimate: Estimate
   monthly: MonthlyPoint[]
   recentMessages: RecentMessage[]
+  dynamics?: Dynamics
   cached?: boolean
 }
 
