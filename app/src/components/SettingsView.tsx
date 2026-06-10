@@ -263,18 +263,20 @@ function SemanticIndexCard({ messagesPath }: { messagesPath: string }) {
         <p>{statusLine}</p>
         {note ? <p className="semantic-note">{note}</p> : null}
       </div>
-      <button
-        type="button"
-        className="button secondary"
-        disabled={!messagesPath || building || state === 'fresh'}
-        onClick={() => void build()}
-      >
-        {building
-          ? 'Building…'
-          : state === 'fresh'
-            ? 'Built'
+      {state === 'fresh' && !building ? (
+        <span className="status-pill good">Indexed</span>
+      ) : (
+        <button
+          type="button"
+          className="button secondary"
+          disabled={!messagesPath || building}
+          onClick={() => void build()}
+        >
+          {building
+            ? 'Building…'
             : `${state === 'stale' ? 'Rebuild' : 'Build'} index${typeof cost === 'number' ? ` (~$${cost.toFixed(2)})` : ''}`}
-      </button>
+        </button>
+      )}
     </div>
   )
 }

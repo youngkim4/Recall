@@ -274,7 +274,10 @@ function MemoriesSection({
       line: `${formatNumber(item.count)} messages together — quiet since ${item.lastDate}.`,
       chatId: item.chatId,
     }))
-    return [...anniversary, ...onThisDay, ...reconnect].slice(0, 6)
+    const all = [...anniversary, ...onThisDay, ...reconnect]
+    // complete rows only (3-up grid) -- a half-empty row reads as a layout bug
+    const fullRows = Math.floor(all.length / 3) * 3
+    return all.slice(0, Math.min(6, Math.max(fullRows, Math.min(all.length, 3))))
   }, [memories])
 
   if (!cards.length) return null

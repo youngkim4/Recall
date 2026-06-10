@@ -1370,7 +1370,27 @@ def memories_payload(messages_path: Path) -> dict:
     cids = df["chat_id"].astype(str)
 
     def label(cid: str) -> str:
-        return names.get(cid) or contact_label({"chatId": cid})
+        name = names.get(cid)
+        if name:
+            return name
+        digits = re.sub(r"\D", "", cid)
+        if cid.startswith("chat"):
+            return f"Group ·{digits[-4:]}" if digits else "Group chat"
+        return f"Unsaved ·{digits[-4:]}" if digits else "Unsaved contact"
+
+    def memory_preview(texts: pd.Series) -> str:
+        """A quote that reads like a memory: conversational, never a link or a paste."""
+        clean = texts[
+            ~texts.str.contains("http", case=False, na=False)
+            & texts.str.contains(r"[a-zA-Z]{3}", na=False)
+        ]
+        if clean.empty:
+            return ""
+        lengths = clean.str.len()
+        sweet = clean[(lengths >= 25) & (lengths <= 130)]
+        if not sweet.empty:
+            return str(sweet.loc[sweet.str.len().idxmax()])
+        return str(clean.loc[lengths.idxmax()])[:120]
 
     # --- on this day, in past years ---
     on_this_day: list[dict] = []
@@ -1399,7 +1419,7 @@ def memories_payload(messages_path: Path) -> dict:
                 (past_today["timestamp"].dt.year == year) & (cids[day_mask] == cid)
             ]
             texts = day_rows["text"].astype(str)
-            preview = texts.loc[texts.str.len().idxmax()][:120] if not texts.empty else ""
+            preview = memory_preview(texts) if not texts.empty else ""
             on_this_day.append(
                 {
                     "chatId": cid,
