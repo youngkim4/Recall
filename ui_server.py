@@ -65,23 +65,46 @@ PREVIEW_STORE_LIMIT = 256
 
 
 class JobWriter(io.TextIOBase):
+    """Routes worker stdout into the job log. tqdm redraws its progress line
+    with \r-terminated frames; instead of buffering them into one unreadable
+    mega-line, emit a log line whenever the frame's stable part (the stage
+    description) changes -- live progress without percentage spam."""
+
+    _FRAME_TAIL = re.compile(r":?\s*\d+%\|.*$")
+
     def __init__(self, job_id: str):
         self.job_id = job_id
         self._buffer = ""
+        self._last_frame_key = ""
 
     def write(self, text: str) -> int:
         if not text:
             return 0
         self._buffer += text
-        while "\n" in self._buffer:
-            line, self._buffer = self._buffer.split("\n", 1)
-            append_log(self.job_id, line)
+        while True:
+            newline = self._buffer.find("\n")
+            carriage = self._buffer.find("\r")
+            if newline == -1 and carriage == -1:
+                break
+            if newline != -1 and (carriage == -1 or newline < carriage):
+                line, self._buffer = self._buffer[:newline], self._buffer[newline + 1:]
+                if line.strip():
+                    append_log(self.job_id, line)
+            else:
+                frame, self._buffer = self._buffer[:carriage], self._buffer[carriage + 1:]
+                self._emit_frame(frame)
         return len(text)
 
+    def _emit_frame(self, frame: str):
+        key = self._FRAME_TAIL.sub("", frame).strip()
+        if key and key != self._last_frame_key:
+            self._last_frame_key = key
+            append_log(self.job_id, key)
+
     def flush(self):
-        if self._buffer:
-            append_log(self.job_id, self._buffer)
-            self._buffer = ""
+        if self._buffer.strip():
+            self._emit_frame(self._buffer)
+        self._buffer = ""
 
 
 def json_default(value):
@@ -504,8 +527,12 @@ def markdown_section(text: str, heading: str, stop_at_next_heading: bool = True)
 def markdown_to_html(text: str) -> str:
     if not text:
         return ""
+    escaped = escape(text)
+    # escaping turns blockquote markers into &gt; before markdown can see
+    # them; restore line-leading ones so quoted messages render as quotes
+    escaped = re.sub(r"(?m)^(\s*)&gt; ?", r"\1> ", escaped)
     return markdown_lib.markdown(
-        escape(text),
+        escaped,
         extensions=["extra", "sane_lists"],
         output_format="html5",
     )

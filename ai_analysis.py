@@ -1,7 +1,9 @@
 """AI-assisted event extraction and conversation summary generation."""
 
+import difflib
 import json
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple
 
@@ -96,7 +98,8 @@ def _extract_events_for_period(
         f"## Task\n\n"
         f"Identify up to {events_per_chunk} significant events from {period_label}.\n\n"
         f"Return JSON with an 'events' array. Each event must include: date, title, detail, "
-        f"category, score, and quote."
+        f"category, score, and quote. Score on an absolute scale: 1.0 = relationship-defining "
+        f"moment, 0.7 = significant event, 0.4 = notable but ordinary, 0.2 = minor."
     )
 
     content = _call_openai(
@@ -106,6 +109,39 @@ def _extract_events_for_period(
     )
 
     return _parse_json_events(content)
+
+
+def _dedupe_events(df: pd.DataFrame) -> pd.DataFrame:
+    """Adjacent chunks can both report the same real-world event. Treat events
+    as duplicates when their dates fall within a week and the titles read the
+    same; keep the higher-scored copy."""
+
+    def norm(title: str) -> str:
+        return re.sub(r"[^a-z0-9 ]", "", str(title).lower()).strip()
+
+    def same_event(title_a: str, title_b: str) -> bool:
+        if difflib.SequenceMatcher(None, title_a, title_b).ratio() >= 0.75:
+            return True
+        # word-order-insensitive: "Trip to Korea planned" == "Planned the trip to Korea"
+        words_a, words_b = set(title_a.split()), set(title_b.split())
+        if not words_a or not words_b:
+            return False
+        jaccard = len(words_a & words_b) / len(words_a | words_b)
+        return jaccard >= 0.7
+
+    ordered = df.sort_values("score", ascending=False).reset_index(drop=True)
+    kept_rows = []
+    for _, row in ordered.iterrows():
+        row_date = pd.Timestamp(row["date"])
+        row_title = norm(row["title"])
+        duplicate = any(
+            abs((row_date - pd.Timestamp(kept["date"])).days) <= 7
+            and same_event(row_title, norm(kept["title"]))
+            for kept in kept_rows
+        )
+        if not duplicate:
+            kept_rows.append(row)
+    return pd.DataFrame(kept_rows).reset_index(drop=True)
 
 
 def ai_extract_events(
@@ -146,7 +182,8 @@ def ai_extract_events(
             f"## Task\n\n"
             f"Identify the {target_events} most significant events/moments.\n\n"
             f"Return JSON with an 'events' array. Each event must include: date, title, detail, "
-            f"category, score, and quote."
+            f"category, score, and quote. Score on an absolute scale: 1.0 = relationship-defining "
+            f"moment, 0.7 = significant event, 0.4 = notable but ordinary, 0.2 = minor."
         )
 
         content = _call_openai(
@@ -206,6 +243,7 @@ def ai_extract_events(
     if df.empty:
         return df
 
+    df = _dedupe_events(df)
     df = df.reset_index(drop=True)
     df["event_month"] = pd.to_datetime(df["date"]).dt.to_period("M")
 

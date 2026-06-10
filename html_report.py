@@ -8,6 +8,7 @@ Purpose:
 import html as html_lib
 import os
 import json
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -151,7 +152,11 @@ def write_html_report(
             '</section>'
         )
 
-    summary_rendered = markdown.markdown(html_lib.escape(summary_text or ""), extensions=['extra'])
+    summary_escaped = html_lib.escape(summary_text or "")
+    # restore line-leading blockquote markers the escape just neutralized,
+    # so quoted messages render as quotes instead of literal "> ..." text
+    summary_escaped = re.sub(r"(?m)^(\s*)&gt; ?", r"\1> ", summary_escaped)
+    summary_rendered = markdown.markdown(summary_escaped, extensions=['extra'])
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
