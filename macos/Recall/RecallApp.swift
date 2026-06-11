@@ -3,7 +3,7 @@ import Foundation
 import WebKit
 
 @main
-final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler {
     private static var sharedDelegate: RecallApp?
 
     private var window: NSWindow?
@@ -24,6 +24,17 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         NSApp.setActivationPolicy(.regular)
         setApplicationIcon()
         buildMenu()
+
+        // the wizard re-probes the instant the user returns from System Settings
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.webView?.evaluateJavaScript(
+                "window.dispatchEvent(new CustomEvent('recall:becameActive'))"
+            )
+        }
 
         do {
             serverPort = findAvailablePort()
@@ -46,6 +57,97 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         stopBackend()
+    }
+
+    // MARK: - Web bridge
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard message.name == "recall",
+              let body = message.body as? [String: Any],
+              let cmd = body["cmd"] as? String else {
+            return
+        }
+        let requestId = body["id"] as? String ?? ""
+        switch cmd {
+        case "openFullDiskAccess":
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                NSWorkspace.shared.open(url)
+            }
+            resolveBridge(requestId, json: "true")
+        case "pickDatabase":
+            pickDatabaseFile(requestId: requestId)
+        case "relaunch":
+            resolveBridge(requestId, json: "true")
+            relaunchApp()
+        default:
+            resolveBridge(requestId, json: "null")
+        }
+    }
+
+    private func resolveBridge(_ requestId: String, json: String) {
+        guard !requestId.isEmpty, let webView else { return }
+        let script = "window.__recallBridge && window.__recallBridge._resolve('\(requestId)', \(json))"
+        DispatchQueue.main.async {
+            webView.evaluateJavaScript(script)
+        }
+    }
+
+    private func pickDatabaseFile(requestId: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = false
+            // ~/Library is hidden in the panel by default; a chat.db copy may sit there
+            panel.showsHiddenFiles = true
+            panel.treatsFilePackagesAsDirectories = true
+            panel.message = "Choose a copy of your Messages database (chat.db)"
+            panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+            panel.begin { response in
+                if response == .OK, let url = panel.url {
+                    let escaped = url.path
+                        .replacingOccurrences(of: "\\", with: "\\\\")
+                        .replacingOccurrences(of: "'", with: "\\'")
+                    self.resolveBridge(requestId, json: "'\(escaped)'")
+                } else {
+                    self.resolveBridge(requestId, json: "null")
+                }
+            }
+        }
+    }
+
+    private func relaunchApp() {
+        // FDA applies at process launch; a clean child teardown first means
+        // no orphan keeps serving under the old TCC identity
+        stopBackend()
+        let bundlePath = Bundle.main.bundleURL.path.replacingOccurrences(of: "'", with: "'\\''")
+        let helper = Process()
+        helper.executableURL = URL(fileURLWithPath: "/bin/sh")
+        helper.arguments = ["-c", "sleep 0.4; /usr/bin/open '\(bundlePath)'"]
+        try? helper.run()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NSApp.terminate(nil)
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        // x-apple.systempreferences and friends must open natively, never navigate the app
+        if let url = navigationAction.request.url,
+           let scheme = url.scheme?.lowercased(),
+           scheme != "http", scheme != "https", scheme != "about" {
+            NSWorkspace.shared.open(url)
+            decisionHandler(.cancel)
+            return
+        }
+        decisionHandler(.allow)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -134,6 +236,13 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         let configuration = WKWebViewConfiguration()
         // Persistent store so localStorage (saved chats, model/path/layout prefs) survives app restarts.
         configuration.websiteDataStore = WKWebsiteDataStore.default()
+        // native bridge for the onboarding wizard: FDA deep-link, file picker, relaunch
+        configuration.userContentController.add(self, name: "recall")
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: "window.__RECALL_SHELL__ = true",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
