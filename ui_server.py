@@ -1144,7 +1144,7 @@ ASK_STOPWORDS = {
     "your",
     # contraction fragments and filler that word-boundary-match everywhere
     "its", "hed", "hes", "shes", "thats", "whats", "youre", "theyre", "weve",
-    "gonna", "wanna", "kinda", "yeah",
+    "gonna", "wanna", "kinda", "yeah", "let", "lets",
 }
 
 
@@ -1159,21 +1159,44 @@ def query_terms(question: str) -> list[str]:
     return sorted(terms, key=len, reverse=True)[:8]
 
 
-def _term_scores(text: pd.Series, terms: list[str]) -> pd.Series:
-    """Whole-word hit count per row ('who' must not match 'whole')."""
-    scores = pd.Series(0, index=text.index)
-    for term in terms:
-        if re.fullmatch(r"[\w']+", term):
-            pattern = r"\b" + re.escape(term) + r"\b"
-        else:
-            pattern = re.escape(term)
-        scores = scores + text.str.contains(pattern, case=False, na=False, regex=True).astype(int)
-    return scores
+def _term_variants(term: str) -> set[str]:
+    """Light morphological variants so 'taxes' matches 'tax' and 'talked'
+    matches 'talk' -- texting never agrees with the question's inflection.
+    Truncations are guarded: '-es' only strips after a sibilant (the actual
+    English rule), bare '-ed'/'-ing' strips need a long-enough base, and any
+    derived form landing on a stopword is dropped -- otherwise 'notes' leaks
+    'not' and matches half the archive, defeating the burst-candidate prune."""
+    base = term.lower()
+    variants = {base}
+    if not re.fullmatch(r"[a-z']+", base):
+        return variants
+    derived: set[str] = set()
+    if base.endswith("ies") and len(base) > 4:
+        derived.add(base[:-3] + "y")
+    if re.search(r"(?:[xsz]|ch|sh)es$", base) and len(base) > 4:
+        derived.add(base[:-2])
+    if base.endswith("s") and len(base) > 3 and not base.endswith("ss") and base != "news":
+        derived.add(base[:-1])
+    if base.endswith("ing") and len(base) > 5:
+        derived.add(base[:-3] + "e")
+        if len(base) > 6:
+            derived.add(base[:-3])
+    if base.endswith("ed") and len(base) > 4:
+        derived.add(base[:-1])
+        if len(base) > 5:
+            derived.add(base[:-2])
+    if not base.endswith("s"):
+        derived.add(base + "s")
+        if re.search(r"(?:[xz]|ch|sh)$", base):
+            derived.add(base + "es")
+    variants |= {v for v in derived if len(v) >= 3 and v not in ASK_STOPWORDS}
+    return variants
 
 
 def _term_pattern(term: str) -> str:
     if re.fullmatch(r"[\w']+", term):
-        return r"\b" + re.escape(term) + r"\b"
+        options = sorted(_term_variants(term), key=len, reverse=True)
+        return r"\b(?:" + "|".join(re.escape(v) for v in options) + r")\b"
     return re.escape(term)
 
 
@@ -1392,6 +1415,11 @@ def ai_ask_answer(
         "Each highlighted line is shown inside the surrounding conversation -- read the whole exchange to "
         "understand the situation (what led to it, who was involved, the nuance) and explain the moment, "
         "not just the highlighted line. "
+        "When the question is trying to RECALL something specific that was said -- 'what was the thing we "
+        "talked about', 'what did they call it' -- the answer is the exact word or phrase from the "
+        "conversation: find it in the excerpts, lead with it, and quote the exchange. Only reach for "
+        "general knowledge if the excerpts genuinely don't contain it, and say so explicitly instead of "
+        "presenting a guess as the memory. "
         "The archive belongs to the person you are talking to: refer to them as 'you', never as 'me' or by a "
         "name -- messages labeled 'You' are theirs. Refer to everyone else by the name shown before each excerpt. "
         "Never output a raw phone number or email address as a person's identity; "
@@ -1701,6 +1729,45 @@ def _representative_messages(df: pd.DataFrame, cap: int) -> pd.DataFrame:
     )
 
 
+def _moment_positions(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Per-row chat id + position in that chat's timeline, for moment dedupe."""
+    ordered = df.sort_values(["chat_id", "timestamp"], kind="stable")
+    pos = pd.Series(range(len(ordered)), index=ordered.index)
+    return ordered["chat_id"].astype(str), pos
+
+
+def _dedupe_moments(
+    rows: pd.DataFrame,
+    chat: pd.Series,
+    pos: pd.Series,
+    per_moment: int = 2,
+    radius: int = 12,
+    seed: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Cap rows per MOMENT (same chat, within `radius` messages): the context
+    window around one hit already covers its burst-mates, so extra rows from
+    the same exchange eat cap slots that other moments need. Rows must arrive
+    in signal order; seed rows count as already-kept coverage."""
+    if rows.empty:
+        return rows
+    kept: dict[str, list[int]] = {}
+    for i in (seed.index if seed is not None else []):
+        c, p = chat.get(i), pos.get(i)
+        if c is not None and p is not None:
+            kept.setdefault(c, []).append(int(p))
+    kept_idx = []
+    for i in rows.index:
+        c, p = chat.get(i), pos.get(i)
+        if c is None or p is None:
+            kept_idx.append(i)
+            continue
+        if sum(1 for x in kept.get(c, ()) if abs(x - int(p)) <= radius) >= per_moment:
+            continue
+        kept.setdefault(c, []).append(int(p))
+        kept_idx.append(i)
+    return rows.loc[kept_idx]
+
+
 def _select_messages(df: pd.DataFrame, terms: list[str], cap: int, prefer_recent: bool = True) -> pd.DataFrame:
     """Score by conversation bursts of (meaning-expanded) terms; fall back to a
     representative spread. prefer_recent=False surfaces the EARLIEST matches."""
@@ -1978,16 +2045,25 @@ def ask_messages_payload(
         name_tokens = sorted(
             {tok for nm in person_names.values() for tok in re.findall(r"[a-z]{4,}", str(nm).lower())}
         )
-        cap = max(1, min(max(int(limit or 8), 24), 30))
-        matches = _person_messages(df, person_keys, name_tokens, cap, terms=terms)
+        # the deepest pool: person questions are the heavy recall class, and
+        # the target moment routinely sits in the mid-tier of a noisy scope
+        cap = 30
+        raw_matches = _person_messages(df, person_keys, name_tokens, cap * 2, terms=terms)
     elif person_focus and scoped:
         cap = max(1, min(max(int(limit or 8), 24), 30))
-        matches = _identity_messages(df, cap, terms=terms)
+        raw_matches = _identity_messages(df, cap * 2, terms=terms)
     else:
         # an identity question with no scoped conversation must not harvest
-        # "I'm/my name is" lines from the whole archive -- fall back to terms
-        cap = max(1, min(int(limit or 8), 20))
-        matches = _select_messages(df, terms, cap, prefer_recent=prefer_recent)
+        # "I'm/my name is" lines from the whole archive -- fall back to terms.
+        # AI asks get a deeper pool: the answer model reads context windows,
+        # and recall questions live or die on the right moment making the cut
+        floor = 18 if use_ai else 0
+        cap = max(1, min(max(int(limit or 8), floor), 20))
+        raw_matches = _select_messages(df, terms, cap * 2, prefer_recent=prefer_recent)
+    # one long exchange must not hog the cap: overfetch above, then keep at
+    # most two rows per moment so distinct moments fill the freed slots
+    moment_chat, moment_pos = _moment_positions(df)
+    matches = _dedupe_moments(raw_matches, moment_chat, moment_pos).head(cap)
 
     # Semantic recall: blend in windows that match the question's MEANING, so
     # paraphrases surface even when no keyword hits ("falling out" finds the
@@ -2009,7 +2085,7 @@ def ask_messages_payload(
                     else None
                 )
                 hits = index.search(
-                    query_vec, k=10, chat_ids=scope_ids,
+                    query_vec, k=24, chat_ids=scope_ids,
                     date_from=date_from, date_to=date_to,
                 )
                 anchor_ids = [h["anchor_id"] for h in hits if h["anchor_id"]]
@@ -2022,15 +2098,21 @@ def ask_messages_payload(
                         rank = {aid: i for i, aid in enumerate(anchor_ids)}
                         sem_rows["_rank"] = sem_rows["message_id"].astype(str).map(rank)
                         sem_rows = sem_rows.sort_values("_rank").drop(columns=["_rank"])
-                        take = min(8, len(sem_rows), max(1, cap // 3))
-                        keep = max(cap - take, cap // 2)
-                        # matches arrive in SIGNAL order, so head(keep) cuts the
-                        # weakest keyword rows, not the oldest
-                        matches = (
-                            pd.concat([matches.head(keep), sem_rows.head(take)])
-                            .drop_duplicates(subset=["message_id"])
-                            .head(cap)
-                        )
+                        # semantic earns its slots by covering moments the
+                        # keyword side MISSED -- its top ranks usually re-cite
+                        # exchanges the bursts already found. Novel windows
+                        # APPEND to the keyword picks instead of evicting
+                        # their tail: the freshest mid-tier keyword moments
+                        # are exactly where recall targets live, and a few
+                        # extra context windows cost tokens, not correctness
+                        novel = _dedupe_moments(
+                            sem_rows, moment_chat, moment_pos,
+                            per_moment=1, seed=matches,
+                        ).head(8)
+                        if not novel.empty:
+                            matches = pd.concat([matches, novel]).drop_duplicates(
+                                subset=["message_id"]
+                            )
             except Exception as exc:
                 print(f"[ask] semantic search failed: {exc}", file=sys.__stderr__)
 
@@ -2039,7 +2121,10 @@ def ask_messages_payload(
         if not name_map.get(cid) and catalog_names.get(cid):
             name_map[cid] = catalog_names[cid]
     windows = (
-        build_context_windows(df, matches, cap=cap) if (use_ai and not matches.empty) else []
+        # semantic blend may append past cap -- window every match we kept
+        build_context_windows(df, matches, cap=max(cap, len(matches)))
+        if (use_ai and not matches.empty)
+        else []
     )
 
     # resolve names for everyone who speaks in the matches or the surrounding windows
