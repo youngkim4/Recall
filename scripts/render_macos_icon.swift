@@ -1,9 +1,9 @@
 import AppKit
 import Foundation
 
-// Recall app icon: the wordmark reduced to a monogram. Cream paper squircle,
-// double hairline frame (the card/report motif), serif ink "R" with a
-// vermilion full stop -- "Recall." as one glyph. Warm-paper memoir brand.
+// Recall app icon: a typographic open quote -- the product is the exact
+// words people said. Cream paper squircle, double hairline frame (the
+// card/report motif), two serif quote marks in ink and vermilion.
 
 let outputPath = CommandLine.arguments.dropFirst().first ?? "/tmp/RecallIcon-1024.png"
 let outputURL = URL(fileURLWithPath: outputPath)
@@ -61,7 +61,8 @@ inkLineSoft.setStroke()
 innerFrame.lineWidth = 3.5
 innerFrame.stroke()
 
-// the monogram: serif R in warm ink, vermilion full stop
+// the mark: a double open quote built from two single-quote glyphs so the
+// trailing mark can carry the vermilion accent
 func serifFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
     let base = NSFont.systemFont(ofSize: size, weight: weight)
     if let descriptor = base.fontDescriptor.withDesign(.serif),
@@ -71,23 +72,26 @@ func serifFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
     return NSFont(name: "Georgia-Bold", size: size) ?? base
 }
 
-let letter = NSMutableAttributedString()
-letter.append(NSAttributedString(string: "R", attributes: [
-    .font: serifFont(size: 556, weight: .heavy),
+let quoteFont = serifFont(size: 940, weight: .heavy)
+let mark = NSMutableAttributedString()
+mark.append(NSAttributedString(string: "\u{2018}", attributes: [
+    .font: quoteFont,
     .foregroundColor: ink,
+    .kern: 26,
 ]))
-letter.append(NSAttributedString(string: ".", attributes: [
-    .font: serifFont(size: 556, weight: .heavy),
+mark.append(NSAttributedString(string: "\u{2018}", attributes: [
+    .font: quoteFont,
     .foregroundColor: vermilion,
-    .kern: 6,
 ]))
 
-let textSize = letter.size()
-let textOrigin = NSPoint(
-    x: (canvas - textSize.width) / 2 + 10,
-    y: (canvas - textSize.height) / 2 + 6
+// quote glyphs hang from the cap line: the line box is mostly empty space
+// below them, so center on the glyph mass, not the box
+let markSize = mark.size()
+let markOrigin = NSPoint(
+    x: (canvas - markSize.width) / 2 + 4,
+    y: (canvas - markSize.height) / 2 - 205
 )
-letter.draw(at: textOrigin)
+mark.draw(at: markOrigin)
 
 image.unlockFocus()
 
