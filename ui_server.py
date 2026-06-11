@@ -68,6 +68,7 @@ from recall_paths import (
     SNAPSHOT_DB,
     ensure_data_dirs,
 )
+from setup_status import LIVE_CHAT_DB, DbProbe, derive_state, probe_database
 
 ROOT = Path(__file__).resolve().parent
 UI_DIR = ROOT / "ui"
@@ -399,6 +400,52 @@ _JOB_STDOUT = _JobStreamRouter(sys.stdout)
 _JOB_STDERR = _JobStreamRouter(sys.stderr)
 
 
+SETUP_MARKER_PATH = SAVES_DIR / "setup.json"
+
+
+def read_setup_marker() -> dict:
+    try:
+        marker = json.loads(SETUP_MARKER_PATH.read_text(encoding="utf-8"))
+        return marker if isinstance(marker, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def write_setup_marker(updates: dict) -> dict:
+    """Persist onboarding state server-side: WKWebView localStorage can be
+    cleared while saves/ survives. Atomic so a crash never corrupts it."""
+    marker = {**read_setup_marker(), **updates}
+    SAVES_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = SETUP_MARKER_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(marker, indent=1), encoding="utf-8")
+    os.replace(tmp, SETUP_MARKER_PATH)
+    return marker
+
+
+def setup_status_payload(db_path: Path | None, messages_path: Path, deep: bool = False) -> dict:
+    try:
+        probe = probe_database(db_path, deep=deep)
+    except Exception as exc:
+        # the wizard derives every screen from this -- it must never 500
+        probe = DbProbe(status="error", kind="copy", path=str(db_path or ""), detail=str(exc))
+    export_exists = path_exists(messages_path)
+    return {
+        "state": derive_state(probe, export_exists),
+        "db": {
+            "status": probe.status,
+            "kind": probe.kind,
+            "path": probe.path,
+            "detail": probe.detail,
+            "approxMessages": probe.approx_messages,
+            "conversations": probe.conversations,
+            "firstYear": probe.first_year,
+            "lastYear": probe.last_year,
+        },
+        "export": {"exists": export_exists, "path": str(messages_path)},
+        "setup": read_setup_marker(),
+    }
+
+
 def run_job(job_id: str, action: str, payload: dict):
     update_job(job_id, status="running")
     writer = JobWriter(job_id)
@@ -458,6 +505,62 @@ def run_job(job_id: str, action: str, payload: dict):
                     "analysis": analysis,
                     "reports": list_report_files(),
                 }
+            elif action == "setup_import":
+                import time as _time
+
+                db_path = safe_path(payload.get("dbPath"), LIVE_CHAT_DB)
+                messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
+                include_contacts = bool(payload.get("includeContacts", True))
+
+                with JOBS_LOCK:
+                    duplicate = any(
+                        j["id"] != job_id
+                        and j["action"] in {"setup_import", "export"}
+                        and j["status"] in {"queued", "running"}
+                        for j in JOBS.values()
+                    )
+                if duplicate:
+                    raise ValueError("An import is already running.")
+
+                update_job(job_id, progress={"step": 1, "of": 3, "label": "Reading your Messages database"})
+                if not path_exists(db_path):
+                    raise FileNotFoundError(f"Database not found: {db_path}")
+                append_log(job_id, f"Exporting {db_path}")
+                try:
+                    export_result = export_database(db_path, messages_path)
+                except Exception as exc:
+                    if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+                        # Messages mid-write; one quiet retry covers most of it
+                        append_log(job_id, "Database is busy -- retrying in a moment")
+                        _time.sleep(2)
+                        export_result = export_database(db_path, messages_path)
+                    else:
+                        raise
+
+                contacts_skipped = False
+                if include_contacts:
+                    update_job(job_id, progress={"step": 2, "of": 3, "label": "Matching names from Contacts"})
+                    append_log(job_id, "Matching names from Contacts")
+                    try:
+                        export_contact_names()
+                    except Exception as exc:
+                        # names are a nicety, never a blocker -- numbers still work
+                        contacts_skipped = True
+                        append_log(job_id, f"Contacts skipped: {exc}")
+
+                update_job(job_id, progress={"step": 3, "of": 3, "label": "Getting your archive ready"})
+                append_log(job_id, "Warming the archive")
+                df, catalog, _names = cached_messages_bundle(messages_path)
+                years = pd.to_datetime(df["timestamp"], errors="coerce").dt.year.dropna()
+                result = {
+                    "messages": int(len(df)),
+                    "conversations": int(len(catalog)),
+                    "firstYear": int(years.min()) if len(years) else None,
+                    "lastYear": int(years.max()) if len(years) else None,
+                    "contactsSkipped": contacts_skipped,
+                }
+                if isinstance(export_result, dict) and export_result.get("recovered"):
+                    result["recovered"] = export_result["recovered"]
             elif action == "semantic":
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
                 if not path_exists(messages_path):
@@ -1542,6 +1645,112 @@ def invalidate_semantic_cache():
         _SEM_CACHE.update({"sig": None, "index": None})
 
 
+_FW_URL_ONLY_RE = re.compile(r"^https?://\S+$", re.I)
+_FW_LETTER_RE = re.compile(r"[^\W\d_]")
+_FW_EMOJI_RE = re.compile("[\U0001f000-\U0001faff☀-➿❤♥]")
+
+
+def _first_real_texts(rows: pd.DataFrame) -> pd.DataFrame:
+    """Rows whose text reads like words someone typed: not attachment-only,
+    not a bare link, carries at least one letter or an emoji."""
+    texts = rows["text"].fillna("").astype(str).str.strip()
+    ok = (
+        texts.ne("")
+        & ~texts.str.contains("￼", regex=False)
+        & ~texts.str.lower().str.startswith("[attachment")
+        & ~texts.str.match(_FW_URL_ONLY_RE)
+        & (texts.str.contains(_FW_LETTER_RE) | texts.str.contains(_FW_EMOJI_RE))
+    )
+    return rows[ok]
+
+
+def first_words_payload(messages_path: Path, limit: int = 5) -> dict:
+    """The first text ever exchanged with the people you text most -- the
+    post-import reveal. 1:1 chats only (the first line in a group chat is
+    often a third party); a person's phone and email handles merge by
+    resolved contact name, and named contacts win unless almost nothing is
+    named yet (fresh machine before the Contacts step)."""
+    empty = {"entries": [], "signature": "", "totals": {"messages": 0, "people": 0}}
+    if not path_exists(messages_path):
+        return empty
+    raw_sig = file_cache_signature(messages_path)
+    sig = "|".join(str(part) for part in raw_sig) if isinstance(raw_sig, tuple) else str(raw_sig or "")
+    df, catalog, names = cached_messages_bundle(messages_path)
+    if df.empty or catalog.empty or "timestamp" not in df.columns:
+        return empty
+
+    direct = catalog[~catalog["chat_id"].astype(str).str.startswith("chat")].copy()
+    if direct.empty:
+        return {**empty, "totals": {"messages": int(len(df)), "people": 0}}
+    direct["chat_id"] = direct["chat_id"].astype(str)
+    resolved = direct["chat_id"].map(lambda cid: str(names.get(cid) or "").strip())
+    direct["person_key"] = [
+        name.lower() if name else cid for name, cid in zip(resolved, direct["chat_id"])
+    ]
+    direct["is_named"] = resolved.ne("")
+
+    people = (
+        direct.groupby("person_key")
+        .agg(
+            count=("message_count", "sum"),
+            handles=("chat_id", list),
+            is_named=("is_named", "any"),
+        )
+        .reset_index()
+        .sort_values("count", ascending=False)
+    )
+    named_people = people[people["is_named"]]
+    pool = named_people if len(named_people) >= 3 else people
+    top = pool.head(limit)
+
+    cids_all = df["chat_id"].astype(str)
+    entries: list[dict] = []
+    for _, person in top.iterrows():
+        handles = {str(h) for h in person["handles"]}
+        rows = df[cids_all.isin(handles)].sort_values("timestamp").head(80)
+        real = _first_real_texts(rows)
+        if real.empty:
+            continue
+        first = real.iloc[0]
+        first_dir = str(first.get("direction") or "")
+        reply = None
+        later = real.iloc[1:]
+        if not later.empty and "direction" in later.columns:
+            opposite = later[later["direction"].fillna("").astype(str) != first_dir].head(1)
+            if not opposite.empty:
+                row = opposite.iloc[0]
+                reply = {
+                    "text": str(row["text"]).strip()[:280],
+                    "direction": str(row.get("direction") or ""),
+                    "timestamp": str(row["timestamp"]),
+                }
+        cid = str(first["chat_id"])
+        display = names.get(cid) or contact_label({"chatId": cid})
+        first_ts = pd.Timestamp(first["timestamp"])
+        entries.append({
+            "person": display,
+            "chatId": cid,
+            "timestamp": str(first["timestamp"]),
+            "yearsAgo": max(0, int((pd.Timestamp.now() - first_ts).days // 365)),
+            "direction": first_dir,
+            "text": str(first["text"]).strip()[:280],
+            "reply": reply,
+            "messageCount": int(person["count"]),
+        })
+
+    years = df["timestamp"].dt.year.dropna()
+    return {
+        "entries": entries,
+        "signature": sig,
+        "totals": {
+            "messages": int(len(df)),
+            "people": len(entries),
+            "firstYear": int(years.min()) if len(years) else None,
+            "lastYear": int(years.max()) if len(years) else None,
+        },
+    }
+
+
 def memories_payload(messages_path: Path) -> dict:
     """Proactive memories computed from the cached dataframe -- no AI calls.
     On-this-day moments from past years, upcoming first-message anniversaries,
@@ -2263,6 +2472,15 @@ class RecallHandler(BaseHTTPRequestHandler):
                     PREVIEW_CACHE.clear()
                 clear_cache_namespace(PREVIEW_CACHE_NAMESPACE)
                 send_json(self, 200, {"cleared": True})
+            elif parsed.path == "/api/setup/complete":
+                payload = parse_body(self)
+                updates: dict = {}
+                for key in ("completed", "skipped", "firstWordsShown"):
+                    if key in payload:
+                        updates[key] = bool(payload[key])
+                if payload.get("pickedDbPath"):
+                    updates["pickedDbPath"] = str(safe_path(str(payload["pickedDbPath"])))
+                send_json(self, 200, {"setup": write_setup_marker(updates)})
             elif parsed.path == "/api/ask":
                 payload = parse_body(self)
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
@@ -2335,7 +2553,18 @@ class RecallHandler(BaseHTTPRequestHandler):
                 "hasMessages": messages_path.exists(),
                 "reports": list_report_files(),
                 "contactNames": contacts_cache_summary(),
+                "setupCompleted": bool(read_setup_marker().get("completed")),
             })
+        elif parsed.path == "/api/setup/status":
+            db_param = query.get("dbPath")
+            send_json(self, 200, setup_status_payload(
+                safe_path(db_param) if db_param else None,
+                safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV),
+                deep=str(query.get("deep", "0")).lower() in {"1", "true", "yes"},
+            ))
+        elif parsed.path == "/api/first-words":
+            messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
+            send_json(self, 200, {"firstWords": first_words_payload(messages_path)})
         elif parsed.path == "/api/permissions/fulldisk":
             # the onboarding wizard polls this while the user flips Full Disk
             # Access; probing the live chat.db is the only reliable signal
