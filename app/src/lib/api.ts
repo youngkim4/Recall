@@ -4,12 +4,15 @@ import type {
   ContactNamesSummary,
   ContactsResponse,
   Defaults,
+  FirstWordsPayload,
   Job,
   MemoriesPayload,
   PreviewPayload,
   ReportFile,
   SearchResponse,
   SemanticStatus,
+  SetupMarker,
+  SetupStatus,
 } from '../types'
 
 const apiBase = import.meta.env.VITE_RECALL_API_BASE?.replace(/\/$/, '') ?? ''
@@ -236,4 +239,34 @@ export const recallApi = {
     }),
 
   job: (id: string) => request<{ job: Job }>(`/api/jobs/${id}`),
+
+  setupStatus: (input: { dbPath?: string; messagesPath?: string; deep?: boolean }) =>
+    request<SetupStatus>(
+      `/api/setup/status${queryString({
+        dbPath: input.dbPath,
+        messagesPath: input.messagesPath,
+        deep: input.deep ? 1 : undefined,
+      })}`,
+    ),
+
+  setupComplete: (input: SetupMarker) =>
+    request<{ setup: SetupMarker }>('/api/setup/complete', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+
+  createSetupImportJob: (input: {
+    dbPath?: string
+    messagesPath?: string
+    includeContacts?: boolean
+  }) =>
+    request<{ job: Job }>('/api/jobs', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'setup_import', ...input }),
+    }),
+
+  firstWords: (input: { messagesPath?: string }) =>
+    request<{ firstWords: FirstWordsPayload }>(
+      `/api/first-words${queryString({ messagesPath: input.messagesPath })}`,
+    ),
 }

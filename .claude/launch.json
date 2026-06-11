@@ -4,9 +4,23 @@
     {
       "name": "recall-ui",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "cwd": "app",
       "port": 5173
+    },
+    {
+      "name": "recall-fresh-install",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "RECALL_DATA_DIR=/tmp/recall-fresh",
+        "RECALL_UI_PORT=53970",
+        "python3",
+        "ui_server.py"
+      ],
+      "port": 53970
     }
   ]
 }

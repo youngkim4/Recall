@@ -4,8 +4,10 @@ import { AnalyzePanel } from './components/AnalyzePanel'
 import { AskView } from './components/AskView'
 import { ConversationList } from './components/ConversationList'
 import { ExplorerView } from './components/ExplorerView'
+import { FirstWordsOverlay } from './components/FirstWordsOverlay'
 import { HomeView } from './components/HomeView'
 import { JobsView } from './components/JobsView'
+import { OnboardingWizard } from './components/onboarding/OnboardingWizard'
 import { ReportReader } from './components/ReportReader'
 import { ResizeHandle } from './components/ResizeHandle'
 import { SettingsView } from './components/SettingsView'
@@ -22,10 +24,13 @@ import type {
   AnalysisPayload,
   Contact,
   Defaults,
+  FirstWordsPayload,
   Job,
   PreviewPayload,
   ReportFile,
   RuntimePaths,
+  SetupImportResult,
+  SetupStatus,
   ViewKey,
 } from './types'
 
@@ -172,6 +177,11 @@ function App() {
   const [settingsStatus, setSettingsStatus] = useState('')
   const [cacheStats, setCacheStats] = useState(() => previewCacheStats())
   const [error, setError] = useState<string | null>(null)
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [rerunSetup, setRerunSetup] = useState(false)
+  const [firstWords, setFirstWords] = useState<FirstWordsPayload | null>(null)
+  const [showFirstWords, setShowFirstWords] = useState(false)
 
   const effectiveDefaults = useMemo(
     () =>
@@ -264,6 +274,26 @@ function App() {
         setContactNameCount(data.contactNames?.count || 0)
         setSelectedReport(data.reports?.[0] || null)
         void loadJobs()
+
+        // first run: no archive and no completed marker -> the wizard decides
+        if (!data.setupCompleted && !data.hasMessages) {
+          try {
+            const status = await recallApi.setupStatus({})
+            if (!cancelled) {
+              if (status.state === 'ready') {
+                void recallApi.setupComplete({ completed: true })
+              } else {
+                setSetupStatus(status)
+                setShowOnboarding(true)
+              }
+            }
+          } catch {
+            // never trap the user behind a failed probe
+          }
+        } else if (data.hasMessages && !data.setupCompleted) {
+          // dev mode / data already exists: short-circuit future boots
+          void recallApi.setupComplete({ completed: true })
+        }
 
         const response = await recallApi.contacts({
           messagesPath: nextPaths.messagesPath || data.messagesPath,
@@ -554,6 +584,74 @@ function App() {
     setActiveView('analyze')
   }, [])
 
+  const finishOnboarding = useCallback(
+    async (result: SetupImportResult | null) => {
+      setShowOnboarding(false)
+      setRerunSetup(false)
+      setActiveView('home')
+      try {
+        await reloadRuntimeData()
+      } catch {
+        // the shell still renders; data loads on the next interaction
+      }
+      if (!result) return
+      try {
+        const { firstWords: payload } = await recallApi.firstWords({
+          messagesPath: paths.messagesPath || undefined,
+        })
+        if (payload.entries.length) {
+          setFirstWords(payload)
+          setShowFirstWords(true)
+          void recallApi.setupComplete({ firstWordsShown: true })
+        }
+      } catch {
+        // the reveal is a nicety, never a blocker
+      }
+    },
+    [paths.messagesPath, reloadRuntimeData],
+  )
+
+  const skipOnboarding = useCallback(() => {
+    setShowOnboarding(false)
+    setRerunSetup(false)
+  }, [])
+
+  const replayFirstWords = useCallback(async () => {
+    try {
+      const { firstWords: payload } = await recallApi.firstWords({
+        messagesPath: effectiveDefaults?.messagesPath || undefined,
+      })
+      if (payload.entries.length) {
+        setFirstWords(payload)
+        setShowFirstWords(true)
+      }
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Unable to load first words.')
+    }
+  }, [effectiveDefaults])
+
+  const rerunOnboarding = useCallback(async () => {
+    try {
+      const status = await recallApi.setupStatus({ deep: true })
+      setSetupStatus(status)
+      setRerunSetup(true)
+      setShowOnboarding(true)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Unable to start setup.')
+    }
+  }, [])
+
+  if (showOnboarding && setupStatus) {
+    return (
+      <OnboardingWizard
+        initialStatus={setupStatus}
+        rerun={rerunSetup}
+        onFinished={(result) => void finishOnboarding(result)}
+        onSkip={skipOnboarding}
+      />
+    )
+  }
+
   return (
     <main className={`app-shell ${layout.sidebarCollapsed ? 'sidebar-collapsed' : ''}`} style={shellStyle}>
       <Sidebar
@@ -594,6 +692,7 @@ function App() {
             onViewChange={handleViewChange}
             onSelectContact={selectContactForAnalyze}
             onOpenReport={openReport}
+            onReplayFirstWords={() => void replayFirstWords()}
           />
         ) : activeView === 'reports' ? (
           <ReportReader
@@ -645,6 +744,7 @@ function App() {
             onRefreshContacts={refreshContacts}
             onRefreshExport={refreshExport}
             onClearPreviewCache={clearPreviewCaches}
+            onRerunSetup={() => void rerunOnboarding()}
           />
         ) : (
           <div className="analyze-layout" style={analyzeStyle}>
@@ -682,6 +782,9 @@ function App() {
           </div>
         )}
       </section>
+      {showFirstWords && firstWords ? (
+        <FirstWordsOverlay payload={firstWords} onClose={() => setShowFirstWords(false)} />
+      ) : null}
     </main>
   )
 }

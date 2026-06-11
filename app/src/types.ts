@@ -10,6 +10,78 @@ export type Defaults = {
   hasMessages: boolean
   reports: ReportFile[]
   contactNames?: ContactNamesSummary
+  setupCompleted?: boolean
+}
+
+export type SetupDbStatus =
+  | 'readable'
+  | 'fda_blocked'
+  | 'missing'
+  | 'empty'
+  | 'invalid'
+  | 'locked'
+  | 'error'
+
+export type SetupState =
+  | 'ready'
+  | 'needs_export'
+  | 'needs_permission'
+  | 'no_messages'
+  | 'db_locked'
+  | 'db_invalid'
+
+export type SetupMarker = {
+  completed?: boolean
+  skipped?: boolean
+  firstWordsShown?: boolean
+  pickedDbPath?: string
+}
+
+export type SetupStatus = {
+  state: SetupState
+  db: {
+    status: SetupDbStatus
+    kind: 'live' | 'copy'
+    path: string
+    detail?: string
+    approxMessages?: number | null
+    conversations?: number | null
+    firstYear?: number | null
+    lastYear?: number | null
+  }
+  export: { exists: boolean; path: string }
+  setup: SetupMarker
+}
+
+export type SetupImportResult = {
+  messages: number
+  conversations: number
+  firstYear?: number | null
+  lastYear?: number | null
+  contactsSkipped?: boolean
+  recovered?: number
+}
+
+export type FirstWordsEntry = {
+  person: string
+  chatId: string
+  timestamp: string
+  yearsAgo: number
+  direction: string
+  text: string
+  reply?: { text: string; direction: string; timestamp: string } | null
+  messageCount: number
+}
+
+export type FirstWordsPayload = {
+  entries: FirstWordsEntry[]
+  signature: string
+  totals: {
+    messages: number
+    people: number
+    firstYear?: number | null
+    lastYear?: number | null
+  }
 }
 
 export type RuntimePaths = {
@@ -217,12 +289,19 @@ export type Job = {
   createdAt: string
   updatedAt: string
   logs: Array<string | { time?: string; message?: string }>
+  progress?: { step: number; of: number; label: string }
   result?: {
     reportPath?: string
     eventsPath?: string
     htmlPath?: string
     analysis?: AnalysisPayload
     reports?: ReportFile[]
+    messages?: number
+    conversations?: number
+    firstYear?: number | null
+    lastYear?: number | null
+    contactsSkipped?: boolean
+    recovered?: number
   } | null
   error?: string | null
 }

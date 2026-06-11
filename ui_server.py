@@ -1058,7 +1058,9 @@ def first_nonempty(values) -> str:
 
 
 def group_display_names_from_database(db_path: Path | None, chat_ids) -> dict[str, str]:
-    """Read custom group-chat display names from chat.db when available."""
+    """Read custom group-chat display names from chat.db when available.
+    Best-effort: a blocked/locked database (no FDA grant yet) must never
+    break the conversation list -- the CSV archive still has everything."""
     if not path_exists(db_path):
         return {}
 
@@ -1070,7 +1072,10 @@ def group_display_names_from_database(db_path: Path | None, chat_ids) -> dict[st
     if not wanted:
         return {}
 
-    conn = sqlite3.connect(str(db_path))
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+    except sqlite3.Error:
+        return {}
     try:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(chat)").fetchall()}
         if "display_name" not in columns:
@@ -1085,6 +1090,8 @@ def group_display_names_from_database(db_path: Path | None, chat_ids) -> dict[st
             """,
             wanted,
         ).fetchall()
+    except sqlite3.Error:
+        return {}
     finally:
         conn.close()
 

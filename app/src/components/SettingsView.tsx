@@ -21,6 +21,7 @@ type SettingsViewProps = {
   onRefreshContacts: () => Promise<void>
   onRefreshExport: () => Promise<void>
   onClearPreviewCache: () => Promise<void>
+  onRerunSetup: () => void
 }
 
 export function SettingsView({
@@ -38,6 +39,7 @@ export function SettingsView({
   onRefreshContacts,
   onRefreshExport,
   onClearPreviewCache,
+  onRerunSetup,
 }: SettingsViewProps) {
   const [draftPaths, setDraftPaths] = useState(paths)
   const normalizedDraftPaths = normalizePaths(draftPaths)
@@ -180,6 +182,9 @@ export function SettingsView({
           }}
         >
           Clear preview cache
+        </button>
+        <button type="button" className="button ghost" disabled={utilityBusy} onClick={onRerunSetup}>
+          Set up again
         </button>
       </div>
 

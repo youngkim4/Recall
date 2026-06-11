@@ -15,6 +15,7 @@ type HomeViewProps = {
   onViewChange: (view: ViewKey) => void
   onSelectContact: (contact: Contact) => void
   onOpenReport: (report: ReportFile) => void
+  onReplayFirstWords: () => void
 }
 
 const DONUT_COLORS = [
@@ -36,6 +37,7 @@ export function HomeView({
   onViewChange,
   onSelectContact,
   onOpenReport,
+  onReplayFirstWords,
 }: HomeViewProps) {
   const ranked = [...contacts].sort(
     (a, b) => Number(b.message_count || 0) - Number(a.message_count || 0),
@@ -133,6 +135,7 @@ export function HomeView({
         messagesPath={defaults?.messagesPath || ''}
         contacts={contacts}
         onSelectContact={onSelectContact}
+        onReplayFirstWords={defaults?.hasMessages ? onReplayFirstWords : undefined}
       />
 
       <div className="ov-grid">
@@ -225,10 +228,12 @@ function MemoriesSection({
   messagesPath,
   contacts,
   onSelectContact,
+  onReplayFirstWords,
 }: {
   messagesPath: string
   contacts: Contact[]
   onSelectContact: (contact: Contact) => void
+  onReplayFirstWords?: () => void
 }) {
   const [memories, setMemories] = useState<MemoriesPayload | null>(null)
 
@@ -280,7 +285,7 @@ function MemoriesSection({
     return all.slice(0, Math.min(6, Math.max(fullRows, Math.min(all.length, 3))))
   }, [memories])
 
-  if (!cards.length) return null
+  if (!cards.length && !onReplayFirstWords) return null
 
   return (
     <section className="panel memories-panel">
@@ -288,6 +293,13 @@ function MemoriesSection({
         <h3>Memories</h3>
       </div>
       <div className="memories-row">
+        {onReplayFirstWords ? (
+          <button type="button" className="memory-card firstwords" onClick={onReplayFirstWords}>
+            <span className="memory-kicker">The beginning</span>
+            <strong>First words</strong>
+            <p>Relive the first thing you and your favorite people ever said.</p>
+          </button>
+        ) : null}
         {cards.map((card) => {
           // every card navigates -- contacts outside the top-80 list get a
           // synthetic Contact so the click never silently does nothing
