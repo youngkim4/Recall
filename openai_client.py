@@ -8,10 +8,15 @@ from dotenv import load_dotenv
 from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
 
 from ai_config import DEFAULT_MODEL, DEFAULT_REASONING_EFFORT, DEFAULT_VERBOSITY
+from recall_paths import DOTENV_PATH
 
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+# bundled apps inherit no shell env -- the key lives in the data dir
+if DOTENV_PATH.exists():
+    load_dotenv(DOTENV_PATH)
+else:
+    load_dotenv()
 
 
 def response_output_text(resp) -> str:

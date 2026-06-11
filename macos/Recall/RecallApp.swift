@@ -211,6 +211,12 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         environment["RECALL_UI_HOST"] = "127.0.0.1"
         environment["RECALL_UI_PORT"] = String(port)
         environment["PYTHONUNBUFFERED"] = "1"
+        if let resourceURL = Bundle.main.resourceURL {
+            let exporter = resourceURL.appendingPathComponent("Recall Contacts Exporter.app")
+            if FileManager.default.fileExists(atPath: exporter.path) {
+                environment["RECALL_CONTACTS_EXPORTER_APP"] = exporter.path
+            }
+        }
         process.environment = environment
 
         let logURL = logFileURL()

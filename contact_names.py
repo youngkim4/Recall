@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 import json
@@ -10,11 +11,13 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Iterable
 
+from recall_paths import SAVES_DIR
+
 
 ROOT = Path(__file__).resolve().parent
 ADDRESS_BOOK_DIR = Path("~/Library/Application Support/AddressBook").expanduser()
-CONTACTS_CACHE_PATH = ROOT / "saves" / "contact_names.json"
-CONTACTS_EXPORTER_APP = ROOT / "saves" / "Recall Contacts Exporter.app"
+CONTACTS_CACHE_PATH = SAVES_DIR / "contact_names.json"
+CONTACTS_EXPORTER_APP = SAVES_DIR / "Recall Contacts Exporter.app"
 CONTACTS_EXPORTER_PATH = CONTACTS_EXPORTER_APP / "Contents" / "MacOS" / "RecallContactsExporter"
 CONTACTS_EXPORTER_SCRIPT = ROOT / "scripts" / "export_contacts.swift"
 CONTACTS_EXPORTER_PLIST = ROOT / "scripts" / "export_contacts_Info.plist"
@@ -163,14 +166,30 @@ def contacts_cache_summary(cache_path: Path | None = CONTACTS_CACHE_PATH) -> dic
     }
 
 
+def _bundled_contacts_exporter() -> Path | None:
+    """Pre-built exporter shipped inside the packaged app, so customer machines
+    never need swiftc/Xcode tools. Set by the Mac shell."""
+    env = os.environ.get("RECALL_CONTACTS_EXPORTER_APP", "")
+    if not env:
+        return None
+    app = Path(env)
+    binary = app / "Contents" / "MacOS" / "RecallContactsExporter"
+    if binary.is_file() and os.access(binary, os.X_OK):
+        return app
+    return None
+
+
 def export_contact_names(cache_path: Path | None = CONTACTS_CACHE_PATH, timeout: int = 120) -> dict:
     """Run the local macOS Contacts exporter and return cache metadata."""
     path = Path(cache_path or CONTACTS_CACHE_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
-    compile_contacts_exporter()
+    exporter_app = _bundled_contacts_exporter()
+    if exporter_app is None:
+        compile_contacts_exporter()
+        exporter_app = CONTACTS_EXPORTER_APP
 
     result = subprocess.run(
-        ["open", "-W", "-n", str(CONTACTS_EXPORTER_APP), "--args", str(path)],
+        ["open", "-W", "-n", str(exporter_app), "--args", str(path)],
         capture_output=True,
         text=True,
         timeout=timeout,

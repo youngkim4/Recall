@@ -9,9 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from recall_paths import SAVES_DIR
+
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_STORE_PATH = ROOT / "saves" / "recall_store.sqlite3"
+DEFAULT_STORE_PATH = SAVES_DIR / "recall_store.sqlite3"
 SCHEMA_VERSION = 1
 
 

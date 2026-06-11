@@ -40,6 +40,19 @@ swiftc \
 cp "$ROOT/macos/Recall/Info.plist" "$CONTENTS/Info.plist"
 printf '%s\n' "$ROOT" > "$RESOURCES/RecallRoot.path"
 
+# pre-build the Contacts exporter so customer machines never need swiftc
+EXPORTER_APP="$RESOURCES/Recall Contacts Exporter.app"
+EXPORTER_MACOS="$EXPORTER_APP/Contents/MacOS"
+rm -rf "$EXPORTER_APP"
+mkdir -p "$EXPORTER_MACOS"
+cp "$ROOT/scripts/export_contacts_Info.plist" "$EXPORTER_APP/Contents/Info.plist"
+swiftc \
+  -O \
+  "$ROOT/scripts/export_contacts.swift" \
+  -o "$EXPORTER_MACOS/RecallContactsExporter"
+chmod +x "$EXPORTER_MACOS/RecallContactsExporter"
+codesign --force --deep --sign - "$EXPORTER_APP" 2>/dev/null || true
+
 rm -rf "$ICONSET" "$ICON_PNG" "$RESOURCES/recall-mark.svg.png" "$RESOURCES/RecallIcon.icns"
 swift "$ROOT/scripts/render_macos_icon.swift" "$ICON_PNG" >/dev/null
 mkdir -p "$ICONSET"

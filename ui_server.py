@@ -48,6 +48,14 @@ from openai_client import _call_openai, _call_openai_stream
 from parse_imessage import extract_attachments, extract_messages, extract_reactions, list_contacts
 from retrieval_planner import build_catalog, plan_retrieval
 import semantic_index as sem
+from recall_paths import (
+    DATA_DIR,
+    SAVES_DIR,
+    OUT_DIR,
+    DEFAULT_MESSAGES_CSV,
+    SNAPSHOT_DB,
+    ensure_data_dirs,
+)
 
 ROOT = Path(__file__).resolve().parent
 UI_DIR = ROOT / "ui"
@@ -169,7 +177,8 @@ def safe_path(value: str, default: Path = None) -> Path:
 
 
 def ensure_under_root(path: Path) -> bool:
-    return ensure_under(path, ROOT)
+    # user data may live under DATA_DIR (packaged app) or the repo (dev)
+    return ensure_under(path, ROOT) or ensure_under(path, DATA_DIR)
 
 
 def ensure_under(path: Path, base: Path) -> bool:
@@ -218,7 +227,7 @@ def update_job(job_id: str, **fields):
 
 def list_report_files():
     reports = []
-    out_dir = ROOT / "out"
+    out_dir = OUT_DIR
     if not out_dir.exists():
         return reports
     for path in sorted(out_dir.glob("analysis_*.*"), key=lambda p: p.stat().st_mtime, reverse=True):
@@ -256,7 +265,7 @@ def merge_snapshot_into(db_path: Path, messages_path: Path) -> int:
     export. Returns the count of recovered rows. Never raises — a refresh must
     not fail because of the merge.
     """
-    snapshot = ROOT / "chat.db"
+    snapshot = SNAPSHOT_DB
     try:
         if not snapshot.exists() or snapshot.resolve() == db_path.resolve():
             return 0
@@ -387,14 +396,14 @@ def run_job(job_id: str, action: str, payload: dict):
         with contextlib.redirect_stdout(_JOB_STDOUT), contextlib.redirect_stderr(_JOB_STDERR):
             if action == "export":
                 db_path = safe_path(payload.get("dbPath"))
-                messages_path = safe_path(payload.get("messagesPath"), ROOT / "messages.csv")
+                messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
                 if not path_exists(db_path):
                     raise FileNotFoundError(f"Database not found: {db_path}")
                 append_log(job_id, f"Exporting {db_path}")
                 result = export_database(db_path, messages_path)
             elif action == "analyze":
                 db_path = safe_path(payload.get("dbPath"))
-                messages_path = safe_path(payload.get("messagesPath"), ROOT / "messages.csv")
+                messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
                 if payload.get("extractFirst"):
                     if not path_exists(db_path):
                         raise FileNotFoundError(f"Database not found: {db_path}")
@@ -407,7 +416,7 @@ def run_job(job_id: str, action: str, payload: dict):
                     raise ValueError("Select a contact before starting analysis")
                 since = parse_optional_date(payload.get("since"))
                 until = parse_optional_date(payload.get("until"))
-                out_dir = str(safe_path(payload.get("outDir"), ROOT / "out"))
+                out_dir = str(safe_path(payload.get("outDir"), OUT_DIR))
                 model = payload.get("model") or DEFAULT_MODEL
                 html = bool(payload.get("html", True))
                 append_log(job_id, f"Analyzing {contact} with {model}")
@@ -438,7 +447,7 @@ def run_job(job_id: str, action: str, payload: dict):
                     "reports": list_report_files(),
                 }
             elif action == "semantic":
-                messages_path = safe_path(payload.get("messagesPath"), ROOT / "messages.csv")
+                messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
                 if not path_exists(messages_path):
                     raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
                 with JOBS_LOCK:
@@ -1499,7 +1508,7 @@ def _conversation_catalog(df: pd.DataFrame) -> pd.DataFrame:
 _ASK_CACHE_LOCK = threading.Lock()
 _ASK_CACHE: dict = {"sig": None, "df": None, "catalog": None, "names": None}
 
-SEMANTIC_DIR = ROOT / "saves" / "semantic"
+SEMANTIC_DIR = SAVES_DIR / "semantic"
 _SEM_CACHE_LOCK = threading.Lock()
 _SEM_CACHE: dict = {"sig": None, "index": None}
 
@@ -2244,7 +2253,7 @@ class RecallHandler(BaseHTTPRequestHandler):
                 send_json(self, 200, {"cleared": True})
             elif parsed.path == "/api/ask":
                 payload = parse_body(self)
-                messages_path = safe_path(payload.get("messagesPath"), ROOT / "messages.csv")
+                messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
                 raw_history = payload.get("history")
                 send_json(self, 200, ask_messages_payload(
                     messages_path,
@@ -2266,7 +2275,7 @@ class RecallHandler(BaseHTTPRequestHandler):
     def handle_ask_stream(self, payload: dict):
         """Server-sent events for /api/ask: status updates while retrieving,
         answer text deltas as the model writes, then the full payload."""
-        messages_path = safe_path(payload.get("messagesPath"), ROOT / "messages.csv")
+        messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
         raw_history = payload.get("history")
 
         self.send_response(200)
@@ -2302,32 +2311,48 @@ class RecallHandler(BaseHTTPRequestHandler):
     def handle_api_get(self, parsed):
         query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
         if parsed.path == "/api/defaults":
-            db_path = ROOT / "chat.db"
-            messages_path = ROOT / "messages.csv"
+            db_path = SNAPSHOT_DB
+            messages_path = DEFAULT_MESSAGES_CSV
             send_json(self, 200, {
                 "defaultModel": DEFAULT_MODEL,
                 "models": list(UI_MODEL_CHOICES),
                 "dbPath": str(db_path) if db_path.exists() else str(Path("~/Library/Messages/chat.db").expanduser()),
                 "messagesPath": str(messages_path),
-                "outDir": str(ROOT / "out"),
+                "outDir": str(OUT_DIR),
                 "hasDb": db_path.exists(),
                 "hasMessages": messages_path.exists(),
                 "reports": list_report_files(),
                 "contactNames": contacts_cache_summary(),
             })
+        elif parsed.path == "/api/permissions/fulldisk":
+            # the onboarding wizard polls this while the user flips Full Disk
+            # Access; probing the live chat.db is the only reliable signal
+            live_db = Path("~/Library/Messages/chat.db").expanduser()
+            status = "missing"
+            if live_db.exists():
+                try:
+                    conn = sqlite3.connect(f"file:{live_db}?mode=ro", uri=True)
+                    try:
+                        conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+                    finally:
+                        conn.close()
+                    status = "granted"
+                except sqlite3.OperationalError:
+                    status = "denied"
+            send_json(self, 200, {"status": status, "dbPath": str(live_db)})
         elif parsed.path == "/api/semantic":
-            messages_path = safe_path(query.get("messagesPath"), ROOT / "messages.csv")
+            messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             status = sem.index_status(SEMANTIC_DIR, file_cache_signature(messages_path))
             if path_exists(messages_path):
                 df, _, _ = cached_messages_bundle(messages_path)
                 status["estimate"] = sem.estimate_build(df)
             send_json(self, 200, {"semantic": status})
         elif parsed.path == "/api/memories":
-            messages_path = safe_path(query.get("messagesPath"), ROOT / "messages.csv")
+            messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             send_json(self, 200, {"memories": memories_payload(messages_path)})
         elif parsed.path == "/api/contacts":
             db_path = safe_path(query.get("dbPath"))
-            messages_path = safe_path(query.get("messagesPath"), ROOT / "messages.csv")
+            messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             limit = int(query.get("limit", "40"))
             if path_exists(messages_path):
                 df = contacts_from_messages(messages_path, limit=limit, db_path=db_path)
@@ -2349,7 +2374,7 @@ class RecallHandler(BaseHTTPRequestHandler):
                 "contactNameCount": count_display_names(df),
             })
         elif parsed.path == "/api/preview":
-            messages_path = safe_path(query.get("messagesPath"), ROOT / "messages.csv")
+            messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             if not path_exists(messages_path):
                 send_json(self, 400, {"error": f"Messages CSV not found: {messages_path}"})
                 return
@@ -2376,7 +2401,7 @@ class RecallHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/reports":
             send_json(self, 200, {"reports": list_report_files()})
         elif parsed.path == "/api/search":
-            messages_path = safe_path(query.get("messagesPath"), ROOT / "messages.csv")
+            messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             send_json(self, 200, search_messages_payload(
                 messages_path,
                 query=query.get("query", ""),
@@ -2384,7 +2409,7 @@ class RecallHandler(BaseHTTPRequestHandler):
                 limit=int(query.get("limit", "60")),
             ))
         elif parsed.path == "/api/analysis":
-            messages_path = safe_path(query.get("messagesPath"), ROOT / "messages.csv")
+            messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             report_path = safe_path(unquote(query.get("reportPath", "")))
             if not path_exists(messages_path):
                 send_json(self, 400, {"error": f"Messages CSV not found: {messages_path}"})
@@ -2455,9 +2480,30 @@ class RecallHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    import signal
+    import time
+
+    from recall_paths import BUNDLED
+
+    ensure_data_dirs()
     host = os.environ.get("RECALL_UI_HOST", "127.0.0.1")
     port = int(os.environ.get("RECALL_UI_PORT", "8765"))
     server = ThreadingHTTPServer((host, port), RecallHandler)
+
+    # clean teardown when the shell (or Sparkle relaunch) terminates us
+    signal.signal(
+        signal.SIGTERM,
+        lambda *_: threading.Thread(target=server.shutdown, daemon=True).start(),
+    )
+    if BUNDLED:
+        # a crashed shell must never leave an orphan listener holding the archive
+        def watch_parent() -> None:
+            while os.getppid() != 1:
+                time.sleep(2.0)
+            os._exit(0)
+
+        threading.Thread(target=watch_parent, daemon=True).start()
+
     print(f"Recall UI running at http://{host}:{port}")
     try:
         server.serve_forever()
