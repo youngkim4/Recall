@@ -3,6 +3,7 @@ import type { Contact, Defaults, Job, MemoriesPayload, ReportFile, ViewKey } fro
 import { contactTitle, formatNumber, reportTitle, shortDateTime } from '../lib/format'
 import { recallApi } from '../lib/api'
 import { BarList } from './BarList'
+import { CardStudio } from './CardStudio'
 import { Donut } from './Donut'
 
 type HomeViewProps = {
@@ -12,6 +13,7 @@ type HomeViewProps = {
   reportCount: number
   namedCount: number
   jobs: Job[]
+  model: string
   onViewChange: (view: ViewKey) => void
   onSelectContact: (contact: Contact) => void
   onOpenReport: (report: ReportFile) => void
@@ -34,11 +36,13 @@ export function HomeView({
   reports,
   reportCount,
   namedCount,
+  model,
   onViewChange,
   onSelectContact,
   onOpenReport,
   onReplayFirstWords,
 }: HomeViewProps) {
+  const [showCardStudio, setShowCardStudio] = useState(false)
   const ranked = [...contacts].sort(
     (a, b) => Number(b.message_count || 0) - Number(a.message_count || 0),
   )
@@ -136,7 +140,16 @@ export function HomeView({
         contacts={contacts}
         onSelectContact={onSelectContact}
         onReplayFirstWords={defaults?.hasMessages ? onReplayFirstWords : undefined}
+        onMakeCard={defaults?.hasMessages ? () => setShowCardStudio(true) : undefined}
       />
+      {showCardStudio ? (
+        <CardStudio
+          defaults={defaults}
+          model={model}
+          contacts={contacts}
+          onClose={() => setShowCardStudio(false)}
+        />
+      ) : null}
 
       <div className="ov-grid">
         <section className="panel">
@@ -229,11 +242,13 @@ function MemoriesSection({
   contacts,
   onSelectContact,
   onReplayFirstWords,
+  onMakeCard,
 }: {
   messagesPath: string
   contacts: Contact[]
   onSelectContact: (contact: Contact) => void
   onReplayFirstWords?: () => void
+  onMakeCard?: () => void
 }) {
   const [memories, setMemories] = useState<MemoriesPayload | null>(null)
 
@@ -291,6 +306,11 @@ function MemoriesSection({
     <section className="panel memories-panel">
       <div className="panel-head">
         <h3>Memories</h3>
+        {onMakeCard ? (
+          <button type="button" className="link-button" onClick={onMakeCard}>
+            Make a card
+          </button>
+        ) : null}
       </div>
       <div className="memories-row">
         {onReplayFirstWords ? (

@@ -689,6 +689,7 @@ function App() {
             reportCount={reportGroupCount}
             namedCount={contactNameCount}
             jobs={jobs}
+            model={model}
             onViewChange={handleViewChange}
             onSelectContact={selectContactForAnalyze}
             onOpenReport={openReport}
