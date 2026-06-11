@@ -1,9 +1,9 @@
 import AppKit
 import Foundation
 
-// Recall app icon: a typographic open quote -- the product is the exact
-// words people said. Cream paper squircle, double hairline frame (the
-// card/report motif), two serif quote marks in ink and vermilion.
+// Recall app icon: the setting sun. A vermilion disc dissolving into
+// paper stripes as it sinks -- a moment passing into memory. Warm
+// geometry on cream paper.
 
 let outputPath = CommandLine.arguments.dropFirst().first ?? "/tmp/RecallIcon-1024.png"
 let outputURL = URL(fileURLWithPath: outputPath)
@@ -42,56 +42,40 @@ NSGraphicsContext.restoreGraphicsState()
 let gradient = NSGradient(starting: paperLight, ending: paper)
 gradient?.draw(in: tile, angle: -90)
 
-// editorial double hairline frame, the report/card motif
-let outerFrame = NSBezierPath(
-    roundedRect: tileRect.insetBy(dx: 64, dy: 64),
-    xRadius: tileRadius - 58,
-    yRadius: tileRadius - 58
-)
-inkLine.setStroke()
-outerFrame.lineWidth = 7
-outerFrame.stroke()
+// the sun: vermilion disc, lower half sliced into thinning strips by the
+// paper -- geometry doing the remembering
+NSGraphicsContext.saveGraphicsState()
+tile.addClip()
 
-let innerFrame = NSBezierPath(
-    roundedRect: tileRect.insetBy(dx: 84, dy: 84),
-    xRadius: tileRadius - 76,
-    yRadius: tileRadius - 76
-)
-inkLineSoft.setStroke()
-innerFrame.lineWidth = 3.5
-innerFrame.stroke()
+let sunCenter = NSPoint(x: 512, y: 560)
+let sunRadius: CGFloat = 312
 
-// the mark: a double open quote built from two single-quote glyphs so the
-// trailing mark can carry the vermilion accent
-func serifFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
-    let base = NSFont.systemFont(ofSize: size, weight: weight)
-    if let descriptor = base.fontDescriptor.withDesign(.serif),
-       let font = NSFont(descriptor: descriptor, size: size) {
-        return font
-    }
-    return NSFont(name: "Georgia-Bold", size: size) ?? base
+let sun = NSBezierPath(ovalIn: NSRect(
+    x: sunCenter.x - sunRadius,
+    y: sunCenter.y - sunRadius,
+    width: sunRadius * 2,
+    height: sunRadius * 2
+))
+vermilion.setFill()
+sun.fill()
+
+// cream gaps widen as the sun sinks; each gap re-draws the tile gradient
+// clipped to (sun ∩ slice) so the paper stays seamless around the disc
+let gaps: [(y: CGFloat, height: CGFloat)] = [
+    (488, 24),
+    (404, 36),
+    (312, 50),
+    (204, 66),
+]
+for gap in gaps {
+    NSGraphicsContext.saveGraphicsState()
+    sun.addClip()
+    NSBezierPath(rect: NSRect(x: 0, y: gap.y, width: canvas, height: gap.height)).addClip()
+    gradient?.draw(in: tile, angle: -90)
+    NSGraphicsContext.restoreGraphicsState()
 }
 
-let quoteFont = serifFont(size: 940, weight: .heavy)
-let mark = NSMutableAttributedString()
-mark.append(NSAttributedString(string: "\u{2018}", attributes: [
-    .font: quoteFont,
-    .foregroundColor: ink,
-    .kern: 26,
-]))
-mark.append(NSAttributedString(string: "\u{2018}", attributes: [
-    .font: quoteFont,
-    .foregroundColor: vermilion,
-]))
-
-// quote glyphs hang from the cap line: the line box is mostly empty space
-// below them, so center on the glyph mass, not the box
-let markSize = mark.size()
-let markOrigin = NSPoint(
-    x: (canvas - markSize.width) / 2 + 4,
-    y: (canvas - markSize.height) / 2 - 205
-)
-mark.draw(at: markOrigin)
+NSGraphicsContext.restoreGraphicsState()
 
 image.unlockFocus()
 
