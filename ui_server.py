@@ -15,7 +15,19 @@ import uuid
 from collections import OrderedDict
 from datetime import datetime
 from html import escape
+import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+class LoopbackHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # skip HTTPServer.server_bind's socket.getfqdn() reverse-DNS lookup:
+        # on the frozen build it dead-ends in an mDNS query that hangs the
+        # boot for 30s+, and a loopback-only server never needs its fqdn
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -2479,16 +2491,35 @@ class RecallHandler(BaseHTTPRequestHandler):
             self.wfile.write(data)
 
 
+def _retarget_streams_to_logfile() -> None:
+    """The frozen (windowed) build gets /dev/null stdio from the bootloader,
+    which would silence every print, request log, and traceback. Route all of
+    it to the same log the Mac shell points users at."""
+    log_dir = Path.home() / "Library" / "Logs" / "Recall"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stream = open(
+        log_dir / "RecallBackend.log", "a", buffering=1, encoding="utf-8", errors="replace"
+    )
+    sys.stdout = stream
+    sys.stderr = stream
+    sys.__stdout__ = stream
+    sys.__stderr__ = stream
+    _JOB_STDOUT._fallback = stream
+    _JOB_STDERR._fallback = stream
+
+
 def main():
     import signal
     import time
 
     from recall_paths import BUNDLED
 
+    if BUNDLED:
+        _retarget_streams_to_logfile()
     ensure_data_dirs()
     host = os.environ.get("RECALL_UI_HOST", "127.0.0.1")
     port = int(os.environ.get("RECALL_UI_PORT", "8765"))
-    server = ThreadingHTTPServer((host, port), RecallHandler)
+    server = LoopbackHTTPServer((host, port), RecallHandler)
 
     # clean teardown when the shell (or Sparkle relaunch) terminates us
     signal.signal(

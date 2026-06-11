@@ -41,9 +41,12 @@ cp "$ROOT/macos/Recall/Info.plist" "$CONTENTS/Info.plist"
 printf '%s\n' "$ROOT" > "$RESOURCES/RecallRoot.path"
 
 # pre-build the Contacts exporter so customer machines never need swiftc
-EXPORTER_APP="$RESOURCES/Recall Contacts Exporter.app"
+# (Contents/Helpers is a sanctioned code-nesting site; Resources is not)
+HELPERS="$CONTENTS/Helpers"
+mkdir -p "$HELPERS"
+EXPORTER_APP="$HELPERS/Recall Contacts Exporter.app"
 EXPORTER_MACOS="$EXPORTER_APP/Contents/MacOS"
-rm -rf "$EXPORTER_APP"
+rm -rf "$EXPORTER_APP" "$RESOURCES/Recall Contacts Exporter.app"
 mkdir -p "$EXPORTER_MACOS"
 cp "$ROOT/scripts/export_contacts_Info.plist" "$EXPORTER_APP/Contents/Info.plist"
 swiftc \

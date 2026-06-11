@@ -26,10 +26,16 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         buildMenu()
 
         do {
-            let appRoot = try resolveAppRoot()
-            let python = try resolvePython(appRoot: appRoot)
             serverPort = findAvailablePort()
-            try startBackend(appRoot: appRoot, python: python, port: serverPort)
+            if let bundledServer = bundledServerExecutable() {
+                // packaged app: self-contained server, data in App Support
+                let dataDir = try ensureDataDirectory()
+                try startBundledBackend(executable: bundledServer, dataDir: dataDir, port: serverPort)
+            } else {
+                let appRoot = try resolveAppRoot()
+                let python = try resolvePython(appRoot: appRoot)
+                try startBackend(appRoot: appRoot, python: python, port: serverPort)
+            }
             createWindow()
             waitForBackend()
         } catch {
@@ -150,6 +156,50 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         self.window = window
     }
 
+    private func bundledServerExecutable() -> URL? {
+        let url = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/RecallServer.app/Contents/MacOS/RecallServer")
+        return FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
+    }
+
+    private func bundledExporterApp() -> URL? {
+        var candidates: [URL] = [
+            Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/Recall Contacts Exporter.app")
+        ]
+        if let resources = Bundle.main.resourceURL {
+            candidates.append(resources.appendingPathComponent("Recall Contacts Exporter.app"))
+        }
+        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private func ensureDataDirectory() throws -> URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let dataDir = appSupport.appendingPathComponent("Recall", isDirectory: true)
+        try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
+        return dataDir
+    }
+
+    private func startBundledBackend(executable: URL, dataDir: URL, port: Int) throws {
+        let process = Process()
+        // direct Process launch (not `open`) keeps TCC attributing the child's
+        // chat.db reads to Recall.app, so the user's FDA grant covers it
+        process.executableURL = executable
+        process.currentDirectoryURL = dataDir
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["RECALL_UI_HOST"] = "127.0.0.1"
+        environment["RECALL_UI_PORT"] = String(port)
+        environment["RECALL_DATA_DIR"] = dataDir.path
+        environment["RECALL_BUNDLED"] = "1"
+        if let exporter = bundledExporterApp() {
+            environment["RECALL_CONTACTS_EXPORTER_APP"] = exporter.path
+        }
+        process.environment = environment
+
+        try process.run()
+        serverProcess = process
+    }
+
     private func resolveAppRoot() throws -> URL {
         let environment = ProcessInfo.processInfo.environment
         if let value = environment["RECALL_APP_ROOT"], !value.isEmpty {
@@ -211,11 +261,8 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         environment["RECALL_UI_HOST"] = "127.0.0.1"
         environment["RECALL_UI_PORT"] = String(port)
         environment["PYTHONUNBUFFERED"] = "1"
-        if let resourceURL = Bundle.main.resourceURL {
-            let exporter = resourceURL.appendingPathComponent("Recall Contacts Exporter.app")
-            if FileManager.default.fileExists(atPath: exporter.path) {
-                environment["RECALL_CONTACTS_EXPORTER_APP"] = exporter.path
-            }
+        if let exporter = bundledExporterApp() {
+            environment["RECALL_CONTACTS_EXPORTER_APP"] = exporter.path
         }
         process.environment = environment
 
@@ -244,8 +291,10 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             DispatchQueue.main.async {
                 if status == 200 {
                     self.loadApp()
-                } else if self.startupAttempts < 80 {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                } else if self.startupAttempts < 240 {
+                    // first launch of the packaged app pays Gatekeeper's full
+                    // bundle scan plus a cold pandas import -- budget ~60s
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                         self.waitForBackend()
                     }
                 } else {

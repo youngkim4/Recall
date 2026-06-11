@@ -51,6 +51,8 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# PyInstaller spec for the release build IS source, keep it
+!packaging/recall_server.spec
 
 # Installer logs
 pip-log.txt
