@@ -4,7 +4,17 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>Recall</title>
+    <script>
+      // pin a chosen appearance before first paint (key mirrors src/lib/theme.ts)
+      try {
+        var theme = localStorage.getItem('recall.theme')
+        if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme
+      } catch (error) {
+        // storage blocked: follow the system
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

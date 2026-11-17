@@ -1,7 +1,645 @@
-// The old interface is gone. The commits after this one bring the new
-// screens, and the last of them puts the shell back in this file.
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { AnalyzeView } from './components/analyze/AnalyzeView'
+import { ChatView } from './components/chat/ChatView'
+import { FirstWords } from './components/firstwords/FirstWords'
+import { JobsView } from './components/jobs/JobsView'
+import { OverviewView } from './components/overview/OverviewView'
+import { OnboardingWizard } from './components/onboarding/OnboardingWizard'
+import { ReportsView } from './components/reports/ReportsView'
+import { SearchView } from './components/search/SearchView'
+import { ResizeHandle } from './components/ResizeHandle'
+import { SettingsView } from './components/settings/SettingsView'
+import { Sidebar } from './components/Sidebar'
+import { CloseIcon } from './components/Icons'
+import { recallApi } from './lib/api'
+import { isActiveJob, mergeJobs } from './lib/jobs'
+import {
+  emptyPaths,
+  hasRuntimePath,
+  pathsFromDefaults,
+  preferredModel,
+  RAIL_WIDTH,
+  readStoredPaths,
+  storePreferredModel,
+  storeRuntimePaths,
+} from './lib/appStorage'
+import { NARROW_WINDOW } from './lib/layout'
+import { useLayout } from './lib/useLayout'
+import { nameReports } from './lib/reports'
+import { useMediaQuery } from './lib/useMediaQuery'
+import { clearPreviewCache, previewCacheStats } from './lib/cache'
+import { useConversationPreview } from './lib/useConversationPreview'
+import type {
+  AnalysisPayload,
+  ArchiveSummary,
+  Contact,
+  Defaults,
+  FirstWordsPayload,
+  Job,
+  ReportFile,
+  RuntimePaths,
+  SetupImportResult,
+  SetupStatus,
+  ViewKey,
+} from './types'
+
+// every conversation is listed; the server builds the list once per archive, so the size costs nothing
+const CONVERSATION_LIMIT = 5000
+
+const NO_DATES = { since: '', until: '' }
+const POLL_MS = 1200
+// this many unanswered questions in a row, and a job is taken to be lost
+const LOST_AFTER_MISSES = 5
+
+// A marker that setup got somewhere. One that fails to save changes nothing
+// now: the same thing is found out again at the next launch.
+function markSetup(fields: Parameters<typeof recallApi.setupComplete>[0]) {
+  recallApi.setupComplete(fields).catch(() => undefined)
+}
+
 function App() {
-  return null
+  // the app opens where first-run setup leaves you: on the first item in the rail
+  const [activeView, setActiveView] = useState<ViewKey>('home')
+  const [defaults, setDefaults] = useState<Defaults | null>(null)
+  const [paths, setPaths] = useState<RuntimePaths>(emptyPaths)
+  const { layout, change: changeLayout, toggleSidebar } = useLayout()
+  const [contacts, setContacts] = useState<Contact[]>([])
+  const [archive, setArchive] = useState<ArchiveSummary | null>(null)
+  const [reportFiles, setReports] = useState<ReportFile[]>([])
+  const [jobs, setJobs] = useState<Job[]>([])
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null)
+  const [selectedReport, setSelectedReport] = useState<ReportFile | null>(null)
+  // the dates that were chosen, and the conversation they were chosen for
+  const [scoped, setScoped] = useState({ subject: '', ...NO_DATES })
+  // the report that was opened, with the file it was read from
+  const [opened, setOpened] = useState<{ path: string; analysis: AnalysisPayload } | null>(null)
+  // the file of a report that could not be opened
+  const [failedReport, setFailedReport] = useState('')
+  const [query, setQuery] = useState('')
+  const [model, setModel] = useState('')
+  const [contactNameCount, setContactNameCount] = useState(0)
+  const [loadingContacts, setLoadingContacts] = useState(true)
+  const [loadingReport, setLoadingReport] = useState(false)
+  const [runningJob, setRunningJob] = useState<Job | null>(null)
+  const [utilityBusy, setUtilityBusy] = useState(false)
+  const [settingsStatus, setSettingsStatus] = useState('')
+  const [cacheStats, setCacheStats] = useState(() => previewCacheStats())
+  const [error, setError] = useState<string | null>(null)
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [rerunSetup, setRerunSetup] = useState(false)
+  const [firstWords, setFirstWords] = useState<FirstWordsPayload | null>(null)
+  const [showFirstWords, setShowFirstWords] = useState(false)
+
+  const effectiveDefaults = useMemo(
+    () =>
+      defaults
+        ? {
+            ...defaults,
+            dbPath: paths.dbPath || defaults.dbPath,
+            messagesPath: paths.messagesPath || defaults.messagesPath,
+            outDir: paths.outDir || defaults.outDir,
+          }
+        : null,
+    [defaults, paths],
+  )
+  // a report goes by the name its conversation has in the list
+  const reports = useMemo(() => nameReports(reportFiles, contacts), [reportFiles, contacts])
+  // Dates belong to one conversation in one archive. Chosen for another, they
+  // are no dates at all, however the conversation came to change.
+  const scopeSubject = `${effectiveDefaults?.messagesPath ?? ''}\n${selectedContact?.chat_id ?? ''}`
+  const scope = useMemo(
+    () => (scoped.subject === scopeSubject ? { since: scoped.since, until: scoped.until } : NO_DATES),
+    [scoped, scopeSubject],
+  )
+  const setScope = useCallback(
+    (next: { since: string; until: string }) => setScoped({ subject: scopeSubject, ...next }),
+    [scopeSubject],
+  )
+  // the report on show is the one that was opened, never one left over from another choice
+  const analysis = opened && selectedReport && opened.path === selectedReport.path ? opened.analysis : null
+
+  // the newest request for the list wins; an older answer that comes late is dropped
+  const contactsRequest = useRef(0)
+  const loadContacts = useCallback(async (data: Defaults, runtimePaths: RuntimePaths) => {
+    const request = ++contactsRequest.current
+    const response = await recallApi.contacts({
+      messagesPath: runtimePaths.messagesPath || data.messagesPath,
+      dbPath: runtimePaths.dbPath || data.dbPath,
+      limit: CONVERSATION_LIMIT,
+    })
+    if (request !== contactsRequest.current) return
+    const nextContacts = response.contacts || []
+    setContacts(nextContacts)
+    setArchive(response.archive ?? null)
+    setContactNameCount(response.contactNameCount || data.contactNames?.count || 0)
+    setSelectedContact((current) => {
+      if (!current) return nextContacts[0] || null
+      return nextContacts.find((contact) => contact.chat_id === current.chat_id) || nextContacts[0] || null
+    })
+  }, [])
+
+  const loadJobs = useCallback(async () => {
+    try {
+      const response = await recallApi.jobs()
+      setJobs(response.jobs || [])
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Unable to load jobs.')
+    }
+  }, [])
+
+  const reloadRuntimeData = useCallback(async (pathOverride?: RuntimePaths) => {
+    const data = await recallApi.defaults()
+    const nextPaths =
+      pathOverride || (hasRuntimePath(paths) ? paths : readStoredPaths(pathsFromDefaults(data)))
+    setDefaults(data)
+    setPaths(nextPaths)
+    setReports(data.reports || [])
+    setSelectedReport((current) => {
+      if (!current) return data.reports?.[0] || null
+      return data.reports?.find((report) => report.path === current.path) || data.reports?.[0] || null
+    })
+    setContactNameCount(data.contactNames?.count || 0)
+    await loadContacts(data, nextPaths)
+    await loadJobs()
+    return data
+  }, [loadContacts, loadJobs, paths])
+
+  useEffect(() => {
+    let cancelled = false
+    async function boot() {
+      try {
+        const data = await recallApi.defaults()
+        if (cancelled) return
+        setDefaults(data)
+        const nextPaths = readStoredPaths(pathsFromDefaults(data))
+        setPaths(nextPaths)
+        setReports(data.reports || [])
+        setModel(preferredModel(data.models || [], data.defaultModel))
+        setContactNameCount(data.contactNames?.count || 0)
+        setSelectedReport(data.reports?.[0] || null)
+        void loadJobs()
+
+        // first run: no archive and no completed marker -> the wizard decides
+        if (!data.setupCompleted && !data.hasMessages) {
+          try {
+            const status = await recallApi.setupStatus({})
+            if (!cancelled) {
+              if (status.state === 'ready') {
+                markSetup({ completed: true })
+              } else {
+                setSetupStatus(status)
+                setShowOnboarding(true)
+              }
+            }
+          } catch {
+            // never trap the user behind a failed probe
+          }
+        } else if (data.hasMessages && !data.setupCompleted) {
+          // dev mode / data already exists: short-circuit future boots
+          markSetup({ completed: true })
+        }
+
+        await loadContacts(data, nextPaths)
+      } catch (apiError) {
+        if (!cancelled) setError(apiError instanceof Error ? apiError.message : 'Unable to load Recall.')
+      } finally {
+        if (!cancelled) setLoadingContacts(false)
+      }
+    }
+    void boot()
+    return () => {
+      cancelled = true
+    }
+  }, [loadContacts, loadJobs])
+
+  const refreshCacheStats = useCallback(() => setCacheStats(previewCacheStats()), [])
+  const preview = useConversationPreview(
+    {
+      messagesPath: effectiveDefaults?.messagesPath ?? '',
+      // the figures are worked out only where they are shown
+      contact: activeView === 'analyze' ? (selectedContact?.chat_id ?? '') : '',
+      model,
+      since: scope.since,
+      until: scope.until,
+    },
+    refreshCacheStats,
+  )
+
+  // the newest report asked for wins; one that finishes loading late is dropped
+  const reportRequest = useRef(0)
+  const openReport = useCallback(
+    async (report: ReportFile) => {
+      if (!effectiveDefaults || !model) return
+      const request = ++reportRequest.current
+      setSelectedReport(report)
+      setActiveView('reports')
+      setLoadingReport(true)
+      setFailedReport('')
+      setError(null)
+      try {
+        const data = await recallApi.analysis({
+          messagesPath: effectiveDefaults.messagesPath,
+          model,
+          reportPath: report.path,
+          contact: report.contact,
+        })
+        if (request === reportRequest.current) setOpened({ path: report.path, analysis: data.analysis })
+      } catch (apiError) {
+        if (request !== reportRequest.current) return
+        setFailedReport(report.path)
+        setError(apiError instanceof Error ? apiError.message : 'Unable to open report.')
+      } finally {
+        if (request === reportRequest.current) setLoadingReport(false)
+      }
+    },
+    [effectiveDefaults, model],
+  )
+
+  // On Reports, the chosen report is opened if it is not yet: when the view
+  // is first come to, or after the list changed under the choice.
+  useEffect(() => {
+    if (activeView !== 'reports' || !selectedReport || analysis || loadingReport) return
+    if (failedReport === selectedReport.path) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void openReport(selectedReport)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [activeView, analysis, failedReport, loadingReport, openReport, selectedReport])
+
+  const runReport = useCallback(async () => {
+    if (!effectiveDefaults || !selectedContact || !model) return
+    setError(null)
+    try {
+      const created = await recallApi.createAnalyzeJob({
+        dbPath: effectiveDefaults.dbPath,
+        messagesPath: effectiveDefaults.messagesPath,
+        outDir: effectiveDefaults.outDir,
+        contact: selectedContact.chat_id,
+        model,
+        html: true,
+        extractFirst: false,
+        since: scope.since,
+        until: scope.until,
+      })
+      setRunningJob(created.job)
+      await loadJobs()
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Unable to start report.')
+    }
+  }, [effectiveDefaults, loadJobs, model, scope.since, scope.until, selectedContact])
+
+  // what a finished report job leaves: the list of reports, and the report itself opened
+  const showFinished = useCallback(
+    async (job: Job) => {
+      try {
+        const nextReports = job.result?.reports || (await recallApi.reports()).reports
+        setReports(nextReports)
+        await loadJobs()
+        const written = job.result?.analysis
+        const report = nextReports.find((item) => item.path === job.result?.reportPath)
+        if (!written || !report) return
+        setOpened({ path: report.path, analysis: written })
+        setSelectedReport(report)
+        // only auto-open the report if the user is still where they
+        // started it -- never yank them out of Chat/Search mid-thought
+        setActiveView((current) => (current === 'analyze' || current === 'reports' ? 'reports' : current))
+      } catch (apiError) {
+        setError(apiError instanceof Error ? apiError.message : 'The report was written, but the list of reports could not be read.')
+      }
+    },
+    [loadJobs],
+  )
+
+  // A report job is asked about until it ends: one question at a time. An
+  // answer about a job that is no longer the one watched changes nothing, and
+  // a job the server no longer knows stops being asked about.
+  const watchedJob = runningJob && isActiveJob(runningJob) ? runningJob.id : ''
+  useEffect(() => {
+    if (!watchedJob) return
+    let asking = false
+    let ended = false
+    let misses = 0
+    const ask = async () => {
+      if (asking || ended) return
+      asking = true
+      try {
+        const { job } = await recallApi.job(watchedJob)
+        misses = 0
+        if (job.status === 'completed') {
+          ended = true
+          await showFinished(job)
+        }
+        setRunningJob((current) => (current?.id === job.id ? job : current))
+      } catch {
+        misses += 1
+        if (misses < LOST_AFTER_MISSES) return
+        ended = true
+        setRunningJob((current) =>
+          current?.id === watchedJob
+            ? { ...current, status: 'failed', error: 'The report stopped answering. Run it again.' }
+            : current,
+        )
+      } finally {
+        asking = false
+      }
+    }
+    const timer = window.setInterval(() => void ask(), POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [showFinished, watchedJob])
+
+  const handleModelChange = useCallback((nextModel: string) => {
+    storePreferredModel(nextModel)
+    setModel(nextModel)
+  }, [])
+
+  const refreshContacts = useCallback(async () => {
+    setUtilityBusy(true)
+    setSettingsStatus('Reading contact names')
+    setError(null)
+    try {
+      const response = await recallApi.refreshContactNames()
+      setContactNameCount(response.contactNames.count || 0)
+      setSettingsStatus(response.message || 'Contacts refreshed.')
+      await reloadRuntimeData()
+    } catch (apiError) {
+      setSettingsStatus('')
+      setError(apiError instanceof Error ? apiError.message : 'Unable to refresh contacts.')
+    } finally {
+      setUtilityBusy(false)
+    }
+  }, [reloadRuntimeData])
+
+  const applyRuntimePaths = useCallback(
+    async (nextPaths: RuntimePaths) => {
+      const normalized = {
+        dbPath: nextPaths.dbPath.trim(),
+        messagesPath: nextPaths.messagesPath.trim(),
+        outDir: nextPaths.outDir.trim(),
+      }
+      setUtilityBusy(true)
+      setSettingsStatus('Applying file locations')
+      setError(null)
+      try {
+        storeRuntimePaths(normalized)
+        setPaths(normalized)
+        if (defaults) {
+          await loadContacts(defaults, normalized)
+        }
+        setSettingsStatus('Paths updated.')
+      } catch (apiError) {
+        setSettingsStatus('')
+        setError(apiError instanceof Error ? apiError.message : 'Unable to apply paths.')
+      } finally {
+        setUtilityBusy(false)
+      }
+    },
+    [defaults, loadContacts],
+  )
+
+  const clearPreviewCaches = useCallback(async () => {
+    clearPreviewCache()
+    setCacheStats(previewCacheStats())
+    setSettingsStatus('Preview cache cleared.')
+    try {
+      await recallApi.clearPreviewCache()
+    } catch {
+      // The local browser cache is cleared even if the server cache is unavailable.
+    }
+  }, [])
+
+  const shellTitle = useMemo(() => {
+    if (activeView === 'home') return 'Overview'
+    if (activeView === 'explore') return 'Search'
+    if (activeView === 'ask') return 'Chat'
+    if (activeView === 'reports') return 'Reports'
+    if (activeView === 'jobs') return 'Jobs'
+    if (activeView === 'settings') return 'Settings'
+    return 'Analyze'
+  }, [activeView])
+
+  const activeJobCount = useMemo(
+    () => mergeJobs(jobs, runningJob).filter(isActiveJob).length,
+    [jobs, runningJob],
+  )
+  const shellStyle = { '--rail-w': `${layout.sidebarWidth}px` } as CSSProperties
+  // a narrow window folds the rail whatever was chosen; the choice comes back with the room
+  const narrowWindow = useMediaQuery(NARROW_WINDOW)
+  const railCollapsed = layout.sidebarCollapsed || narrowWindow
+  const defaultSettingsPaths = useMemo(() => (defaults ? pathsFromDefaults(defaults) : emptyPaths), [defaults])
+  const appliedSettingsPaths = useMemo(
+    () => (effectiveDefaults ? pathsFromDefaults(effectiveDefaults) : paths),
+    [effectiveDefaults, paths],
+  )
+
+  const selectContactForAnalyze = useCallback((contact: Contact) => {
+    setSelectedContact(contact)
+    setActiveView('analyze')
+  }, [])
+
+  const finishOnboarding = useCallback(
+    async (result: SetupImportResult | null) => {
+      setShowOnboarding(false)
+      setRerunSetup(false)
+      setActiveView('home')
+      // the archive the import just wrote; the paths in hand are from before it
+      let written = paths.messagesPath
+      try {
+        const data = await reloadRuntimeData()
+        written = written || data.messagesPath
+      } catch {
+        // the shell still renders; data loads on the next interaction
+      }
+      if (!result) return
+      try {
+        const { firstWords: payload } = await recallApi.firstWords({ messagesPath: written || undefined })
+        if (payload.entries.length) {
+          setFirstWords(payload)
+          setShowFirstWords(true)
+          markSetup({ firstWordsShown: true })
+        }
+      } catch {
+        // the reveal is a nicety, never a blocker
+      }
+    },
+    [paths.messagesPath, reloadRuntimeData],
+  )
+
+  const skipOnboarding = useCallback(() => {
+    setShowOnboarding(false)
+    setRerunSetup(false)
+  }, [])
+
+  const replayFirstWords = useCallback(async () => {
+    try {
+      const { firstWords: payload } = await recallApi.firstWords({
+        messagesPath: effectiveDefaults?.messagesPath || undefined,
+      })
+      if (payload.entries.length) {
+        setFirstWords(payload)
+        setShowFirstWords(true)
+      }
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Unable to load first words.')
+    }
+  }, [effectiveDefaults])
+
+  // The setup guide builds the archive the first time and updates it after
+  // that. Opening it only reads the current state; nothing changes until the
+  // guide is told to start.
+  const openSetup = useCallback(async () => {
+    try {
+      const status = await recallApi.setupStatus({ deep: true })
+      setSetupStatus(status)
+      setRerunSetup(Boolean(archive?.conversations))
+      setShowOnboarding(true)
+    } catch (apiError) {
+      setError(apiError instanceof Error ? apiError.message : 'Unable to start setup.')
+    }
+  }, [archive])
+
+  if (showOnboarding && setupStatus) {
+    return (
+      <OnboardingWizard
+        initialStatus={setupStatus}
+        rerun={rerunSetup}
+        onFinished={(result) => void finishOnboarding(result)}
+        onSkip={skipOnboarding}
+      />
+    )
+  }
+
+  return (
+    <div className={`app${railCollapsed ? ' rail-collapsed' : ''}`} style={shellStyle}>
+      <Sidebar
+        activeView={activeView}
+        activeJobCount={activeJobCount}
+        collapsed={railCollapsed}
+        canExpand={!narrowWindow}
+        onToggleCollapse={toggleSidebar}
+        onViewChange={setActiveView}
+      />
+      <ResizeHandle
+        label="Resize sidebar"
+        value={layout.sidebarWidth}
+        min={RAIL_WIDTH.min}
+        max={RAIL_WIDTH.max}
+        disabled={railCollapsed}
+        onChange={(sidebarWidth) => changeLayout({ sidebarWidth })}
+      />
+
+      <main className="workspace">
+        <header className="titlebar">
+          <h1 key={shellTitle} className="swap">
+            {shellTitle}
+          </h1>
+        </header>
+
+        {error ? (
+          <div className="banner appear" role="alert">
+            <p>{error}</p>
+            <button type="button" className="icon-btn" aria-label="Dismiss" onClick={() => setError(null)}>
+              <CloseIcon />
+            </button>
+          </div>
+        ) : null}
+
+        {activeView === 'home' ? (
+          <OverviewView
+            defaults={effectiveDefaults}
+            archive={archive}
+            contacts={contacts}
+            reports={reports}
+            loading={loadingContacts}
+            model={model}
+            onViewChange={setActiveView}
+            onSelectContact={selectContactForAnalyze}
+            onOpenReport={openReport}
+            onReplayFirstWords={() => void replayFirstWords()}
+            onOpenSetup={() => void openSetup()}
+          />
+        ) : activeView === 'reports' ? (
+          <ReportsView
+            reports={reports}
+            selectedReport={selectedReport}
+            analysis={analysis}
+            loading={loadingReport}
+            failed={Boolean(selectedReport) && failedReport === selectedReport?.path}
+            listWidth={layout.reportListWidth}
+            onListWidthChange={(reportListWidth) => changeLayout({ reportListWidth })}
+            onSelectReport={openReport}
+            onOpenConversation={(chatId, name) =>
+              selectContactForAnalyze(
+                contacts.find((contact) => contact.chat_id === chatId) ?? { chat_id: chatId, display_name: name },
+              )
+            }
+            onChooseConversation={() => setActiveView('analyze')}
+          />
+        ) : activeView === 'explore' ? (
+          <SearchView defaults={effectiveDefaults} contacts={contacts} onSelectContact={selectContactForAnalyze} />
+        ) : activeView === 'ask' ? (
+          <ChatView
+            defaults={effectiveDefaults}
+            model={model}
+            contacts={contacts}
+            onModelChange={handleModelChange}
+            onSelectContact={selectContactForAnalyze}
+            onOpenSetup={() => void openSetup()}
+          />
+        ) : activeView === 'jobs' ? (
+          <JobsView jobs={jobs} runningJob={runningJob} contacts={contacts} onRefresh={loadJobs} />
+        ) : activeView === 'settings' ? (
+          <SettingsView
+            key={`${appliedSettingsPaths.dbPath}\n${appliedSettingsPaths.messagesPath}\n${appliedSettingsPaths.outDir}`}
+            defaults={effectiveDefaults}
+            archive={archive}
+            defaultPaths={defaultSettingsPaths}
+            paths={appliedSettingsPaths}
+            model={model}
+            contactNameCount={contactNameCount}
+            cacheStats={cacheStats}
+            busy={utilityBusy}
+            statusMessage={settingsStatus}
+            onModelChange={handleModelChange}
+            onApplyPaths={(next) => void applyRuntimePaths(next)}
+            onRefreshContacts={() => void refreshContacts()}
+            onClearPreviewCache={() => void clearPreviewCaches()}
+            onOpenSetup={() => void openSetup()}
+          />
+        ) : (
+          <AnalyzeView
+            defaults={effectiveDefaults}
+            contacts={contacts}
+            selectedContact={selectedContact}
+            loadingContacts={loadingContacts}
+            query={query}
+            onQueryChange={setQuery}
+            onSelect={setSelectedContact}
+            preview={preview.payload}
+            previewSettled={preview.settled}
+            previewError={preview.error}
+            onRetryPreview={preview.retry}
+            reports={reports}
+            model={model}
+            onModelChange={handleModelChange}
+            scope={scope}
+            onScopeChange={setScope}
+            runningJob={runningJob}
+            onRunReport={runReport}
+            onOpenReport={openReport}
+            listWidth={layout.listWidth}
+            onListWidthChange={(listWidth) => changeLayout({ listWidth })}
+          />
+        )}
+      </main>
+      {showFirstWords && firstWords ? (
+        <FirstWords payload={firstWords} onClose={() => setShowFirstWords(false)} />
+      ) : null}
+    </div>
+  )
 }
 
 export default App
