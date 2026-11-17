@@ -6,12 +6,14 @@ import {
   isPreviewPayload,
   makePreviewCacheKey,
   previewCacheStats,
+  previewGeneration,
   readPreviewCache,
+  watchPreviewCache,
   writePreviewCache,
 } from './cache.ts'
 import { fakeStorage, noPage, pageWithNoStorage, pageWithStorage } from './fakeStorage.test.ts'
 
-const STORE_KEY = 'recall.previewCache.v7'
+const STORE_KEY = 'recall.previewCache.v8'
 const DAY = 86_400_000
 const T0 = Date.UTC(2026, 10, 1)
 
@@ -153,13 +155,14 @@ test('previews kept in an older shape give their space back', () => {
     fakeStorage({
       'recall.previewCache.v5': '{}',
       'recall.previewCache.v6': '{"a":{}}',
+      'recall.previewCache.v7': '{"a":{}}',
       'recall.theme': 'dark',
     }),
   )
 
   writePreviewCache('a', preview(), T0)
 
-  assert.deepEqual(Object.keys(storage.dump()).sort(), ['recall.previewCache.v7', 'recall.theme'])
+  assert.deepEqual(Object.keys(storage.dump()).sort(), ['recall.previewCache.v8', 'recall.theme'])
 })
 
 test('clearing drops every preview and nothing else', () => {
@@ -170,6 +173,43 @@ test('clearing drops every preview and nothing else', () => {
 
   assert.equal(readPreviewCache('a', T0), null)
   assert.deepEqual(storage.dump(), { 'recall.theme': 'dark' })
+})
+
+test('clearing is told to whoever holds figures in memory', () => {
+  pageWithStorage(fakeStorage())
+  const before = previewGeneration()
+  const told: number[] = []
+  const stop = watchPreviewCache(() => told.push(previewGeneration()))
+
+  clearPreviewCache()
+
+  assert.equal(previewGeneration(), before + 1)
+  assert.deepEqual(told, [before + 1])
+
+  // one that stopped watching is not told again
+  stop()
+  clearPreviewCache()
+  assert.equal(previewGeneration(), before + 2)
+  assert.deepEqual(told, [before + 1])
+})
+
+test('keeping a preview is not a clearing', () => {
+  pageWithStorage(fakeStorage())
+  const before = previewGeneration()
+
+  writePreviewCache('a', preview(), T0)
+  readPreviewCache('a', T0)
+
+  assert.equal(previewGeneration(), before)
+})
+
+test('figures in memory are dropped even where the browser keeps nothing', () => {
+  pageWithNoStorage()
+  const before = previewGeneration()
+
+  clearPreviewCache()
+
+  assert.equal(previewGeneration(), before + 1)
 })
 
 test('a full store keeps the newest previews that fit', () => {
