@@ -1,365 +1,241 @@
-// Share-card rendering, straight onto a canvas 2D context. No DOM
-// serialization, no foreignObject, no font embedding: the page's loaded
-// Fraunces/Hanken faces are available to canvas after document.fonts.ready,
-// and the same draw function feeds both the live preview and the PNG export
-// so they can never drift.
+// Share cards, drawn straight onto a canvas. One draw function feeds the
+// preview, the saved picture and the copied one, so the three cannot differ.
+//
+// A card is who it is about, one figure set large, and under it what makes
+// the figure worth sending: the conversation's own chart, the split of the
+// two voices, the words that were said. What a card has no data for is left
+// off, and the parts that are there share the height between them.
+
+import { days, voices } from './cardCharts.ts'
+import type { DaysChart, VoicesChart } from './cardData.ts'
+import { place, type Block } from './cardLayout.ts'
+import { balance, facts, heading, hero, messages, spoken, wordmark, type CardQuote, type Fact } from './cardParts.ts'
+import { COLOR, WIDTH, clipped, count, named, numbers, percent, shareOf, type Pen } from './cardPen.ts'
+import { shortName } from './conversations.ts'
+
+export type { CardQuote } from './cardParts.ts'
 
 export type CardFormat = 'story' | 'square'
 
 export type AnniversaryCardData = {
   kind: 'anniversary'
   name: string
+  // a group's name is not a first name and a last name; it is kept whole
+  group?: boolean
   years: number
   sinceDate: string
   messageCount: number
-  quote?: { text: string; direction: string } | null
+  // the first message of the conversation and the answer to it, when they are known
+  quote?: CardQuote | null
+  reply?: CardQuote | null
+  // from the conversation's own figures, once they have been read
+  voices?: VoicesChart | null
+  // your share of the messages, 0 to 1
+  balance?: number | null
 }
 
 export type OnThisDayCardData = {
   kind: 'onthisday'
   name: string
-  year: number
   yearsAgo: number
   count: number
-  quote: string
+  // the day itself, as "YYYY-MM-DD" and written out
+  day?: string
+  date?: string
+  quote?: CardQuote | null
+  // the day among the days around it
+  days?: DaysChart | null
+  // the share of that year's other days that held less
+  busier?: { share: number; year: string } | null
 }
 
 export type DuoCardData = {
   kind: 'duo'
   name: string
   totalMessages: number
-  initiation?: number | null
+  // the months the conversation runs between
+  span?: string
+  // your share of the messages, 0 to 1
   balance?: number | null
-  volumeTrendPct?: number | null
+  // the share of days on which you wrote first, 0 to 1
+  initiation?: number | null
   busiestDay?: string
   busiestDayCount?: number | null
+  voices?: VoicesChart | null
 }
 
 export type CardData = AnniversaryCardData | OnThisDayCardData | DuoCardData
 
 export type CardOptions = {
   format: CardFormat
+  // a quoted message is left off unless the reader asks for it
   includeQuote: boolean
 }
 
-export function cardSize(format: CardFormat): { w: number; h: number } {
-  return format === 'story' ? { w: 1080, h: 1920 } : { w: 1080, h: 1080 }
+// Where things go in each shape: the heading, the room the parts share, the
+// gap between two parts, and the line the mark stands on. A tall card keeps
+// clear of the top and bottom, where a story is covered by its own controls.
+type Frame = { height: number; head: number; top: number; bottom: number; gap: number; mark: number }
+const FRAMES: Record<CardFormat, Frame> = {
+  story: { height: 1920, head: 230, top: 420, bottom: 1730, gap: 72, mark: 1848 },
+  square: { height: 1080, head: 104, top: 262, bottom: 952, gap: 44, mark: 1016 },
 }
 
-type Palette = {
-  bg: string
-  surface: string
-  text: string
-  muted: string
-  soft: string
-  accent: string
-  line: string
-  lineStrong: string
-}
+type Card = { name: string; under: string; blocks: Array<Block | null> }
 
-function readPalette(): Palette {
-  const styles = getComputedStyle(document.documentElement)
-  const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback
+function anniversaryCard(pen: Pen, data: AnniversaryCardData, opts: CardOptions): Card {
+  const story = opts.format === 'story'
+  const them = data.group ? data.name : shortName(data.name)
+  const first = opts.includeQuote ? spoken(data.quote) : null
+  // an answer is shown only under the message it answers
+  const exchange = first ? [first, spoken(data.reply)] : []
+  const said = messages(
+    pen,
+    exchange,
+    story ? { size: 44, maxLines: 3 } : { size: 36, maxLines: 2 },
+    exchange[1] ? 'The first messages' : 'The first message',
+  )
+  const yours = shareOf(data.balance)
   return {
-    bg: token('--bg', '#f4eee2'),
-    surface: token('--surface', '#fbf6ec'),
-    text: token('--text', '#2a2017'),
-    muted: token('--muted', '#6e6253'),
-    soft: token('--soft', '#9a8d78'),
-    accent: token('--accent', 'rgb(193, 60, 39)'),
-    line: token('--line', 'rgba(43, 33, 24, 0.14)'),
-    lineStrong: token('--line-strong', 'rgba(43, 33, 24, 0.28)'),
+    name: `You and ${them}`,
+    under: `Since ${data.sinceDate}`,
+    blocks: [
+      hero(pen, String(data.years), story ? (said ? 260 : 340) : said ? 150 : 168, [
+        { text: `${data.years === 1 ? 'year' : 'years'} of messages`, size: story ? (said ? 52 : 60) : said ? 44 : 48 },
+        { text: count(data.messageCount, 'message'), size: story ? 34 : 30, weight: 400, color: COLOR.quiet },
+      ]),
+      said ? { ...said, rank: 1 } : null,
+      data.voices
+        ? voices(data.voices, them, { min: said ? 240 : story ? 300 : 240, max: story ? (said ? 420 : 620) : 400, rank: said ? 2 : 1 })
+        : null,
+      yours === null ? null : { ...balance(yours, them), rank: 3 },
+    ],
   }
 }
 
-const SERIF = 'Fraunces, Georgia, serif'
-const SANS = '"Hanken Grotesk", -apple-system, sans-serif'
-
-function breakLongWord(ctx: CanvasRenderingContext2D, word: string, maxWidth: number): string[] {
-  if (ctx.measureText(word).width <= maxWidth) return [word]
-  const parts: string[] = []
-  let current = ''
-  for (const char of word) {
-    if (current && ctx.measureText(current + char).width > maxWidth) {
-      parts.push(current)
-      current = char
-    } else {
-      current += char
-    }
-  }
-  if (current) parts.push(current)
-  return parts
+// how the day stands among the days of its year, when it stands above most of them
+function standing(data: OnThisDayCardData): Fact[] {
+  const ranked = data.busier
+  if (!ranked || !Number.isFinite(ranked.share) || ranked.share < 0.5) return []
+  if (ranked.share >= 1) return [{ label: 'The busiest day of', value: () => ranked.year }]
+  // rounded down, so that "100%" is never said of a day that another day matched
+  return [{ label: 'Busier than', value: () => `${Math.floor(ranked.share * 100)}% of days in ${ranked.year}` }]
 }
 
-function wrapText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number,
-  maxLines: number,
-): string[] {
-  // texting produces unbroken keyboard-smash tokens wider than the card --
-  // hard-split those so a quote can never overflow the frame
-  const words = text
-    .split(/\s+/)
-    .filter(Boolean)
-    .flatMap((word) => breakLongWord(ctx, word, maxWidth))
-  const lines: string[] = []
-  let current = ''
-  for (const word of words) {
-    const attempt = current ? `${current} ${word}` : word
-    if (ctx.measureText(attempt).width <= maxWidth || !current) {
-      current = attempt
-    } else {
-      lines.push(current)
-      current = word
-      if (lines.length === maxLines - 1) break
-    }
-  }
-  if (current && lines.length < maxLines) lines.push(current)
-  const used = lines.join(' ').split(/\s+/).length
-  if (used < words.length && lines.length) {
-    lines[lines.length - 1] = `${lines[lines.length - 1].replace(/[.,!?]*$/, '')}…`
-  }
-  return lines
-}
-
-function kicker(ctx: CanvasRenderingContext2D, p: Palette, text: string, cx: number, y: number) {
-  ctx.fillStyle = p.accent
-  ctx.font = `600 30px ${SANS}`
-  ctx.textAlign = 'center'
-  const spaced = text.toUpperCase().split('').join('  ')
-  ctx.fillText(spaced, cx, y)
-}
-
-function wordmark(ctx: CanvasRenderingContext2D, p: Palette, cx: number, bottomY: number) {
-  ctx.strokeStyle = p.lineStrong
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.moveTo(cx - 70, bottomY - 64)
-  ctx.lineTo(cx + 70, bottomY - 64)
-  ctx.stroke()
-  ctx.fillStyle = p.text
-  ctx.font = `700 40px ${SERIF}`
-  ctx.textAlign = 'center'
-  ctx.fillText('Recall', cx, bottomY)
-}
-
-function frame(ctx: CanvasRenderingContext2D, p: Palette, w: number, h: number) {
-  ctx.fillStyle = p.bg
-  ctx.fillRect(0, 0, w, h)
-  ctx.strokeStyle = p.lineStrong
-  ctx.lineWidth = 2
-  ctx.strokeRect(50, 50, w - 100, h - 100)
-  ctx.strokeStyle = p.line
-  ctx.lineWidth = 1
-  ctx.strokeRect(62, 62, w - 124, h - 124)
-}
-
-function firstName(name: string): string {
-  const first = name.trim().split(/\s+/)[0] || name
-  return first
-}
-
-export function drawCard(ctx: CanvasRenderingContext2D, data: CardData, opts: CardOptions) {
-  const { w, h } = cardSize(opts.format)
-  const p = readPalette()
-  const cx = w / 2
-  frame(ctx, p, w, h)
-
-  if (data.kind === 'anniversary') {
-    drawAnniversary(ctx, p, data, opts, w, h, cx)
-  } else if (data.kind === 'onthisday') {
-    drawOnThisDay(ctx, p, data, opts, w, h, cx)
-  } else {
-    drawDuo(ctx, p, data, w, h, cx)
-  }
-
-  wordmark(ctx, p, cx, h - 110)
-}
-
-function drawAnniversary(
-  ctx: CanvasRenderingContext2D,
-  p: Palette,
-  data: AnniversaryCardData,
-  opts: CardOptions,
-  w: number,
-  h: number,
-  cx: number,
-) {
-  const story = h > w
-  const topY = story ? 360 : 220
-  kicker(ctx, p, 'Friendship anniversary', cx, topY)
-
-  const numeralY = topY + (story ? 360 : 290)
-  ctx.fillStyle = p.text
-  ctx.font = `900 ${story ? 430 : 330}px ${SERIF}`
-  ctx.textAlign = 'center'
-  ctx.fillText(String(data.years), cx, numeralY)
-
-  ctx.font = `italic 500 ${story ? 60 : 52}px ${SERIF}`
-  ctx.fillStyle = p.text
-  ctx.fillText(
-    `${data.years === 1 ? 'year' : 'years'} of you & ${firstName(data.name)}`,
-    cx,
-    numeralY + (story ? 110 : 90),
-  )
-
-  ctx.font = `500 ${story ? 36 : 32}px ${SANS}`
-  ctx.fillStyle = p.muted
-  ctx.fillText(
-    `since ${data.sinceDate} · ${data.messageCount.toLocaleString()} messages`,
-    cx,
-    numeralY + (story ? 180 : 150),
-  )
-
-  if (opts.includeQuote && data.quote?.text) {
-    const quoteY = numeralY + (story ? 330 : 250)
-    ctx.font = `italic 500 ${story ? 46 : 40}px ${SERIF}`
-    ctx.fillStyle = p.text
-    const lines = wrapText(ctx, `“${data.quote.text}”`, w - 320, 3)
-    lines.forEach((line, index) => {
-      ctx.fillText(line, cx, quoteY + index * (story ? 62 : 54))
-    })
-    ctx.font = `500 30px ${SANS}`
-    ctx.fillStyle = p.soft
-    const who = data.quote.direction === 'outgoing' ? 'your first words' : 'their first words'
-    ctx.fillText(who, cx, quoteY + lines.length * (story ? 62 : 54) + 34)
+function onThisDayCard(pen: Pen, data: OnThisDayCardData, opts: CardOptions): Card {
+  const story = opts.format === 'story'
+  const said = opts.includeQuote ? messages(pen, [data.quote], story ? { size: 52, maxLines: 6 } : { size: 40, maxLines: 3 }) : null
+  const ago = data.yearsAgo === 1 ? 'A year ago today' : `${data.yearsAgo} years ago today`
+  return {
+    name: data.name,
+    under: data.date || ago,
+    blocks: [
+      // the words come first, under the name, the way a thread reads
+      said ? { ...said, rank: 1 } : null,
+      hero(pen, numbers.format(data.count), story ? (said ? 200 : 300) : said ? 130 : 190, [
+        { text: `${data.count === 1 ? 'message' : 'messages'} that day`, size: story ? (said ? 48 : 56) : said ? 40 : 48 },
+        ...(data.date ? [{ text: ago, size: story ? 34 : 30, weight: 400, color: COLOR.quiet }] : []),
+      ]),
+      data.days ? days(data.days, { min: story ? 260 : 200, max: story ? 420 : 330, rank: said ? 2 : 1 }) : null,
+      facts(standing(data), story ? 96 : 80, 3),
+    ],
   }
 }
 
-function drawOnThisDay(
-  ctx: CanvasRenderingContext2D,
-  p: Palette,
-  data: OnThisDayCardData,
-  opts: CardOptions,
-  w: number,
-  h: number,
-  cx: number,
-) {
-  const story = h > w
-  kicker(ctx, p, `On this day · ${data.year}`, cx, story ? 420 : 240)
-
-  const quoteText = opts.includeQuote && data.quote ? data.quote : ''
-  const centerY = story ? 850 : 480
-  if (quoteText) {
-    ctx.font = `italic 500 ${story ? 58 : 50}px ${SERIF}`
-    ctx.fillStyle = p.text
-    const lines = wrapText(ctx, `“${quoteText}”`, w - 300, story ? 6 : 4)
-    const lineHeight = story ? 80 : 68
-    const startY = centerY - ((lines.length - 1) * lineHeight) / 2
-    lines.forEach((line, index) => {
-      ctx.fillText(line, cx, startY + index * lineHeight)
-    })
-  } else {
-    ctx.font = `600 ${story ? 130 : 110}px ${SERIF}`
-    ctx.fillStyle = p.text
-    ctx.fillText(data.count.toLocaleString(), cx, centerY - 20)
-    ctx.font = `italic 500 ${story ? 52 : 44}px ${SERIF}`
-    ctx.fillText('messages, this day', cx, centerY + (story ? 70 : 56))
-  }
-
-  const attributionY = story ? h - 480 : h - 330
-  ctx.font = `500 ${story ? 38 : 34}px ${SANS}`
-  ctx.fillStyle = p.muted
-  ctx.fillText(
-    `— ${firstName(data.name)}, ${data.yearsAgo} ${data.yearsAgo === 1 ? 'year' : 'years'} ago today`,
-    cx,
-    attributionY,
-  )
-  ctx.font = `500 30px ${SANS}`
-  ctx.fillStyle = p.soft
-  ctx.fillText(`${data.count.toLocaleString()} messages that day`, cx, attributionY + 52)
+function duoFacts(data: DuoCardData, them: string): Fact[] {
+  const youFirst = shareOf(data.initiation)
+  const day = data.busiestDay
+    ? data.busiestDayCount
+      ? `${data.busiestDay}, ${numbers.format(data.busiestDayCount)}`
+      : data.busiestDay
+    : ''
+  return [
+    ...(youFirst === null
+      ? []
+      : [
+          {
+            label: 'First to write',
+            value: (pen: Pen, room: number) =>
+              youFirst >= 0.5
+                ? `You, on ${percent(youFirst)} of days`
+                : named(pen, them, `, on ${percent(1 - youFirst)} of days`, room),
+          },
+        ]),
+    ...(day ? [{ label: 'Busiest day', value: (pen: Pen, room: number) => clipped(pen, day, room) }] : []),
+  ]
 }
 
-function drawDuo(
-  ctx: CanvasRenderingContext2D,
-  p: Palette,
-  data: DuoCardData,
-  w: number,
-  h: number,
-  cx: number,
-) {
-  const story = h > w
-  kicker(ctx, p, `You & ${firstName(data.name)}`, cx, story ? 380 : 220)
-
-  const totalY = story ? 660 : 420
-  ctx.fillStyle = p.text
-  ctx.font = `600 ${story ? 170 : 140}px ${SERIF}`
-  ctx.textAlign = 'center'
-  ctx.fillText(data.totalMessages.toLocaleString(), cx, totalY)
-  ctx.font = `italic 500 ${story ? 52 : 44}px ${SERIF}`
-  ctx.fillText('messages together', cx, totalY + (story ? 86 : 70))
-
-  const rows: Array<[string, string]> = []
-  if (data.initiation !== null && data.initiation !== undefined) {
-    rows.push(['You start the day', `${Math.round(data.initiation * 100)}%`])
+function duoCard(pen: Pen, data: DuoCardData, opts: CardOptions): Card {
+  const story = opts.format === 'story'
+  const them = shortName(data.name)
+  const yours = shareOf(data.balance)
+  return {
+    name: `You and ${them}`,
+    under: data.span || 'Every message',
+    blocks: [
+      hero(pen, numbers.format(data.totalMessages), story ? 220 : 150, [
+        { text: data.totalMessages === 1 ? 'message' : 'messages', size: story ? 52 : 44 },
+      ]),
+      data.voices ? voices(data.voices, them, { min: story ? 300 : 240, max: story ? 560 : 400, rank: 1 }) : null,
+      yours === null ? null : { ...balance(yours, them), rank: 2 },
+      facts(duoFacts(data, them), story ? 96 : 80, 3),
+    ],
   }
-  if (data.balance !== null && data.balance !== undefined) {
-    rows.push(['Share of words', `${Math.round(data.balance * 100)}% you`])
-  }
-  if (data.volumeTrendPct !== null && data.volumeTrendPct !== undefined) {
-    const sign = data.volumeTrendPct >= 0 ? '+' : ''
-    rows.push(['Lately', `${sign}${Math.round(data.volumeTrendPct)}%`])
-  }
-  if (data.busiestDay) {
-    rows.push([
-      'Biggest day',
-      `${data.busiestDay}${data.busiestDayCount ? ` · ${data.busiestDayCount.toLocaleString()} texts` : ''}`,
-    ])
-  }
-
-  const rowsTop = totalY + (story ? 220 : 160)
-  const rowHeight = story ? 110 : 92
-  const left = 180
-  const right = w - 180
-  rows.slice(0, story ? 4 : 3).forEach(([label, value], index) => {
-    const y = rowsTop + index * rowHeight
-    ctx.strokeStyle = p.line
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(left, y - rowHeight / 2 + 14)
-    ctx.lineTo(right, y - rowHeight / 2 + 14)
-    ctx.stroke()
-    ctx.font = `500 ${story ? 36 : 32}px ${SANS}`
-    ctx.fillStyle = p.muted
-    ctx.textAlign = 'left'
-    ctx.fillText(label, left, y + 12)
-    ctx.font = `600 ${story ? 40 : 36}px ${SERIF}`
-    ctx.fillStyle = p.text
-    ctx.textAlign = 'right'
-    ctx.fillText(value, right, y + 12)
-  })
-  ctx.textAlign = 'center'
 }
 
-export async function renderCardToCanvas(
-  canvas: HTMLCanvasElement,
-  data: CardData,
-  opts: CardOptions,
-): Promise<void> {
-  const { w, h } = cardSize(opts.format)
-  canvas.width = w
-  canvas.height = h
-  try {
-    await document.fonts.ready
-  } catch {
-    // system serif fallback still renders a correct card
-  }
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return
-  ctx.clearRect(0, 0, w, h)
-  drawCard(ctx, data, opts)
+function drawCard(pen: Pen, data: CardData, opts: CardOptions) {
+  const frame = FRAMES[opts.format]
+  pen.fillStyle = COLOR.paper
+  pen.fillRect(0, 0, WIDTH, frame.height)
+  const card =
+    data.kind === 'anniversary'
+      ? anniversaryCard(pen, data, opts)
+      : data.kind === 'onthisday'
+        ? onThisDayCard(pen, data, opts)
+        : duoCard(pen, data, opts)
+  heading(pen, card.name, card.under, frame.head)
+  const blocks = card.blocks.filter((block): block is Block => block !== null)
+  place(blocks, frame.top, frame.bottom, frame.gap).forEach(({ block, top, height }) => block.draw(pen, top, height))
+  wordmark(pen, frame.mark)
 }
 
-export async function exportCardPng(data: CardData, opts: CardOptions, filename: string) {
+// Draws the card on the canvas at its full size. False when the canvas
+// cannot be drawn on, and so holds no card.
+export function renderCardToCanvas(canvas: HTMLCanvasElement, data: CardData, opts: CardOptions) {
+  // setting the size clears the canvas
+  canvas.width = WIDTH
+  canvas.height = FRAMES[opts.format].height
+  const pen = canvas.getContext('2d')
+  if (!pen) return false
+  drawCard(pen, data, opts)
+  return true
+}
+
+// the card as a PNG; it fails rather than hand over a picture with no card on it
+function cardPng(data: CardData, opts: CardOptions) {
+  const failed = () => new Error('The image could not be made')
   const canvas = document.createElement('canvas')
-  await renderCardToCanvas(canvas, data, opts)
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'))
-  if (!blob) return
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  anchor.click()
-  window.setTimeout(() => URL.revokeObjectURL(url), 10000)
+  if (!renderCardToCanvas(canvas, data, opts)) return Promise.reject(failed())
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => (blob ? resolve(blob) : reject(failed())), 'image/png')
+  })
+}
+
+// Saves the card as a PNG through the browser's own download.
+export async function exportCardPng(data: CardData, opts: CardOptions, filename: string) {
+  const url = URL.createObjectURL(await cardPng(data, opts))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}
+
+// Puts the card on the clipboard as a picture, ready to paste into a message.
+export async function copyCardPng(data: CardData, opts: CardOptions) {
+  if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) {
+    throw new Error('This window cannot copy a picture')
+  }
+  // the picture is handed over still being made, so the copy belongs to the press that asked for it
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': cardPng(data, opts) })])
 }
