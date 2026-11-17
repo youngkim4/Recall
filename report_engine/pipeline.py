@@ -83,8 +83,8 @@ def _check_warnings(checks: list[Checked], skipped: int) -> list[str]:
 def _cut_warnings(count: int) -> list[str]:
     return _counted(
         count,
-        "long message was cut to fit: the model read only its start.",
-        "long messages were cut to fit: the model read only the start of each.",
+        "long message was cut to fit: the model did not read all of it.",
+        "long messages were cut to fit: the model did not read all of each.",
     )
 
 

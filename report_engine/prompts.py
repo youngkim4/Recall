@@ -76,6 +76,7 @@ REDUCE_SYSTEM = (
     "- You may quote only the quotes in the moments, word for word, and only as the words of "
     "the person named with the quote.\n"
     "- Be specific: give dates and say what changed. No filler and no flattery.\n"
+    f"- A summary that ends with {ELISION_MARK} was shortened. The mark is not part of its text.\n"
     "- Write every section as markdown with no headings."
 )
 
@@ -144,8 +145,10 @@ NO_QUOTE = "no quote"
 
 
 def _cell(text: str) -> str:
-    """Outside text as one field of a line: shielded, and with no field separator."""
-    return shield(text).replace("|", "/")
+    """Outside text as one field of a line: with no field separator, and
+    shielded. The separator goes first: a bar inside a tag that turns into a
+    slash after the shield would make a real closing tag."""
+    return shield(text.replace("|", "/"))
 
 
 def note_line(note: Note) -> str:
@@ -187,10 +190,21 @@ def notes_frame_text() -> str:
     return notes_block((("", ""),))
 
 
+def period_head(label: str, first_day: str, last_day: str) -> str:
+    return f"[{_cell(label)} | {first_day} to {last_day}]"
+
+
+def failed_period_line(label: str, first_day: str, last_day: str) -> str:
+    """The line of a period that could not be analysed. It can not be made shorter."""
+    return f"{period_head(label, first_day, last_day)} {FAILED_PERIOD}"
+
+
 def period_line(period: PeriodSummary) -> str:
     """One period for the reduce step, on one line."""
-    head = f"[{_cell(period.label)} | {period.first_day} to {period.last_day}]"
-    return f"{head} {FAILED_PERIOD if period.error is not None else shield(period.summary)}"
+    if period.error is not None:
+        return failed_period_line(period.label, period.first_day, period.last_day)
+    head = period_head(period.label, period.first_day, period.last_day)
+    return f"{head} {shield(period.summary)}"
 
 
 def moment_line(moment: Moment) -> str:

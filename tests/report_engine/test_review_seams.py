@@ -19,7 +19,7 @@ from report_engine.pipeline import run_report
 from report_engine.reduce_fit import fit_reduce
 from report_engine.tokens import TokenMeter
 from report_engine.transcript import build_lines
-from report_engine.verify import holds, quote_parts
+from report_engine.verify import holds, quote_text
 
 from .support import LARGE, SMALL, SMALL_OPTIONS, run
 from .synth import (
@@ -66,7 +66,7 @@ def long_summaries(words: int) -> Any:
     return responder
 
 
-@pytest.mark.parametrize("reduce_cap", [*range(568, 580), *range(580, 800, 15)])
+@pytest.mark.parametrize("reduce_cap", [*range(420, 440), *range(440, 800, 15)])
 def test_a_reduce_request_that_was_cut_to_fit_is_never_larger_than_the_limit(
     reduce_cap: int,
 ) -> None:
@@ -91,7 +91,7 @@ def test_a_limit_below_the_smallest_reduce_request_is_refused_before_any_call() 
             LARGE,
             llm=llm,
             info=info,
-            options=replace(SMALL_OPTIONS, reduce_max_output_tokens=20_000 - 567),
+            options=replace(SMALL_OPTIONS, reduce_max_output_tokens=20_000 - 419),
         )
     assert llm.calls == []
 
@@ -217,11 +217,11 @@ def test_a_changed_prompt_does_not_reuse_the_cache(
     assert len(llm.map_calls) == 1
 
 
-def test_a_quote_with_two_gaps_needs_all_three_parts_in_order() -> None:
+def test_a_quote_with_marks_inside_it_is_not_found() -> None:
     text = "first part then the middle part and at last the final part"
-    assert holds(text, quote_parts("first part [...] the middle [...] final part"))
-    assert not holds(text, quote_parts("first part [...] final part [...] the middle"))
-    assert not holds(text, quote_parts("first part [...] not there [...] final part"))
+    assert holds(text, quote_text("first part then the middle part"))
+    assert not holds(text, quote_text("first part [...] the middle [...] final part"))
+    assert not holds(text, quote_text("first part [...] final part"))
 
 
 def test_when_only_the_moments_are_too_many_no_summary_is_cut() -> None:
@@ -343,7 +343,7 @@ def test_a_request_that_stays_over_the_limit_is_never_sent() -> None:
 def test_a_quote_that_starts_at_a_word_can_not_end_inside_one(
     quote: str, text: str, found: bool
 ) -> None:
-    assert holds(text, quote_parts(quote)) is found
+    assert holds(text, quote_text(quote)) is found
 
 
 def test_when_the_cleaning_passes_run_out_every_bracket_goes(

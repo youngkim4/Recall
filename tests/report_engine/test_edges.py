@@ -102,7 +102,7 @@ def test_a_message_larger_than_the_room_of_the_model_is_cut_and_sent() -> None:
     assert len(llm.map_calls) == len(report.periods)
     assert all(len(call.text.split()) <= 700 for call in llm.map_calls)
     assert sum(period.message_count for period in report.periods) == 3
-    assert report.warnings == ("1 long message was cut to fit: the model read only its start.",)
+    assert report.warnings == ("1 long message was cut to fit: the model did not read all of it.",)
 
 
 class NamesOfOnePeriodAreHeavy:

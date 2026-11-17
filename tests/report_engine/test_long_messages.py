@@ -140,8 +140,8 @@ def test_the_estimate_is_not_thrown_by_a_giant_row() -> None:
 @pytest.mark.parametrize(
     "count, warning",
     [
-        (1, "1 long message was cut to fit: the model read only its start."),
-        (2, "2 long messages were cut to fit: the model read only the start of each."),
+        (1, "1 long message was cut to fit: the model did not read all of it."),
+        (2, "2 long messages were cut to fit: the model did not read all of each."),
     ],
 )
 def test_a_run_says_how_many_messages_were_cut(count: int, warning: str) -> None:
@@ -304,7 +304,9 @@ def test_a_quote_of_what_a_cut_line_shows_is_found_in_the_message(cap: int) -> N
     (moment,) = report.moments
     assert quotes[0].endswith(ELISION_MARK)
     assert moment.quote_verified
-    assert moment.quote == quotes[0]
+    # the mark is not kept: the quote is words of the message
+    assert moment.quote == quotes[0].removesuffix(ELISION_MARK).rstrip()
+    assert moment.quote in letter
     assert not any("quote" in warning for warning in report.warnings)
 
 

@@ -33,8 +33,10 @@ from report_engine.options import ReportOptions
 from report_engine.ports import Labeler, ReportSource
 from report_engine.prompts import (
     MAP_PROMPT_VERSION,
+    failed_period_line,
     map_overhead_text,
     notes_frame_text,
+    reduce_fixed_text,
     reduce_overhead_text,
 )
 from report_engine.scope import coerce_scope
@@ -43,7 +45,9 @@ from report_engine.transcript import COUNT_REF, ELISION_MARK, Line, build_lines,
 
 logger = logging.getLogger(__name__)
 
+# a summary is not made shorter than this while something else can go
 MIN_PERIOD_LINE_TOKENS = 60
+MIN_NAME_ROOM_TOKENS = 16
 # a week of days holds every name of a weekday; the header of another day can
 # be a few tokens larger
 SAMPLE_WEEK = tuple(f"2024-01-{day:02d}" for day in range(1, 8))
@@ -114,11 +118,12 @@ def resolve_limits(
     )
     map_cap = _input_cap(model_info, map_out)
     reduce_cap = _input_cap(model_info, reduce_out)
-    room = map_cap - map_text - name_text - notes_text - options.carry_over_token_budget
+    name_room = _name_room(name_text)
+    room = map_cap - map_text - name_room - notes_text - options.carry_over_token_budget
     if room <= 0:
         raise ConfigError(
             f"model {model_info.id} leaves no room for a period: input cap {map_cap} tokens, "
-            f"prompt {map_text + name_text + notes_text}, notes {options.carry_over_token_budget}"
+            f"prompt {map_text + name_room + notes_text}, notes {options.carry_over_token_budget}"
         )
     return Limits(
         transcript_budget=min(options.period_token_budget, room),
@@ -131,14 +136,31 @@ def resolve_limits(
     )
 
 
-def _check_reduce_fits(limits: Limits, figure_tokens: int, periods: int, model_id: str) -> None:
-    """The reduce request holds one line for each period. When even the shortest
-    lines can not fit, say so before a single call is paid for."""
-    least = limits.reduce_overhead + figure_tokens + periods * MIN_PERIOD_LINE_TOKENS
-    if least > limits.reduce_input_cap:
+def _name_room(tokens: int) -> int:
+    """Room for the speaker names, in steps: the next power of two. When the
+    model and not the option sets the budget of a period, a new name must not
+    move the end of every period that is closed."""
+    room = MIN_NAME_ROOM_TOKENS
+    while room < tokens:
+        room *= 2
+    return room
+
+
+def _check_reduce_fits(
+    cap: int, fixed: int, periods: Sequence[Period], meter: TokenMeter, model_id: str
+) -> None:
+    """The reduce request holds one line for each period. The longest line that
+    can not be made shorter is the line of a period that failed. When these
+    lines do not fit, say so before a single call is paid for."""
+    lines = [
+        f"{failed_period_line(period.label, period.first_day, period.last_day)}\n"
+        for period in periods
+    ]
+    least = fixed + sum(meter.count_many(lines))
+    if least > cap:
         raise ConfigError(
-            f"model {model_id} leaves no room to write the report from {periods} periods: "
-            f"the request needs {least} tokens at least, the limit is {limits.reduce_input_cap}. "
+            f"model {model_id} leaves no room to write the report from {len(periods)} periods: "
+            f"the request needs {least} tokens at least, the limit is {cap}. "
             "Use a smaller reduce_max_output_tokens or a larger period_token_budget."
         )
 
@@ -224,7 +246,8 @@ def build_plan(
     days = measure_days(lines, meter)
     periods = plan_periods(days, limits.transcript_budget, line_sizer(lines, meter), headers)
     figures = conversation_figures(lines)
-    _check_reduce_fits(limits, meter.count(figures), len(periods), model_info.id)
+    fixed = meter.count(reduce_fixed_text(names, figures, with_moments=True))
+    _check_reduce_fits(limits.reduce_input_cap, fixed, periods, meter, model_info.id)
     logger.info(
         "%d line%s in %d period%s of at most %d tokens, counted with %s",
         len(lines),

@@ -14,6 +14,7 @@ from report_engine.estimate import estimate
 from report_engine.fake_llm import FakeCall, FakeLLM, completed, default_reply
 from report_engine.models import Moment, PeriodSummary
 from report_engine.ports import LLMUsage
+from report_engine.prompts import period_line
 from report_engine.ratelimit import TokenBudget
 from report_engine.reduce_fit import fit_reduce
 from report_engine.tokens import TokenMeter
@@ -108,8 +109,35 @@ def test_fitting_leaves_out_the_weakest_moments_when_summaries_are_at_their_floo
     fitted = fit_reduce(periods, moments, 160, meter)
     assert [item.title for item in fitted.moments] == ["strong"]
     assert fitted.left_out == 2
+
+
+def test_fitting_takes_summaries_below_their_usual_length_before_it_gives_up() -> None:
+    """When no moment is left to take out, a summary can go down to the mark
+    alone. A run that was paid for ends for size only when that does not fit."""
+    meter = TokenMeter(WordCounter())
+    periods = [period("A", 300), period("B", 300)]
+    moments = [moment("strong", 0.9), moment("weak", 0.4)]
+    fitted = fit_reduce(periods, moments, 60, meter)
+    assert fitted.moments == ()
+    assert fitted.left_out == 2 and fitted.shortened == 2
+    assert fitted.tokens <= 60
+    assert all(item.summary.endswith("[...]") for item in fitted.periods)
+    bare = fit_reduce(periods, moments, 12, meter)
+    assert [item.summary for item in bare.periods] == ["[...]", "[...]"]
     with pytest.raises(ReduceError):
-        fit_reduce(periods, moments, 60, meter)
+        fit_reduce(periods, moments, 11, meter)
+
+
+def test_the_line_of_a_failed_period_stays_when_summaries_go_down_to_the_mark() -> None:
+    meter = TokenMeter(WordCounter())
+    periods = [period("Lost", 0, error="no answer"), period("Kept", 500)]
+    whole = meter.count(period_line(periods[0]))
+    fitted = fit_reduce(periods, [], whole + 8, meter)
+    assert fitted.periods[0] is periods[0]
+    assert fitted.periods[1].summary == "[...]"
+    assert fitted.shortened == 1
+    with pytest.raises(ReduceError):
+        fit_reduce(periods, [], whole + 2, meter)
 
 
 def test_a_failed_period_line_is_never_cut() -> None:

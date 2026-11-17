@@ -10,6 +10,10 @@ composition are evened out. Letter case must match. In scripts that put
 spaces between words, a quote can not start or end in the middle of a word:
 "ok" is not a quote from "tokens".
 
+A quote is one run of words of one message. The mark of a cut at the end of
+a quote is taken off: a model can copy it from a line that was cut. A mark
+inside a quote is not accepted: "A [...] B" is two places put together.
+
 A verified quote keeps the id of its message and the name of its writer.
 Text inside a message can claim another writer; the name comes from the
 message itself, never from the text.
@@ -49,6 +53,7 @@ _EVEN_OUT = {
 }
 _QUOTE_MARKS = frozenset("'\"") | frozenset(chr(code) for code in _SINGLE_MARKS + _DOUBLE_MARKS)
 _EDGE_DOTS = ("...", _ELLIPSIS)
+_CUT_MARKS = (ELISION_MARK, f"[{_ELLIPSIS}]")
 
 
 def normalise(text: str) -> str:
@@ -69,11 +74,22 @@ def clean_quote(quote: str) -> str:
     return text
 
 
-def quote_parts(quote: str) -> tuple[str, ...]:
-    """A quote in compare form. A long message is shown with a gap mark, and a
-    quote can span the gap: then each side must be in the message, in order."""
-    parts = (normalise(part) for part in quote.split(ELISION_MARK))
-    return tuple(part for part in parts if part)
+def quoted_words(quote: str) -> str:
+    """The words that a quote claims: with no wrapping marks, no dots at the
+    edges and no mark of a cut at the end. A line that was cut ends with the
+    mark, and a model can copy it; the mark is not words of the message. A
+    mark anywhere else stays: words on both sides of a mark were never one
+    run of words in the message."""
+    words = clean_quote(quote)
+    for mark in _CUT_MARKS:
+        if words.endswith(mark):
+            return clean_quote(words[: -len(mark)])
+    return words
+
+
+def quote_text(quote: str) -> str:
+    """A quote in the form that it is compared in."""
+    return normalise(quoted_words(quote))
 
 
 def _splits_word(text: str, index: int) -> bool:
@@ -88,25 +104,14 @@ def _occurrences(text: str, part: str, start: int) -> Iterator[int]:
         at = text.find(part, at + 1)
 
 
-def holds(text: str, parts: Sequence[str]) -> bool:
-    """True when `text` holds every part in order, on word boundaries at both ends."""
-    first, last = parts[0], parts[-1]
-    for begin in _occurrences(text, first, 0):
-        if _splits_word(text, begin):
-            continue
-        cursor = begin + len(first)
-        if len(parts) == 1:
-            if not _splits_word(text, cursor):
-                return True
-            continue
-        for middle in parts[1:-1]:
-            at = text.find(middle, cursor)
-            if at < 0:
-                return False
-            cursor = at + len(middle)
-        if any(not _splits_word(text, at + len(last)) for at in _occurrences(text, last, cursor)):
-            return True
-    return False
+def holds(text: str, quote: str) -> bool:
+    """True when `text` holds `quote` as one run, on word boundaries at both ends."""
+    if not quote:
+        return False
+    return any(
+        not _splits_word(text, begin) and not _splits_word(text, begin + len(quote))
+        for begin in _occurrences(text, quote, 0)
+    )
 
 
 class MessageIndex:
@@ -160,12 +165,12 @@ class _Outcome:
 
 
 def _cited_lines(refs: Sequence[str], period_lines: Sequence[Line]) -> tuple[Line, ...]:
+    """The lines that the references name, each line one time. Two rows of an
+    export can have one id: they are two lines here."""
     cited: list[Line] = []
-    seen: set[str] = set()
     for ref in refs:
         line = resolve_ref(ref, period_lines)
-        if line is not None and line.id not in seen:
-            seen.add(line.id)
+        if line is not None and not any(line is known for known in cited):
             cited.append(line)
     return tuple(cited[:MAX_MESSAGE_IDS])
 
@@ -180,16 +185,14 @@ def _settle_date(
     return None, False
 
 
-def _find_quote(
-    parts: Sequence[str], cited: Sequence[Line], date: str, index: MessageIndex
-) -> Line | None:
+def _find_quote(wanted: str, cited: Sequence[Line], date: str, index: MessageIndex) -> Line | None:
     for line in cited:
-        if holds(index.compare_form(line), parts):
+        if holds(index.compare_form(line), wanted):
             return line
-    if sum(len(part) for part in parts) < MIN_WINDOW_QUOTE_CHARS:
+    if len(wanted) < MIN_WINDOW_QUOTE_CHARS:
         return None
     for line in index.near(date, QUOTE_WINDOW_DAYS):
-        if holds(index.compare_form(line), parts):
+        if holds(index.compare_form(line), wanted):
             return line
     return None
 
@@ -208,11 +211,11 @@ def _check_one(
     if date is None:
         return _Outcome(None)
 
-    given = clean_quote(raw.quote)
+    given = quoted_words(raw.quote)
     quote = word_cut(given, MAX_QUOTE_CHARS)
-    parts = quote_parts(quote)
-    source = _find_quote(parts, cited, date, index) if parts else None
-    ids = [line.id for line in cited]
+    wanted = normalise(quote)
+    source = _find_quote(wanted, cited, date, index) if wanted else None
+    ids = list(dict.fromkeys(line.id for line in cited))
     if source is not None and source.id not in ids:
         ids.append(source.id)
 
@@ -229,7 +232,7 @@ def _check_one(
         quote_speaker=source.label if source is not None else "",
     )
     # a quote that can not be cut to length between words counts as not found too
-    cleared = bool(quote_parts(given)) and source is None
+    cleared = bool(normalise(given)) and source is None
     return _Outcome(moment, quote_cleared=cleared, date_repaired=repaired)
 
 

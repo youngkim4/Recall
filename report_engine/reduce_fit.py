@@ -47,8 +47,19 @@ def _allowance(sizes: Sequence[int], room: int) -> int:
     return ordered[-1] if ordered else 0
 
 
+def _bare(period: PeriodSummary) -> PeriodSummary:
+    """The period with nothing of its summary but the mark. The line of a period
+    that could not be analysed is fixed text: it stays as it is."""
+    if period.error is not None:
+        return period
+    return period.model_copy(update={"summary": ELISION_MARK})
+
+
 def _shorten(period: PeriodSummary, target: int, meter: TokenMeter) -> PeriodSummary:
-    """The same period with its summary cut until its line is no larger than `target`."""
+    """The same period with its summary cut until its line is no larger than
+    `target`. When no start of the summary fits, only the mark stays."""
+    if period.error is not None:
+        return period
     text = shield(period.summary)
     cut = period
     size = _line_sizes([period_line(cut)], meter)[0]
@@ -58,7 +69,26 @@ def _shorten(period: PeriodSummary, target: int, meter: TokenMeter) -> PeriodSum
         text = text[: int(len(text) * target / size * CUT_SAFETY)].rstrip()
         cut = period.model_copy(update={"summary": f"{text} {ELISION_MARK}"})
         size = _line_sizes([period_line(cut)], meter)[0]
-    return cut
+    return cut if size <= target else _bare(period)
+
+
+def _period_tokens(periods: Sequence[PeriodSummary], meter: TokenMeter) -> int:
+    return sum(_line_sizes([period_line(period) for period in periods], meter))
+
+
+def _squeeze(
+    periods: Sequence[PeriodSummary], sizes: Sequence[int], room: int, meter: TokenMeter
+) -> tuple[PeriodSummary, ...]:
+    """Period lines for a room that holds no moment and not the usual length of
+    a summary: each line as short as the room asks, down to the mark alone."""
+    cap = _allowance(sizes, room)
+    squeezed = tuple(
+        _shorten(period, cap, meter) if size > cap else period
+        for period, size in zip(periods, sizes, strict=True)
+    )
+    if _period_tokens(squeezed, meter) <= room:
+        return squeezed
+    return tuple(_bare(period) for period in periods)
 
 
 def _line_sizes(lines: Sequence[str], meter: TokenMeter) -> list[int]:
@@ -89,10 +119,7 @@ def fit_reduce(
         _shorten(period, cap, meter) if size > cap else period
         for period, size in zip(periods, period_sizes, strict=True)
     )
-    shortened = sum(new is not old for new, old in zip(fitted_periods, periods, strict=True))
-    total = sum(_line_sizes([period_line(period) for period in fitted_periods], meter)) + sum(
-        moment_sizes
-    )
+    total = _period_tokens(fitted_periods, meter) + sum(moment_sizes)
 
     left_out: set[int] = set()
     for index in _weakest_first(moments):
@@ -101,9 +128,14 @@ def fit_reduce(
         left_out.add(index)
         total -= moment_sizes[index]
     if total > room:
+        # no moment is left to take out: the summaries go below their usual length
+        fitted_periods = _squeeze(periods, period_sizes, room, meter)
+        total = _period_tokens(fitted_periods, meter)
+    if total > room:
         raise ReduceError(
             f"the reduce request is too large for the model: {total} tokens for {len(periods)} "
             f"periods after shortening, and room for {room}"
         )
+    shortened = sum(new is not old for new, old in zip(fitted_periods, periods, strict=True))
     kept = tuple(moment for index, moment in enumerate(moments) if index not in left_out)
     return Fitted(fitted_periods, kept, tokens=total, shortened=shortened, left_out=len(left_out))

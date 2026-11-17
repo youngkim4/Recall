@@ -27,8 +27,9 @@ from report_engine.dates import DAY_LENGTH
 from report_engine.errors import StoreError
 from report_engine.models import Moment, Report, Scope, Section
 
-# what can stand before the text of a line: indent, quote marks, list marks
-_LINE_MARKS = r"(?:\s|>|[-*+](?=\s)|\d+[.)](?=\s))*"
+# what can stand before the text of a line: indent, quote marks, list marks, and
+# the colon of a definition list
+_LINE_MARKS = r"(?:\s|>|[-*+:](?=\s)|\d+[.)](?=\s))*"
 _LEADING_HASH = re.compile(rf"^({_LINE_MARKS})#")
 _UNDERLINE = re.compile(r"^(?:\s|>)*[=-]+\s*$")
 _SECOND_HASH = re.compile(r"(?<=#)#")

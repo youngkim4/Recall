@@ -23,6 +23,7 @@ from report_engine.plan import Plan
 from report_engine.ports import ChatMessage, LLMResult
 from report_engine.prompts import REDUCE_SCHEMA, reduce_fixed_text, reduce_messages
 from report_engine.reduce_fit import Fitted, fit_reduce
+from report_engine.transcript import scrub
 
 MAX_FIT_ROUNDS = 6
 FIT_SLACK_TOKENS = 8
@@ -47,7 +48,7 @@ def parse_sections(result: LLMResult) -> tuple[Section, ...]:
     sections: list[Section] = []
     for key in SECTION_KEYS:
         text = parsed.get(key)
-        cleaned = clean_section(text) if isinstance(text, str) else ""
+        cleaned = clean_section(scrub(text)) if isinstance(text, str) else ""
         if not cleaned:
             raise ReduceError(f"the reduce step gave no report: section {key!r} is empty")
         sections.append(Section(key=key, title=SECTION_TITLES[key], markdown=cleaned))

@@ -169,7 +169,8 @@ def test_summaries_too_large_for_the_model_are_shortened_to_fit_and_the_report_s
     assert report.warnings == ("4 period summaries were shortened to fit the model's input limit.",)
     (reduce_call,) = llm.reduce_calls
     assert len(reduce_call.text.split()) <= 3_300
-    assert reduce_call.text.count("[...]") == 4
+    period_lines = reduce_call.text.split("<periods>")[1].split("</periods>")[0]
+    assert period_lines.count("[...]") == 4
     assert all(len(period.summary.split()) == 1_100 for period in report.periods)
 
 

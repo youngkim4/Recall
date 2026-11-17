@@ -15,7 +15,7 @@ from typing import Any
 
 from report_engine.dates import DAY_LENGTH
 from report_engine.errors import ReportEngineError
-from report_engine.transcript import squash
+from report_engine.transcript import scrub, squash
 
 MAX_MOMENTS_PER_PERIOD = 8
 MAX_SUMMARY_CHARS = 6_000
@@ -23,8 +23,9 @@ MAX_CARRY_CHARS = 1_500
 MAX_TITLE_CHARS = 200
 MAX_DETAIL_CHARS = 1_000
 MAX_QUOTE_CHARS = 600
-# what is read from a reply; the check cuts it to MAX_QUOTE_CHARS between words
-MAX_RAW_QUOTE_CHARS = 8_000
+# what is read from a reply: more than any reply holds. The check takes the marks
+# around a quote off first and then cuts it to MAX_QUOTE_CHARS between words.
+MAX_RAW_QUOTE_CHARS = 100_000
 MAX_REFS = 8
 
 _DAY_AT_START = re.compile(r"\d{4}-\d{2}-\d{2}", re.ASCII)
@@ -50,7 +51,8 @@ class RawMoment:
 
 @dataclass(frozen=True)
 class PeriodDigest:
-    """`skipped` counts entries of the moment list that were not objects."""
+    """`skipped` counts entries of the moment list that were not objects, and
+    moments over the limit of a period."""
 
     summary: str
     carry_over: str
@@ -59,9 +61,11 @@ class PeriodDigest:
 
 
 def _text(value: Any, limit: int) -> str:
+    """Text from a reply. A model can write half of an emoji escape: what
+    UTF-8 can not carry is repaired here, before it reaches a cache or a file."""
     if value is None:
         return ""
-    return (value if isinstance(value, str) else str(value))[:limit]
+    return scrub(value if isinstance(value, str) else str(value))[:limit]
 
 
 def _day(value: Any) -> str:
@@ -133,10 +137,13 @@ def parse_digest(parsed: Any) -> PeriodDigest:
         raise DigestError("the reply's moments are not a list")
     moments = [_moment(item) for item in items if isinstance(item, Mapping)]
     return PeriodDigest(
-        summary=summary.strip()[:MAX_SUMMARY_CHARS],
+        summary=scrub(summary).strip()[:MAX_SUMMARY_CHARS],
         carry_over=squash(_text(parsed.get("carry_over"), MAX_CARRY_CHARS * 4))[:MAX_CARRY_CHARS],
         moments=_strongest(moments),
-        skipped=_count(parsed.get("skipped")) + len(items) - len(moments),
+        skipped=_count(parsed.get("skipped"))
+        + len(items)
+        - len(moments)
+        + max(0, len(moments) - MAX_MOMENTS_PER_PERIOD),
     )
 
 

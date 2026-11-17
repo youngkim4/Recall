@@ -28,7 +28,7 @@ from report_engine.transcript import (
     shield,
     squash,
 )
-from report_engine.verify import MessageIndex, check_moments, holds, quote_parts
+from report_engine.verify import MessageIndex, check_moments, holds, quote_text
 
 from .synth import MINA, labeler, message, model_info
 
@@ -226,15 +226,17 @@ def test_the_fallback_counter_against_the_real_tokenizer(
     ],
 )
 def test_a_quote_can_not_start_or_end_inside_a_word(quote: str, text: str, found: bool) -> None:
-    assert holds(text, quote_parts(quote)) is found
+    assert holds(text, quote_text(quote)) is found
 
 
-def test_a_quote_across_the_gap_of_a_long_message_needs_both_sides_in_order() -> None:
+def test_a_quote_is_one_run_of_words_and_a_mark_at_its_end_is_not_part_of_it() -> None:
     text = "the start of a very long message and its end"
-    assert holds(text, quote_parts("the start [...] its end"))
-    assert not holds(text, quote_parts("its end [...] the start"))
-    assert not holds(text, quote_parts("the start [...] never said"))
-    assert quote_parts(" [...] ") == ()
+    assert holds(text, quote_text("the start of a very long [...]"))
+    assert holds(text, quote_text('"the start of a very long [...]"'))
+    assert not holds(text, quote_text("the start [...] its end"))
+    assert not holds(text, quote_text("its end [...] the start"))
+    assert quote_text(" [...] ") == ""
+    assert not holds(text, "")
 
 
 def raw(**overrides: Any) -> RawMoment:

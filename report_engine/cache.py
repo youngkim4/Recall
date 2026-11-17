@@ -174,8 +174,9 @@ class PeriodCache:
         """Store one result. An entry with the same key is replaced."""
         try:
             payload = json.dumps(entry.payload, ensure_ascii=False)
+            payload.encode("utf-8")
         except (TypeError, ValueError) as exc:
-            raise StoreError(f"period result is not JSON: {exc}") from exc
+            raise StoreError(f"period result can not be stored: {type(exc).__name__}") from exc
         stamp = self._stamp()
         with self._open() as conn:
             conn.execute(

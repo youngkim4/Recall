@@ -106,6 +106,9 @@ def write_text_atomic(path: str | os.PathLike[str], text: str) -> Path:
         temp = _write_temp(target.parent, target.name, text)
     except OSError as exc:
         raise StoreError(f"can not write {target.name}: {exc}") from exc
+    except ValueError as exc:
+        # text that UTF-8 can not carry
+        raise StoreError(f"can not write {target.name}: {type(exc).__name__}") from exc
     try:
         os.replace(temp, target)
     except OSError as exc:
@@ -198,12 +201,15 @@ class ReportStore:
         target = self._path(report.conversation, report.id)
         if target.exists():
             raise StoreError(f"report {report.id} already exists; a run never overwrites one")
-        text = report.model_dump_json(indent=2) + "\n"
         try:
+            text = report.model_dump_json(indent=2) + "\n"
             _make_folder(target.parent)
             temp = _write_temp(target.parent, target.name, text)
         except OSError as exc:
             raise StoreError(f"can not write report {report.id}: {exc}") from exc
+        except ValueError as exc:
+            # a value that is not JSON, or text that UTF-8 can not carry
+            raise StoreError(f"can not write report {report.id}: {type(exc).__name__}") from exc
         try:
             _publish_new(temp, target)
         except OSError as exc:
