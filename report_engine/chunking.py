@@ -8,19 +8,35 @@ stands alone and is packed by lines.
 A unit only ever grows when new messages arrive, and a larger unit stands
 alone, so a closed period never changes: new messages change only the last
 period.
+
+No line is larger than a period: `fit_lines` cuts the few that are, before
+anything is packed. So no period is larger than the budget.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import groupby
 from typing import TypeVar
 
 from report_engine.tokens import TokenMeter
-from report_engine.transcript import COUNT_REF, Line, render_for_count, render_line
+from report_engine.transcript import (
+    COUNT_REF,
+    ELISION_MARK,
+    Line,
+    cut_start,
+    render_for_count,
+    render_line,
+)
 
 HEADER_TOKENS = 12
+# a tokenizer gives one token for a byte at most, and a character has four bytes at most
+MAX_TOKENS_PER_CHAR = 4
+# the reference, the time and the name before the text of a line
+LINE_HEAD_CHARS = 64
+MAX_LINE_CUTS = 6
+CUT_SAFETY = 0.9
 MONTH_KEY_LENGTH = 7
 MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
@@ -51,7 +67,41 @@ class Period:
     tokens: int
 
 
-def measure_days(lines: Sequence[Line], meter: TokenMeter, max_chars: int) -> tuple[DaySpan, ...]:
+def _shrink(line: Line, size: int, ceiling: int, meter: TokenMeter) -> Line:
+    """The line with less of its text, until the whole line is `ceiling` tokens or fewer."""
+    shown = line.flat.removesuffix(ELISION_MARK).rstrip() if line.cut else line.flat
+    keep = len(shown)
+    cut = line
+    for _ in range(MAX_LINE_CUTS):
+        if size <= ceiling or keep == 0:
+            break
+        keep = int(keep * ceiling / size * CUT_SAFETY)
+        cut = replace(line, flat=cut_start(shown, keep), cut=True)
+        size = meter.count(render_line(COUNT_REF, cut))
+    return cut
+
+
+def fit_lines(lines: tuple[Line, ...], meter: TokenMeter, ceiling: int) -> tuple[Line, ...]:
+    """The same lines, with each line that is larger than `ceiling` tokens cut
+    until it fits. The cap on a message counts characters, and text can hold a
+    token in every character. Only long lines are counted: a short line can not
+    be large."""
+    reach = ceiling / (MAX_TOKENS_PER_CHAR * meter.margin) - LINE_HEAD_CHARS
+    suspects = [index for index, line in enumerate(lines) if len(line.flat) > reach]
+    if not suspects:
+        return lines
+    sizes = meter.count_many([render_line(COUNT_REF, lines[index]) for index in suspects])
+    fitted = {
+        index: _shrink(lines[index], size, ceiling, meter)
+        for index, size in zip(suspects, sizes, strict=True)
+        if size > ceiling
+    }
+    if not fitted:
+        return lines
+    return tuple(fitted.get(index, line) for index, line in enumerate(lines))
+
+
+def measure_days(lines: Sequence[Line], meter: TokenMeter) -> tuple[DaySpan, ...]:
     """Group ordered lines by day and weigh each day once."""
     bounds: list[tuple[str, int, int]] = []
     cursor = 0
@@ -59,7 +109,7 @@ def measure_days(lines: Sequence[Line], meter: TokenMeter, max_chars: int) -> tu
         count = sum(1 for _ in group)
         bounds.append((day, cursor, cursor + count))
         cursor += count
-    texts = [render_for_count(lines[start:stop], max_chars) for _, start, stop in bounds]
+    texts = [render_for_count(lines[start:stop]) for _, start, stop in bounds]
     sizes = meter.count_many(texts)
     return tuple(
         DaySpan(day=day, start=start, stop=stop, tokens=size)
@@ -67,13 +117,11 @@ def measure_days(lines: Sequence[Line], meter: TokenMeter, max_chars: int) -> tu
     )
 
 
-def line_sizer(lines: Sequence[Line], meter: TokenMeter, max_chars: int) -> LineSizer:
+def line_sizer(lines: Sequence[Line], meter: TokenMeter) -> LineSizer:
     """Per-line weights, counted only for the days that need them."""
 
     def sizes(start: int, stop: int) -> Sequence[int]:
-        return meter.count_many(
-            [render_line(COUNT_REF, line, max_chars) for line in lines[start:stop]]
-        )
+        return meter.count_many([render_line(COUNT_REF, line) for line in lines[start:stop]])
 
     return sizes
 

@@ -24,12 +24,18 @@ from dataclasses import dataclass
 from report_engine.dates import is_day, shift_day
 from report_engine.digest import MAX_DETAIL_CHARS, MAX_QUOTE_CHARS, MAX_TITLE_CHARS, RawMoment
 from report_engine.models import CATEGORIES, Moment
-from report_engine.transcript import ELISION_MARK, Line, resolve_ref, squash
+from report_engine.transcript import (
+    ELISION_MARK,
+    Line,
+    is_word_char,
+    resolve_ref,
+    squash,
+    word_cut,
+)
 
 QUOTE_WINDOW_DAYS = 3
 MIN_WINDOW_QUOTE_CHARS = 8
 MAX_MESSAGE_IDS = 8
-SPACED_SCRIPTS_END = 0x0530  # Latin, Greek and Cyrillic end here
 
 _SINGLE_MARKS = (0x2018, 0x2019, 0x201A, 0x201B, 0x2032)
 _DOUBLE_MARKS = (0x201C, 0x201D, 0x201E, 0x201F, 0x2033, 0xAB, 0xBB)
@@ -70,13 +76,9 @@ def quote_parts(quote: str) -> tuple[str, ...]:
     return tuple(part for part in parts if part)
 
 
-def _word_char(char: str) -> bool:
-    return char.isalnum() and ord(char) < SPACED_SCRIPTS_END
-
-
 def _splits_word(text: str, index: int) -> bool:
     """True when `index` falls between two letters or digits of one word."""
-    return 0 < index < len(text) and _word_char(text[index - 1]) and _word_char(text[index])
+    return 0 < index < len(text) and is_word_char(text[index - 1]) and is_word_char(text[index])
 
 
 def _occurrences(text: str, part: str, start: int) -> Iterator[int]:
@@ -206,7 +208,7 @@ def _check_one(
     if date is None:
         return _Outcome(None)
 
-    quote = clean_quote(raw.quote)[:MAX_QUOTE_CHARS]
+    quote = word_cut(clean_quote(raw.quote), MAX_QUOTE_CHARS)
     parts = quote_parts(quote)
     source = _find_quote(parts, cited, date, index) if parts else None
     ids = [line.id for line in cited]

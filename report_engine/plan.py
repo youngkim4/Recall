@@ -11,7 +11,14 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from report_engine.cache import period_key
-from report_engine.chunking import Period, line_sizer, measure_days, plan_periods
+from report_engine.chunking import (
+    HEADER_TOKENS,
+    Period,
+    fit_lines,
+    line_sizer,
+    measure_days,
+    plan_periods,
+)
 from report_engine.errors import (
     ConfigError,
     EmptyConversationError,
@@ -67,7 +74,8 @@ class PlannedPeriod:
 @dataclass(frozen=True)
 class Plan:
     """`names` are all speakers of the conversation; `figures` is the block of
-    exact numbers that the reduce step reads."""
+    exact numbers that the reduce step reads; `cut_messages` is the number of
+    messages of which the model reads only the start."""
 
     scope: Scope
     lines: tuple[Line, ...]
@@ -76,6 +84,7 @@ class Plan:
     limits: Limits
     names: tuple[str, ...]
     figures: str
+    cut_messages: int = 0
 
 
 def _input_cap(model_info: ModelInfo, max_output: int) -> int:
@@ -133,12 +142,11 @@ def _planned_periods(
     periods: Sequence[Period],
     lines: tuple[Line, ...],
     model_id: str,
-    max_chars: int,
     meter: TokenMeter,
     overhead: int,
 ) -> tuple[PlannedPeriod, ...]:
     sliced = [lines[period.start : period.stop] for period in periods]
-    rendered = [render_period(own, max_chars) for own in sliced]
+    rendered = [render_period(own) for own in sliced]
     name_tokens = meter.count_many([", ".join(item.labels) for item in rendered])
     return tuple(
         PlannedPeriod(
@@ -154,12 +162,13 @@ def _planned_periods(
 
 
 def _read_lines(
-    source: ReportSource, conversation: str, scope: Scope, labeler: Labeler
+    source: ReportSource, conversation: str, scope: Scope, labeler: Labeler, max_chars: int
 ) -> tuple[Line, ...]:
     """The source is foreign code. Its error becomes a SourceError that names
     only the type: the text of the error could hold words of a message."""
     try:
-        return build_lines(source.messages(conversation, scope.since, scope.until), labeler)
+        messages = source.messages(conversation, scope.since, scope.until)
+        return build_lines(messages, labeler, max_chars)
     except ReportEngineError:
         raise
     except Exception as exc:
@@ -179,16 +188,15 @@ def build_plan(
     """Read the messages once and split them. Raises EmptyConversationError when
     the scope holds no message with text."""
     wanted = coerce_scope(scope)
-    lines = _read_lines(source, conversation, wanted, labeler)
+    lines = _read_lines(source, conversation, wanted, labeler, options.max_message_chars)
     if not lines:
         raise EmptyConversationError("no message with text in this conversation and scope")
     meter = meter_for(model_info, counter, options.tokenizer_mismatch_margin)
     names = tuple(sorted({line.label for line in lines}))
     limits = resolve_limits(model_info, options, meter, names)
-    days = measure_days(lines, meter, options.max_message_chars)
-    periods = plan_periods(
-        days, limits.transcript_budget, line_sizer(lines, meter, options.max_message_chars)
-    )
+    lines = fit_lines(lines, meter, max(1, limits.transcript_budget - HEADER_TOKENS))
+    days = measure_days(lines, meter)
+    periods = plan_periods(days, limits.transcript_budget, line_sizer(lines, meter))
     figures = conversation_figures(lines)
     _check_reduce_fits(limits, meter.count(figures), len(periods), model_info.id)
     logger.info(
@@ -203,11 +211,10 @@ def build_plan(
     return Plan(
         scope=wanted,
         lines=lines,
-        periods=_planned_periods(
-            periods, lines, model_info.id, options.max_message_chars, meter, limits.map_overhead
-        ),
+        periods=_planned_periods(periods, lines, model_info.id, meter, limits.map_overhead),
         meter=meter,
         limits=limits,
         names=names,
         figures=figures,
+        cut_messages=sum(line.cut for line in lines),
     )

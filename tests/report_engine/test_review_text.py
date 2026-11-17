@@ -54,7 +54,7 @@ def test_no_form_of_a_handle_passes_as_a_name(name: str) -> None:
     assert looks_like_handle(name)
     lines = build_lines([message(1, "2024-06-01 09:00:00", "hi")], lambda sender: name)
     assert lines[0].label == UNSAVED_LABEL
-    assert "@" not in render_period(lines, 1000).text
+    assert "@" not in render_period(lines).text
 
 
 @pytest.mark.parametrize("name", ["Mina", "Mina 2", chr(0x2764), "J", "Dr. O'Neil-Smith"])
@@ -98,7 +98,7 @@ def test_text_that_utf8_can_not_carry_is_repaired_on_the_way_in() -> None:
     broken = f"half an emoji {LONE_SURROGATE} and a null{NUL}byte"
     lines = build_lines([message(1, "2024-06-01 09:00:00", broken)], labeler)
     lines[0].text.encode("utf-8")
-    rendered = render_period(lines, 1000).text
+    rendered = render_period(lines).text
     rendered.encode("utf-8")
     assert NUL not in rendered
     assert scrub("plain") == "plain"

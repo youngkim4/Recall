@@ -23,6 +23,8 @@ MAX_CARRY_CHARS = 1_500
 MAX_TITLE_CHARS = 200
 MAX_DETAIL_CHARS = 1_000
 MAX_QUOTE_CHARS = 600
+# what is read from a reply; the check cuts it to MAX_QUOTE_CHARS between words
+MAX_RAW_QUOTE_CHARS = 8_000
 MAX_REFS = 8
 
 _DAY_AT_START = re.compile(r"\d{4}-\d{2}-\d{2}", re.ASCII)
@@ -99,7 +101,7 @@ def _moment(item: Mapping[str, Any]) -> RawMoment:
         detail=_text(item.get("detail"), MAX_DETAIL_CHARS),
         category=_text(item.get("category"), 32).strip(),
         score=_score(item.get("score")),
-        quote=_text(item.get("quote"), MAX_QUOTE_CHARS),
+        quote=_text(item.get("quote"), MAX_RAW_QUOTE_CHARS),
         refs=_refs(item.get("refs")),
     )
 

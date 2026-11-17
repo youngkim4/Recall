@@ -156,7 +156,7 @@ def test_render_period_numbers_lines_from_one_and_groups_by_day() -> None:
         ],
         labeler,
     )
-    rendered = render_period(lines, max_chars=1000)
+    rendered = render_period(lines)
     assert rendered.text == (
         "--- 2024-06-01 Saturday ---\n"
         "m1 09:00 Mina: hi there\n"
@@ -167,16 +167,15 @@ def test_render_period_numbers_lines_from_one_and_groups_by_day() -> None:
     assert rendered.labels == ("Mina", "Theo", "You")
 
 
-def test_render_period_shortens_a_very_long_message_but_keeps_both_ends() -> None:
+def test_render_period_shows_the_start_of_a_very_long_message() -> None:
     text = "start " + "x" * 500 + " end"
-    lines = build_lines([message(1, "2024-06-01 09:00:00", text)], labeler)
-    rendered = render_period(lines, max_chars=100)
+    lines = build_lines([message(1, "2024-06-01 09:00:00", text)], labeler, 100)
+    rendered = render_period(lines)
     body = rendered.text.split("Mina: ", 1)[1]
-    assert body.startswith("start ")
-    assert body.endswith(" end")
-    assert "[...]" in body
-    assert len(body) <= 100 + len(" [...] ")
+    # the cut is at 100 characters, inside the run of x: the run goes
+    assert body == "start [...]"
     assert lines[0].text == text
+    assert lines[0].cut
 
 
 @pytest.mark.parametrize("ref, index", [("m1", 0), ("M2", 1), (" [m3] ", 2), ("m3.", 2)])

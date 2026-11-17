@@ -80,6 +80,14 @@ def _check_warnings(checks: list[Checked], skipped: int) -> list[str]:
     ]
 
 
+def _cut_warnings(count: int) -> list[str]:
+    return _counted(
+        count,
+        "long message was cut to fit: the model read only its start.",
+        "long messages were cut to fit: the model read only the start of each.",
+    )
+
+
 def _summary(outcome: PeriodOutcome, checked: Checked | None) -> PeriodSummary:
     period = outcome.planned.period
     digest = outcome.digest
@@ -165,7 +173,13 @@ def _after_prepare(
         model=model_info.id,
         created_at=created.astimezone(UTC).isoformat(timespec="seconds"),
         status="partial" if failures else "complete",
-        warnings=(*failures, *mapped.warnings, *check_warnings, *reduced.warnings),
+        warnings=(
+            *failures,
+            *mapped.warnings,
+            *check_warnings,
+            *_cut_warnings(plan.cut_messages),
+            *reduced.warnings,
+        ),
         sections=reduced.sections,
         moments=moments,
         periods=periods,

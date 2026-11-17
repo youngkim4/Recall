@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass
 
 from report_engine.errors import ConfigError
+from report_engine.transcript import MAX_MESSAGE_CHARS
 
 DEFAULT_PERIOD_TOKEN_BUDGET = 80_000
 POSITIVE_COUNTS = (
@@ -45,7 +46,7 @@ class ReportOptions:
     reasoning: str | None = None
     score_floor: float = 0.4
     max_moments: int = 40
-    max_message_chars: int = 6_000
+    max_message_chars: int = MAX_MESSAGE_CHARS
     carry_over_token_budget: int = 4_000
     tokenizer_mismatch_margin: float = 1.35
     map_output_estimate_tokens: int = 4_000

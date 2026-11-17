@@ -154,7 +154,7 @@ def test_new_messages_change_only_the_last_period(seed: int) -> None:
 
 def test_measure_days_counts_each_day_with_its_header() -> None:
     lines = build_lines(conversation("2024-06-01", days=3, per_day=2, words=4), labeler)
-    spans = measure_days(lines, TokenMeter(WordCounter()), max_chars=1000)
+    spans = measure_days(lines, TokenMeter(WordCounter()))
     assert [(span.day, span.start, span.stop) for span in spans] == [
         ("2024-06-01", 0, 2),
         ("2024-06-02", 2, 4),
@@ -166,7 +166,7 @@ def test_measure_days_counts_each_day_with_its_header() -> None:
 
 def test_line_sizer_counts_single_lines() -> None:
     lines = build_lines(conversation("2024-06-01", days=1, per_day=3, words=4), labeler)
-    sizer = line_sizer(lines, TokenMeter(WordCounter()), max_chars=1000)
+    sizer = line_sizer(lines, TokenMeter(WordCounter()))
     assert list(sizer(0, 3)) == [7, 7, 7]
     assert list(sizer(1, 2)) == [7]
 
@@ -178,7 +178,7 @@ def test_real_lines_split_the_same_way_before_and_after_new_messages() -> None:
 
     def plan(messages: list) -> tuple[Period, ...]:
         lines = build_lines(messages, labeler)
-        return plan_periods(measure_days(lines, meter, 1000), 4_000, line_sizer(lines, meter, 1000))
+        return plan_periods(measure_days(lines, meter), 4_000, line_sizer(lines, meter))
 
     before, after = plan(old), plan(new)
     assert len(before) > 5

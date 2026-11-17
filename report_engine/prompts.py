@@ -18,7 +18,7 @@ from typing import Any
 from report_engine.digest import MAX_MOMENTS_PER_PERIOD
 from report_engine.models import CATEGORIES, SECTION_KEYS, Moment, PeriodSummary
 from report_engine.ports import ChatMessage
-from report_engine.transcript import frame, shield
+from report_engine.transcript import ELISION_MARK, frame, shield
 
 MAP_SCHEMA_NAME = "period_digest"
 REDUCE_SCHEMA_NAME = "report_sections"
@@ -42,7 +42,8 @@ MAP_SYSTEM = (
     "them.\n"
     f"{_MAP_VOICE}\n"
     "- Use only what the transcript shows. Do not guess. Do not invent a quote, a date or an event.\n"
-    "- Each line starts with a reference such as m12. Cite lines by their references."
+    "- Each line starts with a reference such as m12. Cite lines by their references.\n"
+    f"- A line that ends with {ELISION_MARK} is the start of a longer message. The rest was cut."
 )
 
 MAP_TASK = (

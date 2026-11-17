@@ -23,6 +23,7 @@ from report_engine.frame_source import FrameSource
 from report_engine.jsonsafe import jsonable
 from report_engine.openai_llm import OpenAIResponsesLLM
 from report_engine.options import ReportOptions
+from report_engine.pipeline import run_report
 from report_engine.ports import LLMUsage
 from report_engine.prompts import MAP_SCHEMA, map_messages
 from report_engine.ratelimit import TokenBudget
@@ -33,7 +34,7 @@ from report_engine.transcript import build_lines
 from report_engine.verify import MessageIndex
 
 from .support import SMALL, SMALL_OPTIONS, run
-from .synth import CONVERSATION, labeler, message, model_info
+from .synth import CONVERSATION, THEO, ListSource, labeler, message, model_info
 from .test_models import report as make_report
 from .test_openai_llm import MESSAGES, REQUEST, Client, adapter, reply
 from .test_selection import moment
@@ -85,7 +86,7 @@ def test_a_message_that_lacks_a_field_is_a_source_error() -> None:
     assert "is_from_me" in str(caught.value)
 
 
-def test_a_period_too_large_for_the_model_is_not_sent() -> None:
+def test_a_message_larger_than_the_room_of_the_model_is_cut_and_sent() -> None:
     messages = [
         message(1, "2024-06-01 09:00:00", "small start"),
         message(2, "2024-06-01 09:01:00", "word " * 600),
@@ -97,17 +98,51 @@ def test_a_period_too_large_for_the_model_is_not_sent() -> None:
         llm=llm,
         info=model_info(max_input_tokens=700, context_window=10_000, max_output_tokens=2_000),
     )
+    assert report.status == "complete"
+    assert len(llm.map_calls) == len(report.periods)
+    assert all(len(call.text.split()) <= 700 for call in llm.map_calls)
+    assert sum(period.message_count for period in report.periods) == 3
+    assert report.warnings == ("1 long message was cut to fit: the model read only its start.",)
+
+
+class OneNameIsHeavy:
+    """Counts words, but every line of one speaker is 5,000 tokens however
+    short its text is. No cut makes such a line fit."""
+
+    family = "words"
+
+    def count_many(self, texts: Any) -> list[int]:
+        return [len(text.split()) + 5_000 * text.count("Theo:") for text in texts]
+
+
+def test_a_period_that_no_cut_can_make_fit_is_not_sent() -> None:
+    messages = [
+        message(1, "2024-06-01 09:00:00", "small start"),
+        message(2, "2024-06-02 09:00:00", "a line", sender=THEO),
+        message(3, "2024-06-03 09:00:00", "small end"),
+    ]
+    llm = FakeLLM()
+    report = run_report(
+        source=ListSource(messages),
+        conversation=CONVERSATION,
+        llm=llm,
+        model_info=model_info(
+            max_input_tokens=3_000, context_window=10_000, max_output_tokens=2_000
+        ),
+        labeler=labeler,
+        options=SMALL_OPTIONS,
+        counter=OneNameIsHeavy(),
+    )
     assert [period.label for period in report.periods] == [
-        "2024-06-01 part 1",
-        "2024-06-01 part 2",
-        "2024-06-01 part 3",
+        "2024-06-01",
+        "2024-06-02 part 1",
+        "2024-06-03",
     ]
     assert len(llm.map_calls) == 2
-    assert all("word word word" not in call.text for call in llm.calls)
+    assert all("Theo:" not in call.text for call in llm.map_calls)
     assert report.status == "partial"
-    (warning,) = report.warnings
-    assert warning.startswith(
-        'Period "2024-06-01 part 2" was not analysed: the period is too large for the model'
+    assert report.warnings[0].startswith(
+        'Period "2024-06-02 part 1" was not analysed: the period is too large for the model'
     )
     assert report.periods[1].usage.calls == 0
 

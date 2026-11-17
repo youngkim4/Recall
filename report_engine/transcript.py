@@ -8,6 +8,10 @@ code or an e-mail address is replaced before it can reach a prompt.
 Every piece of outside text that goes into a prompt passes `shield`: it is
 put on one line, and anything that imitates a data frame of a prompt is
 broken with an invisible character.
+
+A message has a hard cap. A longer one keeps its start and gets a mark at
+its end. The cut is made once, when the lines are built, so every size and
+every transcript sees the same text. Quote checks read the whole message.
 """
 
 from __future__ import annotations
@@ -25,9 +29,10 @@ from report_engine.ports import Labeler
 OWN_LABEL = "You"
 UNSAVED_LABEL = "Unsaved contact"
 MAX_LABEL_CHARS = 40
+MAX_MESSAGE_CHARS = 4_000
 MIN_PHONE_DIGITS = 7
 ELISION_MARK = "[...]"
-ELISION = f" {ELISION_MARK} "
+SPACED_SCRIPTS_END = 0x0530  # Latin, Greek and Cyrillic end here
 COUNT_REF = "m00000"
 FRAME_TAGS = ("transcript", "notes", "periods", "moments")
 TRANSCRIPT_OPEN = "<transcript>"
@@ -49,8 +54,8 @@ _HAS_INVISIBLE = re.compile("[" + "".join(re.escape(chr(code)) for code in _INVI
 @dataclass(frozen=True, slots=True)
 class Line:
     """One message with text. `text` is kept as stored, for quote checks. `flat`
-    is the same text as a prompt shows it: on one line and shielded. It is
-    worked out once, when the line is built."""
+    is the text as a transcript shows it: on one line, shielded, and with only
+    its start when the message is too long. `cut` says that it was shortened."""
 
     id: str
     day: str
@@ -58,6 +63,7 @@ class Line:
     label: str
     text: str
     flat: str = ""
+    cut: bool = False
 
 
 @dataclass(frozen=True)
@@ -76,6 +82,7 @@ class _Row:
     sender: str
     text: str
     flat: str
+    cut: bool
 
 
 def scrub(text: str) -> str:
@@ -171,7 +178,28 @@ def _own_flag(value: object, mid: str) -> bool:
     raise SourceError(f"message {mid!r} has an is_from_me value that is not true or false")
 
 
-def _read_row(message: Mapping[str, Any], known_days: set[str]) -> _Row | None:
+def is_word_char(char: str) -> bool:
+    """A letter or a digit of a script that puts spaces between words."""
+    return char.isalnum() and ord(char) < SPACED_SCRIPTS_END
+
+
+def word_cut(text: str, keep: int) -> str:
+    """At most the first `keep` characters of a text. The cut does not fall
+    inside a word: a quote can not end inside a word, so a text that was cut
+    there could not be found in its message."""
+    end = min(keep, len(text))
+    if is_word_char(text[end : end + 1]):
+        while end and is_word_char(text[end - 1]):
+            end -= 1
+    return text[:end].rstrip()
+
+
+def cut_start(flat: str, keep: int) -> str:
+    """The start of a text that is too long, and the mark that says it was cut."""
+    return f"{word_cut(flat, keep)} {ELISION_MARK}".lstrip()
+
+
+def _read_row(message: Mapping[str, Any], known_days: set[str], max_chars: int) -> _Row | None:
     try:
         mid = scrub(str(message["id"]))
         stamp = message["timestamp"]
@@ -195,13 +223,21 @@ def _read_row(message: Mapping[str, Any], known_days: set[str]) -> _Row | None:
     if not flat:
         return None
     sender = scrub(str(message.get("sender") or ""))
-    return _Row(stamp=stamp, id=mid, own=own, sender=sender, text=text, flat=flat)
+    cut = len(flat) > max_chars
+    shown = cut_start(flat, max_chars) if cut else flat
+    return _Row(stamp=stamp, id=mid, own=own, sender=sender, text=text, flat=shown, cut=cut)
 
 
-def build_lines(messages: Iterable[Mapping[str, Any]], labeler: Labeler) -> tuple[Line, ...]:
-    """Check, order and name the messages. Messages with no text are left out."""
+def build_lines(
+    messages: Iterable[Mapping[str, Any]],
+    labeler: Labeler,
+    max_message_chars: int = MAX_MESSAGE_CHARS,
+) -> tuple[Line, ...]:
+    """Check, order and name the messages. Messages with no text are left out.
+    A message longer than `max_message_chars` keeps its start."""
     known_days: set[str] = set()
-    rows = [row for row in (_read_row(message, known_days) for message in messages) if row]
+    read = (_read_row(message, known_days, max_message_chars) for message in messages)
+    rows = [row for row in read if row]
     if any(later.stamp < earlier.stamp for earlier, later in zip(rows, rows[1:], strict=False)):
         rows = sorted(rows, key=lambda row: row.stamp)
     names = resolve_labels((row.sender for row in rows if not row.own), labeler)
@@ -213,6 +249,7 @@ def build_lines(messages: Iterable[Mapping[str, Any]], labeler: Labeler) -> tupl
             label=OWN_LABEL if row.own else names[row.sender],
             text=row.text,
             flat=row.flat,
+            cut=row.cut,
         )
         for row in rows
     )
@@ -222,40 +259,31 @@ def day_header(day: str) -> str:
     return f"--- {day} {WEEKDAYS[parse_day(day).weekday()]} ---"
 
 
-def _capped(flat: str, max_chars: int) -> str:
-    """A very long message keeps its start and its end."""
-    if len(flat) <= max_chars:
-        return flat
-    head = max_chars * 3 // 4
-    tail = max_chars - head
-    return flat[:head].rstrip() + ELISION + flat[len(flat) - tail :].lstrip()
+def render_line(ref: str, line: Line) -> str:
+    return f"{ref} {line.clock} {line.label}: {line.flat or shield(line.text)}"
 
 
-def render_line(ref: str, line: Line, max_chars: int) -> str:
-    return f"{ref} {line.clock} {line.label}: {_capped(line.flat or shield(line.text), max_chars)}"
-
-
-def _render(lines: Sequence[Line], max_chars: int, ref_for: Callable[[int], str]) -> str:
+def _render(lines: Sequence[Line], ref_for: Callable[[int], str]) -> str:
     parts: list[str] = []
     day = ""
     for number, line in enumerate(lines, start=1):
         if line.day != day:
             day = line.day
             parts.append(day_header(day))
-        parts.append(render_line(ref_for(number), line, max_chars))
+        parts.append(render_line(ref_for(number), line))
     return "\n".join(parts)
 
 
-def render_period(lines: Sequence[Line], max_chars: int) -> Rendered:
+def render_period(lines: Sequence[Line]) -> Rendered:
     """The text of one period, with references m1..mN in order."""
-    text = _render(lines, max_chars, lambda number: f"m{number}")
+    text = _render(lines, lambda number: f"m{number}")
     return Rendered(text=text, labels=tuple(sorted({line.label for line in lines})))
 
 
-def render_for_count(lines: Sequence[Line], max_chars: int) -> str:
+def render_for_count(lines: Sequence[Line]) -> str:
     """Same text with one fixed reference, so a size does not depend on numbering.
     The fixed reference is as long as the longest real one, so a size never runs low."""
-    return _render(lines, max_chars, lambda _number: COUNT_REF)
+    return _render(lines, lambda _number: COUNT_REF)
 
 
 def resolve_ref(ref: object, lines: Sequence[Line]) -> Line | None:
