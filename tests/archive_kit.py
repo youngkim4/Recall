@@ -64,6 +64,16 @@ def own_archives():
 
 
 @pytest.fixture
+def jobs_end(own_archives, no_jobs):
+    """Each job that the server started in a test has ended before the archives of the test are let go."""
+    yield
+    until = time.monotonic() + 10.0
+    while unfinished() and time.monotonic() < until:
+        time.sleep(0.01)
+    assert not unfinished(), "a job of this test did not end"
+
+
+@pytest.fixture
 def data_folder(tmp_path, monkeypatch):
     """A data folder of the app with nothing in it: no export, no archive, no names."""
     folder = (tmp_path / "data").resolve()
@@ -114,6 +124,11 @@ def listed():
     """The jobs in the list, oldest first: what each does and how far it is."""
     with ui_server.JOBS_LOCK:
         return [(job["action"], job["status"]) for job in ui_server.JOBS.values()]
+
+
+def unfinished():
+    """The jobs that are queued or at work now."""
+    return [job for job in listed() if job[1] in ui_server.UNFINISHED]
 
 
 def said(job):
