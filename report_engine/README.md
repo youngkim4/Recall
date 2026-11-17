@@ -74,12 +74,14 @@ Different values give different periods and different cache keys.
 
 A message is a dict: `id` (str, not empty), `timestamp` (`YYYY-MM-DD HH:MM:SS`, local time, no zone), `is_from_me` (`True`, `False`, `1` or `0`), `sender` (str), `text` (str).
 A message that does not have this shape stops the run with `SourceError` before any model call.
+An error that the source or the labeler raises also stops the run with `SourceError`.
+The message of this `SourceError` gives only the type of the error, because the text of the error can hold a handle or words of a message. The cause is in `__cause__`.
 
 `since` and `until` are days (`YYYY-MM-DD`) or full timestamps. Both ends are included. A day means the whole day.
 A scope with an unknown key or a bad date is a `ConfigError`. It never becomes "all dates".
 
 - `FrameSource(frame)` reads a pandas DataFrame with the export columns `message_id`, `timestamp`, `sender`, `text`, `chat_id`, `is_from_me`. It matches `chat_id` exactly. It reads rows by position. It converts a timestamp that has a zone to the local time of the machine.
-- `ArchiveSource(archive)` reads `archive.iter_messages(conversation_id, since=..., until=...)`. It sends days only, asks for one day more than `until`, and applies the exact bounds itself. It skips rows whose `kind` is `system`. `ArchiveSource.open(path)` imports the `archive` package at that moment. This adapter is tested with a stand-in only.
+- `ArchiveSource(archive)` reads `archive.iter_messages(conversation_id, since=..., until=...)`. It sends days only, asks for one day more than `until`, and applies the exact bounds itself. It skips rows whose `kind` is `system`. It reads one conversation id, not a list of ids. `ArchiveSource.open(path)` imports the `archive` package at that moment. It does not catch the errors of `Archive.open`: the archive contract says that a missing file is a `FileNotFoundError`. This adapter is tested with a stand-in only.
 
 ### Labeler
 
@@ -231,6 +233,7 @@ All text from messages, names, summaries and notes is data in a prompt.
 | The cancel token is set | `ReportCancelled`. No report. |
 | An error in the engine after the first call | `RunError`. No report. The cause is in `__cause__`. |
 | The scope has no message with text | `EmptyConversationError`. No model call. |
+| The source or the labeler raises an error, or a message has a bad shape | `SourceError`. No model call. |
 | The model limits leave no room for a period or for the reduce call | `ConfigError`. No model call. |
 
 `ReportCancelled`, `AllPeriodsFailed` and `ReduceError` are kinds of `RunError`. Each `RunError` has a `usage` attribute with the tokens and the cost of the run until that moment.
@@ -322,7 +325,7 @@ This package does not change the server. The wiring step must do these things.
    4. Until the Reports page reads JSON, write the markdown file: `write_text_atomic(out_dir / f"analysis_{sanitize_filename(contact)}.md", render_markdown(report))`.
 4. Make the events for `build_analysis_payload` from `report.moments`. The engine does not write `events_timeline_*.csv`.
 5. Send `ProgressEvent` to the job progress. Keep one `CancelToken` for each job and add a route that calls `cancel()`.
-6. Catch `RunError`, `EmptyConversationError`, `ConfigError` and `SourceError`. Record `error.usage` of a `RunError`. Show `report.warnings` when `status` is `partial`.
+6. Catch `RunError`, `EmptyConversationError`, `ConfigError` and `SourceError`. All of them are kinds of `ReportEngineError`. After the first model call a run ends only with a `RunError`. Record `error.usage` of a `RunError`. Show `report.warnings` when `status` is `partial`.
 7. In `preview_payload`, replace `estimate_cost` with `estimate`. Give it the same labeler as the run.
 8. Serve the JSON to the Reports page: the list from `list_reports`, one report from `load_report(...).model_dump(mode="json")`.
 9. Give `since` and `until` as days. The engine includes the whole `until` day. Today's server compares against midnight and drops that day.
