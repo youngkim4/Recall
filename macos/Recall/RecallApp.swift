@@ -1,5 +1,6 @@
 import Cocoa
 import Foundation
+import UniformTypeIdentifiers
 import WebKit
 
 @main
@@ -82,6 +83,9 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         case "relaunch":
             resolveBridge(requestId, json: "true")
             relaunchApp()
+        case "print":
+            resolveBridge(requestId, json: "true")
+            saveAsPDF()
         default:
             resolveBridge(requestId, json: "null")
         }
@@ -118,6 +122,70 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
                 }
             }
         }
+    }
+
+    // MARK: - PDF
+
+    /// The page asked to print itself. Recall has one thing to print, a report
+    /// set as a document, and here that means a file: the place to save it is
+    /// asked for, and the page goes through the print system into a PDF there,
+    /// in pages of the user's paper size, laid out by the page's print styles.
+    private func saveAsPDF() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let webView = self.webView, let window = self.window else { return }
+            let panel = NSSavePanel()
+            panel.allowedContentTypes = [.pdf]
+            panel.canCreateDirectories = true
+            panel.nameFieldStringValue = self.fileName(from: webView.title) + ".pdf"
+            panel.beginSheetModal(for: window) { response in
+                guard response == .OK, let url = panel.url,
+                      let info = NSPrintInfo.shared.copy() as? NSPrintInfo else {
+                    self.printingEnded()
+                    return
+                }
+                info.jobDisposition = .save
+                info.dictionary()[NSPrintInfo.AttributeKey.jobSavingURL] = url
+                // The page sets its own margins (@page). Half an inch here is
+                // what puts the first line of a page where those margins say.
+                info.topMargin = 36
+                info.bottomMargin = 36
+                info.leftMargin = 36
+                info.rightMargin = 36
+                let operation = webView.printOperation(with: info)
+                operation.showsPrintPanel = false
+                operation.showsProgressPanel = true
+                // pages are laid out in the operation's view, which has no size until it is given one
+                operation.view?.frame = NSRect(origin: .zero, size: info.paperSize)
+                operation.runModal(
+                    for: window,
+                    delegate: self,
+                    didRun: #selector(self.printOperationDidRun(_:success:contextInfo:)),
+                    contextInfo: nil
+                )
+            }
+        }
+    }
+
+    @objc private func printOperationDidRun(
+        _ operation: NSPrintOperation,
+        success: Bool,
+        contextInfo: UnsafeMutableRawPointer?
+    ) {
+        printingEnded()
+    }
+
+    /// A page that began a print hears that it is over, saved or not.
+    private func printingEnded() {
+        webView?.evaluateJavaScript("window.dispatchEvent(new Event('afterprint'))")
+    }
+
+    /// The page's title as a file name: nothing in it that a path cannot hold.
+    private func fileName(from title: String?) -> String {
+        let cleaned = (title ?? "")
+            .components(separatedBy: CharacterSet(charactersIn: "/:\\\n"))
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        return cleaned.isEmpty ? "Recall report" : cleaned
     }
 
     private func relaunchApp() {
@@ -238,8 +306,15 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         configuration.websiteDataStore = WKWebsiteDataStore.default()
         // native bridge for the onboarding wizard: FDA deep-link, file picker, relaunch
         configuration.userContentController.add(self, name: "recall")
+        // A web view does nothing when its page calls window.print(). Here the
+        // call comes to the shell, which saves the page as a PDF.
         configuration.userContentController.addUserScript(WKUserScript(
-            source: "window.__RECALL_SHELL__ = true",
+            source: """
+            window.__RECALL_SHELL__ = true;
+            window.print = function () {
+              window.webkit.messageHandlers.recall.postMessage({ cmd: 'print', id: '' });
+            };
+            """,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
