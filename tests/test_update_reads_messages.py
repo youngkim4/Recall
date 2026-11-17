@@ -8,135 +8,19 @@ the archive that was there stays as it was.
 """
 import json
 import os
-import sqlite3
 from urllib.parse import quote
 
 import pandas as pd
 import pytest
 
 import recall_paths
-import setup_status
 import ui_server
 from setup_status import DbProbe
+from tests.archive_kit import left_behind, messages_csv, run, texts_in, unchanged
+from tests.invented_db import GROUP, messages_db
 from tests.loopback import fetch
 
 pytestmark = pytest.mark.usefixtures("fresh_bundle_cache", "no_saved_names")
-
-PERSON = "+15550100"
-GROUP = "chat123"
-# 2024-01-15 10:00 UTC, in the nanoseconds since 2001 that Messages keeps
-START = 726915600 * 1_000_000_000
-MINUTE = 60 * 1_000_000_000
-
-
-def messages_db(path, texts, group_name=""):
-    """A database shaped like the one Messages keeps: one person, one photo, one reaction."""
-    conn = sqlite3.connect(str(path))
-    conn.executescript("""
-        CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT);
-        CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, chat_identifier TEXT, display_name TEXT);
-        CREATE TABLE message (
-            ROWID INTEGER PRIMARY KEY, date INTEGER, handle_id INTEGER, text TEXT, attributedBody BLOB,
-            is_from_me INTEGER, service TEXT, associated_message_guid TEXT, associated_message_type INTEGER DEFAULT 0
-        );
-        CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);
-        CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, filename TEXT, mime_type TEXT, total_bytes INTEGER);
-        CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
-    """)
-    conn.execute("INSERT INTO handle VALUES (1, ?)", (PERSON,))
-    conn.execute("INSERT INTO chat VALUES (1, ?, '')", (PERSON,))
-    conn.execute("INSERT INTO chat VALUES (2, ?, ?)", (GROUP, group_name))
-    for place, text in enumerate(texts, start=1):
-        conn.execute(
-            "INSERT INTO message VALUES (?, ?, 1, ?, NULL, ?, 'iMessage', NULL, 0)",
-            (place, START + place * MINUTE, text, place % 2),
-        )
-        conn.execute("INSERT INTO chat_message_join VALUES (1, ?)", (place,))
-    conn.execute("INSERT INTO attachment VALUES (1, 'photo.jpg', 'image/jpeg', 1024)")
-    conn.execute("INSERT INTO message_attachment_join VALUES (1, 1)")
-    conn.execute("INSERT INTO message VALUES (900, ?, 1, NULL, NULL, 0, 'iMessage', 'guid-1', 2000)", (START + 900 * MINUTE,))
-    conn.execute("INSERT INTO chat_message_join VALUES (1, 900)")
-    conn.commit()
-    conn.close()
-    return path
-
-
-@pytest.fixture
-def no_saved_names(tmp_path, monkeypatch):
-    """No name comes from the Contacts cache of this Mac."""
-    monkeypatch.setattr(ui_server, "CONTACTS_CACHE_PATH", tmp_path / "contact_names.json")
-    monkeypatch.setattr(ui_server, "resolve_contact_names", lambda handles, **_: {})
-
-
-@pytest.fixture
-def messages_home(tmp_path, monkeypatch):
-    """A folder that stands in for ~/Library/Messages. The database in it is `chat.db`."""
-    home = tmp_path / "Messages"
-    home.mkdir()
-    home = home.resolve()
-    monkeypatch.setattr(setup_status, "LIVE_MESSAGES_DIR", home)
-    monkeypatch.setattr(setup_status, "LIVE_CHAT_DB", home / "chat.db")
-    monkeypatch.setattr(ui_server, "LIVE_CHAT_DB", home / "chat.db")
-    return home
-
-
-@pytest.fixture
-def archive(tmp_path):
-    """An archive that is already there: its three files and what is in them."""
-    folder = tmp_path / "archive"
-    folder.mkdir()
-    files = {
-        folder / "messages.csv": (
-            "message_id,timestamp,sender,text,chat_id,is_from_me,service\n"
-            f"1,2020-01-01 00:00:00,me,kept,{PERSON},1,iMessage\n"
-        ),
-        folder / "messages_attachments.csv": "message_id,filename\n1,kept.jpg\n",
-        folder / "messages_reactions.csv": "reaction_id,reaction_type\n1,kept\n",
-    }
-    for path, text in files.items():
-        path.write_text(text, encoding="utf-8")
-    return files
-
-
-@pytest.fixture
-def marker(tmp_path, monkeypatch):
-    """The file that records how far setup got."""
-    saves = tmp_path / "saves"
-    monkeypatch.setattr(ui_server, "SAVES_DIR", saves)
-    monkeypatch.setattr(ui_server, "SETUP_MARKER_PATH", saves / "setup.json")
-    return saves / "setup.json"
-
-
-def run(action, payload):
-    """Run one job to its end, the way its thread does, and give back how it ended."""
-    job = ui_server.job_record(action, payload)
-    with ui_server.JOBS_LOCK:
-        ui_server.JOBS[job["id"]] = job
-    try:
-        ui_server.run_job(job["id"], action, payload)
-        with ui_server.JOBS_LOCK:
-            return dict(ui_server.JOBS[job["id"]])
-    finally:
-        with ui_server.JOBS_LOCK:
-            ui_server.JOBS.pop(job["id"], None)
-
-
-def texts_in(path):
-    return set(pd.read_csv(path)["text"].dropna())
-
-
-def messages_csv(archive):
-    return next(path for path in archive if path.name == "messages.csv")
-
-
-def unchanged(archive):
-    return all(path.read_text(encoding="utf-8") == text for path, text in archive.items())
-
-
-def left_behind(archive):
-    """Files in the folder of the archive that are not the archive."""
-    folder = messages_csv(archive).parent
-    return sorted(path.name for path in folder.iterdir() if path not in archive)
 
 
 # ---- which database is read ----

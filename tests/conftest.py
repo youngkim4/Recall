@@ -1,13 +1,119 @@
+import atexit
+import os
+import shutil
+import socket
 import sqlite3
+import tempfile
 import threading
 
-import pandas as pd
-import pytest
+# These three lines come before any import of the project.
+# - The key is not a key, whatever the shell or a .env file holds.
+# - "~" is an empty folder: setup_status and contact_names work out where
+#   Messages and Contacts are from it when they are imported.
+_HOME = tempfile.mkdtemp(prefix="recall-tests-home-")
+atexit.register(shutil.rmtree, _HOME, ignore_errors=True)
+os.environ.update({"OPENAI_API_KEY": "test-key-not-real", "HOME": _HOME})
+
+import pandas as pd  # noqa: E402
+import pytest  # noqa: E402
+
+THIS_MACHINE = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+@pytest.fixture(autouse=True)
+def stay_on_this_machine(monkeypatch):
+    """No test reaches another host: not an AI provider, not anything else."""
+    connect = socket.socket.connect
+    look_up = socket.getaddrinfo
+
+    def refuse(host):
+        raise ConnectionRefusedError(f"a test tried to reach {host}; tests stay on this machine")
+
+    def guarded_connect(sock, address):
+        # an address that is not a pair is a socket file on this machine
+        if isinstance(address, tuple) and address[0] not in THIS_MACHINE:
+            refuse(address[0])
+        return connect(sock, address)
+
+    def guarded_look_up(host, *args, **kwargs):
+        if host is not None and host not in THIS_MACHINE:
+            refuse(host)
+        return look_up(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket, "getaddrinfo", guarded_look_up)
 
 
 @pytest.fixture
 def tmp_dir(tmp_path):
     return tmp_path
+
+
+@pytest.fixture
+def no_saved_names(tmp_path, monkeypatch):
+    """No name comes from the Contacts cache of this Mac."""
+    import ui_server
+
+    monkeypatch.setattr(ui_server, "CONTACTS_CACHE_PATH", tmp_path / "contact_names.json")
+    monkeypatch.setattr(ui_server, "resolve_contact_names", lambda handles, **_: {})
+
+
+@pytest.fixture
+def messages_home(tmp_path, monkeypatch):
+    """A folder that stands in for ~/Library/Messages. The database in it is `chat.db`."""
+    import setup_status
+    import ui_server
+
+    home = tmp_path / "Messages"
+    home.mkdir()
+    home = home.resolve()
+    monkeypatch.setattr(setup_status, "LIVE_MESSAGES_DIR", home)
+    monkeypatch.setattr(setup_status, "LIVE_CHAT_DB", home / "chat.db")
+    monkeypatch.setattr(ui_server, "LIVE_CHAT_DB", home / "chat.db")
+    return home
+
+
+@pytest.fixture
+def archive(tmp_path):
+    """An archive that is already there: its three files and what is in them."""
+    folder = tmp_path / "archive"
+    folder.mkdir()
+    files = {
+        folder / "messages.csv": (
+            "message_id,timestamp,sender,text,chat_id,is_from_me,service\n"
+            "1,2020-01-01 00:00:00,me,kept,+15550100,1,iMessage\n"
+        ),
+        folder / "messages_attachments.csv": "message_id,filename\n1,kept.jpg\n",
+        folder / "messages_reactions.csv": "reaction_id,reaction_type\n1,kept\n",
+    }
+    for path, text in files.items():
+        path.write_text(text, encoding="utf-8")
+    return files
+
+
+@pytest.fixture
+def marker(tmp_path, monkeypatch):
+    """The file that records how far setup got."""
+    import ui_server
+
+    saves = tmp_path / "saves"
+    monkeypatch.setattr(ui_server, "SAVES_DIR", saves)
+    monkeypatch.setattr(ui_server, "SETUP_MARKER_PATH", saves / "setup.json")
+    return saves / "setup.json"
+
+
+@pytest.fixture
+def no_jobs():
+    """The list of jobs is empty before a test and after it."""
+    import ui_server
+
+    def clear():
+        with ui_server.JOBS_LOCK:
+            ui_server.JOBS.clear()
+
+    clear()
+    yield
+    clear()
 
 
 @pytest.fixture
