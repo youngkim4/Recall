@@ -15,131 +15,29 @@ import pandas as pd
 import pytest
 
 import recall_paths
-import setup_status
 import ui_server
 from setup_status import DbProbe
-from tests.loopback import fetch
+from tests.archive_kit import left_behind, messages_csv, run, texts_in, unchanged
+from tests.invented_db import GROUP, messages_db
+from tests.loopback import fetch, post
 
 pytestmark = pytest.mark.usefixtures("fresh_bundle_cache", "no_saved_names")
 
-PERSON = "+15550100"
-GROUP = "chat123"
-# 2024-01-15 10:00 UTC, in the nanoseconds since 2001 that Messages keeps
-START = 726915600 * 1_000_000_000
-MINUTE = 60 * 1_000_000_000
-
-
-def messages_db(path, texts, group_name=""):
-    """A database shaped like the one Messages keeps: one person, one photo, one reaction."""
-    conn = sqlite3.connect(str(path))
-    conn.executescript("""
-        CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT);
-        CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, chat_identifier TEXT, display_name TEXT);
-        CREATE TABLE message (
-            ROWID INTEGER PRIMARY KEY, date INTEGER, handle_id INTEGER, text TEXT, attributedBody BLOB,
-            is_from_me INTEGER, service TEXT, associated_message_guid TEXT, associated_message_type INTEGER DEFAULT 0
-        );
-        CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);
-        CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, filename TEXT, mime_type TEXT, total_bytes INTEGER);
-        CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
-    """)
-    conn.execute("INSERT INTO handle VALUES (1, ?)", (PERSON,))
-    conn.execute("INSERT INTO chat VALUES (1, ?, '')", (PERSON,))
-    conn.execute("INSERT INTO chat VALUES (2, ?, ?)", (GROUP, group_name))
-    for place, text in enumerate(texts, start=1):
-        conn.execute(
-            "INSERT INTO message VALUES (?, ?, 1, ?, NULL, ?, 'iMessage', NULL, 0)",
-            (place, START + place * MINUTE, text, place % 2),
-        )
-        conn.execute("INSERT INTO chat_message_join VALUES (1, ?)", (place,))
-    conn.execute("INSERT INTO attachment VALUES (1, 'photo.jpg', 'image/jpeg', 1024)")
-    conn.execute("INSERT INTO message_attachment_join VALUES (1, 1)")
-    conn.execute("INSERT INTO message VALUES (900, ?, 1, NULL, NULL, 0, 'iMessage', 'guid-1', 2000)", (START + 900 * MINUTE,))
-    conn.execute("INSERT INTO chat_message_join VALUES (1, 900)")
-    conn.commit()
-    conn.close()
-    return path
-
-
-@pytest.fixture
-def no_saved_names(tmp_path, monkeypatch):
-    """No name comes from the Contacts cache of this Mac."""
-    monkeypatch.setattr(ui_server, "CONTACTS_CACHE_PATH", tmp_path / "contact_names.json")
-    monkeypatch.setattr(ui_server, "resolve_contact_names", lambda handles, **_: {})
-
-
-@pytest.fixture
-def messages_home(tmp_path, monkeypatch):
-    """A folder that stands in for ~/Library/Messages. The database in it is `chat.db`."""
-    home = tmp_path / "Messages"
-    home.mkdir()
-    home = home.resolve()
-    monkeypatch.setattr(setup_status, "LIVE_MESSAGES_DIR", home)
-    monkeypatch.setattr(setup_status, "LIVE_CHAT_DB", home / "chat.db")
-    monkeypatch.setattr(ui_server, "LIVE_CHAT_DB", home / "chat.db")
-    return home
-
-
-@pytest.fixture
-def archive(tmp_path):
-    """An archive that is already there: its three files and what is in them."""
-    folder = tmp_path / "archive"
-    folder.mkdir()
-    files = {
-        folder / "messages.csv": (
-            "message_id,timestamp,sender,text,chat_id,is_from_me,service\n"
-            f"1,2020-01-01 00:00:00,me,kept,{PERSON},1,iMessage\n"
-        ),
-        folder / "messages_attachments.csv": "message_id,filename\n1,kept.jpg\n",
-        folder / "messages_reactions.csv": "reaction_id,reaction_type\n1,kept\n",
-    }
-    for path, text in files.items():
-        path.write_text(text, encoding="utf-8")
-    return files
-
-
-@pytest.fixture
-def marker(tmp_path, monkeypatch):
-    """The file that records how far setup got."""
-    saves = tmp_path / "saves"
-    monkeypatch.setattr(ui_server, "SAVES_DIR", saves)
-    monkeypatch.setattr(ui_server, "SETUP_MARKER_PATH", saves / "setup.json")
-    return saves / "setup.json"
-
-
-def run(action, payload):
-    """Run one job to its end, the way its thread does, and give back how it ended."""
-    job = ui_server.job_record(action, payload)
-    with ui_server.JOBS_LOCK:
-        ui_server.JOBS[job["id"]] = job
-    try:
-        ui_server.run_job(job["id"], action, payload)
-        with ui_server.JOBS_LOCK:
-            return dict(ui_server.JOBS[job["id"]])
-    finally:
-        with ui_server.JOBS_LOCK:
-            ui_server.JOBS.pop(job["id"], None)
-
-
-def texts_in(path):
-    return set(pd.read_csv(path)["text"].dropna())
-
-
-def messages_csv(archive):
-    return next(path for path in archive if path.name == "messages.csv")
-
-
-def unchanged(archive):
-    return all(path.read_text(encoding="utf-8") == text for path, text in archive.items())
-
-
-def left_behind(archive):
-    """Files in the folder of the archive that are not the archive."""
-    folder = messages_csv(archive).parent
-    return sorted(path.name for path in folder.iterdir() if path not in archive)
-
 
 # ---- which database is read ----
+
+
+def databases_opened(monkeypatch):
+    """Every database that sqlite3 is asked to open from now on, as the text it was asked with."""
+    opened = []
+    connect = sqlite3.connect
+
+    def note_and_connect(target, *args, **kwargs):
+        opened.append(str(target))
+        return connect(target, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", note_and_connect)
+    return opened
 
 
 def test_an_update_reads_messages_itself_whatever_path_the_client_sends(messages_home, archive, tmp_path):
@@ -161,14 +59,66 @@ def test_the_setup_guide_reads_messages_itself_when_it_names_no_copy(messages_ho
     assert texts_in(messages_csv(archive)) == {"from messages"}
 
 
-def test_the_setup_guide_reads_the_copy_it_names_for_that_import(messages_home, archive, tmp_path):
+HEADER_ONLY = "message_id,timestamp,sender,text,chat_id,is_from_me,service\n"
+
+
+@pytest.mark.parametrize("there", [None, "", HEADER_ONLY])
+def test_a_first_setup_reads_the_copy_it_names(messages_home, tmp_path, there):
+    # no archive yet: no file, or a file with no message in it
     messages_db(messages_home / "chat.db", ["from messages"])
     copy = messages_db(tmp_path / "copy.db", ["from the copy"])
+    target = tmp_path / "new.csv"
+    if there is not None:
+        target.write_text(there, encoding="utf-8")
+
+    job = run("setup_import", {"dbPath": str(copy), "messagesPath": str(target), "includeContacts": False})
+
+    assert job["status"] == "completed", job["error"]
+    assert texts_in(target) == {"from the copy"}
+
+
+COPY_REFUSED = "An update reads Messages on this Mac. It does not read a copy. The archive was not changed."
+
+
+def test_an_archive_that_holds_messages_is_never_updated_from_a_copy(messages_home, archive, tmp_path, monkeypatch):
+    messages_db(messages_home / "chat.db", ["from messages"])
+    copy = messages_db(tmp_path / "copy.db", ["from an old copy"])
+    opened = databases_opened(monkeypatch)
 
     job = run("setup_import", {"dbPath": str(copy), "messagesPath": str(messages_csv(archive)), "includeContacts": False})
 
-    assert job["status"] == "completed", job["error"]
-    assert texts_in(messages_csv(archive)) == {"from the copy"}
+    assert (job["status"], job["error"]) == ("failed", COPY_REFUSED)
+    assert unchanged(archive)
+    assert opened == []
+
+
+def test_the_route_refuses_a_copy_for_an_archive_that_holds_messages(server, messages_home, archive, tmp_path, no_jobs):
+    copy = messages_db(tmp_path / "copy.db", ["from an old copy"])
+
+    status, answer = post(server, "/api/jobs", {"action": "setup_import", "dbPath": str(copy), "messagesPath": str(messages_csv(archive))})
+
+    assert (status, answer) == (409, {"error": COPY_REFUSED})
+    with ui_server.JOBS_LOCK:
+        assert not ui_server.JOBS
+    assert unchanged(archive)
+
+
+@pytest.mark.parametrize("content, holds", [
+    (None, False),
+    ("", False),
+    (HEADER_ONLY, False),
+    (HEADER_ONLY + "1,2020-01-01 00:00:00,me,kept,+15550100,1,iMessage\n", True),
+])
+def test_an_archive_holds_messages_when_its_file_has_a_row(tmp_path, content, holds):
+    target = tmp_path / "messages.csv"
+    if content is not None:
+        target.write_text(content, encoding="utf-8")
+
+    assert ui_server.holds_messages(target) is holds
+
+
+def test_a_file_that_cannot_be_read_is_not_taken_for_an_archive_with_no_message(tmp_path):
+    assert ui_server.holds_messages(tmp_path) is True
 
 
 def test_only_the_setup_guide_can_name_a_database(messages_home, tmp_path):
@@ -197,17 +147,22 @@ def test_a_report_does_not_read_a_database_first(messages_home, archive, tmp_pat
 # ---- what is written ----
 
 
-def test_no_second_source_is_merged_into_an_update(messages_home, archive, tmp_path, monkeypatch):
-    messages_db(messages_home / "chat.db", ["still in messages"])
-    in_data_folder = messages_db(tmp_path / "chat.db", ["still in messages", "gone from messages"])
-    monkeypatch.setattr(recall_paths, "SNAPSHOT_DB", in_data_folder)
-    monkeypatch.setattr(ui_server, "SNAPSHOT_DB", in_data_folder, raising=False)
+@pytest.mark.parametrize("action", ["export", "setup_import"])
+def test_no_second_source_is_read_for_an_import(messages_home, archive, tmp_path, monkeypatch, action):
+    live = messages_db(messages_home / "chat.db", ["still in messages"])
+    # a copy where an earlier build kept one: it holds a message that Messages no longer has
+    second = messages_db(tmp_path / "chat.db", ["still in messages", "gone from messages"])
+    monkeypatch.setattr(recall_paths, "SNAPSHOT_DB", second)
+    opened = databases_opened(monkeypatch)
 
-    job = run("setup_import", {"messagesPath": str(messages_csv(archive)), "includeContacts": False})
+    job = run(action, {"messagesPath": str(messages_csv(archive)), "includeContacts": False})
 
     assert job["status"] == "completed", job["error"]
     assert texts_in(messages_csv(archive)) == {"still in messages"}
     assert "recovered" not in job["result"]
+    # the database of Messages was opened; the second one was not, by any reader
+    assert any(str(live) in target for target in opened)
+    assert not any(str(second) in target for target in opened)
 
 
 def test_an_update_writes_the_three_files_and_leaves_nothing_else(messages_home, archive):
@@ -266,16 +221,17 @@ def test_an_update_on_a_mac_with_no_messages_database_says_so(messages_home, arc
     assert unchanged(archive)
 
 
-def test_a_copy_that_is_not_there_is_named_in_what_went_wrong(messages_home, archive, tmp_path):
+def test_a_copy_that_is_not_there_is_named_in_what_went_wrong(messages_home, tmp_path):
     messages_db(messages_home / "chat.db", ["from messages"])
     missing = tmp_path / "gone.db"
+    target = tmp_path / "new.csv"
 
-    job = run("setup_import", {"dbPath": str(missing), "messagesPath": str(messages_csv(archive)), "includeContacts": False})
+    job = run("setup_import", {"dbPath": str(missing), "messagesPath": str(target), "includeContacts": False})
 
     # a copy that was named and cannot be read stops the import: Messages is not read in its place
     assert job["status"] == "failed"
     assert str(missing.resolve()) in job["error"]
-    assert unchanged(archive)
+    assert not target.exists()
 
 
 @pytest.mark.parametrize("reader", ["extract_attachments", "extract_reactions"])
@@ -307,7 +263,7 @@ def test_a_path_picked_in_an_earlier_setup_is_not_kept(marker):
 
 
 def test_setup_records_how_far_it_got_and_no_path():
-    said = {"completed": 1, "skipped": 0, "pickedDbPath": "/somewhere/chat.db", "other": True}
+    said = {"completed": True, "skipped": False, "pickedDbPath": "/somewhere/chat.db", "other": True}
 
     assert ui_server.setup_marker_updates(said) == {"completed": True, "skipped": False}
 
@@ -359,3 +315,16 @@ def test_a_group_takes_its_name_from_messages_itself_when_that_can_be_read(serve
     names = names_of_conversations(server, group_export)
 
     assert names[GROUP] == "Project Crew"
+
+
+@pytest.mark.parametrize("content, holds", [(None, False), (HEADER_ONLY, False), (HEADER_ONLY + "1,2020-01-01 00:00:00,me,kept,+15550100,1,iMessage\n", True)])
+def test_the_state_of_setup_says_whether_the_archive_holds_messages(server, messages_home, tmp_path, content, holds):
+    # the guide and the server use one test for "is this an update"
+    target = tmp_path / "messages.csv"
+    if content is not None:
+        target.write_text(content, encoding="utf-8")
+
+    _, _, body = fetch(server, f"/api/setup/status?messagesPath={quote(str(target))}")
+
+    assert json.loads(body)["export"] == {"exists": content is not None, "path": str(target), "holdsMessages": holds}
+

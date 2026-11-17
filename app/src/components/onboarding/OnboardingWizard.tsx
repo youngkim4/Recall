@@ -1,16 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { recallApi } from '../../lib/api'
 import { recallBridge } from '../../lib/bridge'
+import { isActiveJob } from '../../lib/jobs'
+import {
+  canImport,
+  foundTheSame,
+  frameStep,
+  guideStep,
+  importRequest,
+  importView,
+  interruptedReason,
+  noNotes,
+  noted,
+  notStartedJob,
+  whyNotThisCopy,
+  type GuideStage,
+  type StepNotes,
+} from '../../lib/setupGuide'
 import type { Job, SetupImportResult, SetupStatus } from '../../types'
 import { ImportStep } from './ImportStep'
 import { SetupFrame } from './SetupFrame'
 import { DbProblemStep, DoneStep, NoMessagesStep, PermissionStep, WelcomeStep } from './SetupSteps'
 
-// The wizard is a pure function of server state: no stored step index, every
-// entry (cold boot, relaunch after FDA, re-run from Settings) re-derives its
-// phase from a fresh /api/setup/status. That is what makes relaunch-resume free.
-
-type Phase = 'welcome' | 'permission' | 'no_messages' | 'db_problem' | 'import' | 'done'
+// The guide keeps no step. What shows is worked out each time from what is
+// known (guideStep): how far the reader has gone, the last check of Messages,
+// a copy if one was chosen, and the import if one was started. Every entry
+// (cold boot, relaunch after access was given, an update from the app) starts
+// from a fresh /api/setup/status, and that is what makes carrying on after a
+// relaunch free.
 
 // this many unanswered questions in a row, and the import is taken to be lost
 const LOST_AFTER_MISSES = 4
@@ -23,123 +40,129 @@ function markSetup(fields: Parameters<typeof recallApi.setupComplete>[0]) {
 
 type Props = {
   initialStatus: SetupStatus
+  // the archive file that the app reads: an import writes this one
+  messagesPath: string
   rerun?: boolean
   onFinished: (result: SetupImportResult | null) => void
   onSkip: () => void
 }
 
-function phaseForStatus(status: SetupStatus): Phase {
-  switch (status.state) {
-    case 'needs_permission':
-      return 'permission'
-    case 'no_messages':
-      return 'no_messages'
-    case 'needs_export':
-    case 'ready':
-      return 'import'
-    default:
-      return 'db_problem'
-  }
-}
-
-// An update is of an archive that is already there, so the state of setup
-// says nothing about it. What there is to do is read from the database:
-// where Messages cannot be read, the update says so before it is started.
-function phaseForDatabase(status: SetupStatus): Phase {
-  switch (status.db.status) {
-    case 'readable':
-      return 'import'
-    case 'fda_blocked':
-      return 'permission'
-    case 'missing':
-    case 'empty':
-      return 'no_messages'
-    default:
-      return 'db_problem'
-  }
-}
-
-function frameStep(phase: Phase): number {
-  if (phase === 'welcome') return 0
-  if (phase === 'permission' || phase === 'no_messages' || phase === 'db_problem') return 1
-  if (phase === 'import') return 2
-  return 3
-}
-
-export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onSkip }: Props) {
+export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, onFinished, onSkip }: Props) {
   // an update has no welcome to read: it opens on what there is to do
-  const [phase, setPhase] = useState<Phase>(() => (rerun ? phaseForDatabase(initialStatus) : 'welcome'))
-  const [status, setStatus] = useState<SetupStatus>(initialStatus)
-  // A copy chosen in this guide, for the import it starts. It is not kept:
-  // the next time the guide opens, it reads Messages itself again.
-  const [pickedDbPath, setPickedDbPath] = useState('')
+  const [stage, setStage] = useState<GuideStage>(rerun ? 'source' : 'welcome')
+  // the last check of Messages itself
+  const [live, setLive] = useState<SetupStatus>(initialStatus)
+  // A copy chosen in this guide: the path the reader gave, and what its check
+  // found. It is for the import that the next step offers, and it goes when
+  // that step is left: the guide then reads Messages itself again.
+  const [picked, setPicked] = useState<{ path: string; found: SetupStatus } | null>(null)
   const [pickBusy, setPickBusy] = useState(false)
-  const [pickError, setPickError] = useState('')
   const [job, setJob] = useState<Job | null>(null)
   const [result, setResult] = useState<SetupImportResult | null>(null)
-  const [returnedFromSettings, setReturnedFromSettings] = useState(false)
-  const [recheckCount, setRecheckCount] = useState(0)
+  // The request for an import is on its way. Until it is answered there is
+  // no job to show, and the step cannot be left: the import may have begun.
+  const [starting, setStarting] = useState(false)
   // System Settings was opened from here; coming back to the window means something only then
   const wentToSettings = useRef(false)
+  // the newest check wins; an older answer that comes late is dropped
+  const checks = useRef(0)
+  // a second press before the first has its answer starts nothing
+  const asked = useRef(false)
 
-  const probe = useCallback(
+  const step = guideStep({ stage, job, picked: picked?.found ?? null, live })
+  const archivePath = messagesPath.trim() || undefined
+
+  // What the reader was told at the step that shows. When the step changes,
+  // it is gone: a note of one step is never read at another.
+  const [notes, setNotes] = useState<StepNotes>(() => noNotes(step))
+  if (notes.step !== step) setNotes(noNotes(step))
+  const told = notes.step === step ? notes : noNotes(step)
+  const tell = useCallback(
+    (change: Partial<Omit<StepNotes, 'step'>>) => setNotes((current) => noted(current, step, change)),
+    [step],
+  )
+
+  const check = useCallback(
     async (deep = false): Promise<SetupStatus | null> => {
+      const mine = ++checks.current
       try {
-        const next = await recallApi.setupStatus({
-          dbPath: pickedDbPath || undefined,
-          deep,
-        })
-        setStatus(next)
+        const next = await recallApi.setupStatus({ messagesPath: archivePath, deep })
+        if (mine === checks.current) setLive(next)
         return next
       } catch {
-        // the wizard must never trap the user behind a failed probe
+        // the guide must never trap the reader behind a check that failed
         return null
       }
     },
-    [pickedDbPath],
+    [archivePath],
   )
 
-  // permission phase: poll quietly; the shell pings recall:becameActive the
-  // moment the user returns from System Settings
+  // The step follows what a check finds. Where that is a database to import,
+  // its size is asked for too.
+  const checkThenSize = useCallback(async () => {
+    const next = await check()
+    if (next && canImport(next.db.status)) void check(true)
+  }, [check])
+
+  // Where access is asked for, Messages is looked at again and again; the
+  // shell says recall:becameActive the moment the reader is back from System
+  // Settings. One look at a time, so that each answer is the newest.
   useEffect(() => {
-    if (phase !== 'permission') return
-    let stopped = false
-    const tick = async () => {
-      const next = await probe()
-      if (stopped || !next) return
-      if (next.db.status === 'readable') {
-        void probe(true)
-        setPhase('import')
-      } else if (next.db.status === 'empty') {
-        setPhase('no_messages')
+    if (step !== 'permission') return
+    let looking = false
+    const look = async () => {
+      if (looking) return
+      looking = true
+      try {
+        await checkThenSize()
+      } finally {
+        looking = false
       }
     }
-    const interval = window.setInterval(tick, 1500)
+    const interval = window.setInterval(() => void look(), 1500)
     const onActive = () => {
-      if (wentToSettings.current) setReturnedFromSettings(true)
-      void tick()
+      if (wentToSettings.current) tell({ returnedFromSettings: true })
+      void look()
     }
     window.addEventListener('recall:becameActive', onActive)
     window.addEventListener('focus', onActive)
     return () => {
-      stopped = true
       window.clearInterval(interval)
       window.removeEventListener('recall:becameActive', onActive)
       window.removeEventListener('focus', onActive)
+      // the trip to System Settings belongs to this visit of the step
+      wentToSettings.current = false
     }
-  }, [phase, probe])
+  }, [step, checkThenSize, tell])
+
+  // the archive is there: setup is recorded as done, and the copy has served
+  const ended = useCallback(() => {
+    markSetup({ completed: true })
+    setPicked(null)
+    setStage('done')
+  }, [])
+
+  // What the server says of the import, taken as it is. An import that has
+  // ended well ends the guide, whichever answer says so first.
+  const follow = useCallback(
+    (next: Job) => {
+      setJob(next)
+      if (next.status !== 'completed') return
+      setResult((next.result || null) as SetupImportResult | null)
+      ended()
+    },
+    [ended],
+  )
 
   // The import is asked about until it ends. One unanswered question is not
   // an ending; several in a row mean the server was restarted, and jobs are
   // kept in memory, so the files are looked at instead.
-  const watched = job?.id && (job.status === 'queued' || job.status === 'running') ? job.id : ''
+  const watched = job?.id && isActiveJob(job) ? job.id : ''
   useEffect(() => {
     if (!watched) return
     let stopped = false
     let asking = false
     let misses = 0
-    const interrupted = () =>
-      setJob((current) => (current ? { ...current, status: 'failed', error: 'The import was interrupted.' } : current))
     const ask = async () => {
       if (asking) return
       asking = true
@@ -147,24 +170,18 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
         const { job: next } = await recallApi.job(watched)
         if (stopped) return
         misses = 0
-        setJob(next)
-        if (next.status === 'completed') {
-          setResult((next.result || null) as SetupImportResult | null)
-          markSetup({ completed: true })
-          setPhase('done')
-        }
+        follow(next)
       } catch {
         misses += 1
         if (stopped || misses < LOST_AFTER_MISSES) return
         // An update starts with an archive already there, so the file being
         // there says nothing about this run; only a first import can be read that way.
-        const next = rerun ? null : await probe()
+        const next = rerun ? null : await check()
         if (stopped) return
-        if (next?.export.exists) {
-          markSetup({ completed: true })
-          setPhase('done')
+        if (next?.export.holdsMessages) {
+          ended()
         } else {
-          interrupted()
+          setJob((current) => (current ? { ...current, status: 'failed', error: interruptedReason(rerun) } : current))
         }
       } finally {
         asking = false
@@ -175,38 +192,31 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
       stopped = true
       window.clearInterval(interval)
     }
-  }, [watched, probe, rerun])
+  }, [watched, check, ended, follow, rerun])
 
+  // the welcome was read at launch; Messages is looked at as it is now
   const start = useCallback(() => {
-    const next = phaseForStatus(status)
-    if (next === 'import') void probe(true)
-    setPhase(next)
-  }, [probe, status])
+    setStage('source')
+    void checkThenSize()
+  }, [checkThenSize])
 
-  const validatePath = useCallback(async (path: string) => {
-    setPickError('')
-    setPickBusy(true)
-    try {
-      const next = await recallApi.setupStatus({ dbPath: path, deep: true })
-      if (next.db.status === 'readable') {
-        setPickedDbPath(path)
-        setStatus(next)
-        setPhase('import')
-      } else if (next.db.status === 'empty') {
-        setPickError('That database has nothing in it.')
-      } else if (next.db.status === 'fda_blocked') {
-        setPickError(
-          'macOS blocked that folder. Allow it in the prompt macOS showed, or move the file to your home folder and choose it again.',
-        )
-      } else {
-        setPickError('That file is not a Messages database. Choose chat.db, not chat.db-wal or chat.db-shm.')
+  const validatePath = useCallback(
+    async (path: string) => {
+      tell({ pickError: '' })
+      setPickBusy(true)
+      try {
+        const found = await recallApi.setupStatus({ dbPath: path, messagesPath: archivePath, deep: true })
+        const against = whyNotThisCopy(found.db.status)
+        if (against) tell({ pickError: against })
+        else setPicked({ path, found })
+      } catch {
+        tell({ pickError: 'That file could not be checked.' })
+      } finally {
+        setPickBusy(false)
       }
-    } catch {
-      setPickError('That file could not be checked.')
-    } finally {
-      setPickBusy(false)
-    }
-  }, [])
+    },
+    [archivePath, tell],
+  )
 
   const pickFile = useCallback(async () => {
     const path = await recallBridge.pickDatabaseFile()
@@ -214,36 +224,33 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
   }, [validatePath])
 
   const startImport = useCallback(async () => {
-    setPickError('')
+    if (asked.current) return
+    asked.current = true
+    setStarting(true)
     try {
-      const { job: created } = await recallApi.createSetupImportJob({
-        dbPath: pickedDbPath || undefined,
-        includeContacts: true,
-      })
-      setJob(created)
+      const request = importRequest({ archivePath: messagesPath, copyPath: picked?.path ?? '', rerun })
+      const { job: created } = await recallApi.createSetupImportJob(request)
+      follow(created)
     } catch (error) {
-      setJob({
-        id: '',
-        action: 'setup_import',
-        status: 'failed',
-        createdAt: '',
-        updatedAt: '',
-        logs: [],
-        error: error instanceof Error ? error.message : 'The import could not be started.',
-      })
+      setJob(notStartedJob(error, rerun))
+    } finally {
+      asked.current = false
+      setStarting(false)
     }
-  }, [pickedDbPath])
+  }, [follow, messagesPath, picked, rerun])
 
+  // Messages is looked at again before the next try. A copy is tried as it was chosen.
   const retryImport = useCallback(() => {
     setJob(null)
-    void probe(true)
-  }, [probe])
+    if (!picked) void check(true)
+  }, [check, picked])
 
+  // "Still nothing" is said only of an answer, and only when it is the same answer
   const recheck = useCallback(async () => {
-    setRecheckCount((count) => count + 1)
-    const next = await probe(true)
-    if (next && next.db.status === 'readable') setPhase('import')
-  }, [probe])
+    const before = live.db.status
+    const next = await check(true)
+    tell({ sameAgain: foundTheSame(before, next) })
+  }, [check, live.db.status, tell])
 
   const skip = useCallback(() => {
     markSetup({ skipped: true })
@@ -254,66 +261,86 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
   // finished before. Leaving the first setup is recorded as skipped.
   const leave = rerun ? onSkip : skip
 
+  // Back from the import. A copy is given up, and the guide reads Messages
+  // itself again. With no copy, an update goes back to the app and a first
+  // setup to its welcome.
+  const back = useCallback(() => {
+    setJob(null)
+    if (picked) {
+      setPicked(null)
+      void checkThenSize()
+    } else if (!rerun) {
+      setStage('welcome')
+    } else if (job) {
+      // An update was started, and how it ended is not known for sure. The
+      // app reads the archive again, with no first words to show.
+      onFinished(null)
+    } else {
+      onSkip()
+    }
+  }, [checkThenSize, job, onFinished, onSkip, picked, rerun])
+
   const finish = useCallback(() => {
     onFinished(result)
   }, [onFinished, result])
 
-  const importBlocked = Boolean(job && (job.status === 'queued' || job.status === 'running'))
-
   return (
-    <SetupFrame step={rerun ? null : frameStep(phase)} phase={phase}>
-      {phase === 'welcome' ? (
+    <SetupFrame step={rerun ? null : frameStep(step)} phase={step}>
+      {step === 'welcome' ? (
         <WelcomeStep onStart={start} onSkip={skip} />
-      ) : phase === 'permission' ? (
+      ) : step === 'permission' ? (
         <PermissionStep
-          returnedFromSettings={returnedFromSettings}
+          rerun={rerun}
+          returnedFromSettings={told.returnedFromSettings}
           pickBusy={pickBusy}
-          pickError={pickError}
+          pickError={told.pickError}
           onOpenSettings={() => {
             wentToSettings.current = true
             recallBridge.openFullDiskAccess()
           }}
-          onRelaunch={() => {
-            if (!importBlocked) recallBridge.relaunch()
-          }}
+          onRelaunch={() => recallBridge.relaunch()}
           onPick={pickFile}
           onManualPath={validatePath}
           onSkip={leave}
         />
-      ) : phase === 'no_messages' ? (
+      ) : step === 'no_messages' ? (
         <NoMessagesStep
-          variant={status.db.status === 'empty' ? 'empty' : 'missing'}
+          rerun={rerun}
+          variant={live.db.status === 'empty' ? 'empty' : 'missing'}
           pickBusy={pickBusy}
-          pickError={pickError}
-          onRecheck={recheck}
+          pickError={told.pickError}
+          onRecheck={() => void recheck()}
           onPick={pickFile}
           onManualPath={validatePath}
           onSkip={leave}
-          stillNothing={recheckCount > 0}
+          stillNothing={told.sameAgain}
         />
-      ) : phase === 'db_problem' ? (
+      ) : step === 'db_problem' ? (
         <DbProblemStep
-          variant={status.db.status === 'locked' ? 'locked' : 'invalid'}
-          detail={status.db.detail || ''}
+          rerun={rerun}
+          variant={live.db.status === 'invalid' ? 'invalid' : 'unread'}
+          detail={live.db.detail || ''}
           pickBusy={pickBusy}
-          pickError={pickError}
+          pickError={told.pickError}
           onRetry={() => void recheck()}
           onPick={pickFile}
           onManualPath={validatePath}
           // an update was opened from the app, and leaving it goes back there
-          onBack={rerun ? onSkip : () => setPhase('welcome')}
+          onBack={rerun ? onSkip : () => setStage('welcome')}
         />
-      ) : phase === 'import' ? (
+      ) : step === 'done' ? (
+        <DoneStep result={result} rerun={rerun} onFinish={finish} />
+      ) : (
         <ImportStep
-          status={status}
+          view={importView(step) ?? 'ready'}
+          status={picked?.found ?? live}
           job={job}
           rerun={rerun}
+          starting={starting}
           onStart={() => void startImport()}
           onRetry={retryImport}
-          onBack={rerun ? onSkip : () => setPhase('welcome')}
+          onBack={back}
         />
-      ) : (
-        <DoneStep result={result} rerun={rerun} onFinish={finish} />
       )}
     </SetupFrame>
   )

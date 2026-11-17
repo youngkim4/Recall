@@ -2,11 +2,13 @@
 """Local web UI server for Recall."""
 
 import contextlib
+import csv
 import io
 import json
 import mimetypes
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import threading
@@ -29,6 +31,7 @@ class LoopbackHTTPServer(ThreadingHTTPServer):
         self.server_name = str(host)
         self.server_port = int(port)
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 import pandas as pd
@@ -86,7 +89,7 @@ from recall_paths import (
     DEFAULT_MESSAGES_CSV,
     ensure_data_dirs,
 )
-from setup_status import LIVE_CHAT_DB, DbProbe, derive_state, probe_database
+from setup_status import LIVE_CHAT_DB, DbProbe, derive_state, open_read_only, probe_database
 
 ROOT = Path(__file__).resolve().parent
 UI_DIR = ROOT / "ui"
@@ -193,12 +196,19 @@ def is_local_api_request(handler) -> bool:
         return False
 
 
+class BadRequest(ValueError):
+    """A request that cannot be read. The route answers 400 with the sentence."""
+
+
 def parse_body(handler) -> dict:
-    length = int(handler.headers.get("Content-Length", "0") or 0)
-    if length <= 0:
-        return {}
-    raw = handler.rfile.read(length)
-    return json.loads(raw.decode("utf-8"))
+    try:
+        length = int(handler.headers.get("Content-Length", "0") or 0)
+        if length <= 0:
+            return {}
+        return json.loads(handler.rfile.read(length).decode("utf-8"))
+    except ValueError as exc:
+        # a length that is no number, bytes that are not UTF-8, text that is not JSON
+        raise BadRequest("The request body must be JSON.") from exc
 
 
 def safe_path(value: str, default: Path = None) -> Path:
@@ -307,15 +317,65 @@ def companion_report_paths(report_path: Path, contact: str) -> tuple[Path | None
 
 
 ARCHIVE_KEPT = "The archive was not changed."
+# how long an import waits before it tries a busy database once more
+BUSY_WAIT_SECONDS = 2
+# what sqlite3 says, in small letters, when a database is held, closed to this app, or not one of Messages
+BUSY_SIGNS = ("locked", "busy")
+CLOSED_SIGNS = ("unable to open", "permission", "not permitted", "authoriz")
+NOT_MESSAGES_SIGNS = ("no such table", "no such column", "not a database", "file is encrypted")
+
+
+class ImportStopped(Exception):
+    """An import that stops for a reason told to the reader in one plain sentence."""
+
+
+class DatabaseBusy(ImportStopped):
+    """Another program holds the database. The import is tried once more."""
+
+
+class ArchiveInParts(ImportStopped):
+    """An import stopped part way, and an earlier file could not be put back."""
+
+
+ARCHIVE_PUT_BACK = "The archive is as it was before the import that did not finish."
+
+
+def archive_note(archive_there: bool, put_back: bool = False) -> str:
+    """What a failed import says of the archive, when there is one: it was not
+    changed, or this import put it back as it was before one that did not finish."""
+    if not archive_there:
+        return ""
+    return f" {ARCHIVE_PUT_BACK if put_back else ARCHIVE_KEPT}"
+
+
+def holds_messages(messages_path: Path) -> bool:
+    """True when the archive file holds a message. No file holds none, and neither does a file with no row.
+
+    A file that cannot be read is not taken for an archive with no message:
+    what cannot be looked at is not written over from a copy.
+    """
+    try:
+        with open(messages_path, newline="", encoding="utf-8") as archive:
+            rows = csv.reader(archive)
+            next(rows, None)
+            return next(rows, None) is not None
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError, csv.Error):
+        return True
 
 
 def database_for(action: str, payload: dict) -> Path | None:
     """The database a job reads, if it reads one.
 
-    An update reads the database Messages keeps on this Mac. A path the client
-    sends does not change that, and neither does a copy in the data folder.
-    Only the setup guide can name a copy, and only for the import it starts.
-    No other job reads a database.
+    An archive that holds messages is updated from the database Messages
+    keeps on this Mac, and from nothing else. A path the client sends does
+    not change that, and neither does a copy in the data folder: an import
+    that names a copy for such an archive is stopped (ImportStopped).
+
+    Only a first setup can name a copy: an import into an archive that holds
+    no message yet. The copy is read for that import only. No other job reads
+    a database.
     """
     if action == "export":
         return LIVE_CHAT_DB
@@ -323,6 +383,8 @@ def database_for(action: str, payload: dict) -> Path | None:
         named = payload.get("dbPath")
         if named and not isinstance(named, str):
             raise ValueError("The path of the copy must be text.")
+        if named and holds_messages(safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)):
+            raise ImportStopped(f"An update reads Messages on this Mac. It does not read a copy. {ARCHIVE_KEPT}")
         return safe_path(named, LIVE_CHAT_DB)
     return None
 
@@ -340,108 +402,418 @@ def closed_to_recall(probe: DbProbe) -> str:
     )
 
 
-def why_unreadable(probe: DbProbe) -> Exception | None:
+def not_there(probe: DbProbe) -> str:
+    """What to say where no database is."""
+    if probe.kind == "live":
+        return "There is no Messages database on this Mac."
+    return f"There is no file at {probe.path}."
+
+
+def no_messages(probe: DbProbe) -> str:
+    """What to say of a database that holds no message to keep."""
+    if probe.kind == "live":
+        return "Messages holds no messages on this Mac."
+    return f"The copy at {probe.path} holds no messages."
+
+
+def not_messages(probe: DbProbe, said: str = "") -> str:
+    """What to say of a file that is not a database of Messages. `said` is what a check found, in brackets."""
+    what = "The file that Messages keeps on this Mac" if probe.kind == "live" else f"The copy at {probe.path}"
+    return f"{what} is not a Messages database{said}."
+
+
+def not_read(probe: DbProbe, said: str = "") -> str:
+    """What to say of a database that could not be read, when nothing more is known."""
+    what = "The Messages database on this Mac" if probe.kind == "live" else f"The copy at {probe.path}"
+    return f"{what} could not be read{said}."
+
+
+def held(probe: DbProbe) -> str:
+    """What to say of a database that another program holds."""
+    if probe.kind == "live":
+        return "The Messages database on this Mac is busy. Quit Messages or wait a moment, then try again."
+    return f"The copy at {probe.path} is busy. Close the app that has it open, then try again."
+
+
+def why_unreadable(probe: DbProbe, note: str) -> ImportStopped | None:
     """What stops an import before it starts, or None when the database can be tried.
 
     The check tells a database macOS keeps closed from one that is not there:
-    without Full Disk Access macOS can show the file as missing.
+    without Full Disk Access macOS can show the file as missing. `note` is
+    what the reason says of the archive (archive_note): nothing when there is
+    no archive.
     """
     # a busy database is tried: Messages may only be in the middle of a write
     if probe.status in ("readable", "locked"):
         return None
-    live = probe.kind == "live"
-    if probe.status == "fda_blocked":
-        return PermissionError(f"{closed_to_recall(probe)} {ARCHIVE_KEPT}")
-    if probe.status == "missing":
-        where = "There is no Messages database on this Mac." if live else f"There is no file at {probe.path}."
-        return FileNotFoundError(f"{where} {ARCHIVE_KEPT}")
-    if probe.status == "empty":
-        what = "Messages holds no messages on this Mac." if live else f"The copy at {probe.path} holds no messages."
-        return ValueError(f"{what} {ARCHIVE_KEPT}")
     said = f" ({probe.detail})" if probe.detail else ""
-    what = (
-        f"The Messages database on this Mac could not be read{said}."
-        if live
-        else f"The copy at {probe.path} is not a Messages database{said}."
+    if probe.status == "fda_blocked":
+        reason = closed_to_recall(probe)
+    elif probe.status == "missing":
+        reason = not_there(probe)
+    elif probe.status == "empty":
+        reason = no_messages(probe)
+    elif probe.status == "invalid":
+        reason = not_messages(probe, said)
+    else:
+        # the file could not be looked at: it is not said to be another kind of file
+        reason = not_read(probe, said)
+    return ImportStopped(f"{reason}{note}")
+
+
+def reading_stopped(exc: Exception, probe: DbProbe, note: str) -> ImportStopped:
+    """The plain sentence for what a reader raised.
+
+    What the reader raised is not put into the sentence: it can hold the text
+    of a query. Only an error of sqlite3 is read for signs of its kind.
+    """
+    signs = str(exc).lower() if isinstance(exc, sqlite3.Error) else ""
+    if any(sign in signs for sign in BUSY_SIGNS):
+        return DatabaseBusy(f"{held(probe)}{note}")
+    if any(sign in signs for sign in CLOSED_SIGNS):
+        return ImportStopped(f"{closed_to_recall(probe)}{note}")
+    if any(sign in signs for sign in NOT_MESSAGES_SIGNS):
+        return ImportStopped(f"{not_messages(probe)}{note}")
+    return ImportStopped(f"{not_read(probe)}{note}")
+
+
+def writing_stopped(exc: Exception, messages_path: Path, note: str) -> ImportStopped:
+    """The plain sentence for what stopped the writing of the archive. The files are as they were."""
+    reason = f": {exc.strerror}" if isinstance(exc, OSError) and exc.strerror else ""
+    return ImportStopped(
+        f"The archive could not be written to {messages_path.parent}{reason}.{note}"
     )
-    return ValueError(f"{what} {ARCHIVE_KEPT}")
+
+
+def archive_files(messages_path: Path) -> tuple[Path, Path, Path]:
+    """The three files of an archive, in the order an import moves them in.
+
+    The messages go in last. The archive is known by its messages file, so
+    when that one is new the other two already are.
+    """
+    return (
+        companion_data_path(messages_path, "_attachments.csv"),
+        companion_data_path(messages_path, "_reactions.csv"),
+        messages_path,
+    )
+
+
+def staging_path(target: Path) -> Path:
+    """Where a new file is written before it moves to its place."""
+    return target.with_name(f"{target.stem}.tmp-export{target.suffix}")
+
+
+def earlier_path(target: Path) -> Path:
+    """Where the file that was at a place is kept while the new files move in."""
+    return target.with_name(f"{target.stem}.before-update{target.suffix}")
+
+
+def discard(paths) -> None:
+    """Remove files that an import made for its own use. One that cannot be removed is left."""
+    for path in paths:
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+
+
+def keep_earlier(target: Path) -> bool:
+    """Keep the file at `target` under its earlier name. False when no file is there.
+
+    The earlier name is a second name for the same file where the volume can
+    do that, and a copy where it cannot.
+    """
+    earlier = earlier_path(target)
+    discard([earlier])
+    try:
+        os.link(target, earlier)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        shutil.copy2(target, earlier)
+    return True
+
+
+def restored(target: Path, had_earlier: bool) -> bool:
+    """Put one place back as it was before the import. False when that fails."""
+    earlier = earlier_path(target)
+    try:
+        if had_earlier:
+            os.replace(earlier, target)
+            # two names of one file: the move leaves the earlier name where it was
+            earlier.unlink(missing_ok=True)
+        else:
+            target.unlink(missing_ok=True)
+    except OSError:
+        return False
+    return True
+
+
+def unfinished(targets: tuple[Path, ...]) -> bool:
+    """True while an import has not finished its moves: the earlier messages file is still kept.
+
+    That file is kept first and given up last, so it stands for the whole
+    earlier generation.
+    """
+    return os.path.lexists(earlier_path(targets[-1]))
+
+
+def in_parts(stuck: list[tuple[Path, bool]], targets: tuple[Path, ...]) -> ArchiveInParts:
+    """What to say when a place could not be put back as it was. `stuck` holds each such place, and whether it had an earlier file."""
+    folder = targets[-1].parent
+    kept = [earlier_path(target).name for target, had_earlier in stuck if had_earlier]
+    left = [target.name for target, had_earlier in stuck if not had_earlier]
+    said = ["The import stopped part way, and the archive could not be put back as it was."]
+    if kept:
+        said.append(f"The earlier files are kept in {folder} as {', '.join(kept)}.")
+    if kept and unfinished(targets):
+        said.append("The next import puts them back.")
+    if left:
+        said.append(f"A new file could not be removed from {folder}: {', '.join(left)}.")
+    return ArchiveInParts(" ".join(said))
+
+
+def settle_earlier(targets: tuple[Path, ...]) -> bool:
+    """Deal with the earlier files that an import before this one left beside the archive.
+    True when the archive was put back.
+
+    While the earlier messages file is there, that import did not finish: the
+    process ended during the moves, or a file could not be put back. Each
+    earlier file is put back now, the messages last, so the archive is again
+    as it was before that import. With no earlier messages file, that import
+    finished, and what is left of its earlier files is removed.
+    """
+    others, messages = targets[:-1], targets[-1]
+    if not unfinished(targets):
+        discard(earlier_path(target) for target in others)
+        return False
+    stuck = [
+        (target, True)
+        for target in others
+        if os.path.lexists(earlier_path(target)) and not restored(target, True)
+    ]
+    # The earlier messages file goes last, and only when the others are back:
+    # while it is there, a later import still puts the others back.
+    if not stuck and not restored(messages, True):
+        stuck = [(messages, True)]
+    if stuck:
+        raise in_parts(stuck, targets)
+    return True
+
+
+def settle_default_archive() -> None:
+    """At the start of the server: put back what an import that the end of the process cut off left.
+
+    Until then each request reads new attachments or reactions beside the
+    earlier messages. Only the archive file of the app is known here; an
+    archive at another path is put back by its next import. A failure
+    changes nothing: the next import tries again and tells the reader.
+    """
+    with contextlib.suppress(Exception):
+        settle_earlier(archive_files(DEFAULT_MESSAGES_CSV))
+
+
+def move_in(targets: tuple[Path, ...]) -> None:
+    """Move each new file to its place, or leave every place as it was.
+
+    1. The files that are there are kept beside their places, as one earlier
+       generation, the messages first.
+    2. Each new file takes its place in one step, the messages last. A place
+       never stands empty, and a request served meanwhile reads a whole file.
+    3. The earlier messages file is given up. That finishes the import: until
+       then, the next import puts the earlier files back (settle_earlier).
+       The other earlier files are then removed.
+
+    When a step fails, the files moved so far are put back from the earlier
+    generation, the last one first.
+    """
+    messages = targets[-1]
+    had_earlier: dict[Path, bool] = {}
+    moved: list[Path] = []
+    stuck: list[tuple[Path, bool]] = []
+    try:
+        for target in reversed(targets):
+            had_earlier[target] = keep_earlier(target)
+        for target in targets:
+            os.replace(staging_path(target), target)
+            moved.append(target)
+        earlier_path(messages).unlink(missing_ok=True)
+    except BaseException as stopped:
+        stuck = [
+            (target, had_earlier[target])
+            for target in reversed(moved)
+            if not restored(target, had_earlier[target])
+        ]
+        if stuck:
+            # the messages file is as it was: it is kept again, to say that the import did not finish
+            with contextlib.suppress(OSError):
+                if messages not in dict(stuck) and not unfinished(targets):
+                    keep_earlier(messages)
+            raise in_parts(stuck, targets) from stopped
+        raise
+    finally:
+        # An earlier file that could not be put back is the only copy of what
+        # it holds. It stays, and so does the earlier messages file.
+        held = set(dict(stuck)) | ({messages} if stuck else set())
+        discard(earlier_path(target) for target in targets if target not in held)
+
+
+class ArchiveFrames(NamedTuple):
+    """What an archive holds, in the order that its files move in (archive_files)."""
+
+    attachments: pd.DataFrame
+    reactions: pd.DataFrame
+    messages: pd.DataFrame
+
+
+def read_database(db_path: Path) -> ArchiveFrames:
+    """All that an archive holds, read from one database before a file is written."""
+    path = str(db_path)
+    messages = extract_messages(path)
+    return ArchiveFrames(
+        attachments=extract_attachments(path),
+        reactions=extract_reactions(path),
+        messages=messages,
+    )
+
+
+def write_archive(frames: ArchiveFrames, messages_path: Path) -> None:
+    """Write the files of the archive, all of them or none."""
+    targets = archive_files(messages_path)
+    try:
+        messages_path.parent.mkdir(parents=True, exist_ok=True)
+        for target, frame in zip(targets, frames):
+            frame.to_csv(staging_path(target), index=False)
+        move_in(targets)
+    finally:
+        discard(staging_path(target) for target in targets)
 
 
 def export_database(db_path: Path, messages_path: Path) -> dict:
     """Write the archive from one database: messages, attachments, reactions.
 
     Nothing is merged in from a second source, so the archive holds what the
-    database holds. All three are read before a file is written, and each file
-    is written beside its place and moved in whole: a failure leaves the
-    archive as it was, and a request served meanwhile reads a complete file.
+    database holds. All three are read before a file is written. The files are
+    then written beside their places and moved in (move_in): a failure at any
+    step leaves the three files as they were. What an import before this one
+    could not finish is put back first (settle_earlier).
+
+    All three files are written each time. A database with no attachments or
+    no reactions gives a file with only its header, so no figure of an earlier
+    archive stays beside new messages. A database with no message to keep is
+    not imported: the archive would be empty.
     """
+    # What an import before this one could not finish is put back first, and
+    # the files that it left half written are removed.
+    targets = archive_files(messages_path)
+    put_back = settle_earlier(targets)
+    discard(staging_path(target) for target in targets)
+    archive_there = path_exists(messages_path)
+    note = archive_note(archive_there, put_back)
     probe = probe_database(db_path)
-    stopped = why_unreadable(probe)
+    stopped = why_unreadable(probe, note)
     if stopped:
         raise stopped
     try:
-        messages = extract_messages(str(db_path))
-        attachments = extract_attachments(str(db_path))
-        reactions = extract_reactions(str(db_path))
-    except sqlite3.OperationalError as exc:
-        if any(sign in str(exc).lower() for sign in ("unable to open", "permission", "not permitted", "authoriz")):
-            raise PermissionError(f"{closed_to_recall(probe)} {ARCHIVE_KEPT}") from exc
-        raise
-
-    # The messages go in last. The archive is known by its messages file, so
-    # when that one is new the other two already are.
-    files = (
-        (messages_path.with_name(f"{messages_path.stem}_attachments.csv"), attachments),
-        (messages_path.with_name(f"{messages_path.stem}_reactions.csv"), reactions),
-        (messages_path, messages),
-    )
-    # a database with no attachments or no reactions writes no file for them
-    staged = [
-        (target.with_name(f"{target.stem}.tmp-export{target.suffix}"), target, frame)
-        for target, frame in files
-        if target == messages_path or not frame.empty
-    ]
-    messages_path.parent.mkdir(parents=True, exist_ok=True)
+        frames = read_database(db_path)
+    except Exception as exc:  # noqa: BLE001 - whatever a reader raises is told in a plain sentence
+        raise reading_stopped(exc, probe, note) from exc
+    if frames.messages.empty:
+        raise ImportStopped(f"{no_messages(probe)}{note}")
     try:
-        for staging, _, frame in staged:
-            frame.to_csv(staging, index=False)
-        for staging, target, _ in staged:
-            os.replace(staging, target)
-    finally:
-        for staging, _, _ in staged:
-            staging.unlink(missing_ok=True)
+        write_archive(frames, messages_path)
+    except ImportStopped:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the files are as they were, and the reader is told so
+        raise writing_stopped(exc, messages_path, note) from exc
+    # the files are in place: nothing after this is a reason to say that the import failed
+    with contextlib.suppress(Exception):
+        forget_previews()
 
     return {
-        "messages": len(messages),
-        "attachments": len(attachments),
-        "reactions": len(reactions),
+        "messages": len(frames.messages),
+        "attachments": len(frames.attachments),
+        "reactions": len(frames.reactions),
         "messagesPath": str(messages_path),
     }
+
+
+def forget_previews() -> None:
+    """Drop every preview that the server keeps. After an import, none of the earlier archive is shown."""
+    with PREVIEW_CACHE_LOCK:
+        PREVIEW_CACHE.clear()
+    clear_cache_namespace(PREVIEW_CACHE_NAMESPACE)
 
 
 def export_when_free(job_id: str, db_path: Path, messages_path: Path) -> dict:
     """Export, and try once more when the database is busy: Messages may be in the middle of a write."""
     try:
         return export_database(db_path, messages_path)
-    except (sqlite3.Error, pd.errors.DatabaseError) as exc:
-        if not any(sign in str(exc).lower() for sign in ("locked", "busy")):
-            raise
+    except DatabaseBusy:
         append_log(job_id, "The database is busy. Trying again in a moment")
-        time.sleep(2)
+        time.sleep(BUSY_WAIT_SECONDS)
         return export_database(db_path, messages_path)
 
 
-def refuse_second_import(job_id: str) -> None:
-    """One import writes the archive at a time."""
-    with JOBS_LOCK:
-        running = any(
-            job["id"] != job_id
-            and job["action"] in {"setup_import", "export"}
-            and job["status"] in {"queued", "running"}
-            for job in JOBS.values()
-        )
-    if running:
-        raise ValueError("An import is already running.")
+JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "semantic"})
+IMPORT_ACTIONS = frozenset({"setup_import", "export"})
+UNFINISHED = frozenset({"queued", "running"})
+INDEX_ACTIONS = frozenset({"semantic"})
+# Jobs that do not run together: the job that is asked for, the jobs that
+# hold it up, and what the reader is told. Each import writes the archive and
+# each build writes the index. The index is of one archive, so an import
+# during a build would leave the index out of date as soon as it is paid for.
+ONE_AT_A_TIME = (
+    (IMPORT_ACTIONS, IMPORT_ACTIONS, "An import is already running. Wait until it ends."),
+    (IMPORT_ACTIONS, INDEX_ACTIONS, "The meaning index is being built. Wait until it ends, then import."),
+    (INDEX_ACTIONS, INDEX_ACTIONS, "A semantic index build is already running."),
+    (INDEX_ACTIONS, IMPORT_ACTIONS, "An import is running. Wait until it ends, then build the index."),
+)
+
+
+class JobRefused(Exception):
+    """A request for a job that makes no job. `status` is the answer to the request."""
+
+    def __init__(self, message: str, status: int = 409):
+        super().__init__(message)
+        self.status = status
+
+
+def usable_path(value, what: str) -> None:
+    """Refuse a path that is not text, or that no system can hold. A path that is not given is the default."""
+    if not value:
+        return
+    if not isinstance(value, str):
+        raise JobRefused(f"The path of {what} must be text.", 400)
+    try:
+        safe_path(value)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise JobRefused(f"The path of {what} cannot be used.", 400) from exc
+
+
+def check_request(action, payload: dict) -> None:
+    """Refuse a request that cannot be a job. Raises JobRefused, and no job is made."""
+    if not isinstance(action, str):
+        raise JobRefused("The action must be text.", 400)
+    if action not in JOB_ACTIONS:
+        raise JobRefused(f"Unknown job action: {action}", 400)
+    usable_path(payload.get("messagesPath"), "the archive")
+    usable_path(payload.get("outDir"), "the reports folder")
+    if action == "setup_import":
+        usable_path(payload.get("dbPath"), "the copy")
+        if not isinstance(payload.get("includeContacts", True), bool):
+            raise JobRefused("includeContacts must be true or false.", 400)
+        try:
+            # only a first setup can name a copy
+            database_for(action, payload)
+        except ImportStopped as stopped:
+            raise JobRefused(str(stopped), 409) from stopped
+
+
+def refuse_a_second(action: str) -> None:
+    """Refuse a job while a job that holds it up is not ended. The caller holds JOBS_LOCK."""
+    unfinished_actions = {job["action"] for job in JOBS.values() if job["status"] in UNFINISHED}
+    for asked, held_up_by, sentence in ONE_AT_A_TIME:
+        if action in asked and unfinished_actions & held_up_by:
+            raise JobRefused(sentence)
 
 
 def job_record(action: str, payload: dict) -> dict:
@@ -461,11 +833,27 @@ def job_record(action: str, payload: dict) -> dict:
     }
 
 
+def job_copy(job: dict) -> dict:
+    """A job as it is now, for an answer. It shares no list with the job, which changes in its own thread."""
+    return {**job, "logs": list(job["logs"])}
+
+
 def create_job(action: str, payload: dict) -> dict:
+    """Make a job and start it. Raises JobRefused when no job is made.
+
+    Whether a second import can run is decided here, once, with the list of
+    jobs held. A job is in the list as queued from this moment, so two
+    imports asked for together cannot each find the other and both stop.
+    """
+    check_request(action, payload)
     job = job_record(action, payload)
     job_id = job["id"]
     with JOBS_LOCK:
+        refuse_a_second(action)
         JOBS[job_id] = job
+        # The answer is the job as it was made. The job itself changes in its
+        # own thread, and it can end before the answer is written.
+        made = job_copy(job)
         # prune finished jobs so a long session doesn't grow memory unbounded
         if len(JOBS) > 60:
             for old_id in [
@@ -476,8 +864,13 @@ def create_job(action: str, payload: dict) -> dict:
                 JOBS.pop(old_id, None)
 
     thread = threading.Thread(target=run_job, args=(job_id, action, payload), daemon=True)
-    thread.start()
-    return job
+    try:
+        thread.start()
+    except RuntimeError as exc:
+        # a job that never starts would stay queued and hold up every later job of its group
+        update_job(job_id, status="failed", error="The job could not be started.")
+        raise JobRefused("The job could not be started. Try again.", 500) from exc
+    return made
 
 
 class _JobStreamRouter(io.TextIOBase):
@@ -511,7 +904,10 @@ class _JobStreamRouter(io.TextIOBase):
         return self._target().write(text)
 
     def flush(self):
-        self._target().flush()
+        target = self._target()
+        # at the end of the process the stream can be closed before this is
+        if not getattr(target, "closed", False):
+            target.flush()
 
 
 _JOB_STDOUT = _JobStreamRouter(sys.stdout)
@@ -519,34 +915,58 @@ _JOB_STDERR = _JobStreamRouter(sys.stderr)
 
 
 SETUP_MARKER_PATH = SAVES_DIR / "setup.json"
+SETUP_MARKER_KEYS = ("completed", "skipped", "firstWordsShown")
+# the record is read, changed and written by one request at a time
+SETUP_MARKER_LOCK = threading.Lock()
 
 
 def read_setup_marker() -> dict:
-    """How far setup got. A path picked in an earlier setup is not kept: a
-    pick is for the one import it was made for."""
+    """How far setup got: the three things that can be recorded, each true or
+    false. A path picked in an earlier setup is not kept: a pick is for the
+    one import it was made for. A value that an earlier build wrote as text
+    or as a number says nothing."""
     try:
         marker = json.loads(SETUP_MARKER_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     if not isinstance(marker, dict):
         return {}
-    return {key: value for key, value in marker.items() if key != "pickedDbPath"}
+    return {key: marker[key] for key in SETUP_MARKER_KEYS if isinstance(marker.get(key), bool)}
 
 
-def setup_marker_updates(payload: dict) -> dict:
-    """What the client may record about setup: how far it got, and no path."""
-    return {key: bool(payload[key]) for key in ("completed", "skipped", "firstWordsShown") if key in payload}
+def setup_marker_updates(payload) -> dict:
+    """What the client may record about setup: how far it got, and no path.
+
+    Only true and false are taken. Text such as "false" says nothing, and a
+    body that is not a record records nothing.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    return {key: payload[key] for key in SETUP_MARKER_KEYS if isinstance(payload.get(key), bool)}
 
 
 def write_setup_marker(updates: dict) -> dict:
     """Persist onboarding state server-side: WKWebView localStorage can be
-    cleared while saves/ survives. Atomic so a crash never corrupts it."""
-    marker = {**read_setup_marker(), **updates}
-    SAVES_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SETUP_MARKER_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(marker, indent=1), encoding="utf-8")
-    os.replace(tmp, SETUP_MARKER_PATH)
-    return marker
+    cleared while saves/ survives. Atomic so a crash never corrupts it. With
+    nothing to record, nothing is written."""
+    with SETUP_MARKER_LOCK:
+        marker = {**read_setup_marker(), **updates}
+        if not updates:
+            return marker
+        SAVES_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = SETUP_MARKER_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(marker, indent=1), encoding="utf-8")
+        os.replace(tmp, SETUP_MARKER_PATH)
+        return marker
+
+
+def access_to_messages(probe: DbProbe) -> str:
+    """Whether macOS lets this app read Messages: granted, denied, or missing when there is no database."""
+    if probe.status == "fda_blocked":
+        return "denied"
+    if probe.status == "missing":
+        return "missing"
+    return "granted"
 
 
 def setup_status_payload(db_path: Path | None, messages_path: Path, deep: bool = False) -> dict:
@@ -568,12 +988,37 @@ def setup_status_payload(db_path: Path | None, messages_path: Path, deep: bool =
             "firstYear": probe.first_year,
             "lastYear": probe.last_year,
         },
-        "export": {"exists": export_exists, "path": str(messages_path)},
+        # holdsMessages is the test for "is this an update": the guide and database_for use the same one
+        "export": {"exists": export_exists, "path": str(messages_path), "holdsMessages": holds_messages(messages_path)},
         "setup": read_setup_marker(),
     }
 
 
+def fail_unfinished(job_id: str) -> None:
+    """Mark a job as failed when its work is over and the list still says queued or running.
+
+    However a job ends, it must not stay unfinished: it would hold up every
+    later job of its group.
+    """
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job and job["status"] in UNFINISHED:
+            job.update(
+                status="failed",
+                error="The job stopped before it ended.",
+                updatedAt=datetime.now().isoformat(timespec="seconds"),
+            )
+
+
 def run_job(job_id: str, action: str, payload: dict):
+    """Do the work of a job in its thread. When this returns or raises, the job is ended in the list."""
+    try:
+        work_job(job_id, action, payload)
+    finally:
+        fail_unfinished(job_id)
+
+
+def work_job(job_id: str, action: str, payload: dict):
     update_job(job_id, status="running")
     writer = JobWriter(job_id)
     _JOB_STDOUT.register(writer)
@@ -582,7 +1027,6 @@ def run_job(job_id: str, action: str, payload: dict):
         with contextlib.redirect_stdout(_JOB_STDOUT), contextlib.redirect_stderr(_JOB_STDERR):
             if action == "export":
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
-                refuse_second_import(job_id)
                 append_log(job_id, "Reading Messages")
                 result = export_when_free(job_id, database_for(action, payload), messages_path)
             elif action == "analyze":
@@ -628,12 +1072,11 @@ def run_job(job_id: str, action: str, payload: dict):
             elif action == "setup_import":
                 db_path = database_for(action, payload)
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
-                include_contacts = bool(payload.get("includeContacts", True))
-                refuse_second_import(job_id)
+                include_contacts = payload.get("includeContacts", True) is not False
 
                 update_job(job_id, progress={"step": 1, "of": 3, "label": "Reading your Messages database"})
                 append_log(job_id, "Reading Messages" if db_path == LIVE_CHAT_DB else f"Reading the copy at {db_path}")
-                export_when_free(job_id, db_path, messages_path)
+                exported = export_when_free(job_id, db_path, messages_path)
 
                 contacts_skipped = False
                 if include_contacts:
@@ -641,35 +1084,29 @@ def run_job(job_id: str, action: str, payload: dict):
                     append_log(job_id, "Matching names from Contacts")
                     try:
                         export_contact_names()
-                    except Exception as exc:
+                    except Exception:
                         # names are a nicety, never a blocker -- numbers still work
                         contacts_skipped = True
-                        append_log(job_id, f"Contacts skipped: {exc}")
+                        append_log(job_id, "Contacts could not be read. Some people show as numbers.")
+                        with contextlib.suppress(Exception):
+                            traceback.print_exc(file=sys.__stderr__)
 
                 update_job(job_id, progress={"step": 3, "of": 3, "label": "Getting your archive ready"})
                 append_log(job_id, "Warming the archive")
-                df, catalog, _names = cached_messages_bundle(messages_path)
-                years = read_times(df["timestamp"]).dt.year.dropna()
-                result = {
-                    "messages": int(len(df)),
-                    "conversations": int(len(catalog)),
-                    "firstYear": int(years.min()) if len(years) else None,
-                    "lastYear": int(years.max()) if len(years) else None,
-                    "contactsSkipped": contacts_skipped,
-                }
+                # The three files are in place, so the import did its work. A
+                # count that fails after that is a warning, not a failed import.
+                try:
+                    counted = what_the_archive_holds(messages_path)
+                except Exception:
+                    append_log(job_id, WRITTEN_NOT_COUNTED)
+                    with contextlib.suppress(Exception):
+                        traceback.print_exc(file=sys.__stderr__)
+                    counted = {"messages": exported["messages"], "warning": WRITTEN_NOT_COUNTED}
+                result = {**counted, "contactsSkipped": contacts_skipped}
             elif action == "semantic":
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
                 if not path_exists(messages_path):
                     raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
-                with JOBS_LOCK:
-                    duplicate = any(
-                        j["id"] != job_id
-                        and j["action"] == "semantic"
-                        and j["status"] in {"queued", "running"}
-                        for j in JOBS.values()
-                    )
-                if duplicate:
-                    raise ValueError("A semantic index build is already running.")
                 append_log(job_id, "Building semantic index")
                 df, _, _ = cached_messages_bundle(messages_path)
                 summary = sem.build_index(
@@ -684,6 +1121,14 @@ def run_job(job_id: str, action: str, payload: dict):
                 raise ValueError(f"Unknown job action: {action}")
         writer.flush()
         update_job(job_id, status="completed", result=result)
+    except ImportStopped as exc:
+        update_job(job_id, status="failed", error=str(exc))
+        # What led to the sentence is for the log of the server, not for the
+        # page. A log that cannot be written does not change how the job ended.
+        with contextlib.suppress(Exception):
+            writer.flush()
+            if exc.__cause__ is not None:
+                traceback.print_exception(exc, file=sys.__stderr__)
     except Exception as exc:
         writer.flush()
         append_log(job_id, traceback.format_exc())
@@ -1286,7 +1731,7 @@ def group_display_names_from_database(db_path: Path | None, chat_ids) -> dict[st
         return {}
 
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        conn = open_read_only(db_path, timeout=2.0)
     except sqlite3.Error:
         return {}
     try:
@@ -1384,6 +1829,25 @@ def archive_summary(messages_path: Path) -> dict:
 
 _PATTERNS_CACHE: dict = {"sig": None, "value": None}
 _PATTERNS_LOCK = threading.Lock()
+
+
+WRITTEN_NOT_COUNTED = "The archive is written. Recall could not read it back to count it."
+
+
+def what_the_archive_holds(messages_path: Path) -> dict:
+    """What an import tells of the archive it wrote: the count that the Overview shows, and the years.
+
+    One count is used everywhere: a message in no conversation is shown
+    nowhere in the app, so it is not counted here either (archive_summary).
+    """
+    summary = archive_summary(messages_path)
+    first, last = summary["firstMessage"], summary["lastMessage"]
+    return {
+        "messages": summary["messages"],
+        "conversations": summary["conversations"],
+        "firstYear": int(first[:4]) if first else None,
+        "lastYear": int(last[:4]) if last else None,
+    }
 
 
 def archive_patterns(messages_path: Path) -> dict:
@@ -2801,8 +3265,15 @@ class RecallHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/jobs":
                 payload = parse_body(self)
-                action = payload.get("action", "analyze")
-                send_json(self, 202, {"job": create_job(action, payload)})
+                if not isinstance(payload, dict):
+                    send_json(self, 400, {"error": "The request must be a JSON object."})
+                    return
+                try:
+                    job = create_job(payload.get("action", "analyze"), payload)
+                except JobRefused as refused:
+                    send_json(self, refused.status, {"error": str(refused)})
+                    return
+                send_json(self, 202, {"job": job})
             elif parsed.path == "/api/contact-names":
                 try:
                     summary = export_contact_names()
@@ -2814,9 +3285,7 @@ class RecallHandler(BaseHTTPRequestHandler):
                     "message": summary.get("message") or f"Loaded {summary.get('count', 0):,} contacts.",
                 })
             elif parsed.path == "/api/cache/preview":
-                with PREVIEW_CACHE_LOCK:
-                    PREVIEW_CACHE.clear()
-                clear_cache_namespace(PREVIEW_CACHE_NAMESPACE)
+                forget_previews()
                 send_json(self, 200, {"cleared": True})
             elif parsed.path == "/api/setup/complete":
                 send_json(self, 200, {"setup": write_setup_marker(setup_marker_updates(parse_body(self)))})
@@ -2838,6 +3307,8 @@ class RecallHandler(BaseHTTPRequestHandler):
                 self.handle_ask_stream(payload)
             else:
                 send_json(self, 404, {"error": "Not found"})
+        except BadRequest as exc:
+            send_json(self, 400, {"error": str(exc)})
         except Exception as exc:
             send_json(self, 500, {"error": str(exc)})
 
@@ -2904,21 +3375,11 @@ class RecallHandler(BaseHTTPRequestHandler):
             messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             send_json(self, 200, {"firstWords": first_words_payload(messages_path)})
         elif parsed.path == "/api/permissions/fulldisk":
-            # the onboarding wizard polls this while the user flips Full Disk
-            # Access; probing the live chat.db is the only reliable signal
-            live_db = Path("~/Library/Messages/chat.db").expanduser()
-            status = "missing"
-            if live_db.exists():
-                try:
-                    conn = sqlite3.connect(f"file:{live_db}?mode=ro", uri=True)
-                    try:
-                        conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
-                    finally:
-                        conn.close()
-                    status = "granted"
-                except sqlite3.OperationalError:
-                    status = "denied"
-            send_json(self, 200, {"status": status, "dbPath": str(live_db)})
+            # the same check that the guide uses: it tells a database that macOS hides from one that is not there
+            send_json(self, 200, {
+                "status": access_to_messages(probe_database(LIVE_CHAT_DB)),
+                "dbPath": str(LIVE_CHAT_DB),
+            })
         elif parsed.path == "/api/semantic":
             messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             status = sem.index_status(SEMANTIC_DIR, file_cache_signature(messages_path))
@@ -2948,10 +3409,18 @@ class RecallHandler(BaseHTTPRequestHandler):
                     "archive": archive_summary(messages_path),
                 })
                 return
-            if why_unreadable(probe_database(db_path)):
+            probe = probe_database(db_path)
+            if why_unreadable(probe, note=""):
                 send_json(self, 400, {"error": f"There is no archive at {messages_path}, and Messages cannot be read."})
                 return
-            df = decorate_contacts_frame(list_contacts(str(db_path), limit=limit))
+            try:
+                listed = list_contacts(str(db_path), limit=limit)
+            except sqlite3.Error as exc:
+                # a busy database can be asked again; the reason is a plain sentence either way
+                stopped = reading_stopped(exc, probe, note="")
+                send_json(self, 503 if isinstance(stopped, DatabaseBusy) else 500, {"error": str(stopped)})
+                return
+            df = decorate_contacts_frame(listed)
             send_json(self, 200, {
                 "contacts": df.to_dict(orient="records"),
                 "source": "database",
@@ -2975,7 +3444,8 @@ class RecallHandler(BaseHTTPRequestHandler):
         elif parsed.path.startswith("/api/jobs/"):
             job_id = parsed.path.rsplit("/", 1)[-1]
             with JOBS_LOCK:
-                job = JOBS.get(job_id)
+                # a copy: the job changes in its own thread while the answer is written
+                job = job_copy(JOBS[job_id]) if job_id in JOBS else None
             if not job:
                 send_json(self, 404, {"error": "Job not found"})
                 return
@@ -3111,6 +3581,7 @@ def main():
     if BUNDLED:
         _retarget_streams_to_logfile()
     ensure_data_dirs()
+    settle_default_archive()
     host = os.environ.get("RECALL_UI_HOST", "127.0.0.1")
     port = int(os.environ.get("RECALL_UI_PORT", "8765"))
     server = LoopbackHTTPServer((host, port), RecallHandler)

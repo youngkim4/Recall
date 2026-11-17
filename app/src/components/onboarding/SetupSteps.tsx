@@ -1,5 +1,6 @@
 import { recallBridge } from '../../lib/bridge'
 import { plural } from '../../lib/format'
+import { offersCopy, revealsFirstWords } from '../../lib/setupGuide'
 import type { SetupImportResult } from '../../types'
 import { OtherSource } from './OtherSource'
 
@@ -34,6 +35,8 @@ export function WelcomeStep({ onStart, onSkip }: { onStart: () => void; onSkip: 
 }
 
 type PermissionStepProps = SourceProps & {
+  // true for an update: after Recall opens again, the update is started again by hand
+  rerun: boolean
   // true once the reader has been to System Settings and come back
   returnedFromSettings: boolean
   onOpenSettings: () => void
@@ -41,7 +44,11 @@ type PermissionStepProps = SourceProps & {
   onSkip: () => void
 }
 
+// the way out of a step that asks for something: an update goes back to the app
+const wayOut = (rerun: boolean) => (rerun ? 'Not now' : 'Skip for now')
+
 export function PermissionStep({
+  rerun,
   returnedFromSettings,
   pickBusy,
   pickError,
@@ -70,15 +77,25 @@ export function PermissionStep({
           </button>
         ) : null}
         <button type="button" className="btn quiet lg" onClick={onSkip}>
-          Skip for now
+          {wayOut(rerun)}
         </button>
       </div>
       {returnedFromSettings ? (
-        // macOS applies the permission when an app starts, so the last step is a fresh start
+        // macOS applies the permission when an app starts, so the last step is a fresh start.
+        // A first setup carries on by itself after that; an update is not kept, and is started again.
         <div className="notice setup-notice">
           <p>
-            <strong>Reopen Recall to finish.</strong> macOS applies Full Disk Access when an app starts. Setup carries
-            on from here.
+            {rerun ? (
+              <>
+                <strong>Reopen Recall, then choose Update again.</strong> macOS applies Full Disk Access when an app
+                starts.
+              </>
+            ) : (
+              <>
+                <strong>Reopen Recall to finish.</strong> macOS applies Full Disk Access when an app starts. Setup
+                carries on from here.
+              </>
+            )}
           </p>
           {recallBridge.available ? (
             <button type="button" className="btn" onClick={onRelaunch}>
@@ -94,12 +111,13 @@ export function PermissionStep({
           Waiting for access
         </p>
       )}
-      <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} />
+      {offersCopy(rerun) ? <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} /> : null}
     </>
   )
 }
 
 type NoMessagesStepProps = SourceProps & {
+  rerun: boolean
   // missing: no database on this Mac; empty: a database with nothing in it
   variant: 'missing' | 'empty'
   // true after "Check again" found the same thing
@@ -109,6 +127,7 @@ type NoMessagesStepProps = SourceProps & {
 }
 
 export function NoMessagesStep({
+  rerun,
   variant,
   stillNothing,
   pickBusy,
@@ -122,9 +141,11 @@ export function NoMessagesStep({
     <>
       <h1>{variant === 'missing' ? 'No Messages database on this Mac' : 'Your Messages history is empty'}</h1>
       <p className="setup-lead">
-        {variant === 'missing'
-          ? 'Recall looked in ~/Library/Messages and found no chat.db. If your messages are on another Mac, copy chat.db from it and choose the copy below.'
-          : 'The database is there with nothing in it. If you signed in to iCloud a moment ago, Messages may still be syncing.'}
+        {variant === 'empty'
+          ? 'The database is there with nothing in it. If you signed in to iCloud a moment ago, Messages may still be syncing.'
+          : rerun
+            ? 'Recall looked in ~/Library/Messages and found no chat.db. An update reads Messages on this Mac. Open Messages and sign in, then check again.'
+            : 'Recall looked in ~/Library/Messages and found no chat.db. If your messages are on another Mac, copy chat.db from it and choose the copy below.'}
       </p>
       {stillNothing ? (
         <p className="setup-note" role="status">
@@ -136,24 +157,29 @@ export function NoMessagesStep({
           Check again
         </button>
         <button type="button" className="btn quiet lg" onClick={onSkip}>
-          Skip for now
+          {wayOut(rerun)}
         </button>
       </div>
-      <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} />
+      {offersCopy(rerun) ? <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} /> : null}
     </>
   )
 }
 
 type DbProblemStepProps = SourceProps & {
-  // locked: Messages is writing to it; invalid: the file is not a Messages database
-  variant: 'invalid' | 'locked'
+  rerun: boolean
+  // invalid: the file that Messages keeps is not a database of Messages; unread: it could not be looked at
+  variant: 'invalid' | 'unread'
   // what the check said, in its own words
   detail: string
   onRetry: () => void
   onBack: () => void
 }
 
+// Messages itself cannot be read as a database. A copy that cannot be read
+// never comes here: it is refused where it is chosen. A first setup can go on
+// from a copy; an update cannot.
 export function DbProblemStep({
+  rerun,
   variant,
   detail,
   pickBusy,
@@ -165,11 +191,12 @@ export function DbProblemStep({
 }: DbProblemStepProps) {
   return (
     <>
-      <h1>{variant === 'locked' ? 'The Messages database is busy' : 'That file is not a Messages database'}</h1>
+      <h1>Recall cannot read the Messages database</h1>
       <p className="setup-lead">
-        {variant === 'locked'
-          ? 'Messages is writing to it. Quit Messages or wait a moment, then try again.'
-          : 'Choose the file named chat.db, not chat.db-wal or chat.db-shm. When you copy it, bring all three files so the newest messages come too.'}
+        {variant === 'invalid'
+          ? 'The file that Messages keeps on this Mac, ~/Library/Messages/chat.db, is not a Messages database.'
+          : 'The file that Messages keeps on this Mac, ~/Library/Messages/chat.db, could not be read.'}
+        {rerun ? ' An update reads Messages on this Mac. Open Messages, wait until your conversations show, then try again.' : null}
       </p>
       {detail ? <p className="setup-note">{detail}</p> : null}
       <div className="setup-actions">
@@ -177,12 +204,10 @@ export function DbProblemStep({
           Try again
         </button>
         <button type="button" className="btn quiet lg" onClick={onBack}>
-          Back
+          {rerun ? 'Not now' : 'Back'}
         </button>
       </div>
-      {variant === 'invalid' ? (
-        <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} />
-      ) : null}
+      {offersCopy(rerun) ? <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} /> : null}
     </>
   )
 }
@@ -210,6 +235,7 @@ export function DoneStep({ result, rerun, onFinish }: DoneStepProps) {
     <>
       <h1>Your archive is ready</h1>
       {counted.length ? <p className="setup-lead">{counted.join(', ')}</p> : null}
+      {result?.warning ? <p className="setup-note">{result.warning}</p> : null}
       {result?.contactsSkipped ? (
         <p className="setup-note">
           Contacts could not be read, so some people show as numbers. Read them again from Settings at any time.
@@ -217,7 +243,7 @@ export function DoneStep({ result, rerun, onFinish }: DoneStepProps) {
       ) : null}
       <div className="setup-actions">
         <button type="button" className="btn primary lg" onClick={onFinish}>
-          {rerun ? 'Done' : 'Show my first words'}
+          {revealsFirstWords(rerun, result) ? 'Show my first words' : 'Done'}
         </button>
       </div>
     </>

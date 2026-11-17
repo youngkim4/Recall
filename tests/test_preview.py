@@ -297,3 +297,25 @@ def test_a_preview_is_never_of_a_conversation_that_only_holds_the_id_asked_for(t
     with pytest.raises(ValueError, match="No messages found"):
         preview(csv, AVERY[:-1])
     assert preview(csv, AVERY)["stats"]["totalMessages"] == 2
+
+
+def test_a_large_archive_is_read_with_no_warning_about_its_columns(tmp_path):
+    """A column that is empty for many rows and then holds text was read in
+    parts, and pandas wrote a warning that went to the lines of the job."""
+    import warnings
+
+    from conversation import load_messages
+
+    rows = ["message_id,timestamp,sender,text,chat_id,is_from_me,service,attachment_types"]
+    rows += [f"{place},2024-01-01 10:00:00,+15550100,invented text {place},+15550100,1,iMessage," for place in range(1, 260_001)]
+    rows += ["260001,2024-01-02 10:00:00,+15550100,with a photo,+15550100,1,iMessage,image/jpeg"]
+    path = tmp_path / "messages.csv"
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    with warnings.catch_warnings(record=True) as raised:
+        warnings.simplefilter("always")
+        frame = load_messages(str(path))
+
+    assert len(frame) == 260_001
+    assert [str(warning.message)[:40] for warning in raised] == []
+
