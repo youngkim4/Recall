@@ -1,15 +1,19 @@
 import { formatNumber, plural } from '../../lib/format'
-import { isActiveJob, lastLog } from '../../lib/jobs'
-import { failedHeading } from '../../lib/setupGuide'
+import { lastLog } from '../../lib/jobs'
+import { failedHeading, type ImportView } from '../../lib/setupGuide'
 import type { Job, SetupStatus } from '../../types'
 import { CheckIcon } from '../Icons'
 
 type ImportStepProps = {
+  // before the import is started, while it runs, or after it stopped
+  view: ImportView
   // the check of what will be read: Messages itself, or the copy that was chosen
   status: SetupStatus
   // the import, once it has been started
   job: Job | null
   rerun: boolean
+  // the request to start is on its way: nothing here can be pressed until it is answered
+  starting: boolean
   onStart: () => void
   onRetry: () => void
   onBack: () => void
@@ -33,18 +37,18 @@ function sizeOf(db: SetupStatus['db']) {
 
 // Before, during and after the import: what will be read, how far it has got,
 // or why it stopped.
-export function ImportStep({ status, job, rerun, onStart, onRetry, onBack }: ImportStepProps) {
+export function ImportStep({ view, status, job, rerun, starting, onStart, onRetry, onBack }: ImportStepProps) {
   // a copy is read only because it was chosen in this guide, and the reader is told what that does
   const fromCopy = status.db.kind === 'copy'
   // Back gives a copy up. An update that reads Messages itself has only the app to go back to.
   const wayBack = rerun && !fromCopy ? 'Not now' : 'Back'
 
-  if (job?.status === 'failed') {
+  if (view === 'failed') {
     return (
       <>
-        <h1>{failedHeading(job, rerun)}</h1>
+        <h1>{failedHeading({ id: job?.id ?? '' }, rerun)}</h1>
         {/* the reason says whether the archive was changed, where the server knows */}
-        {job.error ? (
+        {job?.error ? (
           <p className="notice bad" role="alert">
             {job.error}
           </p>
@@ -62,7 +66,7 @@ export function ImportStep({ status, job, rerun, onStart, onRetry, onBack }: Imp
     )
   }
 
-  if (isActiveJob(job)) {
+  if (view === 'running') {
     const current = job?.progress?.step || 1
     const said = lastLog(job?.logs)
     return (
@@ -110,10 +114,11 @@ export function ImportStep({ status, job, rerun, onStart, onRetry, onBack }: Imp
         </p>
       ) : null}
       <div className="setup-actions">
-        <button type="button" className="btn primary lg" onClick={onStart}>
-          {rerun ? 'Update archive' : 'Import messages'}
+        <button type="button" className="btn primary lg" disabled={starting} onClick={onStart}>
+          {starting ? <span className="spinner" /> : null}
+          {starting ? 'Starting' : rerun ? 'Update archive' : 'Import messages'}
         </button>
-        <button type="button" className="btn quiet lg" onClick={onBack}>
+        <button type="button" className="btn quiet lg" disabled={starting} onClick={onBack}>
           {wayBack}
         </button>
       </div>

@@ -4,10 +4,14 @@ import type { Job, SetupDbStatus, SetupState, SetupStatus } from '../types.ts'
 import {
   canImport,
   failedHeading,
+  foundTheSame,
   frameStep,
   guideStep,
   importRequest,
+  importView,
   interruptedReason,
+  noNotes,
+  noted,
   notStartedJob,
   revealsFirstWords,
   stepForDatabase,
@@ -121,6 +125,27 @@ test('when the archive is ready the guide says so', () => {
   const step = guideStep({ stage: 'done', job: job({ status: 'completed' }), picked: null, live: checked('readable', true) })
 
   assert.equal(step, 'done')
+  // whatever else is still known
+  for (const status of ['running', 'failed'] as const) {
+    const still = guideStep({ stage: 'done', job: job({ status }), picked: copyAt('/copies/chat.db'), live: checked('missing', true) })
+
+    assert.equal(still, 'done', status)
+  }
+})
+
+test('an import that was started comes before the copy it reads', () => {
+  const live = checked('fda_blocked', true)
+  const picked = copyAt('/copies/chat.db')
+
+  assert.equal(guideStep({ stage: 'source', job: job({ status: 'running' }), picked, live }), 'import_running')
+  assert.equal(guideStep({ stage: 'source', job: job({ status: 'failed' }), picked, live }), 'import_failed')
+})
+
+test('the import step shows one of three views, and the others none', () => {
+  assert.equal(importView('import'), 'ready')
+  assert.equal(importView('import_running'), 'running')
+  assert.equal(importView('import_failed'), 'failed')
+  for (const step of ['welcome', 'permission', 'no_messages', 'db_problem', 'done'] as const) assert.equal(importView(step), null)
 })
 
 test('a copy that was chosen is offered for import, whatever Messages itself allows', () => {
@@ -169,6 +194,12 @@ test('with no archive file set, the server writes its own', () => {
 
 test('a copy is named only when one was chosen, and with the archive file', () => {
   const request = importRequest({ archivePath: '/elsewhere/mine.csv', copyPath: '/copies/chat.db' })
+
+  assert.deepEqual(request, { messagesPath: '/elsewhere/mine.csv', dbPath: '/copies/chat.db', includeContacts: true })
+})
+
+test('the path of the archive is sent without the spaces around it, also with a copy', () => {
+  const request = importRequest({ archivePath: '  /elsewhere/mine.csv ', copyPath: '/copies/chat.db' })
 
   assert.deepEqual(request, { messagesPath: '/elsewhere/mine.csv', dbPath: '/copies/chat.db', includeContacts: true })
 })
@@ -230,3 +261,38 @@ test('the first words are shown after the first setup, and not after an update',
   // an archive that was already there brought nothing in
   assert.equal(revealsFirstWords(false, null), false)
 })
+
+test('a step starts with nothing told at it', () => {
+  assert.deepEqual(noNotes('permission'), { step: 'permission', pickError: '', returnedFromSettings: false, sameAgain: false })
+})
+
+test('what is told at a step is kept with what was told there before', () => {
+  const first = noted(noNotes('permission'), 'permission', { returnedFromSettings: true })
+  const second = noted(first, 'permission', { pickError: 'That file could not be read.' })
+
+  assert.deepEqual(second, {
+    step: 'permission',
+    pickError: 'That file could not be read.',
+    returnedFromSettings: true,
+    sameAgain: false,
+  })
+  // the first notes are not changed
+  assert.equal(first.pickError, '')
+})
+
+test('what is told for a step that is no longer showing is dropped', () => {
+  const showing = noNotes('no_messages')
+
+  // an answer that comes late, for the step the reader has left
+  assert.equal(noted(showing, 'permission', { pickError: 'That file could not be read.' }), showing)
+})
+
+test('a second check found the same only when it got an answer and the answer is the same', () => {
+  assert.equal(foundTheSame('missing', checked('missing', false)), true)
+  // another kind of nothing is not the same thing again
+  assert.equal(foundTheSame('missing', checked('empty', false)), false)
+  assert.equal(foundTheSame('missing', checked('readable', false)), false)
+  // a check that got no answer found nothing
+  assert.equal(foundTheSame('missing', null), false)
+})
+

@@ -50,11 +50,50 @@ export function guideStep(input: {
   return input.picked ? 'import' : stepForDatabase(input.live.db.status)
 }
 
+// What the import step shows: the import before it is started, while it
+// runs, or after it stopped. Another step shows none of them.
+export type ImportView = 'ready' | 'running' | 'failed'
+
+export function importView(step: GuideStep): ImportView | null {
+  if (step === 'import') return 'ready'
+  if (step === 'import_running') return 'running'
+  return step === 'import_failed' ? 'failed' : null
+}
+
 // which of the four marks at the top a step lights
 export function frameStep(step: GuideStep) {
   if (step === 'welcome') return 0
   if (step === 'done') return 3
-  return step === 'import' || step === 'import_running' || step === 'import_failed' ? 2 : 1
+  return importView(step) ? 2 : 1
+}
+
+// What the reader was told at a step. It belongs to that step: when another
+// step shows, it is gone, and it does not come back with the step.
+export type StepNotes = {
+  step: GuideStep
+  // why the copy that was tried cannot be used
+  pickError: string
+  // the reader went to System Settings and came back to the window
+  returnedFromSettings: boolean
+  // "Check again" found the same thing as before
+  sameAgain: boolean
+}
+
+export function noNotes(step: GuideStep): StepNotes {
+  return { step, pickError: '', returnedFromSettings: false, sameAgain: false }
+}
+
+// The notes with a change that was made at `step`. A change for a step that
+// is no longer showing is dropped: it is the late answer to something the
+// reader has left.
+export function noted(notes: StepNotes, step: GuideStep, change: Partial<Omit<StepNotes, 'step'>>): StepNotes {
+  return notes.step === step ? { ...notes, ...change } : notes
+}
+
+// Whether a second check found what the first one found. A check that got no
+// answer found nothing.
+export function foundTheSame(before: SetupDbStatus, next: SetupStatus | null) {
+  return next !== null && next.db.status === before
 }
 
 // What the guide asks the server for when it starts an import. The archive
