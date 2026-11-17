@@ -616,17 +616,44 @@ def export_when_free(job_id: str, db_path: Path, messages_path: Path) -> dict:
         return export_database(db_path, messages_path)
 
 
-def refuse_second_import(job_id: str) -> None:
-    """One import writes the archive at a time."""
-    with JOBS_LOCK:
-        running = any(
-            job["id"] != job_id
-            and job["action"] in {"setup_import", "export"}
-            and job["status"] in {"queued", "running"}
-            for job in JOBS.values()
-        )
-    if running:
-        raise ValueError("An import is already running.")
+IMPORT_ACTIONS = frozenset({"setup_import", "export"})
+UNFINISHED = frozenset({"queued", "running"})
+# Jobs of one group do not run together: each import writes the archive, and
+# each build writes the index. The second one is refused when it is asked for.
+ONE_AT_A_TIME = (
+    (IMPORT_ACTIONS, "An import is already running. Wait until it ends."),
+    (frozenset({"semantic"}), "A semantic index build is already running."),
+)
+
+
+class JobRefused(Exception):
+    """A request for a job that makes no job. `status` is the answer to the request."""
+
+    def __init__(self, message: str, status: int = 409):
+        super().__init__(message)
+        self.status = status
+
+
+def check_import(action: str, payload: dict) -> None:
+    """Refuse an import whose request cannot be one. A job of another kind is not looked at."""
+    if action not in IMPORT_ACTIONS:
+        return
+    named = payload.get("messagesPath")
+    if named and not isinstance(named, str):
+        raise JobRefused("The path of the archive must be text.", 400)
+    try:
+        database_for(action, payload)
+    except ValueError as exc:
+        raise JobRefused(str(exc), 400) from exc
+
+
+def refuse_a_second(action: str) -> None:
+    """Refuse a job while another of its group is not ended. The caller holds JOBS_LOCK."""
+    for group, sentence in ONE_AT_A_TIME:
+        if action in group and any(
+            job["action"] in group and job["status"] in UNFINISHED for job in JOBS.values()
+        ):
+            raise JobRefused(sentence)
 
 
 def job_record(action: str, payload: dict) -> dict:
@@ -647,9 +674,17 @@ def job_record(action: str, payload: dict) -> dict:
 
 
 def create_job(action: str, payload: dict) -> dict:
+    """Make a job and start it. Raises JobRefused when no job is made.
+
+    Whether a second import can run is decided here, once, with the list of
+    jobs held. A job is in the list as queued from this moment, so two
+    imports asked for together cannot each find the other and both stop.
+    """
+    check_import(action, payload)
     job = job_record(action, payload)
     job_id = job["id"]
     with JOBS_LOCK:
+        refuse_a_second(action)
         JOBS[job_id] = job
         # prune finished jobs so a long session doesn't grow memory unbounded
         if len(JOBS) > 60:
@@ -661,7 +696,12 @@ def create_job(action: str, payload: dict) -> dict:
                 JOBS.pop(old_id, None)
 
     thread = threading.Thread(target=run_job, args=(job_id, action, payload), daemon=True)
-    thread.start()
+    try:
+        thread.start()
+    except RuntimeError as exc:
+        # a job that never starts would stay queued and hold up every later job of its group
+        update_job(job_id, status="failed", error="The job could not be started.")
+        raise JobRefused("The job could not be started. Try again.", 500) from exc
     return job
 
 
@@ -783,7 +823,6 @@ def run_job(job_id: str, action: str, payload: dict):
         with contextlib.redirect_stdout(_JOB_STDOUT), contextlib.redirect_stderr(_JOB_STDERR):
             if action == "export":
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
-                refuse_second_import(job_id)
                 append_log(job_id, "Reading Messages")
                 result = export_when_free(job_id, database_for(action, payload), messages_path)
             elif action == "analyze":
@@ -830,7 +869,6 @@ def run_job(job_id: str, action: str, payload: dict):
                 db_path = database_for(action, payload)
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
                 include_contacts = bool(payload.get("includeContacts", True))
-                refuse_second_import(job_id)
 
                 update_job(job_id, progress={"step": 1, "of": 3, "label": "Reading your Messages database"})
                 append_log(job_id, "Reading Messages" if db_path == LIVE_CHAT_DB else f"Reading the copy at {db_path}")
@@ -862,15 +900,6 @@ def run_job(job_id: str, action: str, payload: dict):
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
                 if not path_exists(messages_path):
                     raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
-                with JOBS_LOCK:
-                    duplicate = any(
-                        j["id"] != job_id
-                        and j["action"] == "semantic"
-                        and j["status"] in {"queued", "running"}
-                        for j in JOBS.values()
-                    )
-                if duplicate:
-                    raise ValueError("A semantic index build is already running.")
                 append_log(job_id, "Building semantic index")
                 df, _, _ = cached_messages_bundle(messages_path)
                 summary = sem.build_index(
@@ -3008,8 +3037,15 @@ class RecallHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/jobs":
                 payload = parse_body(self)
-                action = payload.get("action", "analyze")
-                send_json(self, 202, {"job": create_job(action, payload)})
+                if not isinstance(payload, dict):
+                    send_json(self, 400, {"error": "The request must be a JSON object."})
+                    return
+                try:
+                    job = create_job(payload.get("action", "analyze"), payload)
+                except JobRefused as refused:
+                    send_json(self, refused.status, {"error": str(refused)})
+                    return
+                send_json(self, 202, {"job": job})
             elif parsed.path == "/api/contact-names":
                 try:
                     summary = export_contact_names()
