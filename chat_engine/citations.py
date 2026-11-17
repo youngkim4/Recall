@@ -3,6 +3,9 @@
 The model cites messages as [m3]. The reader sees [1], [2], ... in the order
 the answer first uses them. The work is done on the stream, so the text shown
 while it arrives is the text of the final answer.
+
+A number in brackets without the "m", such as [3], is read as [m3]: the reader
+takes every number in brackets for a citation, so none may pass unchecked.
 """
 
 from __future__ import annotations
@@ -13,10 +16,11 @@ from typing import Callable
 _MAX_MARKER = 64
 _MAX_RANGE = 20
 _DASH = r"[-–—]"
-_ONE = rf"m\d+(?:\s*{_DASH}\s*m?\d+)?"
+_ONE = rf"m?\d+(?:\s*{_DASH}\s*m?\d+)?"
+_BETWEEN = r"(?:\s*(?:[,;&]|and)\s*|\s+|(?=m))"  # never empty before a digit: one run of digits is one number
 _MARKER_RE = re.compile(rf"(?P<space>[ \t]*)\[(?P<body>[^\[\]\n]{{1,{_MAX_MARKER}}})\]")
-_BODY_RE = re.compile(rf"^\s*{_ONE}(?:\s*(?:[,;&]|and)?\s*{_ONE})*\s*$", re.IGNORECASE)
-_PIECE_RE = re.compile(rf"m(\d+)(?:\s*{_DASH}\s*m?(\d+))?", re.IGNORECASE)
+_BODY_RE = re.compile(rf"^\s*{_ONE}(?:{_BETWEEN}{_ONE})*\s*$", re.IGNORECASE)
+_PIECE_RE = re.compile(rf"m?(\d+)(?:\s*{_DASH}\s*m?(\d+))?", re.IGNORECASE)
 
 
 def _expand(body: str) -> list[str]:

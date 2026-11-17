@@ -49,6 +49,14 @@ class Scope:
             return False
         return not (self.until and day > self.until)
 
+    def within(self, other: Scope) -> bool:
+        """True when `other` allows everything this scope allows."""
+        if other.conversations and not (self.conversations and set(self.conversations) <= set(other.conversations)):
+            return False
+        if other.since and not (self.since and self.since >= other.since):
+            return False
+        return not (other.until and not (self.until and self.until <= other.until))
+
     def narrow(self, requested: Optional[Sequence[str]]) -> Optional[tuple[str, ...]]:
         """Conversation ids a lookup may read.
 

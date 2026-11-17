@@ -65,8 +65,9 @@ def test_text_before_a_tool_call_is_not_part_of_the_answer() -> None:
     result = engine.ask("bread?", on_event=events.append)
     assert result["answer"] == "It started in 2024."
     resets = [event for event in events_of("status", events) if event.get("reset")]
-    assert len(resets) == 1 and resets[0]["text"] == "Searching for “sourdough”"
+    assert len(resets) == 1 and resets[0]["text"] == "Looking at more messages"
     after_reset = events[events.index(resets[0]) + 1:]
+    assert after_reset[0] == {"type": "status", "text": "Searching for “sourdough”"}
     assert "".join(e["text"] for e in events_of("delta", after_reset)) == "It started in 2024."
 
 

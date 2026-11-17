@@ -40,7 +40,9 @@ def local_answer(
     """The messages that match the words of the question best, as a plain list."""
     names = labeler or MaskingLabeler()
     registry = EvidenceRegistry()
-    context = ToolContext(archive, names, registry, ConversationAliases(), scope, Limits())
+    limits = Limits()
+    context = ToolContext(archive, names, registry, ConversationAliases(), scope, limits)
+    context.directory()  # the labeler learns the unsaved handles here, before it reads the question
     units = question_units(question, names.redact)
     if not units:
         return _result("No AI model was used. Give at least one word to search for.", [], "No search was run")
@@ -67,7 +69,7 @@ def local_answer(
     for number, found in enumerate(outcome.hits, start=1):
         refs.append(registry.add(found.message))
         lines.append(_line(context, found.message, number))
-    cited = citations(refs, registry, context.book)
+    cited = citations(refs, registry, context.book, limits.max_message_chars)
     step = f"Searched for “{request.query}”: {len(cited)} matches shown"
     return _result(names.redact("\n".join(lines)), cited, step)
 

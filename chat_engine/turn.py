@@ -39,6 +39,8 @@ MIN_RESULT_TOKENS = 100
 _CARRIED_TOKENS = 1200
 _REPEATED = "Same lookup as before: its result is above. Try a different lookup, or answer."
 _SKIPPED = "Lookup skipped: the limit on lookups for this question is reached."
+_LOOKING = "Looking at more messages"
+_LEFT_OUT = "[This earlier answer is left out: it was written for a scope the user has changed since.]"
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,7 @@ class Reply:
     provider_items: tuple[Any, ...] = ()
     streamed: bool = False
     cancelled: bool = False
+    forced: bool = False  # the call that had to answer without tools
 
 
 def status(text: str, reset: bool = False) -> Event:
@@ -107,6 +110,7 @@ class QuestionTurn:
         self._transcript: list[ChatMessage] = []
         self._steps: list[Event] = []
         self._ran: set[tuple[str, str]] = set()
+        self._call_ids: set[str] = set()
         self._left = settings.total_tool_tokens
         self._totals = {
             "input_tokens": 0,
@@ -119,7 +123,7 @@ class QuestionTurn:
 
     # --- the turn ---
 
-    def events(self) -> Iterator[Event]:
+    def events(self) -> Generator[Event, None, None]:
         if self._cancel.cancelled:
             yield self._done(Reply(cancelled=True))
             return
@@ -151,7 +155,7 @@ class QuestionTurn:
                 self._transcript.append(ChatMessage("user", LIMIT_NOTE))
             reply = yield from self._call_model(allow_tools=not forced)
             if reply.cancelled or forced or not reply.calls:
-                return reply
+                return replace(reply, forced=forced)
             yield from self._run_tools(reply)
             if self._cancel.cancelled:
                 return Reply(cancelled=True)
@@ -168,7 +172,7 @@ class QuestionTurn:
             allow_tools=allow_tools,
             cancel=self._cancel,
         )
-        renumber = CitationStream(lambda ref: ref in self._session.registry)
+        renumber = CitationStream(self._citable)
         raw: list[str] = []
         shown: list[str] = []
         calls: list[ToolCall] = []
@@ -204,17 +208,42 @@ class QuestionTurn:
         if tail:
             shown.append(tail)
             yield {"type": "delta", "text": tail}
+        unique, renamed = self._unique(calls)
         return Reply(
             text="".join(raw),
             shown="".join(shown),
-            calls=tuple(calls),
+            calls=unique,
             order=renumber.order,
             unknown=renumber.unknown,
             stop_reason=end.stop_reason,
-            provider_items=tuple(end.provider_items),
+            provider_items=() if renamed else tuple(end.provider_items),
             streamed=bool(shown),
             cancelled=self._cancel.cancelled,
         )
+
+    def _citable(self, ref: str) -> bool:
+        """A reference the answer may cite: a shown message inside the scope of this question."""
+        message = self._session.registry.get(ref)
+        return message is not None and self._box.context.allows(message)
+
+    def _unique(self, calls: list[ToolCall]) -> tuple[tuple[ToolCall, ...], bool]:
+        """Every call of the question with an id of its own. True when an id had to change.
+
+        A changed id no longer matches the items of the provider, so the
+        caller drops those and the call goes back in its plain form.
+        """
+        unique: list[ToolCall] = []
+        renamed = False
+        for call in calls:
+            call_id = call.id
+            number = len(self._call_ids)
+            while not call_id or call_id in self._call_ids:
+                number += 1
+                call_id = f"call_{number}"
+            self._call_ids.add(call_id)
+            renamed = renamed or call_id != call.id
+            unique.append(call if call_id == call.id else replace(call, id=call_id))
+        return tuple(unique), renamed
 
     def _outbound(self) -> list[ChatMessage]:
         """Every message the model gets passes here: no raw handle goes out."""
@@ -234,7 +263,8 @@ class QuestionTurn:
         self._transcript.append(
             ChatMessage("assistant", reply.text, tool_calls=reply.calls, provider_items=reply.provider_items)
         )
-        reset = reply.streamed
+        if reply.streamed:
+            yield status(_LOOKING, reset=True)  # the text shown so far was not the answer
         for call in reply.calls:
             if self._cancel.cancelled:
                 return
@@ -247,8 +277,7 @@ class QuestionTurn:
                 continue
             prepared = self._box.prepare(call.name, call.arguments)
             if prepared.status:
-                yield status(prepared.status, reset=reset)
-                reset = False
+                yield status(prepared.status)
             if self._cancel.cancelled:
                 return
             outcome = prepared.run(self._allowance())
@@ -282,17 +311,23 @@ class QuestionTurn:
         messages = [ChatMessage("system", system)]
         for turn in turns:
             messages.append(ChatMessage("user", turn.question))
-            messages.append(ChatMessage("assistant", turn.answer))
+            messages.append(ChatMessage("assistant", self._earlier_answer(turn)))
         block = question_block(self._question, lookups, self._carried(turns), self._note)
         return [*messages, ChatMessage("user", block)]
 
+    def _earlier_answer(self, turn: Turn) -> str:
+        """An earlier answer, when everything it could read is inside the scope of this question."""
+        return turn.answer if turn.scope.within(self._scope) else _LEFT_OUT
+
     def _recent_turns(self) -> list[Turn]:
-        """The newest turns that fit the history budget. The last one always fits."""
+        """The newest turns that fit the history budget. With a budget, the last one always fits."""
+        if self._settings.history_tokens <= 0:
+            return []
         count = self._settings.count_tokens
         kept: list[Turn] = []
         used = 0
         for turn in reversed(self._session.turns):
-            cost = count(turn.question) + count(turn.answer)
+            cost = count(turn.question) + count(self._earlier_answer(turn))
             if kept and used + cost > self._settings.history_tokens:
                 break
             kept.append(turn)
@@ -322,7 +357,7 @@ class QuestionTurn:
 
     def _done(self, reply: Reply) -> Event:
         if not reply.cancelled and not reply.shown:
-            raise ModelError("The model gave no answer.", detail=f"stop_reason={reply.stop_reason}")
+            raise _no_answer(reply)
         context = self._box.context
         payload = build_payload(
             answer=reply.shown,
@@ -333,11 +368,26 @@ class QuestionTurn:
             book=context.book,
             questions=[self._question, *self._session.questions()],
             redact=self._labeler.redact,
+            allowed=context.allows,
+            text_cap=self._settings.max_message_chars,
             steps=self._steps,
             usage=self._totals,
             cancelled=reply.cancelled,
             truncated=reply.stop_reason == "length",
         )
         if not reply.cancelled:
-            self._session.add_turn(Turn(self._question, reply.text.strip(), reply.order))
+            self._session.add_turn(Turn(self._question, reply.text.strip(), reply.order, self._scope))
         return {"type": "done", "payload": payload}
+
+
+def _no_answer(reply: Reply) -> ModelError:
+    """Why a model call that had to answer gave no text."""
+    if reply.stop_reason == "length":
+        message = "The model used all of its output before it wrote an answer."
+    elif reply.stop_reason == "filtered":
+        message = "The model provider blocked the answer."
+    elif reply.forced:
+        message = "The model gave no answer after its last lookup."
+    else:
+        message = "The model gave no answer."
+    return ModelError(message, detail=f"stop_reason={reply.stop_reason} forced={reply.forced}")

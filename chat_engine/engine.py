@@ -100,7 +100,7 @@ class ChatEngine:
         A cancelled question returns what was written so far, with "cancelled".
         """
         payload: dict[str, Any] = {}
-        events = self._events(question, scope, session, cancel)
+        events = self._turn(question, scope, session, cancel).events()
         try:
             for event in events:
                 if on_event is not None:
@@ -125,24 +125,20 @@ class ChatEngine:
     ) -> Iterator[Event]:
         """The same as `ask`, as an iterator of events.
 
-        The last event is "done" or "error". A failure is not raised here: it
-        is the "error" event. Closing the iterator stops the model call.
+        The last event is "done" or "error". A failure of the model or of the
+        archive is not raised here: it is the "error" event. An empty question
+        is refused at once, with ValueError. Closing the iterator stops the
+        model call.
         """
-        events = self._events(question, scope, session, cancel)
-        try:
-            yield from events
-        except ChatEngineError as error:
-            yield error.to_event()
-        finally:
-            events.close()
+        return _relay(self._turn(question, scope, session, cancel).events())
 
-    def _events(
+    def _turn(
         self,
         question: str,
         scope: Scope,
         session: Optional[ChatSession],
         cancel: Optional[CancelToken],
-    ) -> Generator[Event, None, None]:
+    ) -> QuestionTurn:
         text = str(question or "").strip()
         if not text:
             raise ValueError("the question is empty")
@@ -150,7 +146,7 @@ class ChatEngine:
         if len(text) > MAX_QUESTION_CHARS:
             text = text[:MAX_QUESTION_CHARS]
             note = f"[The question was cut at {MAX_QUESTION_CHARS:,} characters.]"
-        turn = QuestionTurn(
+        return QuestionTurn(
             archive=self._archive,
             llm=self._llm,
             labeler=self._labeler,
@@ -162,4 +158,13 @@ class ChatEngine:
             session=session if session is not None else ChatSession(),
             cancel=cancel if cancel is not None else CancelToken(),
         )
-        yield from turn.events()
+
+
+def _relay(events: Generator[Event, None, None]) -> Generator[Event, None, None]:
+    """Pass the events on; a typed failure becomes the last event."""
+    try:
+        yield from events
+    except ChatEngineError as error:
+        yield error.to_event()
+    finally:
+        events.close()

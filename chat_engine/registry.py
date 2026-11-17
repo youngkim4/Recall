@@ -77,9 +77,14 @@ class EvidenceRegistry:
 
     @classmethod
     def restore(cls, rows: Iterable[Mapping[str, Any]]) -> EvidenceRegistry:
+        """A registry from `snapshot()`. Raises ValueError when the rows are not a snapshot."""
         registry = cls()
         for row in rows:
-            registry.add(row["message"])
+            if not isinstance(row, Mapping) or not isinstance(row.get("message"), Mapping):
+                raise ValueError("an evidence row must hold a message")
+            ref = registry.add(_checked(row["message"]))
+            if row.get("ref") not in (None, ref):
+                raise ValueError("the evidence rows are not in the order of their references")
         return registry
 
 
@@ -108,10 +113,27 @@ class ConversationAliases:
 
     @classmethod
     def restore(cls, conversation_ids: Iterable[str]) -> ConversationAliases:
+        """Aliases from `snapshot()`. Raises ValueError when an id is not text."""
         aliases = cls()
         for conversation_id in conversation_ids:
+            if not isinstance(conversation_id, str) or not conversation_id:
+                raise ValueError("a conversation id must be text")
             aliases.alias(conversation_id)
         return aliases
+
+
+def _checked(message: Mapping[str, Any]) -> Message:
+    """A stored message with the fields the engine reads, each of the right type."""
+    for key in ("id", "conversation"):
+        if not isinstance(message.get(key), str) or not message[key]:
+            raise ValueError(f"a stored message needs its {key}")
+    for key in ("timestamp", "text", "sender", "kind"):
+        if not isinstance(message.get(key, ""), str):
+            raise ValueError(f"the {key} of a stored message must be text")
+    attachments = message.get("attachments") or []
+    if not isinstance(attachments, (list, tuple)) or not all(isinstance(item, str) for item in attachments):
+        raise ValueError("the attachments of a stored message must be a list of text")
+    return _copy(message)
 
 
 def _copy(message: Mapping[str, Any]) -> Message:

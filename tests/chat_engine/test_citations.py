@@ -34,7 +34,7 @@ def test_unknown_reference_is_dropped_and_reported() -> None:
 
 
 def test_other_brackets_are_left_alone() -> None:
-    text = "See [sic] and [1] and [a number ending in 0199] and [maybe m3?]."
+    text = "See [sic] and [1st] and [a number ending in 0199] and [maybe m3?]."
     out, stream = _whole(text)
     assert out == text
     assert stream.order == ()
