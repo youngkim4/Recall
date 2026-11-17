@@ -515,3 +515,46 @@ class TestSearchContacts:
     def test_search_no_match(self, mock_chat_db):
         df = search_contacts(mock_chat_db, "9999999999")
         assert df.empty
+
+
+class TestHandTool:
+    """`python parse_imessage.py`: it names no database and no file to write by itself."""
+
+    def run_main(self, monkeypatch, *args):
+        import parse_imessage
+
+        monkeypatch.setattr(sys, "argv", ["parse_imessage.py", *args])
+        parse_imessage.main()
+
+    def test_with_no_argument_it_reads_and_writes_nothing(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "messages.csv").write_text("the archive of the app", encoding="utf-8")
+        (tmp_path / "chat.db").write_bytes(b"an old copy")
+
+        with pytest.raises(SystemExit):
+            self.run_main(monkeypatch)
+
+        assert (tmp_path / "messages.csv").read_text(encoding="utf-8") == "the archive of the app"
+        assert "--db" in capsys.readouterr().err
+
+    def test_with_a_database_and_no_file_to_write_it_writes_nothing(self, mock_chat_db, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+
+        with pytest.raises(SystemExit):
+            self.run_main(monkeypatch, "--db", mock_chat_db)
+
+        assert not (tmp_path / "messages.csv").exists()
+        assert "--out" in capsys.readouterr().err
+
+    def test_it_writes_the_file_that_is_named(self, mock_chat_db, tmp_path, monkeypatch):
+        out = tmp_path / "named.csv"
+
+        self.run_main(monkeypatch, "--db", mock_chat_db, "--out", str(out))
+
+        assert set(pd.read_csv(out)["text"].dropna()) >= {"hello there", "hey!"}
+
+    def test_the_list_of_conversations_needs_no_file_to_write(self, mock_chat_db, monkeypatch, capsys):
+        self.run_main(monkeypatch, "--db", mock_chat_db, "--list-contacts")
+
+        assert "Messages:" in capsys.readouterr().out
+

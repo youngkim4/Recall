@@ -87,7 +87,8 @@ python cli.py --contact +12165551234 --no-confirm
 ## Notes
 
 - `chat_id` is usually the phone number for 1:1 chats, or starts with `chat` for group chats. Use `--list-contacts` to discover IDs.
-- If the DB is locked, close Messages or copy it first: `cp ~/Library/Messages/chat.db ./chat.db`
+- If the DB is locked, close Messages or copy it first. Copy `chat.db`, `chat.db-wal` and `chat.db-shm` to a folder outside this checkout, for example `cp ~/Library/Messages/chat.db* ~/Desktop/`, and name the copy with `--db`.
+- WARNING: `cli.py --db` writes `messages.csv` in the current folder. In this checkout that file is the archive of the app. Run the command in another folder, or name another file with `--messages`. The app does not read a `chat.db` in this folder.
 - Full conversation history is sent to the OpenAI API with `store=false` -- cost estimates are shown before any API call.
 
 ## License

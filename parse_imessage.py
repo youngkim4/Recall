@@ -10,8 +10,11 @@ Purpose:
 - Provide a simple CLI to export results to a CSV file
 
 Usage:
-  python parse_imessage.py --db ~/Library/Messages/chat.db --out messages.csv
+  python parse_imessage.py --db ~/Library/Messages/chat.db --out ~/Desktop/messages.csv
   python parse_imessage.py --db ~/Library/Messages/chat.db --list-contacts
+
+WARNING: In a checkout of Recall, ./messages.csv is the archive of the app.
+Name another file for --out, or this tool writes over the archive.
 
 Notes:
 - Timestamp conversion handles seconds, microseconds, and nanoseconds since 2001-01-01.
@@ -464,13 +467,18 @@ def search_contacts(db_path: str, query: str, limit: int = 10) -> pd.DataFrame:
 
 def main():
     parser = argparse.ArgumentParser(description="Extract iMessage messages to CSV")
-    parser.add_argument("--db", dest="db_path", default="chat.db", help="Path to chat.db (default: ./chat.db)")
-    parser.add_argument("--out", dest="out_csv", default="messages.csv", help="Output CSV path (default: messages.csv)")
+    # No default for either path. In a checkout, ./chat.db is an old copy and
+    # ./messages.csv is the archive of the app: one command with no argument
+    # must not write the one over the other.
+    parser.add_argument("--db", dest="db_path", required=True, help="Path to a Messages database (chat.db)")
+    parser.add_argument("--out", dest="out_csv", help="Output CSV path. Needed for every use but --list-contacts")
     parser.add_argument("--list-contacts", action="store_true", help="List top contacts by message count")
     parser.add_argument("--limit", type=int, default=20, help="Number of contacts to show (default: 20)")
     parser.add_argument("--attachments", action="store_true", help="Export attachments metadata")
     parser.add_argument("--reactions", action="store_true", help="Export reactions/tapbacks")
     args = parser.parse_args()
+    if not args.list_contacts and not args.out_csv:
+        parser.error("--out is needed: name the file to write")
 
     try:
         if args.list_contacts:
