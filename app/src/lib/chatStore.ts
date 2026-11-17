@@ -116,6 +116,21 @@ export const chatStore = {
     })
   },
 
+  // Undo for deleteChat: put a removed chat back where it was. An answer that
+  // was still streaming when the chat was deleted is gone, so any partial
+  // message stops being marked as streaming.
+  restoreChat(chat: SavedChat, index: number) {
+    if (chatExists(chat.id)) return
+    const settled: SavedChat = {
+      ...chat,
+      messages: chat.messages.map((message) => ({ ...message, streaming: undefined })),
+    }
+    const at = Math.max(0, Math.min(index, state.chats.length))
+    const chats = [...state.chats.slice(0, at), settled, ...state.chats.slice(at)]
+    persist(chats)
+    set({ chats })
+  },
+
   // Append the question, run the request, and save the answer — all independent
   // of any React component, so it completes even after navigating away.
   async send(question: string, scope: string, ask: AskParams) {

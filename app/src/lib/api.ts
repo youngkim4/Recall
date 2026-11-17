@@ -1,8 +1,10 @@
 import type {
   AnalysisPayload,
+  ArchivePatterns,
   AskResponse,
   ContactNamesSummary,
   ContactsResponse,
+  DayMessages,
   Defaults,
   FirstWordsPayload,
   Job,
@@ -121,6 +123,26 @@ export const recallApi = {
       })}`,
     ),
 
+  // one day of one conversation: all of it, or the part around a time or from a place in it
+  day: (input: {
+    messagesPath: string
+    contact: string
+    day: string
+    around?: string
+    offset?: number
+    limit?: number
+  }) =>
+    request<DayMessages>(
+      `/api/day${queryString({
+        messagesPath: input.messagesPath,
+        contact: input.contact,
+        day: input.day,
+        around: input.around,
+        offset: input.offset,
+        limit: input.limit,
+      })}`,
+    ),
+
   ask: (input: AskInput) =>
     request<AskResponse>('/api/ask', {
       method: 'POST',
@@ -213,6 +235,11 @@ export const recallApi = {
   memories: (input: { messagesPath?: string }) =>
     request<{ memories: MemoriesPayload }>(
       `/api/memories${queryString({ messagesPath: input.messagesPath })}`,
+    ),
+
+  overview: (input: { messagesPath?: string }) =>
+    request<{ overview: ArchivePatterns }>(
+      `/api/overview${queryString({ messagesPath: input.messagesPath })}`,
     ),
 
   semanticStatus: (input: { messagesPath?: string }) =>
