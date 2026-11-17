@@ -89,6 +89,20 @@ class FrameArchive:
     def index_built(self) -> bool:
         return self._index is not None
 
+    def text_lengths(self) -> np.ndarray:
+        """The number of characters of each text, for a report on volume."""
+        return self._texts.str.len().to_numpy(dtype=np.int64)
+
+    def longest_messages(self, count: int = 1) -> list[Message]:
+        """The messages with the longest text, the longest first."""
+        order = np.argsort(-self.text_lengths(), kind="stable")[:max(0, count)]
+        return [self._message(int(position)) for position in order]
+
+    @property
+    def attachment_only(self) -> int:
+        """How many messages are only an attachment."""
+        return int(self._rows.is_attachment.sum())
+
     def build_index(self) -> WordIndex:
         """The search index. It is built at the first search; call this to build it sooner."""
         with self._lock:
