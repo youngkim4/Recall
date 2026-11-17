@@ -288,7 +288,9 @@ def test_the_columns_have_one_list_of_names_in_three_places() -> None:
 
 
 def test_the_frame_has_the_columns_and_the_types_of_an_export(loaded: Loaded, frame: pd.DataFrame) -> None:
-    assert tuple(frame.columns) == data.EXPORT_COLUMNS == tuple(loaded.frame.columns)
+    # the frame says of each row whether it was unsent; a bridge archive holds no such row
+    assert tuple(frame.columns) == (*data.EXPORT_COLUMNS, compat.UNSENT_COLUMN)
+    assert data.EXPORT_COLUMNS == tuple(loaded.frame.columns) and not frame[compat.UNSENT_COLUMN].any()
     assert str(frame["timestamp"].dtype) == str(loaded.frame["timestamp"].dtype) == "datetime64[ns]"
     assert (str(frame["chat_id"].dtype), str(frame["sender"].dtype)) == ("string", "string")
     assert str(frame["is_from_me"].dtype) == "int64" and set(frame["is_from_me"]) == {0, 1}

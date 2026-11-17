@@ -73,7 +73,7 @@ def export_row(
 
 
 def write_export(path: Path, rows: Sequence[Mapping[str, Any]]) -> Path:
-    """Write the rows with pandas, as export_database in ui_server.py writes an export."""
+    """Write the rows with pandas, as the import of an earlier build of the app wrote an export."""
     path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(list(rows), columns=list(EXPORT_COLUMNS)).to_csv(path, index=False)
     return path

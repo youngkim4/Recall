@@ -166,6 +166,6 @@ Each one has a test that states it.
 venv/bin/python -m pytest tests/recall_services tests/integration --cov=recall_services --cov-report=term-missing
 ```
 
-The tests use invented data, a scripted model and a dummy key. `tests/integration/guards.py` blocks every socket that leaves the machine and points the home folder and the data folder at temp folders.
+The tests use invented data, a scripted model and a dummy key. `tests/guards.py` blocks every socket that leaves the machine and points the home folder and the data folder at temp folders.
 
 No Python linter and no type checker is configured in this repository.

@@ -2,8 +2,8 @@
 
 An invented Messages database holds texts that are only in attributedBody, as
 a current macOS writes them. The archives come from Apple's NSArchiver
-(tests/fixtures/typedstream). export_database of ui_server.py writes the
-export with the decoder of parse_imessage.py, and import_legacy_csv loads it.
+(tests/fixtures/typedstream). The export is written as an earlier build of the
+app wrote it, with the decoder of parse_imessage.py, and import_legacy_csv loads it.
 The archive must hold each text whole and untrimmed.
 
 The same database also goes through import_chat_db, which uses the archive's
@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterator
-from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,6 +22,7 @@ import pytest
 
 from archive import INDEXED_TEXT_CHARS, Archive, ImportResult, import_chat_db, import_legacy_csv
 from conversation import load_messages
+from parse_imessage import extract_attachments, extract_messages, extract_reactions
 from tests import guards
 from tests.integration import bridge_data as data
 from tests.integration.bridge_data import ROWAN, AppleFixture, BlobDatabase
@@ -48,35 +48,39 @@ FIXTURES = data.apple_fixtures()
 @dataclass(frozen=True)
 class Bridged:
     database: BlobDatabase
-    exported: dict[str, Any]  # what export_database returned
+    exported: dict[str, Any]  # what write_old_export returned
     csv_path: Path
     result: ImportResult
-    archive: Archive  # database -> export_database -> import_legacy_csv
+    archive: Archive  # database -> the export of an earlier build -> import_legacy_csv
     pulled: Archive  # database -> import_chat_db
 
 
-def _server(config: pytest.Config) -> Any:
-    """ui_server, loaded inside a test: the guards are active, and its streams are those of the process.
+def write_old_export(database: Path, csv_path: Path) -> dict[str, Any]:
+    """Write the three files of an export, as the import of an earlier build of the app wrote them.
 
-    The module keeps the stdout of the moment it loads, for the logs of its jobs.
-    Under pytest that is a capture file, and pytest closes it before the interpreter ends.
+    The server no longer writes an export: an update is a pull into the
+    archive. The readers of that import are still in parse_imessage.py.
     """
-    capture = config.pluginmanager.getplugin("capturemanager")
-    with capture.global_and_fixture_disabled() if capture is not None else nullcontext():
-        import ui_server
-    return ui_server
+    frames = {
+        "messages": (extract_messages(str(database)), csv_path),
+        "attachments": (extract_attachments(str(database)), csv_path.with_name(f"{csv_path.stem}_attachments.csv")),
+        "reactions": (extract_reactions(str(database)), csv_path.with_name(f"{csv_path.stem}_reactions.csv")),
+    }
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    for frame, target in frames.values():
+        frame.to_csv(target, index=False)
+    return {**{name: len(frame) for name, (frame, _) in frames.items()}, "messagesPath": str(csv_path)}
 
 
 @pytest.fixture(scope="module")
-def bridged(tmp_path_factory: pytest.TempPathFactory, pytestconfig: pytest.Config) -> Iterator[Bridged]:
-    export_database = _server(pytestconfig).export_database  # the function that an update of the app runs
+def bridged(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Bridged]:
     folder = tmp_path_factory.mktemp("decoder-bridge")
     blobs = {name: FIXTURES[name].blob for name in (*WHOLE, *OTHER)}
     csv_path = folder / "export" / "messages.csv"
     # the exporter writes local times and the bridge reads them: both in the time zone of the tests
     with guards.time_zone():
         database = data.blob_database(folder / "source" / "chat.db", blobs, tapback_text=TAPBACK)
-        exported = export_database(database.path, csv_path)
+        exported = write_old_export(database.path, csv_path)
         result = import_legacy_csv(csv_path, folder / "bridge" / "archive.sqlite3")
         import_chat_db(database.path, folder / "pull" / "archive.sqlite3")
     archive = Archive.open(folder / "bridge" / "archive.sqlite3")
