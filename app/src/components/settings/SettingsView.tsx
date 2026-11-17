@@ -63,82 +63,88 @@ export function SettingsView({
 
   return (
     <div className="view">
-      <div className="page arrive-each">
-        <section aria-labelledby="settings-look">
-          <div className="section-head">
-            <h2 id="settings-look">Appearance</h2>
-          </div>
-          <div className="settings">
-            <div className="setting">
-              <span className="setting-label">Theme</span>
-              <span className="setting-value" />
-              <ChoiceMenu label="Theme" value={theme} choices={themeOptions} onChange={chooseTheme} align="end" quietLabel />
+      <div className="page wide settings-page arrive-each">
+        {/* how the app looks and thinks */}
+        <div className="settings-col">
+          <section aria-labelledby="settings-look">
+            <div className="section-head">
+              <h2 id="settings-look">Appearance</h2>
             </div>
-          </div>
-        </section>
+            <div className="settings">
+              <div className="setting">
+                <span className="setting-label">Theme</span>
+                <span className="setting-value" />
+                <ChoiceMenu label="Theme" value={theme} choices={themeOptions} onChange={chooseTheme} align="end" quietLabel />
+              </div>
+            </div>
+          </section>
 
-        <section className="section" aria-labelledby="settings-ai">
-          <div className="section-head">
-            <h2 id="settings-ai">AI</h2>
-          </div>
-          <div className="settings">
-            <div className="setting">
-              <span className="setting-label">Quality</span>
-              <span className="setting-value" />
-              <QualityControl models={defaults?.models ?? []} value={model} onChange={onModelChange} align="end" quietLabel />
+          <section className="section" aria-labelledby="settings-ai">
+            <div className="section-head">
+              <h2 id="settings-ai">AI</h2>
             </div>
-            <MeaningIndex
-              messagesPath={paths.messagesPath || defaults?.messagesPath || ''}
-              refreshKey={`${archive?.messages} ${archive?.lastMessage}`}
-            />
-          </div>
-        </section>
+            <div className="settings">
+              <div className="setting">
+                <span className="setting-label">Quality</span>
+                <span className="setting-value" />
+                <QualityControl models={defaults?.models ?? []} value={model} onChange={onModelChange} align="end" quietLabel />
+              </div>
+              <MeaningIndex
+                messagesPath={paths.messagesPath || defaults?.messagesPath || ''}
+                refreshKey={`${archive?.messages} ${archive?.lastMessage}`}
+              />
+            </div>
+          </section>
+        </div>
 
-        <section className="section" aria-labelledby="settings-archive">
-          <div className="section-head">
-            <h2 id="settings-archive">Archive</h2>
-          </div>
-          {statusMessage ? (
-            <p className="notice" role="status">
-              {statusMessage}
-            </p>
-          ) : null}
-          <div className="settings">
-            <div className="setting">
-              <span className="setting-label">Messages</span>
-              <span className="setting-value">
-                {archive?.conversations
-                  ? `${formatNumber(archive.messages)}, imported through ${formatLongDate(archive.lastMessage)}`
-                  : 'None imported'}
-              </span>
-              <button type="button" className="btn" disabled={busy} onClick={onOpenSetup}>
-                {archive?.conversations ? 'Update' : 'Build'}
-              </button>
+        {/* the archive and where it is kept */}
+        <div className="settings-col">
+          <section aria-labelledby="settings-archive">
+            <div className="section-head">
+              <h2 id="settings-archive">Archive</h2>
             </div>
-            <div className="setting">
-              <span className="setting-label">Contact names</span>
-              <span className="setting-value">
-                {names ? `${formatNumber(names)}${namesUpdated ? `, read ${formatDate(namesUpdated)}` : ''}` : 'None read'}
-              </span>
-              <button type="button" className="btn" disabled={busy} onClick={onRefreshContacts}>
-                Read again
-              </button>
+            {statusMessage ? (
+              <p className="notice" role="status">
+                {statusMessage}
+              </p>
+            ) : null}
+            <div className="settings">
+              <div className="setting">
+                <span className="setting-label">Messages</span>
+                <span className="setting-value">
+                  {archive?.conversations
+                    ? `${formatNumber(archive.messages)}, imported through ${formatLongDate(archive.lastMessage)}`
+                    : 'None imported'}
+                </span>
+                <button type="button" className="btn" disabled={busy} onClick={onOpenSetup}>
+                  {archive?.conversations ? 'Update' : 'Build'}
+                </button>
+              </div>
+              <div className="setting">
+                <span className="setting-label">Contact names</span>
+                <span className="setting-value">
+                  {names ? `${formatNumber(names)}${namesUpdated ? `, read ${formatDate(namesUpdated)}` : ''}` : 'None read'}
+                </span>
+                <button type="button" className="btn" disabled={busy} onClick={onRefreshContacts}>
+                  Read again
+                </button>
+              </div>
+              <div className="setting">
+                <span className="setting-label">Saved figures</span>
+                <span className="setting-value">{plural(cacheStats.count, 'conversation')}</span>
+                <button type="button" className="btn" disabled={!cacheStats.count} onClick={onClearPreviewCache}>
+                  Clear
+                </button>
+              </div>
             </div>
-            <div className="setting">
-              <span className="setting-label">Saved figures</span>
-              <span className="setting-value">{plural(cacheStats.count, 'conversation')}</span>
-              <button type="button" className="btn" disabled={!cacheStats.count} onClick={onClearPreviewCache}>
-                Clear
-              </button>
-            </div>
-          </div>
-        </section>
+          </section>
 
-        <section className="section">
-          <Disclosure className="setting-more" summary="File locations">
-            <FileLocations paths={paths} defaultPaths={defaultPaths} busy={busy} onApply={onApplyPaths} />
-          </Disclosure>
-        </section>
+          <section className="section">
+            <Disclosure className="setting-more" summary="File locations">
+              <FileLocations paths={paths} defaultPaths={defaultPaths} busy={busy} onApply={onApplyPaths} />
+            </Disclosure>
+          </section>
+        </div>
       </div>
     </div>
   )

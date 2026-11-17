@@ -1,10 +1,36 @@
-/* Settings and Jobs: plain rows. A label, what it is set to, and one way to
+/* Settings: groups of rows. A label, what it is set to, and one way to
    change it. */
 
 @layer views {
-  /* the label column is the width of the facts column elsewhere */
+  /* ---- the page: the groups in one column; with room, two columns side by
+     side, how the app looks and thinks on the left, the archive on the right ---- */
+  .settings-col + .settings-col,
+  .settings-col > * + .section {
+    margin-top: var(--s-12);
+  }
+
+  @container workspace (min-width: 64rem) {
+    .settings-page {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: start;
+      gap: var(--s-4);
+    }
+
+    .settings-col + .settings-col {
+      margin-top: 0;
+    }
+  }
+
+  /* A group is a card. Its rows stand 16px in from its edges, with a
+     hairline between one row and the next that starts and ends where the
+     words do. The label column is the width of the facts column elsewhere. */
   .settings {
     display: grid;
+    padding-inline: var(--s-4);
+    border-radius: var(--r-lg);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-raised);
   }
 
   .setting {
@@ -15,6 +41,10 @@
     min-height: 3rem;
     padding-block: var(--s-2);
     border-bottom: 1px solid var(--line);
+  }
+
+  .settings > .setting:last-child {
+    border-bottom: 0;
   }
 
   .setting-label {
@@ -48,12 +78,13 @@
     font-size: var(--t-small);
   }
 
+  /* the ways to act on a group stand in its card, as far from its foot as from the row above */
   .setting-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--s-2) var(--s-3);
-    padding-top: var(--s-4);
+    padding-block: var(--s-3);
   }
 
   .setting-actions > .link {
@@ -64,20 +95,37 @@
     margin-bottom: var(--s-2);
   }
 
-  /* in a narrow window the label goes above what it is set to */
+  /* In a narrow window the label goes above what it is set to. What it is
+     set to keeps at least 10rem for its words; a control that does not fit
+     beside that goes under it, on the right. */
   @container workspace (max-width: 40rem) {
     .setting {
-      grid-template-columns: minmax(0, 1fr) auto;
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--s-1) var(--s-4);
+      padding-block: var(--s-3);
     }
 
     .setting-label {
-      grid-column: 1 / -1;
-      margin-bottom: calc(var(--s-3) * -1);
+      flex: 1 0 100%;
       font-size: var(--t-small);
     }
 
+    .setting-value {
+      flex: 1 1 10rem;
+    }
+
+    /* a row with nothing to say keeps its control on the label's line */
+    .setting-value:empty {
+      flex-basis: 0;
+    }
+
+    .setting > :is(.btn, .picker) {
+      margin-left: auto;
+    }
+
     .setting-field {
-      grid-column: 1 / -1;
+      flex: 1 0 100%;
     }
   }
 }
