@@ -60,7 +60,6 @@ LLMFactory = Callable[[ChatModelConfig], LLM]
 CHAT_TIMEOUT_SECONDS = 60.0
 # the browser sends the last few turns; more than this is no chat that a person had
 HISTORY_ROWS = 40
-PROVIDER_NAMES = {"openai": "OpenAI"}
 EMPTY_QUESTION = "Type a question first."
 ASK_AGAIN = "then ask again."
 _ENGINE_WORDS = {
@@ -118,7 +117,7 @@ def _sentence(code: str, said: str, config: ChatModelConfig | None, retry_after:
     """One plain sentence for a failure. Words that the engine chose for a special case are kept."""
     if said and said != _ENGINE_WORDS.get(code):
         return said
-    provider = PROVIDER_NAMES.get(config.provider, "The model provider") if config else "The model provider"
+    provider = models.provider_name(config.provider) if config else models.SOME_PROVIDER
     model = config.model if config else "that was asked for"
     sentences = {
         "no_key": f"No API key is set. Add your {provider} API key in Settings, {ASK_AGAIN}",

@@ -12,12 +12,17 @@ from tests.integration import guards
 guards.install()
 
 from collections.abc import Iterator  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import TYPE_CHECKING  # noqa: E402
 
 import pytest  # noqa: E402
 
 from archive import Archive  # noqa: E402
 from recall_services.names import Names  # noqa: E402
 from tests.recall_services import world  # noqa: E402
+
+if TYPE_CHECKING:
+    from tests.recall_services import report_world
 
 
 @pytest.fixture(autouse=True)
@@ -44,3 +49,15 @@ def archive(orchard: world.Orchard) -> Iterator[Archive]:
 @pytest.fixture
 def saved() -> Names:
     return Names.from_records(world.RECORDS)
+
+
+@pytest.fixture
+def desk(tmp_path: Path) -> Iterator["report_world.Desk"]:
+    """An archive with a long and a short conversation, and places for the files of a report."""
+    from tests.recall_services import report_world
+
+    made = report_world.build_desk(tmp_path)
+    try:
+        yield made
+    finally:
+        report_world.close_desk(made)

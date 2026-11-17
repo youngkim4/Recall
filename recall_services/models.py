@@ -30,6 +30,9 @@ from report_engine.model_info import LongContextRule, ModelInfo
 
 FACTS_PATH = Path(__file__).with_name("models.json")
 UNCONFIRMED_FAMILY = "unconfirmed:"
+# a provider as a sentence names it
+PROVIDER_NAMES = {"openai": "OpenAI"}
+SOME_PROVIDER = "The model provider"
 
 Level = Literal["low", "medium", "high", "top"]
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -218,6 +221,11 @@ def _runnable(model_id: str) -> ModelFacts:
             found.id, f"The model {found.id} is not offered. Choose one of: {_choices(_registry())}."
         )
     return found
+
+
+def provider_name(provider: str) -> str:
+    """The name of a provider for a sentence that a person reads."""
+    return PROVIDER_NAMES.get(provider, SOME_PROVIDER)
 
 
 def offered_ids() -> list[str]:

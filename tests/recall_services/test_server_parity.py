@@ -22,7 +22,7 @@ import pytest
 import ui_server
 from archive import Archive, import_legacy_csv
 from setup_status import DbProbe
-from recall_services import conversations, day, messages, search, unreadable
+from recall_services import conversations, day, messages, reports, search, unreadable
 from recall_services.names import Names
 
 pytestmark = pytest.mark.usefixtures("fresh_bundle_cache")
@@ -225,3 +225,35 @@ def test_the_last_words_say_that_the_archive_is_as_it_was() -> None:
     assert unreadable.ARCHIVE_KEPT == ui_server.ARCHIVE_KEPT
     probe = DbProbe(status="missing", kind="copy", path="/invented/place/chat.db")
     assert str(unreadable.why(probe)).endswith(unreadable.ARCHIVE_KEPT)
+
+
+# --- the files of a report, read by the server --------------------------------
+
+
+def test_the_server_reads_the_files_that_a_run_writes(desk: Any) -> None:
+    from tests.recall_services.report_world import MODEL
+    from tests.report_engine.synth import MINA
+
+    done = reports.run(MINA, MODEL, "2023-01-01", "2023-02-28", **desk.more())
+    text = done.report_path.read_text(encoding="utf-8")
+    assert ui_server.report_contact(done.report_path) == MINA
+    assert ui_server.report_scope(text) == ("2023-01-01", "2023-02-28")
+    assert ui_server.companion_report_paths(done.report_path, MINA) == (done.events_path, None)
+    story = ui_server.markdown_section(text, "Summary", stop_at_next_heading=False)
+    assert reports.story_of(text) == story and story.startswith("### The Arc")
+    assert ui_server.markdown_to_html(story).count("<h3>") == 4
+    # the events, read as build_analysis_payload reads them
+    read_back = pd.read_csv(done.events_path).fillna("")
+    assert list(read_back.columns) == list(reports.EVENT_COLUMNS)
+    assert [str(value) for value in read_back["title"]] == [moment.title for moment in done.report.moments]
+    assert [float(value) for value in read_back["score"]] == [moment.score for moment in done.report.moments]
+    for name in (done.report_path.name, done.events_path.name):
+        assert ui_server._REPORT_FILE_NAME.fullmatch(name), name
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["", "no story here", "## Summary", "## Summary\n", "# T\n\n## Overview\n- x\n\n## Summary\n### The Arc\nwords\n\n## Not a section\nmore\n"],
+)
+def test_the_story_of_a_report_file_is_cut_as_the_server_cuts_it(text: str) -> None:
+    assert reports.story_of(text) == ui_server.markdown_section(text, "Summary", stop_at_next_heading=False)
