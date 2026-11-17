@@ -497,9 +497,12 @@ def keep_earlier(target: Path) -> bool:
 
 def restored(target: Path, had_earlier: bool) -> bool:
     """Put one place back as it was before the import. False when that fails."""
+    earlier = earlier_path(target)
     try:
         if had_earlier:
-            os.replace(earlier_path(target), target)
+            os.replace(earlier, target)
+            # two names of one file: the move leaves the earlier name where it was
+            earlier.unlink(missing_ok=True)
         else:
             target.unlink(missing_ok=True)
     except OSError:
@@ -507,33 +510,99 @@ def restored(target: Path, had_earlier: bool) -> bool:
     return True
 
 
+def unfinished(targets: tuple[Path, ...]) -> bool:
+    """True while an import has not finished its moves: the earlier messages file is still kept.
+
+    That file is kept first and given up last, so it stands for the whole
+    earlier generation.
+    """
+    return os.path.lexists(earlier_path(targets[-1]))
+
+
+def in_parts(stuck: list[tuple[Path, bool]], targets: tuple[Path, ...]) -> ArchiveInParts:
+    """What to say when a place could not be put back as it was. `stuck` holds each such place, and whether it had an earlier file."""
+    folder = targets[-1].parent
+    kept = [earlier_path(target).name for target, had_earlier in stuck if had_earlier]
+    left = [target.name for target, had_earlier in stuck if not had_earlier]
+    said = ["The import stopped part way, and the archive could not be put back as it was."]
+    if kept:
+        said.append(f"The earlier files are kept in {folder} as {', '.join(kept)}.")
+    if kept and unfinished(targets):
+        said.append("The next import puts them back.")
+    if left:
+        said.append(f"A new file could not be removed from {folder}: {', '.join(left)}.")
+    return ArchiveInParts(" ".join(said))
+
+
+def settle_earlier(targets: tuple[Path, ...]) -> None:
+    """Deal with the earlier files that an import before this one left beside the archive.
+
+    While the earlier messages file is there, that import did not finish: the
+    process ended during the moves, or a file could not be put back. Each
+    earlier file is put back now, the messages last, so the archive is again
+    as it was before that import. With no earlier messages file, that import
+    finished, and what is left of its earlier files is removed.
+    """
+    others, messages = targets[:-1], targets[-1]
+    if not unfinished(targets):
+        discard(earlier_path(target) for target in others)
+        return
+    stuck = [
+        (target, True)
+        for target in others
+        if os.path.lexists(earlier_path(target)) and not restored(target, True)
+    ]
+    # The earlier messages file goes last, and only when the others are back:
+    # while it is there, a later import still puts the others back.
+    if not stuck and not restored(messages, True):
+        stuck = [(messages, True)]
+    if stuck:
+        raise in_parts(stuck, targets)
+
+
 def move_in(targets: tuple[Path, ...]) -> None:
     """Move each new file to its place, or leave every place as it was.
 
-    The files that were there are first kept beside their places, as one
-    earlier generation. Then each new file takes its place in one step, so a
-    place never stands empty and a request served meanwhile reads a whole
-    file. When a move fails, the files moved so far are put back from the
-    earlier generation, the last one first.
+    1. The files that are there are kept beside their places, as one earlier
+       generation, the messages first.
+    2. Each new file takes its place in one step, the messages last. A place
+       never stands empty, and a request served meanwhile reads a whole file.
+    3. The earlier messages file is given up. That finishes the import: until
+       then, the next import puts the earlier files back (settle_earlier).
+       The other earlier files are then removed.
+
+    When a step fails, the files moved so far are put back from the earlier
+    generation, the last one first.
     """
-    moved: list[tuple[Path, bool]] = []
-    stuck: list[Path] = []
+    messages = targets[-1]
+    had_earlier: dict[Path, bool] = {}
+    moved: list[Path] = []
+    stuck: list[tuple[Path, bool]] = []
     try:
-        had_earlier = {target: keep_earlier(target) for target in targets}
+        for target in reversed(targets):
+            had_earlier[target] = keep_earlier(target)
         for target in targets:
             os.replace(staging_path(target), target)
-            moved.append((target, had_earlier[target]))
+            moved.append(target)
+        earlier_path(messages).unlink(missing_ok=True)
     except BaseException as stopped:
-        stuck = [target for target, earlier in reversed(moved) if not restored(target, earlier)]
+        stuck = [
+            (target, had_earlier[target])
+            for target in reversed(moved)
+            if not restored(target, had_earlier[target])
+        ]
         if stuck:
-            raise ArchiveInParts(
-                "The import stopped part way, and the earlier files could not be put back. "
-                f"They are in {targets[-1].parent}, with .before-update in their names."
-            ) from stopped
+            # the messages file is as it was: it is kept again, to say that the import did not finish
+            with contextlib.suppress(OSError):
+                if messages not in dict(stuck) and not unfinished(targets):
+                    keep_earlier(messages)
+            raise in_parts(stuck, targets) from stopped
         raise
     finally:
-        # an earlier file that could not be put back is the only copy of what it holds
-        discard(earlier_path(target) for target in targets if target not in stuck)
+        # An earlier file that could not be put back is the only copy of what
+        # it holds. It stays, and so does the earlier messages file.
+        held = set(dict(stuck)) | ({messages} if stuck else set())
+        discard(earlier_path(target) for target in targets if target not in held)
 
 
 class ArchiveFrames(NamedTuple):
@@ -573,13 +642,16 @@ def export_database(db_path: Path, messages_path: Path) -> dict:
     Nothing is merged in from a second source, so the archive holds what the
     database holds. All three are read before a file is written. The files are
     then written beside their places and moved in (move_in): a failure at any
-    step leaves the three files as they were.
+    step leaves the three files as they were. What an import before this one
+    could not finish is put back first (settle_earlier).
 
     All three files are written each time. A database with no attachments or
     no reactions gives a file with only its header, so no figure of an earlier
     archive stays beside new messages. A database with no message to keep is
     not imported: the archive would be empty.
     """
+    # what an import before this one could not finish is put back first
+    settle_earlier(archive_files(messages_path))
     archive_there = path_exists(messages_path)
     probe = probe_database(db_path)
     stopped = why_unreadable(probe, archive_there)
