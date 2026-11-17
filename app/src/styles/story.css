@@ -188,6 +188,11 @@
     animation-delay: var(--at);
   }
 
+  /* one that does not say who sent it has no dots before it to wait for */
+  .arrival.unsaid > .arrival-bubble {
+    animation-delay: var(--at);
+  }
+
   @keyframes bubble-in {
     from {
       opacity: 0;

@@ -41,8 +41,6 @@ export function CardStudio({ defaults, model, contacts, memories, onClose }: Car
   const asked = useRef(new Set<string>())
   const messagesPath = defaults?.messagesPath ?? ''
   const { load: firstWords } = useLoad(messagesPath, loadFirstWords)
-  // the day the studio was opened on
-  const [now] = useState(() => new Date())
   const [chosenKey, setChosenKey] = useState('')
   const [format, setFormat] = useState<CardFormat>('story')
   // the card whose message was asked onto it; a tick never carries over to another card
@@ -55,8 +53,8 @@ export function CardStudio({ defaults, model, contacts, memories, onClose }: Car
   const [failure, setFailure] = useState('')
 
   const moments = useMemo(
-    () => cardMoments(memories, firstWords.state === 'ready' ? firstWords.value : null, contacts, now),
-    [memories, firstWords, contacts, now],
+    () => cardMoments(memories, firstWords.state === 'ready' ? firstWords.value : null, contacts),
+    [memories, firstWords, contacts],
   )
   const chosen = moments.find((moment) => moment.key === chosenKey) ?? moments[0] ?? null
   const chatId = chosen?.chatId ?? ''

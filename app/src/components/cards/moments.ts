@@ -1,8 +1,9 @@
-import type { CardData, CardQuote } from '../../lib/cardCanvas'
-import { longDay } from '../../lib/cardData'
-import { contactTitle, conversationName, isGroupChat, messageCount } from '../../lib/conversations'
-import { formatLongDate, plural } from '../../lib/format'
-import type { Contact, FirstWordsPayload, MemoriesPayload } from '../../types'
+import type { CardData, CardQuote } from '../../lib/cardCanvas.ts'
+import { longDay } from '../../lib/cardData.ts'
+import { contactTitle, conversationName, isGroupChat, messageCount } from '../../lib/conversations.ts'
+import { sentByMe } from '../../lib/direction.ts'
+import { formatLongDate, plural } from '../../lib/format.ts'
+import type { Contact, FirstWordsPayload, MemoriesPayload } from '../../types.ts'
 
 export type CardMoment = {
   key: string
@@ -17,22 +18,17 @@ export type CardMoment = {
 // how many conversations are offered for a card of two people
 const PEOPLE = 8
 
-const pad = (value: number) => String(value).padStart(2, '0')
-const said = (text: string, direction: string): CardQuote => ({ text, fromMe: direction === 'outgoing' })
-
-// today's day of the year in another year, as "YYYY-MM-DD"; '' in a year that has no such day
-function sameDayIn(year: number, now: Date) {
-  const isDay = new Date(Date.UTC(year, now.getMonth(), now.getDate())).getUTCDate() === now.getDate()
-  return isDay ? `${year}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` : ''
-}
+// a first message on the side that sent it, or on neither when it does not say
+const said = (text: string, direction: string): CardQuote => ({ text, fromMe: sentByMe(direction) })
 
 // Everything a card can be made of today: anniversaries that are near, what
 // was said on this day in earlier years, and the people written to most.
+// Which day "this day" is comes from the server with each moment; this
+// computer's clock is not asked.
 export function cardMoments(
   memories: MemoriesPayload | null,
   firstWords: FirstWordsPayload | null,
   contacts: Contact[],
-  now: Date,
 ): CardMoment[] {
   const firstMessages = new Map((firstWords?.entries ?? []).map((entry) => [entry.chatId, entry]))
 
@@ -60,7 +56,7 @@ export function cardMoments(
 
   const onThisDay = (memories?.onThisDay ?? []).map((item): CardMoment => {
     const name = conversationName(item.name, item.chatId)
-    const day = sameDayIn(item.year, now)
+    const day = item.day || ''
     return {
       key: `day-${item.chatId}-${item.year}`,
       group: 'On this day',

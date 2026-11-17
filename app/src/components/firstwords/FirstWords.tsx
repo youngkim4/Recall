@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { conversationName } from '../../lib/conversations'
+import { sentByMe } from '../../lib/direction'
 import { formatLongDate, formatNumber, plural } from '../../lib/format'
 import type { FirstWordsEntry, FirstWordsPayload } from '../../types'
 import { CloseIcon, PauseIcon, PlayIcon } from '../Icons'
@@ -167,25 +168,30 @@ function Exchange({ entry, still }: { entry: FirstWordsEntry; still: boolean }) 
       <p className="exchange-who">{conversationName(entry.person, entry.chatId)}</p>
       <div className="thread">
         <p className="stamp">{[formatLongDate(entry.timestamp), ago].filter(Boolean).join(', ')}</p>
-        <Arrival mine={entry.direction === 'outgoing'} text={entry.text} order={0} />
-        {entry.reply ? <Arrival mine={entry.reply.direction === 'outgoing'} text={entry.reply.text} order={1} /> : null}
+        <Arrival mine={sentByMe(entry.direction)} text={entry.text} order={0} />
+        {entry.reply ? <Arrival mine={sentByMe(entry.reply.direction)} text={entry.reply.text} order={1} /> : null}
       </div>
     </div>
   )
 }
 
 // One message arriving. Theirs is announced by the three dots, as it was when
-// it was first sent; yours rises into place.
-function Arrival({ mine, text, order }: { mine: boolean; text: string; order: number }) {
+// it was first sent; yours rises into place. One that does not say who sent
+// it (mine is null) is set as a thread sets it, in gray on the left, with no
+// dots to say that the other side wrote it and no wait for them.
+function Arrival({ mine, text, order }: { mine: boolean | null; text: string; order: number }) {
   return (
-    <div className={`msg turn arrival${mine ? ' you' : ''}`} style={{ '--order': order } as CSSProperties}>
-      {mine ? null : (
+    <div
+      className={`msg turn arrival${mine ? ' you' : mine === null ? ' unsaid' : ''}`}
+      style={{ '--order': order } as CSSProperties}
+    >
+      {mine === false ? (
         <span className="typing arrival-typing" aria-hidden="true">
           <i />
           <i />
           <i />
         </span>
-      )}
+      ) : null}
       <span className={`bubble lg tail arrival-bubble${mine ? ' you' : ''}`}>
         {mine ? <span className="sr-only">You: </span> : null}
         {text}
