@@ -1,0 +1,373 @@
+/* Reports: saved reports on the left, the chosen one on the right as a
+   document. What the numbers say comes first, in cards like the Overview's;
+   then the moments on a timeline; then the story, set for reading.
+   The timeline has a sheet of its own. Every name here starts with "report",
+   except .prose, which is the reading text and is used nowhere else. */
+
+@import './report-timeline.css';
+
+@layer views {
+  .report-page > * + .section {
+    margin-top: var(--s-12);
+  }
+
+  /* a list with no heading over it starts one gutter down */
+  .report-list-top {
+    padding-top: var(--s-2);
+  }
+
+  /* what belongs to the paper only is not on the screen */
+  [data-paper-only] {
+    display: none;
+  }
+
+  /* ---- cover: who, and what can be done with the report ---- */
+  .report-cover .section-head {
+    margin-bottom: 0;
+  }
+
+  .report-cover .section-links {
+    align-items: baseline;
+  }
+
+  /* ---- figures: a card each, its name over the number, one line under it.
+     The same measures as the Overview's tiles. ---- */
+  .report-figures {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--s-3);
+    margin-top: var(--s-6);
+  }
+
+  .report-figure {
+    display: grid;
+    align-content: start;
+    min-width: 0;
+    padding: var(--s-4);
+  }
+
+  .report-figure > * {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .report-figure > dt,
+  .report-figure-note {
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+  }
+
+  .report-figure > dd {
+    margin-top: 0.125rem;
+    font-size: var(--t-heading);
+    line-height: var(--lh-heading);
+    font-weight: var(--w-medium);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  .report-figure > .report-figure-note {
+    margin-top: var(--s-2);
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    font-weight: var(--w-regular);
+    letter-spacing: 0;
+  }
+
+  /* too narrow for four: two rows of two */
+  @container detail (max-width: 38rem) {
+    .report-figures {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  .report-skeleton-chart {
+    height: 14rem;
+  }
+
+  /* ---- the smaller figures: a card each, its name at the top and a picture
+     of itself under it. As many side by side as have 12rem each; one left
+     alone on the last line takes the whole of it, so no place stands empty. ---- */
+  .report-numbers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-3);
+  }
+
+  .report-number {
+    flex: 1 1 12rem;
+    min-width: 0;
+  }
+
+  .report-numbers + .people {
+    margin-top: var(--s-12);
+  }
+
+  .report-number .section-head {
+    margin-bottom: var(--s-3);
+  }
+
+  /* one bar for the two voices, and what each comes to under its end */
+  .report-split > p {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--s-3);
+    margin-top: var(--s-2);
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-2);
+  }
+
+  .report-split > p > span {
+    display: inline-flex;
+    gap: var(--s-1);
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .report-split-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .report-split b {
+    font-weight: var(--w-medium);
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+
+  /* A kind, a bar as long as its share of the largest, its count. The rows
+     share their columns, so the bars start on one line whatever the words. */
+  .report-kinds {
+    display: grid;
+    grid-template-columns: max-content minmax(1.5rem, 1fr) max-content;
+    gap: var(--s-1) var(--s-3);
+  }
+
+  .report-split + .report-kinds {
+    margin-top: var(--s-4);
+  }
+
+  .report-kinds > li {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    align-items: center;
+    color: var(--text-2);
+  }
+
+  /* these count both voices, so they take no voice's color */
+  .report-kind-bar > i {
+    display: block;
+    min-width: 2px;
+    height: 0.375rem;
+    border-radius: 2px;
+    background: var(--mark);
+  }
+
+  .report-kinds b {
+    font-weight: var(--w-regular);
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    text-align: right;
+  }
+
+  /* ---- the story: its chapters named in a card of rows, then set for
+     reading. The list, the headings and the text keep one width: 65
+     characters of the reading size. ---- */
+  .report-story {
+    --report-measure: 38rem;
+  }
+
+  /* the title of the story sits a little under the name of the section */
+  .section-head + .report-chapter-title {
+    margin-top: var(--s-4);
+  }
+
+  .report-opening {
+    max-width: var(--report-measure);
+    margin-top: var(--s-3);
+  }
+
+  .report-contents {
+    max-width: var(--report-measure);
+    margin-top: var(--s-6);
+  }
+
+  .section-head + .report-contents {
+    margin-top: 0;
+  }
+
+  .report-chapter {
+    margin-top: var(--s-8);
+  }
+
+  .section-head + .report-chapter {
+    margin-top: var(--s-4);
+  }
+
+  /* a chapter after another starts under a line, with room on both sides of it */
+  .report-chapter + .report-chapter {
+    padding-top: var(--s-8);
+    border-top: 1px solid var(--line);
+  }
+
+  .report-chapter-title {
+    max-width: var(--report-measure);
+    font-size: 1.0625rem;
+    line-height: var(--lh-reading);
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  .report-chapter > .prose {
+    max-width: var(--report-measure);
+    margin-top: 0;
+  }
+
+  .report-chapter-title + .prose {
+    margin-top: var(--s-3);
+  }
+
+  /* the first paragraph leads the story */
+  .prose[data-lead] > p:first-child {
+    font-size: 1.0625rem;
+    line-height: 1.625rem;
+  }
+
+  /* the story's own rules fall where the chapters already draw a line */
+  .report-story .prose > hr:is(:first-child, :last-child) {
+    display: none;
+  }
+
+  /* ---- the story: written prose, set for reading ---- */
+  .prose {
+    max-width: var(--measure);
+    font-size: var(--t-reading);
+    line-height: var(--lh-reading);
+    overflow-wrap: break-word;
+  }
+
+  .prose > * + * {
+    margin-top: var(--s-3);
+  }
+
+  /* a heading belongs to what follows it: more room above than below */
+  .prose :is(h3, h4, h5, h6) {
+    font-size: var(--t-reading);
+    line-height: var(--lh-reading);
+    font-weight: var(--w-medium);
+    text-wrap: balance;
+  }
+
+  .prose > * + :is(h3, h4, h5, h6) {
+    margin-top: var(--s-8);
+  }
+
+  .prose > :is(h3, h4, h5, h6) + * {
+    margin-top: var(--s-2);
+  }
+
+  /* the two lowest headings come with room of the browser's own under them */
+  .prose :is(h5, h6) {
+    margin-bottom: 0;
+  }
+
+  .prose > :is(h5, h6):first-child {
+    margin-top: 0;
+  }
+
+  .prose :is(ul, ol) {
+    padding-left: 1.25rem;
+  }
+
+  .prose ul {
+    list-style: disc;
+  }
+
+  .prose ol {
+    list-style: decimal;
+  }
+
+  .prose li + li {
+    margin-top: var(--s-1);
+  }
+
+  .prose li::marker {
+    color: var(--text-3);
+  }
+
+  /* words quoted from the conversation, when who said them is not known */
+  .prose blockquote {
+    margin-inline: 0;
+    padding-left: var(--s-3);
+    border-left: 2px solid var(--line-strong);
+    color: var(--text-2);
+  }
+
+  .prose strong {
+    font-weight: var(--w-medium);
+  }
+
+  .prose a {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.2em;
+    text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  }
+
+  .prose hr {
+    height: 1px;
+    margin-block: var(--s-6);
+    border: 0;
+    background: var(--line);
+  }
+
+  .prose code {
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 0.9em;
+  }
+
+  .prose table {
+    border-collapse: collapse;
+    font-size: var(--t-body);
+    line-height: var(--lh-body);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .prose :is(th, td) {
+    padding: var(--s-1) var(--s-4) var(--s-1) 0;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+  }
+
+  .prose th {
+    font-weight: var(--w-medium);
+    color: var(--text-2);
+  }
+
+  .report-skeleton-line {
+    display: block;
+    height: 0.75rem;
+  }
+
+  /* ---- the files it was saved as ---- */
+  .report-files {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--s-1) var(--s-4);
+    padding-top: var(--s-4);
+    border-top: 1px solid var(--line);
+    color: var(--text-3);
+  }
+
+  /* the files stay together when the line wraps */
+  .report-files > span:last-child {
+    display: flex;
+    gap: var(--s-4);
+  }
+}

@@ -1,0 +1,160 @@
+/* Paper: a report set as a document, to print or to save as a PDF.
+
+   It is a state of the page: <html data-paper> while it is up (usePaper).
+   Export opens it on the screen first, so what is saved is what was seen; a
+   print asked for while a report is open puts it up for the length of the
+   print. Everything that decides how the document looks is under
+   [data-paper], where it can be looked at. @media print adds only what a
+   screen has no word for: the sheet, and where a page may break.
+
+   None of this is in a cascade layer, so it holds against the app's own
+   layout without having to know it. */
+
+/* paper is light, whatever the app is set to */
+:root[data-paper],
+:root[data-paper][data-theme] {
+  color-scheme: light;
+}
+
+/* the app is a window of fixed panes; a document is one column that runs on */
+:root[data-paper],
+:root[data-paper] :is(body, #root, .app, .workspace, .split, .pane-detail, .detail) {
+  display: block;
+  width: auto;
+  max-width: none;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+}
+
+/* a column that answers to its own width cannot be broken across pages */
+:root[data-paper] :is(.workspace, .detail) {
+  container-type: normal;
+}
+
+/* [data-screen-only] is what a sheet of paper has no use for: buttons, links,
+   what a pointer reads. The paper's own bar is one of them; on the screen it
+   is brought back further down. */
+:root[data-paper] :is(.rail, .resize-handle, .titlebar, .banner, .pane-back, [data-screen-only]),
+:root[data-paper] .split > :not(.pane-detail) {
+  display: none;
+}
+
+:root[data-paper] [data-paper-only] {
+  display: revert;
+}
+
+/* nothing arrives on paper: it is simply there */
+:root[data-paper] .report-page,
+:root[data-paper] .report-page > * {
+  animation: none;
+}
+
+/* what a fold keeps closed in the app is part of the document */
+:root[data-paper] .report-page .disclosure-body {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+:root[data-paper] .report-page :is(.disclosure-toggle, .section-links) {
+  display: none;
+}
+
+/* ---- the document ---- */
+:root[data-paper] .report-mark {
+  margin-bottom: var(--s-6);
+  font-size: var(--t-small);
+  line-height: var(--lh-small);
+  font-weight: var(--w-medium);
+  color: var(--text-3);
+}
+
+/* the chart and the marks are read, not moved across */
+:root[data-paper] .report-page :is(.activity-plot, .report-strip-line) {
+  pointer-events: none;
+  cursor: auto;
+}
+
+/* ---- on the screen: a sheet on a desk, under a bar of its own ---- */
+@media screen {
+  :root[data-paper] body {
+    background: var(--bg-rail);
+  }
+
+  :root[data-paper] .report-page {
+    max-width: 49rem;
+    margin: var(--s-8) auto var(--s-16);
+    padding: 4rem 4.5rem;
+    border-radius: var(--r-xs);
+    background: var(--bg);
+    box-shadow: var(--shadow-pop);
+  }
+
+  /* the bar stays in reach while the sheet scrolls under it */
+  :root[data-paper] .paper-bar {
+    position: sticky;
+    z-index: 3;
+    top: var(--s-3);
+    display: flex;
+    justify-content: space-between;
+    gap: var(--s-3);
+    /* out of the sheet's own padding, to sit on its top edge */
+    margin: -3rem -3.5rem var(--s-8);
+    padding: var(--s-2);
+    border-radius: var(--r-lg);
+    background: var(--bg-glass);
+    box-shadow: var(--shadow-raised);
+    backdrop-filter: blur(20px) saturate(1.8);
+  }
+
+  @media (max-width: 44rem) {
+    :root[data-paper] .report-page {
+      margin: 0;
+      padding: var(--s-8) var(--s-5) var(--s-16);
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    :root[data-paper] .paper-bar {
+      margin: calc(var(--s-5) * -1) calc(var(--s-2) * -1) var(--s-6);
+    }
+  }
+}
+
+/* ---- on a sheet of paper ---- */
+@media print {
+  @page {
+    margin: 18mm 16mm;
+  }
+
+  :root[data-paper] body {
+    background: #fff;
+  }
+
+  /* bars, marks and bubbles are the content: they print in their colors */
+  :root[data-paper] .report-page,
+  :root[data-paper] .report-page * {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* a heading stays with what it is the heading of */
+  :root[data-paper] .report-page :is(h2, h3, h4, h5, h6, .section-head, .report-cover) {
+    break-after: avoid;
+  }
+
+  /* a chart, a figure or a moment is never cut in two */
+  :root[data-paper]
+    .report-page
+    :is(.report-figure, .voices, .report-number, .report-strip, .report-moment, .ranked-row, .report-contents, li, blockquote, table) {
+    break-inside: avoid;
+  }
+
+  :root[data-paper] .report-page p {
+    orphans: 3;
+    widows: 3;
+  }
+}

@@ -1,0 +1,255 @@
+/* Overview: the day it is and what the archive holds on it, how large the
+   archive is, then what is worth opening today. */
+
+@layer views {
+  /* ---- lead: the day, set large ---- */
+  .overview-lead {
+    font-size: var(--t-display);
+    line-height: var(--lh-display);
+    letter-spacing: -0.02em;
+  }
+
+  /* ---- tiles: the archive in four figures, each over a small picture of
+     itself. Every tile has the same four rows, so the figures, the pictures
+     and the lines under them each share a line across the row. ---- */
+  .tiles {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--s-3);
+  }
+
+  /* too narrow for four: two rows of two */
+  @container workspace (max-width: 46rem) {
+    .tiles {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  .tile {
+    display: grid;
+    /* a name, a figure, a picture, and one line about it */
+    grid-template-rows: auto auto auto auto;
+    min-width: 0;
+    padding: var(--s-4);
+  }
+
+  .tile-label,
+  .tile-value,
+  .tile-note {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tile-label,
+  .tile-note {
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+  }
+
+  .tile-value {
+    margin-top: 0.125rem;
+    font-size: var(--t-heading);
+    line-height: var(--lh-heading);
+    font-weight: var(--w-medium);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* the picture stands on the floor of its row, whatever its height */
+  .tile-picture {
+    display: flex;
+    align-items: flex-end;
+    height: 1.5rem;
+    margin-top: var(--s-3);
+  }
+
+  .tile-picture > .voice-bar > :first-child {
+    border-radius: 2px 0 0 2px;
+  }
+
+  .tile-note {
+    margin-top: var(--s-2);
+  }
+
+  /* a line that ends in something to press: the words give way, the control does not */
+  .tile-action {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--s-2);
+    overflow: visible;
+  }
+
+  .tile-action > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tile-action > .link {
+    flex: none;
+  }
+
+  .tile-waiting {
+    width: 100%;
+    height: 0.375rem;
+  }
+
+  /* a window as narrow as a phone: one tile a row, its figure beside its name */
+  @container workspace (max-width: 26rem) {
+    .tiles {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--s-2);
+    }
+
+    .tile {
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: baseline;
+      column-gap: var(--s-3);
+      padding: var(--s-3) var(--s-4);
+    }
+
+    .tile-value {
+      margin-top: 0;
+    }
+
+    .tile-picture,
+    .tile-note {
+      grid-column: 1 / -1;
+    }
+
+    .tile-picture {
+      height: 1rem;
+      margin-top: var(--s-2);
+    }
+  }
+
+  /* how the messages built up, month by month */
+  .spark {
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  .spark-area {
+    fill: var(--heat-1);
+  }
+
+  .spark-line {
+    fill: none;
+    stroke: var(--text-2);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+  }
+
+  /* one length cut into parts, the largest first, in steps of the text color */
+  .tile-parts {
+    display: flex;
+    gap: 1px;
+    width: 100%;
+    height: 0.375rem;
+  }
+
+  .tile-parts > i {
+    flex-basis: 0;
+    min-width: 2px;
+    background: var(--heat-4);
+  }
+
+  .tile-parts > [data-part='1'] {
+    background: var(--heat-3);
+  }
+
+  .tile-parts > [data-part='2'],
+  .tile-parts > [data-part='3'],
+  .tile-parts > [data-part='4'] {
+    background: var(--heat-2);
+  }
+
+  .tile-parts > [data-part='rest'] {
+    background: var(--heat-0);
+  }
+
+  .tile-parts > :first-child {
+    border-radius: 2px 0 0 2px;
+  }
+
+  .tile-parts > :last-child {
+    border-radius: 0 2px 2px 0;
+  }
+
+  .overview-actions {
+    display: flex;
+    gap: var(--s-2);
+    margin-top: var(--s-5);
+  }
+
+  /* ---- moments: when on the left, who and what on the right; in a card,
+     with a hairline between one moment and the next ---- */
+  .card > .moments .row {
+    padding-block: var(--s-4);
+  }
+
+  .moment {
+    display: grid;
+    grid-template-columns: 11rem minmax(0, 1fr);
+    align-items: start;
+    gap: var(--s-4);
+  }
+
+  .moment-when {
+    color: var(--text-3);
+  }
+
+  /* in a narrow window "when" goes above "who", and the bubble gets the width */
+  @container workspace (max-width: 40rem) {
+    .moment {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+    }
+  }
+
+  .moment-main,
+  .moment-detail {
+    display: grid;
+    justify-items: start;
+    min-width: 0;
+  }
+
+  /* the detail spans the column, so a bubble's 78% is 78% of the column and
+     not of its own text */
+  .moment-detail {
+    justify-self: stretch;
+  }
+
+  /* a row with lines beneath its title sets the title in medium */
+  .moment-name {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: var(--w-medium);
+  }
+
+  .moment-line {
+    color: var(--text-2);
+  }
+
+  /* a quoted message keeps 4px clear above and below, and stops short of the
+     column the way a bubble does in a transcript */
+  .moment .bubble {
+    max-width: 78%;
+    margin-block: var(--s-1);
+  }
+
+  /* under a quoted message the line is a footnote to it; it keeps the body
+     line height so the row ends on the same rhythm as the others */
+  .bubble + .moment-line {
+    font-size: var(--t-small);
+    color: var(--text-3);
+  }
+}

@@ -1,0 +1,534 @@
+/* App frame: rail, title strip, panes, page column.
+
+   One spacing value governs each region. In the rail it is 8px: the rail's
+   padding, a nav row's inset, and the icon-to-label gap are all 8px, and a
+   32px row leaves 8px above and below its 16px icon. */
+
+@layer shell {
+  .app {
+    --rail-w-now: var(--rail-w);
+    display: grid;
+    grid-template-columns: var(--rail-w-now) 1px minmax(0, 1fr);
+    height: 100%;
+    background: var(--bg);
+    transition: grid-template-columns var(--dur-long) var(--ease-out);
+  }
+
+  .app.rail-collapsed {
+    --rail-w-now: var(--rail-w-collapsed);
+  }
+
+  /* ---- rail ----
+     6px of padding above the first 32px row centers it on the 44px title
+     strip beside it, so "Overview" and the view title share a line. */
+  .rail {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 0.375rem var(--s-2) var(--s-2);
+    overflow: hidden;
+    background: var(--bg-rail);
+    user-select: none;
+  }
+
+  /* The Mac window draws its traffic lights over the first 28px. Rows start
+     8px below that, level with the first row of the list beside them. */
+  .is-mac-app .rail {
+    padding-top: 2.25rem;
+  }
+
+  /* Settings, with the control that folds the rail away beside it */
+  .rail-foot {
+    display: flex;
+    gap: 1px;
+    margin-top: auto;
+  }
+
+  .rail-foot .nav {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .rail-collapsed .rail-foot {
+    flex-direction: column-reverse;
+  }
+
+  /* The fill behind the current row is one piece. It moves to the row that
+     was chosen, so the eye is led from where it was to where it went; when the
+     choice is in the other list it leaves toward that list. */
+  .nav {
+    position: relative;
+    isolation: isolate;
+    display: grid;
+    gap: 1px;
+  }
+
+  .nav::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 2rem;
+    border-radius: var(--r-md);
+    background: var(--fill-active);
+    opacity: 0;
+    translate: 0 calc(var(--at, 0) * (2rem + 1px));
+    transition:
+      translate var(--dur-long) var(--ease-out),
+      opacity var(--dur-micro) ease;
+  }
+
+  .nav[data-current]::before {
+    opacity: 1;
+  }
+
+  .nav-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    width: 100%;
+    height: 2rem;
+    padding: 0 var(--s-2);
+    border-radius: var(--r-md);
+    color: var(--text-2);
+    white-space: nowrap;
+    transition:
+      background-color var(--dur-micro) ease,
+      color var(--dur-micro) ease;
+  }
+
+  .nav-item .icon {
+    color: var(--text-3);
+    transition: color var(--dur-micro) ease;
+  }
+
+  .nav-item .nav-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: opacity var(--dur-micro) ease;
+  }
+
+  .nav-item .nav-count {
+    font-size: var(--t-small);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+  }
+
+  .nav-item[aria-current='page'] {
+    color: var(--text);
+    font-weight: var(--w-medium);
+  }
+
+  .nav-item[aria-current='page'] .icon {
+    color: var(--text);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .nav-item:hover:not([aria-current='page']) {
+      color: var(--text);
+      background: var(--fill-hover);
+    }
+
+    .nav-item:hover:not([aria-current='page']) .icon {
+      color: var(--text-2);
+    }
+  }
+
+  /* collapsed: each row is a 32px square around its icon. The words fade as
+     the rail closes over them, so they are gone before it gets there. */
+  .rail-collapsed .nav-item {
+    width: 2rem;
+  }
+
+  .rail-collapsed .nav-label {
+    opacity: 0;
+  }
+
+  /* folded, there is no room for the number: a dot on the icon's corner says
+     that work is under way */
+  .rail-collapsed .nav-count {
+    position: absolute;
+    top: 0.375rem;
+    right: 0.375rem;
+    width: 0.375rem;
+    height: 0.375rem;
+    overflow: hidden;
+    border-radius: var(--r-full);
+    background: var(--text-2);
+    font-size: 0;
+  }
+
+  /* ---- resize handle: a hairline with a wide grab area ---- */
+  .resize-handle {
+    position: relative;
+    z-index: 2;
+    width: 1px;
+    background: var(--line);
+    cursor: col-resize;
+    transition: background-color var(--dur-micro) ease;
+  }
+
+  .resize-handle::before {
+    content: '';
+    position: absolute;
+    inset: 0 -0.25rem;
+  }
+
+  .resize-handle.is-dragging,
+  .resize-handle:focus-visible {
+    outline: none;
+    background: var(--you-ink);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .resize-handle:hover:not(.is-dragging) {
+      background: var(--line-strong);
+    }
+  }
+
+  .rail-collapsed > .resize-handle {
+    pointer-events: none;
+  }
+
+  /* ---- workspace ---- */
+  /* the views inside ask how wide the workspace is, not the window */
+  .workspace {
+    display: grid;
+    grid-template-rows: var(--title-h) auto minmax(0, 1fr);
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+    container: workspace / inline-size;
+  }
+
+  /* The title strip doubles as the window's drag zone in the Mac app, so
+     nothing in it is interactive. There it is 28px tall, which centers the
+     title on the traffic lights. */
+  .titlebar {
+    display: flex;
+    align-items: center;
+    padding: 0 var(--s-4);
+    border-bottom: 1px solid var(--line);
+    user-select: none;
+  }
+
+  .is-mac-app .workspace {
+    --title-h: 1.75rem;
+  }
+
+  /* collapsed rail: clear the traffic lights, which now overhang the strip */
+  .is-mac-app .rail-collapsed .titlebar {
+    padding-left: 2.5rem;
+  }
+
+  .banner {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
+    border-bottom: 1px solid var(--line);
+    background: var(--bad-soft);
+    color: var(--bad);
+  }
+
+  .banner p {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .banner .icon-btn {
+    color: inherit;
+  }
+
+  .view {
+    grid-row: 3;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  /* ---- page: one reading column ---- */
+  /* One left edge runs down a window: the title in the strip above is 16px
+     in, and so is everything under it for as long as the column fills the
+     width. Once there is room to spare the column sits in the middle with
+     32px gutters. It starts 32px under the strip, as a detail pane does. */
+  .page {
+    max-width: calc(var(--page-max) + var(--page-pad) * 2);
+    margin: 0 auto;
+    padding: var(--s-8) var(--page-pad) var(--s-16);
+  }
+
+  @container workspace (max-width: 49rem) {
+    .page {
+      padding-inline: var(--s-4);
+    }
+  }
+
+  /* more room above a heading than below it */
+  .page > * + .section,
+  .detail > * + .section {
+    margin-top: var(--s-12);
+  }
+
+  /* 8px to the first row and 8px of row inset: the heading sits one row
+     pitch above the first line of its list, so it reads as part of the same column */
+  .section-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-1) var(--s-4);
+    margin-bottom: var(--s-2);
+  }
+
+  /* the heading and anything that explains it keep left; the ways onward keep
+     right, and go under the heading whole before any of them breaks in two */
+  .section-links {
+    display: flex;
+    gap: var(--s-4);
+    margin-left: auto;
+    white-space: nowrap;
+  }
+
+  /* one line where a list would be; it starts where the first row's text would */
+  .section-note {
+    margin-top: var(--s-2);
+    color: var(--text-3);
+  }
+
+  .section-head h2,
+  .section-head h3 {
+    font-size: var(--t-body);
+    line-height: var(--lh-body);
+  }
+
+  .section-head .meta {
+    color: var(--text-3);
+  }
+
+  /* ---- split: list pane and detail pane, each scrolling on its own ---- */
+  .split {
+    display: grid;
+    grid-template-columns: var(--list-w, 20rem) 1px minmax(0, 1fr);
+    grid-row: 3;
+    min-height: 0;
+  }
+
+  .pane {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  /* 16px = the list's 8px gutter + a row's 8px inset, so the heading sits on
+     the same edge as the first thing in each row */
+  .pane-head {
+    flex: none;
+    padding: var(--s-4) var(--s-4) var(--s-3);
+  }
+
+  .pane-head h2 {
+    font-size: var(--t-reading);
+    line-height: var(--lh-body);
+  }
+
+  .pane-head .meta {
+    color: var(--text-3);
+  }
+
+  /* a head that holds an action row in place of a title: same 8px gutter as the list */
+  .pane-actions {
+    padding: var(--s-2) var(--s-2) 0;
+  }
+
+  .pane-actions + .pane-scroll {
+    padding-top: var(--s-2);
+  }
+
+  .pane-note {
+    padding: 0 var(--s-2);
+    color: var(--text-3);
+  }
+
+  /* fixed divider between two panes that do not resize */
+  .split > .divider {
+    background: var(--line);
+  }
+
+  /* A short-lived offer to take back what was just done. 8px margin and 8px
+     inset keep its words on the list's own text edge. */
+  /* rises into place, and leaves the way it came, a little faster */
+  .undo-bar {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-3);
+    margin: 0 var(--s-2) var(--s-2);
+    padding: var(--s-2);
+    border-radius: var(--r-md);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-raised);
+    transition:
+      opacity var(--dur-short) var(--ease-out),
+      translate var(--dur-long) var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+      translate: 0 calc(0.5rem * var(--travel));
+    }
+  }
+
+  .undo-bar.is-leaving {
+    opacity: 0;
+    translate: 0 calc(0.5rem * var(--travel));
+    transition-duration: var(--dur-micro), var(--dur-short);
+  }
+
+  /* what was waiting on a load fades in; nothing slides. Not for a part of
+     something that arrives: the two would run at once, and this one would win. */
+  .appear {
+    transition: opacity var(--dur-short) ease;
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
+
+  /* ---- arrive: what a click brought into view fades in and rises into
+     place. It runs once, as the thing is put on the page, and leaves every
+     transition the thing has of its own alone. With Reduce Motion it is the
+     fade only. ---- */
+  .arrive,
+  .arrive-each > :not(dialog, [popover]) {
+    animation: arrive max(var(--dur-long), var(--dur-short)) var(--ease-out) backwards;
+  }
+
+  /* its parts follow a beat apart, top first */
+  .arrive-each > :nth-child(2) {
+    animation-delay: 30ms;
+  }
+
+  .arrive-each > :nth-child(3) {
+    animation-delay: 60ms;
+  }
+
+  .arrive-each > :nth-child(4) {
+    animation-delay: 90ms;
+  }
+
+  .arrive-each > :nth-child(n + 5) {
+    animation-delay: 120ms;
+  }
+
+  @keyframes arrive {
+    from {
+      opacity: 0;
+      translate: 0 calc(0.5rem * var(--travel));
+    }
+  }
+
+  .pane-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 0 var(--s-2) var(--s-4);
+  }
+
+  .pane-detail {
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  /* what is inside answers to the width of this column, which a wide list can make narrow in a wide window */
+  .detail {
+    max-width: calc(var(--page-max) + var(--page-pad) * 2);
+    padding: var(--s-8) var(--page-pad) var(--s-16);
+    container: detail / inline-size;
+  }
+
+  /* content that scrolls under a fixed header fades at the edge instead of
+     being cut by a rule; the fade only appears once the list has moved */
+  @supports (animation-timeline: scroll()) {
+    @property --edge-fade {
+      syntax: '<length>';
+      inherits: false;
+      initial-value: 0px;
+    }
+
+    .pane-scroll {
+      mask-image: linear-gradient(to bottom, transparent, #000 var(--edge-fade));
+      animation: edge-fade linear both;
+      animation-timeline: scroll(self);
+      animation-range: 0 1.5rem;
+    }
+
+    @keyframes edge-fade {
+      to {
+        --edge-fade: 1rem;
+      }
+    }
+  }
+
+  /* ---- a narrow window: one pane at a time ----
+     Under 40rem there is no room for a list beside the thing it lists. A
+     split shows one or the other, and the detail carries the way back. */
+  .pane-back {
+    display: none;
+  }
+
+  @container workspace (max-width: 40rem) {
+    .split {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .split > .resize-handle,
+    .split > .divider,
+    .split[data-pane='detail'] > .pane:first-child,
+    .split[data-pane='list'] > .pane:last-child {
+      display: none;
+    }
+
+    /* the chevron sits on the text edge; the button's fill reaches past it */
+    .pane-back {
+      display: inline-flex;
+      justify-self: start;
+      margin: 0 0 var(--s-3) -0.625rem;
+    }
+
+    /* one pane fills the width, so it takes the title's edge as well */
+    .detail {
+      padding-inline: var(--s-4);
+    }
+  }
+
+  /* ---- shown when the app itself fails to render ---- */
+  .app-fallback {
+    display: grid;
+    align-content: center;
+    justify-items: center;
+    gap: var(--s-2);
+    height: 100%;
+    padding: var(--s-8);
+    text-align: center;
+  }
+
+  .app-fallback h1 {
+    font-size: var(--t-heading);
+    line-height: var(--lh-heading);
+  }
+
+  .app-fallback p {
+    max-width: 56ch;
+    color: var(--text-2);
+  }
+
+  .app-fallback .btn {
+    margin-top: var(--s-3);
+  }
+}

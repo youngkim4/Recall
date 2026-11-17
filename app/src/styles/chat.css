@@ -1,0 +1,417 @@
+/* Chat: saved chats on the left, the conversation and its composer on the right. */
+
+@layer views {
+  .split.chat {
+    --list-w: 16.25rem;
+  }
+
+  /* ---- saved chats ---- */
+  .chat-row {
+    position: relative;
+    height: 2rem;
+    padding: 0 var(--s-2);
+  }
+
+  .chat-open {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* the whole row opens the chat; the delete control sits above this layer */
+  .chat-open::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+  }
+
+  .chat-open:focus-visible {
+    outline: none;
+  }
+
+  /* pressed, the row darkens one step before the chat opens */
+  .chat-row:has(.chat-open:active):not(.is-active) {
+    background: var(--fill-active);
+  }
+
+  .chat-row:has(.chat-open:focus-visible) {
+    outline: 2px solid var(--you-ink);
+    outline-offset: -2px;
+  }
+
+  .chat-open .row-title {
+    display: block;
+  }
+
+  /* the time and the delete control share one slot at the row's end */
+  .chat-trail {
+    display: grid;
+    flex: none;
+    align-items: center;
+    justify-items: end;
+  }
+
+  .chat-trail > * {
+    grid-area: 1 / 1;
+    transition: opacity var(--dur-micro) ease;
+  }
+
+  /* 24px control in a 32px row: 4px from the top, bottom and right edges */
+  .chat-delete {
+    z-index: 1;
+    margin-right: calc(var(--s-1) * -1);
+    opacity: 0;
+  }
+
+  .chat-delete::after {
+    inset: -0.25rem;
+  }
+
+  .chat-row:has(:focus-visible) .row-end {
+    opacity: 0;
+  }
+
+  .chat-row:has(:focus-visible) .chat-delete {
+    opacity: 1;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .chat-row:hover .row-end {
+      opacity: 0;
+    }
+
+    .chat-row:hover .chat-delete {
+      opacity: 1;
+    }
+  }
+
+  /* ---- conversation ---- */
+  .chat-pane {
+    --chat-w: 40rem;
+  }
+
+  .chat-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: var(--s-8) var(--page-pad) var(--s-6);
+    /* text fades as it reaches the composer instead of being cut by its edge */
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--s-6)), transparent);
+  }
+
+  .chat-column {
+    display: grid;
+    max-width: var(--chat-w);
+    margin: 0 auto;
+  }
+
+  /* a question sits close to its answer and well clear of the one before */
+  .chat-column > .msg {
+    max-width: 85%;
+    margin-top: var(--s-10);
+  }
+
+  .chat-column > .msg:first-child {
+    margin-top: 0;
+  }
+
+  .chat-column > .answer,
+  .chat-column > .chat-waiting {
+    margin-top: var(--s-4);
+  }
+
+  /* a message that was just sent rises into place; older ones are simply there */
+  .chat-column > .is-new {
+    transition:
+      opacity var(--dur-short) var(--ease-out),
+      translate var(--dur-long) var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+      translate: 0 calc(0.5rem * var(--travel));
+    }
+  }
+
+  .answer-body {
+    max-width: var(--measure);
+    font-size: var(--t-reading);
+    line-height: var(--lh-reading);
+  }
+
+  .answer-body > * + * {
+    margin-top: var(--s-3);
+  }
+
+  .answer-body ul {
+    display: grid;
+    gap: var(--s-1);
+    padding-left: var(--s-5);
+    list-style: disc;
+  }
+
+  .answer-body li::marker {
+    color: var(--text-3);
+  }
+
+  .cite-ref {
+    margin-left: 1px;
+    font-size: var(--t-caption);
+    font-variant-numeric: tabular-nums;
+    line-height: 0;
+    color: var(--text-3);
+  }
+
+  /* follows the last character while the answer arrives; settles after a few beats */
+  .caret {
+    display: inline-block;
+    width: 2px;
+    height: 1.125em;
+    margin-left: 2px;
+    border-radius: 1px;
+    background: var(--text-3);
+    vertical-align: -0.2em;
+    animation: caret-blink 1s steps(1) 5;
+  }
+
+  @keyframes caret-blink {
+    50% {
+      opacity: 0;
+    }
+  }
+
+  .answer-note {
+    margin-top: var(--s-3);
+    color: var(--text-2);
+  }
+
+  /* ---- cited messages ---- */
+  .cites {
+    margin-top: var(--s-2);
+  }
+
+  /* under an answer the button is a footnote to it, so it is a step quieter */
+  .cites .disclosure-toggle {
+    color: var(--text-2);
+  }
+
+  .cite-list {
+    display: grid;
+    gap: 1px;
+    margin-left: calc(var(--s-2) * -1);
+    padding-top: var(--s-1);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .cites .disclosure-toggle:hover {
+      color: var(--text);
+    }
+  }
+
+  .chat-waiting {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    color: var(--text-3);
+  }
+
+  /* ---- composer ---- */
+  .chat-dock {
+    display: grid;
+    flex: none;
+    gap: var(--s-2);
+    padding: 0 var(--page-pad) var(--s-6);
+  }
+
+  .chat-dock > * {
+    width: 100%;
+    max-width: var(--chat-w);
+    margin-inline: auto;
+  }
+
+  /* in a narrow window the thread and composer take the title's edge, 16px in */
+  @container workspace (max-width: 40rem) {
+    .chat-scroll,
+    .chat-dock {
+      padding-inline: var(--s-4);
+    }
+
+    /* pinned to the pane's corner, whatever the thread below it is doing */
+    .chat-pane {
+      position: relative;
+    }
+
+    .chat-pane > .pane-back {
+      position: absolute;
+      top: var(--s-2);
+      left: var(--s-2);
+      z-index: 1;
+      margin: 0;
+    }
+
+    .chat-pane:not(.is-empty) .chat-scroll {
+      padding-top: var(--s-12);
+    }
+  }
+
+  /* an error above the composer starts on the composer's text edge */
+  .chat-dock > .notice {
+    padding-inline: var(--s-5);
+  }
+
+  /* Radius = the send button's 16px radius + the 8px around it, so the corner
+     and the round controls inside it share a center. The pickers are pills
+     for the same reason. */
+  .composer {
+    --picker-r: var(--r-full);
+    display: grid;
+    padding: var(--s-2);
+    border-radius: calc(var(--control-h) / 2 + var(--s-2));
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-raised);
+    transition: box-shadow var(--dur-micro) ease;
+  }
+
+  .composer:focus-within {
+    box-shadow: var(--shadow-raised-hover);
+  }
+
+  /* 12px inside the 8px padding puts the text on the picker labels' edge;
+     6px above it puts the capitals as far from the top as they are from the side */
+  .composer textarea {
+    display: block;
+    width: 100%;
+    max-height: 12.5rem;
+    padding: 0.375rem var(--s-3) var(--s-2);
+    overflow: auto;
+    border: 0;
+    outline: none;
+    background: transparent;
+    font-size: var(--t-reading);
+    line-height: var(--lh-reading);
+    resize: none;
+  }
+
+  .composer textarea::placeholder {
+    color: var(--text-3);
+    opacity: 1;
+  }
+
+  .composer textarea:disabled {
+    cursor: not-allowed;
+  }
+
+  /* what to search keeps left; how carefully to answer sits with Send */
+  .composer-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-width: 0;
+  }
+
+  .composer-bar > .picker {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .composer-bar > .picker:first-child {
+    margin-right: auto;
+  }
+
+  /* inside the composer the focus ring is drawn within the control, clear of the composer's own edge */
+  .composer-bar .picker:focus-visible,
+  .send:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .send:focus-visible {
+    outline-color: var(--on-you);
+    box-shadow: 0 0 0 2px var(--you-ink);
+  }
+
+  .send {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: var(--control-h);
+    height: var(--control-h);
+    border-radius: var(--r-full);
+    background: var(--you);
+    color: var(--on-you);
+    transition:
+      background-color var(--dur-micro) ease,
+      color var(--dur-micro) ease,
+      scale var(--dur-micro) var(--ease-out);
+  }
+
+  .send:active:not(:disabled) {
+    scale: var(--press-scale);
+  }
+
+  /* nothing to send yet: the control goes gray, as it does in Messages */
+  .send:disabled {
+    background: var(--fill-active);
+    color: var(--text-off);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .send:hover:not(:disabled) {
+      background: var(--you-hover);
+    }
+  }
+
+  /* ---- before the first question: heading, composer and examples as one group ---- */
+  .chat-pane.is-empty {
+    justify-content: center;
+    padding-bottom: 10vh;
+  }
+
+  .chat-pane.is-empty .chat-scroll {
+    flex: none;
+    overflow: visible;
+    padding-top: 0;
+    mask-image: none;
+  }
+
+  .chat-pane.is-empty .chat-dock {
+    padding-bottom: 0;
+  }
+
+  .chat-start {
+    font-size: var(--t-display);
+    line-height: var(--lh-display);
+    letter-spacing: -0.02em;
+    text-align: center;
+  }
+
+  /* example questions start on the composer's text edge: 8px padding + 12px inset */
+  .prompts {
+    width: 100%;
+    max-width: calc(var(--chat-w) + var(--page-pad) * 2);
+    margin: var(--s-3) auto 0;
+    padding: 0 var(--page-pad);
+  }
+
+  .prompts .row {
+    padding: 0.375rem var(--s-5);
+    color: var(--text-2);
+    transition:
+      background-color var(--dur-micro) ease,
+      color var(--dur-micro) ease;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .prompts .row:hover {
+      color: var(--text);
+    }
+  }
+
+  .chat-setup {
+    display: grid;
+    justify-items: center;
+    gap: var(--s-3);
+    margin-top: var(--s-4);
+    padding: 0 var(--page-pad);
+    color: var(--text-2);
+    text-align: center;
+  }
+}

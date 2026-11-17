@@ -1,0 +1,283 @@
+/* The moments of a report: where each one fell along the days it covers,
+   and under that the moments themselves as a timeline, in one card. */
+
+@layer views {
+  /* ---- along the days: a mark where each moment fell, larger for the ones
+     that matter most ---- */
+  .report-strip {
+    padding: var(--s-4) var(--s-4) var(--s-3);
+  }
+
+  /* one line over the marks, always there, so reading a mark moves nothing:
+     what the marks mean, or the moment under the pointer and its day */
+  .report-strip-readout {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-4);
+    height: var(--lh-body);
+    margin-bottom: var(--s-2);
+    color: var(--text-2);
+    white-space: nowrap;
+  }
+
+  .report-strip-readout > span:first-child:not(.report-strip-key) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .report-strip-readout > b {
+    margin-left: auto;
+    font-weight: var(--w-medium);
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+
+  .report-strip-key {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    font-size: var(--t-small);
+    line-height: var(--lh-body);
+    color: var(--text-3);
+  }
+
+  /* the same two marks as on the line */
+  .report-strip-key::before {
+    content: '';
+    width: 0.3125rem;
+    height: 0.3125rem;
+    border-radius: 50%;
+    background: var(--heat-3);
+  }
+
+  .report-strip-key[data-lead]::before {
+    width: 0.5625rem;
+    height: 0.5625rem;
+    background: var(--text);
+  }
+
+  .report-strip-line {
+    position: relative;
+    height: 1.5rem;
+    border-radius: var(--r-xs);
+    cursor: pointer;
+  }
+
+  .report-strip-line::before {
+    content: '';
+    position: absolute;
+    inset: 50% 0 auto;
+    height: 1px;
+    background: var(--line-strong);
+  }
+
+  /* marks that fall together darken, so a busy stretch shows as one */
+  .report-strip-line > i {
+    position: absolute;
+    top: 50%;
+    left: calc(var(--at) * (100% - 0.5rem) + 0.25rem);
+    width: 0.3125rem;
+    height: 0.3125rem;
+    border-radius: 50%;
+    background: var(--heat-3);
+    translate: -50% -50%;
+  }
+
+  .report-strip-line > [data-lead] {
+    z-index: 1;
+    width: 0.5625rem;
+    height: 0.5625rem;
+    background: var(--text);
+    box-shadow: 0 0 0 2px var(--bg-raised);
+  }
+
+  .report-strip-line > [data-active] {
+    z-index: 2;
+    background: var(--text);
+    outline: 1.5px solid var(--text);
+    outline-offset: 2px;
+  }
+
+  .report-strip-axis {
+    position: relative;
+    display: flex;
+    justify-content: space-between;
+    margin-top: var(--s-1);
+    font-size: var(--t-caption);
+    line-height: var(--lh-caption);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+  }
+
+  .report-strip-tick {
+    position: absolute;
+    left: calc(var(--at) * (100% - 0.5rem) + 0.25rem);
+    translate: -50% 0;
+  }
+
+  /* too narrow for the months between: the first and last day say enough */
+  @container detail (max-width: 34rem) {
+    .report-strip-tick {
+      display: none;
+    }
+  }
+
+  /* ---- the timeline: the day and the kind on the left, a line with a mark
+     for each moment, what happened on the right ---- */
+  .report-timeline {
+    --when: 5rem;
+    --rail: calc(var(--when) + var(--s-3) + 0.5rem);
+
+    display: grid;
+    gap: var(--s-4);
+    padding: var(--s-4);
+  }
+
+  .report-strip + .report-timeline {
+    border-top: 1px solid var(--line);
+  }
+
+  .report-timeline-year > h4 {
+    margin-bottom: var(--s-3);
+    font-size: var(--t-body);
+    line-height: var(--lh-body);
+    font-weight: var(--w-medium);
+  }
+
+  .report-moment {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--when) 1rem minmax(0, 1fr);
+    column-gap: var(--s-3);
+    padding-bottom: var(--s-6);
+  }
+
+  .report-timeline-year:last-child > ol > .report-moment:last-child {
+    padding-bottom: 0;
+  }
+
+  /* the line runs from one mark to the next, and stops at the last of a year */
+  .report-moment::before {
+    content: '';
+    position: absolute;
+    top: 1.125rem;
+    bottom: -0.25rem;
+    left: calc(var(--rail) - 0.5px);
+    width: 1px;
+    background: var(--line-strong);
+  }
+
+  .report-moment:last-child::before {
+    display: none;
+  }
+
+  .report-moment::after {
+    content: '';
+    position: absolute;
+    top: 0.375rem;
+    left: var(--rail);
+    width: 0.4375rem;
+    height: 0.4375rem;
+    border: 1.5px solid var(--text-3);
+    border-radius: 50%;
+    background: var(--bg-raised);
+    translate: -50% 0;
+  }
+
+  /* one that matters most is a full mark */
+  .report-moment[data-lead]::after {
+    border-color: var(--text);
+    background: var(--text);
+  }
+
+  .report-moment-when {
+    display: grid;
+    align-content: start;
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .report-moment-when > span {
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+  }
+
+  /* 8px of room on every side, for the fill that picks a moment out */
+  .report-moment-main {
+    display: grid;
+    grid-column: 3;
+    gap: var(--s-1);
+    max-width: var(--measure);
+    margin: calc(var(--s-2) * -1);
+    padding: var(--s-2);
+    border-radius: var(--r-md);
+  }
+
+  .report-moment-main > h5 {
+    margin: 0;
+    font-size: var(--t-body);
+    line-height: var(--lh-body);
+    font-weight: var(--w-medium);
+  }
+
+  .report-moment-main > p {
+    color: var(--text-2);
+  }
+
+  /* what was said: the messages themselves, or a quotation when who wrote them is not known */
+  .report-moment-main > :is(blockquote, .thread) {
+    margin-top: var(--s-1);
+  }
+
+  .report-moment-main > blockquote {
+    display: grid;
+    gap: var(--s-1);
+    margin-inline: 0;
+    padding-left: var(--s-3);
+    border-left: 2px solid var(--line-strong);
+    color: var(--text-2);
+  }
+
+  /* gone to from the marks above: picked out, then let go */
+  .report-moment[data-target] > .report-moment-main {
+    animation: report-moment-found 1.6s var(--ease-out);
+  }
+
+  @keyframes report-moment-found {
+    from,
+    35% {
+      background: var(--fill-active);
+    }
+  }
+
+  /* the way to the rest of the moments is the card's last row */
+  .report-timeline-more {
+    padding: var(--s-3) var(--s-4);
+    border-top: 1px solid var(--line);
+  }
+
+  /* in a narrow column the day goes over what happened, and the words get the width */
+  @container detail (max-width: 34rem) {
+    .report-timeline {
+      --rail: 0.5rem;
+    }
+
+    .report-moment {
+      grid-template-columns: 1rem minmax(0, 1fr);
+      row-gap: var(--s-1);
+    }
+
+    .report-moment-when {
+      display: flex;
+      grid-column: 2;
+      align-items: baseline;
+      gap: var(--s-2);
+    }
+
+    .report-moment-main {
+      grid-column: 2;
+    }
+  }
+}

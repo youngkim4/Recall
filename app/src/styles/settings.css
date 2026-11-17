@@ -1,0 +1,126 @@
+/* Settings and Jobs: plain rows. A label, what it is set to, and one way to
+   change it. */
+
+@layer views {
+  /* the label column is the width of the facts column elsewhere */
+  .settings {
+    display: grid;
+  }
+
+  .setting {
+    display: grid;
+    grid-template-columns: 11rem minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--s-4);
+    min-height: 3rem;
+    padding-block: var(--s-2);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .setting-label {
+    color: var(--text-2);
+  }
+
+  .setting-value {
+    display: grid;
+    min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .setting-note {
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+  }
+
+  .setting-note.bad {
+    color: var(--bad);
+  }
+
+  /* a picker at the end of a row ends on the row's edge */
+  .setting > .picker {
+    margin-right: calc(var(--s-2) * -1);
+  }
+
+  .setting-field {
+    grid-column: 2 / -1;
+    font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: var(--t-small);
+  }
+
+  .setting-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-2) var(--s-3);
+    padding-top: var(--s-4);
+  }
+
+  .setting-actions > .link {
+    margin-left: auto;
+  }
+
+  .section > .notice {
+    margin-bottom: var(--s-2);
+  }
+
+  /* in a narrow window the label goes above what it is set to */
+  @container workspace (max-width: 40rem) {
+    .setting {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .setting-label {
+      grid-column: 1 / -1;
+      margin-bottom: calc(var(--s-3) * -1);
+      font-size: var(--t-small);
+    }
+
+    .setting-field {
+      grid-column: 1 / -1;
+    }
+  }
+
+  /* ---- jobs: what, how it stands, when ---- */
+  .jobs {
+    display: grid;
+  }
+
+  .job {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 6rem 5rem;
+    align-items: baseline;
+    gap: var(--s-4);
+    padding-block: var(--s-3);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .job-main {
+    display: grid;
+    min-width: 0;
+  }
+
+  .job-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: var(--w-medium);
+  }
+
+  .job-detail {
+    color: var(--text-2);
+    overflow-wrap: anywhere;
+  }
+
+  .job-detail.bad {
+    color: var(--bad);
+  }
+
+  .job-when {
+    font-size: var(--t-small);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    text-align: right;
+    white-space: nowrap;
+  }
+}

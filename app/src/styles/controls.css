@@ -1,0 +1,496 @@
+/* Buttons, fields, pickers, status marks.
+
+   A control is 32px tall and its icon 16px, so an icon sits 8px from every
+   near edge: the same 8px the rail and the lists are built on. Words keep
+   12px from a control's edge. Hit areas reach 40px without overlapping. */
+
+@layer controls {
+  /* ---- button ---- */
+  .btn {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-2);
+    height: var(--control-h);
+    padding: 0 var(--s-3);
+    border-radius: var(--r-md);
+    font-weight: var(--w-medium);
+    white-space: nowrap;
+    color: var(--text);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-raised);
+    transition:
+      background-color var(--dur-micro) ease,
+      box-shadow var(--dur-micro) ease,
+      color var(--dur-micro) ease,
+      scale var(--dur-micro) var(--ease-out);
+  }
+
+  .btn::after {
+    content: '';
+    position: absolute;
+    inset: -0.25rem 0;
+  }
+
+  /* an icon needs less room beside it than a word does */
+  .btn:has(> .icon:first-child),
+  .btn:has(> .spinner:first-child) {
+    padding-left: 0.625rem;
+  }
+
+  /* pressed, a raised button loses its lift and sits on the page */
+  .btn:active:not(:disabled) {
+    scale: var(--press-scale);
+    box-shadow: 0 0 0 1px var(--ring-hover);
+  }
+
+  .btn.primary:active:not(:disabled),
+  .btn.quiet:active:not(:disabled) {
+    box-shadow: none;
+  }
+
+  .btn.quiet:active:not(:disabled) {
+    background: var(--fill-active);
+  }
+
+  .btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .btn.primary {
+    color: var(--on-ink);
+    background: var(--ink);
+    box-shadow: none;
+  }
+
+  .btn.quiet {
+    color: var(--text-2);
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .btn.lg {
+    height: var(--control-h-lg);
+    padding: 0 var(--s-4);
+    font-size: var(--t-reading);
+  }
+
+  .btn.lg::after {
+    inset: 0;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .btn:hover:not(:disabled) {
+      box-shadow: var(--shadow-raised-hover);
+    }
+
+    .btn.primary:hover:not(:disabled) {
+      background: var(--ink-hover);
+      box-shadow: none;
+    }
+
+    .btn.quiet:hover:not(:disabled) {
+      color: var(--text);
+      background: var(--fill-hover);
+      box-shadow: none;
+    }
+  }
+
+  /* ---- spinner: beside a label while its action runs ---- */
+  .spinner {
+    flex: none;
+    width: 0.875rem;
+    height: 0.875rem;
+    border: 1.5px solid currentColor;
+    border-right-color: transparent;
+    border-radius: var(--r-full);
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      rotate: 1turn;
+    }
+  }
+
+  /* ---- icon button ---- */
+  .icon-btn {
+    position: relative;
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: var(--control-h);
+    height: var(--control-h);
+    border-radius: var(--r-md);
+    color: var(--text-3);
+    transition:
+      background-color var(--dur-micro) ease,
+      color var(--dur-micro) ease,
+      scale var(--dur-micro) var(--ease-out);
+  }
+
+  .icon-btn::after {
+    content: '';
+    position: absolute;
+    inset: -0.25rem;
+  }
+
+  /* inside a row: 24px, and the hit area stays within the row */
+  .icon-btn.sm {
+    width: var(--control-h-sm);
+    height: var(--control-h-sm);
+    border-radius: var(--r-sm);
+  }
+
+  /* an arrow at the end of what it steps through says so and keeps the
+     focus; one that was switched off would drop it */
+  .icon-btn:active:not(:disabled, [aria-disabled='true']) {
+    scale: var(--press-scale);
+  }
+
+  .icon-btn:is(:disabled, [aria-disabled='true']) {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .icon-btn:hover:not(:disabled, [aria-disabled='true']) {
+      color: var(--text);
+      background: var(--fill-hover);
+    }
+  }
+
+  /* ---- text link: color only, no hover surface ---- */
+  .link {
+    position: relative;
+    border-radius: var(--r-xs);
+    color: var(--text-2);
+    font-weight: var(--w-medium);
+    transition: color var(--dur-micro) ease;
+  }
+
+  .link::after {
+    content: '';
+    position: absolute;
+    inset: -0.625rem -0.25rem;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .link:hover {
+      color: var(--text);
+    }
+  }
+
+  /* inside a sentence a link takes the sentence's own type and is told apart
+     by its underline, never by color or weight alone */
+  .link.in-text {
+    font-weight: inherit;
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.2em;
+    text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+    transition:
+      color var(--dur-micro) ease,
+      text-decoration-color var(--dur-micro) ease;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .link.in-text:hover {
+      text-decoration-color: currentColor;
+    }
+  }
+
+  /* ---- field: the edge keeps its width; focus is a ring drawn inside it ---- */
+  .field {
+    width: 100%;
+    height: var(--control-h);
+    padding: 0 var(--s-3);
+    border: 1px solid var(--line-field);
+    border-radius: var(--r-md);
+    outline: 2px solid transparent;
+    outline-offset: -2px;
+    background: var(--bg-raised);
+    color: var(--text);
+    transition:
+      background-color var(--dur-micro) ease,
+      border-color var(--dur-micro) ease;
+  }
+
+  .field::placeholder {
+    color: var(--text-3);
+    opacity: 1;
+  }
+
+  .field:focus-visible {
+    outline-color: var(--you-ink);
+  }
+
+  .field:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  /* search: filled and unbordered, the way the system draws search fields.
+     The glass sits 8px in and the text another 8px after it. */
+  .search {
+    position: relative;
+    display: block;
+  }
+
+  .search > .icon {
+    position: absolute;
+    top: var(--s-2);
+    left: var(--s-2);
+    color: var(--text-3);
+    pointer-events: none;
+  }
+
+  .search > .field {
+    padding-left: var(--s-8);
+    border-color: transparent;
+    background: var(--fill-track);
+  }
+
+  /* the button that empties the field is ours; the browser's own is put away */
+  .search > .field::-webkit-search-cancel-button {
+    display: none;
+  }
+
+  .search > .field:not(:placeholder-shown) {
+    padding-right: var(--s-8);
+  }
+
+  .search-clear {
+    position: absolute;
+    top: var(--s-1);
+    right: var(--s-1);
+    transition:
+      background-color var(--dur-micro) ease,
+      color var(--dur-micro) ease,
+      opacity var(--dur-micro) ease,
+      scale var(--dur-micro) var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
+
+  /* ---- picker: a button as wide as the choice it names, which opens a panel
+     of the other choices. While the panel is open the button stays lit and
+     its chevron turns over. ---- */
+  .picker {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s-1);
+    max-width: 16rem;
+    height: var(--control-h);
+    padding: 0 var(--s-2) 0 var(--s-3);
+    border-radius: var(--picker-r, var(--r-md));
+    color: var(--text-2);
+    font-weight: var(--w-medium);
+    transition:
+      background-color var(--dur-micro) ease,
+      color var(--dur-micro) ease;
+  }
+
+  .picker-value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* the setting a value belongs to, ahead of it and quieter: "Quality High" */
+  .picker-label {
+    flex: none;
+    font-weight: var(--w-regular);
+    color: var(--text-3);
+  }
+
+  .picker > .icon {
+    flex: none;
+    color: var(--text-3);
+    transition: rotate var(--dur-short) var(--ease-out);
+  }
+
+  .picker:has(+ :popover-open) {
+    color: var(--text);
+    background: var(--fill-active);
+  }
+
+  .picker:has(+ :popover-open) > .icon {
+    rotate: 180deg;
+  }
+
+  .picker:active {
+    background: var(--fill-active);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .picker:hover {
+      color: var(--text);
+      background: var(--fill-hover);
+    }
+  }
+
+  /* ---- status: a mark and a word; the word carries the meaning ---- */
+  .status {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 0.375rem;
+    color: var(--text-2);
+    white-space: nowrap;
+  }
+
+  .status::before {
+    content: '';
+    width: 0.375rem;
+    height: 0.375rem;
+    border-radius: var(--r-full);
+    background: var(--text-off);
+  }
+
+  .status.ok::before {
+    background: var(--ok);
+  }
+
+  .status.bad {
+    color: var(--bad);
+  }
+
+  .status.bad::before {
+    background: var(--bad);
+  }
+
+  /* running work shows a spinner in place of the dot */
+  .status.busy::before {
+    content: none;
+  }
+
+  /* ---- notice: a message bound to the thing it describes ---- */
+  .notice {
+    padding: var(--s-2) var(--s-3);
+    border-radius: var(--r-md);
+    background: var(--fill-hover);
+    color: var(--text-2);
+  }
+
+  .notice strong {
+    color: var(--text);
+  }
+
+  .notice.bad {
+    background: var(--bad-soft);
+    color: var(--bad);
+  }
+
+  .notice.bad strong {
+    color: inherit;
+  }
+
+  /* ---- empty state: what goes here, why it matters, one action ---- */
+  /* 8px above and below, the inset a row would have, so an empty list starts
+     where its first row would */
+  .empty {
+    display: grid;
+    justify-items: start;
+    gap: var(--s-1);
+    max-width: 26rem;
+    padding: var(--s-2) 0;
+    color: var(--text-2);
+  }
+
+  .empty strong {
+    color: var(--text);
+  }
+
+  .empty .btn {
+    margin-top: var(--s-3);
+  }
+
+  /* ---- swap: a figure that has changed fades in over the one it replaces ---- */
+  .swap {
+    display: inline-block;
+    transition:
+      opacity var(--dur-short) ease,
+      translate var(--dur-short) var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+      translate: 0 calc(0.25rem * var(--travel));
+    }
+  }
+
+  /* ---- step: what an arrow moved to. The one in view leaves toward the side
+     it now lies on while the next arrives from the other. Both sit in one
+     place, so the box keeps its size and nothing around it moves. ---- */
+  .step {
+    --step-by: calc(0.75rem * var(--travel));
+
+    display: grid;
+  }
+
+  .step > * {
+    grid-area: 1 / 1;
+    min-width: 0;
+    transition:
+      opacity var(--dur-short) ease,
+      translate var(--dur-short) var(--ease-out);
+  }
+
+  .step > [data-step='in'] {
+    @starting-style {
+      opacity: 0;
+      translate: calc(var(--slide) * var(--step-by)) 0;
+    }
+  }
+
+  /* the way out is shorter than the way in */
+  .step > [data-step='out'] {
+    opacity: 0;
+    translate: calc(var(--slide) * var(--step-by) * -1) 0;
+    transition-duration: var(--dur-micro);
+    pointer-events: none;
+  }
+
+  .link:disabled {
+    color: var(--text-off);
+    cursor: not-allowed;
+  }
+
+  /* ---- an icon that changes with what it stands for arrives with a small
+     pop: from a quarter of its size, a little soft, to itself ---- */
+  .icon-swap {
+    display: grid;
+    transition:
+      opacity var(--dur-short) ease,
+      scale var(--dur-short) var(--ease-out),
+      filter var(--dur-short) ease;
+
+    @starting-style {
+      opacity: 0;
+      scale: 0.25;
+      filter: blur(4px);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .icon-swap {
+      transition-property: opacity;
+    }
+  }
+
+  /* ---- skeleton: holds the shape of what is loading ---- */
+  .skeleton {
+    border-radius: var(--r-xs);
+    background: var(--fill-track);
+    color: transparent;
+    user-select: none;
+  }
+}

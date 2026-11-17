@@ -1,0 +1,188 @@
+/* Reset and element defaults. */
+
+@layer reset {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  h1,
+  h2,
+  h3,
+  h4,
+  p,
+  figure,
+  blockquote,
+  dl,
+  dd,
+  ol,
+  ul {
+    margin: 0;
+    padding: 0;
+  }
+
+  ol,
+  ul {
+    list-style: none;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-size: inherit;
+    line-height: inherit;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  strong,
+  b {
+    font-weight: var(--w-medium);
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    margin: 0;
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+  }
+
+  button {
+    appearance: none;
+    border: 0;
+    padding: 0;
+    background: none;
+    text-align: inherit;
+    /* a Mac app keeps the arrow over its controls */
+    cursor: default;
+    user-select: none;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  svg {
+    display: block;
+    flex: none;
+  }
+}
+
+@layer base {
+  html {
+    height: 100%;
+    overflow: auto hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 100%;
+    font-weight: var(--w-regular);
+    font-synthesis: none;
+    font-optical-sizing: auto;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    height: 100%;
+    /* the folded rail and one pane wide enough to read */
+    min-width: 20rem;
+    overflow: hidden;
+    background: var(--bg);
+    font-size: var(--t-body);
+    line-height: var(--lh-body);
+  }
+
+  #root {
+    height: 100%;
+  }
+
+  /* the browser's own surfaces carry the palette too */
+  ::selection {
+    background: color-mix(in srgb, var(--you) 26%, transparent);
+  }
+
+  input,
+  textarea {
+    caret-color: var(--you-ink);
+  }
+
+  :focus {
+    outline: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--you-ink);
+    outline-offset: 2px;
+  }
+
+  /* short text wraps evenly; long reading text keeps the default breaker */
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+  }
+
+  p,
+  li,
+  dd,
+  figcaption {
+    text-wrap: pretty;
+  }
+
+  /* an icon is one text-line square unless a component says otherwise */
+  .icon {
+    width: var(--icon);
+    height: var(--icon);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  body.is-resizing {
+    cursor: col-resize;
+    user-select: none;
+  }
+
+  body.is-resizing * {
+    transition: none !important;
+  }
+
+  /* movement is a few numbers, so it can be switched off in one place:
+     how far a press sinks, how small a popover starts, and a factor on every
+     distance something travels */
+  :root {
+    --press-scale: 0.96;
+    --pop-scale: 0.97;
+    --travel: 1;
+  }
+
+  /* Reduce Motion: movement stops; fades and color changes stay */
+  @media (prefers-reduced-motion: reduce) {
+    :root {
+      --press-scale: 1;
+      --pop-scale: 1;
+      --travel: 0;
+      --dur-long: 0ms;
+    }
+  }
+}

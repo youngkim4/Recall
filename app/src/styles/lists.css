@@ -1,0 +1,403 @@
+/* Rows, facts, popovers, disclosures. */
+
+@layer components {
+  /* ---- row: one selectable line in a list.
+     8px inset on every side and an 8px gap, so a row's leading element is
+     the same distance from the top, the left, and the text beside it. ---- */
+  .rows {
+    display: grid;
+    gap: 1px;
+  }
+
+  .row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    width: 100%;
+    min-width: 0;
+    padding: var(--s-2);
+    border-radius: var(--r-md);
+    transition: background-color var(--dur-micro) ease;
+  }
+
+  .row-main {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .row-title,
+  .row-sub {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .row-title {
+    color: var(--text);
+  }
+
+  .row-sub {
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+  }
+
+  .row-end {
+    flex: none;
+    font-size: var(--t-small);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+  }
+
+  .row.is-active {
+    background: var(--fill-active);
+  }
+
+  .row.is-active .row-title {
+    font-weight: var(--w-medium);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    button.row:hover:not(.is-active),
+    a.row:hover:not(.is-active),
+    .row.has-action:hover:not(.is-active) {
+      background: var(--fill-hover);
+    }
+  }
+
+  /* pressed, a row darkens one step before it acts */
+  button.row:active:not(.is-active),
+  a.row:active:not(.is-active) {
+    background: var(--fill-active);
+  }
+
+  /* in a reading column the fill reaches 8px past both edges, which keeps the
+     row's words on the same edge as the heading above them */
+  .rows.bleed {
+    margin-inline: calc(var(--s-2) * -1);
+  }
+
+  /* ---- card: a surface that holds one thing. Its edge is a shadow and not
+     a border: a hairline ring with a tight lift under it. A ring of this kind
+     sits on any background and takes no room in the layout; in dark the ring
+     alone is the edge. ---- */
+  .card {
+    border-radius: var(--r-lg);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-raised);
+  }
+
+  /* a card around a figure keeps it 16px from every edge */
+  .card-pad {
+    padding: var(--s-4);
+  }
+
+  /* Rows in a card reach its edges, 16px in from them, with a hairline
+     between one row and the next that starts and ends where the words do.
+     The first and last rows take the card's own corners, so a row that is
+     hovered or focused keeps the card's shape. */
+  .card > .rows {
+    gap: 0;
+  }
+
+  .card > .rows > li + li::before {
+    content: '';
+    display: block;
+    height: 1px;
+    margin-inline: var(--s-4);
+    background: var(--line);
+  }
+
+  .card > .rows .row {
+    padding: var(--s-3) var(--s-4);
+    border-radius: 0;
+    outline-offset: -2px;
+  }
+
+  .card > .rows > li:first-child .row {
+    border-start-start-radius: var(--r-lg);
+    border-start-end-radius: var(--r-lg);
+  }
+
+  .card > .rows > li:last-child .row {
+    border-end-start-radius: var(--r-lg);
+    border-end-end-radius: var(--r-lg);
+  }
+
+  /* ---- ranked rows: place, name, bar, count and share on one grid, so the
+     columns line up down the list ---- */
+  /* The name keeps at least 7rem and takes what is left over; the bar takes up
+     to 14rem of the room that remains, and none when there is none. A bar
+     that sized first would squeeze the name out of a narrow column. */
+  .ranked-row {
+    display: grid;
+    grid-template-columns: 1.25rem minmax(7rem, 1fr) minmax(0, 14rem) 4.5rem 2.5rem;
+    gap: var(--s-3);
+  }
+
+  .ranked-place,
+  .ranked-count,
+  .ranked-share {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ranked-place,
+  .ranked-share {
+    color: var(--text-3);
+  }
+
+  .ranked-count,
+  .ranked-share {
+    text-align: right;
+  }
+
+  .ranked-share {
+    font-size: var(--t-small);
+  }
+
+  /* ---- facts: a label and what it comes to. The label column is the width
+     of the Overview's, so second columns start on the same line across views. ---- */
+  .facts > div {
+    display: grid;
+    grid-template-columns: 11rem minmax(0, 1fr);
+    gap: var(--s-4);
+    padding: var(--s-2) 0;
+  }
+
+  .facts dt {
+    color: var(--text-3);
+  }
+
+  /* in a narrow column the labels give room to what they come to */
+  @container detail (max-width: 34rem) {
+    .facts > div {
+      grid-template-columns: 7.5rem minmax(0, 1fr);
+    }
+  }
+
+  .facts dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- popover: a small panel that opens from the control that owns it.
+     It is the browser's own popover, so a click outside or Escape closes it.
+     It grows from the corner nearest its control and leaves a little faster. ---- */
+  .popover {
+    position: fixed;
+    inset: auto;
+    margin: 0;
+    padding: var(--s-1);
+    border: 0;
+    border-radius: var(--r-lg);
+    background: var(--bg-raised);
+    color: var(--text);
+    box-shadow: var(--shadow-pop);
+    opacity: 0;
+    scale: var(--pop-scale);
+    transform-origin: var(--origin, top left);
+    transition:
+      opacity var(--dur-micro) ease,
+      scale var(--dur-micro) var(--ease-out),
+      display var(--dur-micro) allow-discrete,
+      overlay var(--dur-micro) allow-discrete;
+  }
+
+  .popover:popover-open {
+    opacity: 1;
+    scale: 1;
+    transition-duration: var(--dur-short);
+
+    @starting-style {
+      opacity: 0;
+      scale: var(--pop-scale);
+    }
+  }
+
+  /* ---- list picker: a search field over the choices. 4px of padding and
+     8px rows inside a 12px panel, so the corners share a center. ---- */
+  /* How the panel is laid out does not depend on its being open. While it
+     fades out it is no longer open and is still drawn; a layout that applied
+     only when open would fall apart for those frames. */
+  .list-picker {
+    flex-direction: column;
+    gap: var(--s-1);
+    width: 18rem;
+    overflow: hidden;
+  }
+
+  .list-picker:popover-open {
+    display: flex;
+  }
+
+  /* The search row is part of the panel, not a box inside it: no fill and no
+     ring, a hairline under it, and its icon on the rows' text edge. The caret
+     and the highlighted row say where focus is. */
+  .list-picker > .search {
+    flex: none;
+    margin: calc(var(--s-1) * -1) calc(var(--s-1) * -1) 0;
+    padding: 0 var(--s-1);
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* the glass sits a little inside its 16px box, so the box starts 3px early
+     and the drawn edge lands on the rows' text edge */
+  .list-picker > .search > .icon {
+    top: 0.75rem;
+    left: 0.5625rem;
+  }
+
+  .list-picker > .search > .field {
+    height: 2.5rem;
+    padding-left: var(--s-8);
+    border: 0;
+    outline: none;
+    background: none;
+  }
+
+  .list-picker > .rows {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: 18rem;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .list-picker .row {
+    height: var(--control-h);
+    padding-block: 0;
+    scroll-margin: var(--s-1);
+  }
+
+  /* One highlight, moved by the pointer and the arrow keys alike. It is the
+     only sign of where the keyboard is, so it takes the stronger fill. */
+  .list-picker .row[data-active] {
+    background: var(--fill-active);
+  }
+
+  .list-picker .row[aria-selected='true'] .row-title {
+    font-weight: var(--w-medium);
+  }
+
+  .list-picker .row > .icon {
+    flex: none;
+    color: var(--text-2);
+  }
+
+  .list-picker > .pane-note {
+    padding: var(--s-2);
+  }
+
+  /* ---- choice menu: a few named choices, each with a line about what it
+     means and a check on the one in use. 4px of padding and 8px rows inside a
+     12px panel, so the corners share a center. ---- */
+  .choice-menu {
+    width: 15rem;
+    list-style: none;
+    outline: none;
+    /* kept while it fades out, when it is no longer open and still drawn */
+    gap: 1px;
+  }
+
+  .choice-menu:popover-open {
+    display: grid;
+  }
+
+  .choice {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: 0.375rem var(--s-2);
+    border-radius: var(--r-md);
+    cursor: default;
+  }
+
+  /* one highlight, moved by the pointer and the arrow keys alike; it is the
+     only sign of where the keyboard is, so it takes the stronger fill */
+  .choice[data-active] {
+    background: var(--fill-active);
+  }
+
+  .choice-main {
+    display: grid;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .choice-title {
+    display: flex;
+    align-items: baseline;
+    gap: 0.375rem;
+  }
+
+  .choice[aria-checked='true'] .choice-title {
+    font-weight: var(--w-medium);
+  }
+
+  .choice-meta {
+    font-weight: var(--w-regular);
+    color: var(--text-3);
+  }
+
+  .choice-note {
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+  }
+
+  .choice > .icon {
+    flex: none;
+    color: var(--text-2);
+  }
+
+  /* ---- disclosure: height animates through a grid track ---- */
+  .disclosure-body {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition:
+      grid-template-rows var(--dur-long) var(--ease-in-out),
+      opacity var(--dur-short) ease;
+  }
+
+  .disclosure-body > div {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .disclosure-body.is-open {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+
+  /* the button that opens it: its words start on the text edge, its fill reaches past */
+  .disclosure-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-1);
+    height: var(--control-h);
+    margin-left: calc(var(--s-3) * -1);
+    padding: 0 var(--s-2) 0 var(--s-3);
+    border-radius: var(--r-md);
+    font-weight: var(--w-medium);
+    transition:
+      background-color var(--dur-micro) ease,
+      color var(--dur-micro) ease;
+  }
+
+  .disclosure-toggle .icon {
+    color: var(--text-3);
+    transition: rotate var(--dur-long) var(--ease-in-out);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .disclosure-toggle:hover {
+      background: var(--fill-hover);
+    }
+  }
+
+  .disclosure-toggle[aria-expanded='true'] .icon {
+    rotate: 180deg;
+  }
+}

@@ -1,0 +1,314 @@
+/* The calendar that chooses a range of dates, and the view of every month
+   behind its title. Marks and bars are counts of messages, so they take the
+   neutral mark color; the first and last chosen day take ink, like any
+   primary choice. */
+
+@layer components {
+  .cal {
+    /* kept while it fades out, when it is no longer open and still drawn */
+    flex-direction: column;
+    width: 17.25rem;
+    padding: var(--s-3);
+  }
+
+  .cal:popover-open {
+    display: flex;
+  }
+
+  /* ---- the month in view, and the way to its neighbors ---- */
+  .cal-bar {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--s-1);
+  }
+
+  .cal-title {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-1);
+    height: var(--control-h-sm);
+    margin-right: auto;
+    /* the words start on the panel's text edge; the fill reaches past it */
+    margin-left: calc(var(--s-2) * -1);
+    padding: 0 0.375rem 0 var(--s-2);
+    border-radius: var(--r-sm);
+    font-weight: var(--w-medium);
+    transition: background-color var(--dur-micro) ease;
+  }
+
+  .cal-title > .icon {
+    color: var(--text-3);
+    transition: rotate var(--dur-short) var(--ease-out);
+  }
+
+  .cal-title[aria-expanded='true'] {
+    background: var(--fill-active);
+  }
+
+  .cal-title[aria-expanded='true'] > .icon {
+    rotate: 180deg;
+  }
+
+  /* the days and the months take turns in a room of one size, so the panel
+     keeps its shape: a line of weekdays over six weeks */
+  .cal-body {
+    flex: none;
+    /* 24 for the weekdays, six weeks of 32, and 2 between weeks */
+    height: 14.125rem;
+    margin-top: var(--s-2);
+    overflow: hidden;
+  }
+
+  .cal-week,
+  .cal-days {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  /* each week's part of the band is its own shape */
+  .cal-days {
+    row-gap: 2px;
+  }
+
+  .cal-week {
+    height: 1.5rem;
+    font-size: var(--t-caption);
+    line-height: var(--lh-caption);
+    color: var(--text-3);
+    text-align: center;
+  }
+
+  /* ---- a day: its number over a mark as wide as the day was busy ---- */
+  .cal-day {
+    position: relative;
+    display: grid;
+    place-items: center;
+    height: 2rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .cal-num {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    /* room under the number for the mark */
+    padding-bottom: 0.25rem;
+    border-radius: var(--r-md);
+    transition:
+      background-color var(--dur-micro) ease,
+      color var(--dur-micro) ease;
+  }
+
+  .cal-day > i {
+    position: absolute;
+    bottom: 0.3125rem;
+    left: 50%;
+    width: calc(0.1875rem + var(--v) * 0.6875rem);
+    height: 2px;
+    border-radius: 1px;
+    background: var(--mark);
+    translate: -50%;
+  }
+
+  .cal-day[data-quiet] {
+    color: var(--text-3);
+  }
+
+  /* a day the conversation does not reach */
+  .cal-day.is-out {
+    color: var(--text-off);
+  }
+
+  .cal-day:focus-visible {
+    z-index: 1;
+    outline-offset: -2px;
+    border-radius: var(--r-md);
+  }
+
+  /* the chosen days share one band, rounded where a week starts and ends */
+  .cal-day[data-in] {
+    background: var(--fill-active);
+  }
+
+  .cal-day[data-in]:nth-child(7n + 1) {
+    border-radius: var(--r-md) 0 0 var(--r-md);
+  }
+
+  .cal-day[data-in]:nth-child(7n) {
+    border-radius: 0 var(--r-md) var(--r-md) 0;
+  }
+
+  /* under a cap the band runs only toward the rest of the range */
+  .cal-day[data-edge='start'] {
+    border-radius: 0;
+    background: linear-gradient(to right, transparent 50%, var(--fill-active) 50%);
+  }
+
+  .cal-day[data-edge='end'] {
+    border-radius: 0;
+    background: linear-gradient(to left, transparent 50%, var(--fill-active) 50%);
+  }
+
+  .cal-day[data-edge='both'],
+  .cal-day[data-edge='start']:nth-child(7n),
+  .cal-day[data-edge='end']:nth-child(7n + 1) {
+    background: none;
+  }
+
+  .cal-day[data-edge] > .cal-num {
+    background: var(--ink);
+    color: var(--on-ink);
+  }
+
+  .cal-day[data-edge] > i {
+    background: var(--on-ink);
+    opacity: 0.7;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .cal-title:hover {
+      background: var(--fill-hover);
+    }
+
+    .cal-day:not([data-in]):hover > .cal-num {
+      background: var(--fill-hover);
+    }
+  }
+
+  /* ---- what is chosen, or the day under the pointer, and what it holds ---- */
+  /* two lines, always: a long range and a short day take the same room, so
+     nothing under the pointer moves as it crosses the days */
+  /* what is chosen, and the way back to all of it */
+  .cal-foot {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-3);
+    margin-top: var(--s-2);
+    padding-top: var(--s-3);
+    border-top: 1px solid var(--line);
+  }
+
+  .cal-readout {
+    display: grid;
+    min-width: 0;
+    font-weight: var(--w-medium);
+  }
+
+  .cal-readout > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .cal-readout > :last-child {
+    font-weight: var(--w-regular);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-2);
+    white-space: nowrap;
+  }
+
+  /* ---- every month of the conversation: a bar a month, a row a year ---- */
+  .jump {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    transition: opacity var(--dur-short) ease;
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
+
+  .jump-head,
+  .jump-year {
+    display: grid;
+    grid-template-columns: 2.5rem repeat(12, minmax(0, 1fr));
+  }
+
+  .jump-head {
+    flex: none;
+    height: 1.5rem;
+    font-size: var(--t-caption);
+    line-height: var(--lh-caption);
+    color: var(--text-3);
+    text-align: center;
+  }
+
+  /* The years share the room: one year stands as tall as the calendar it
+     replaces, five are each a short row, and more than that scroll. */
+  .jump-years {
+    display: grid;
+    flex: 1;
+    grid-auto-rows: minmax(2rem, 1fr);
+    gap: 0.375rem;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* the line the bars stand on */
+  .jump-year {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .jump-year-name {
+    align-self: end;
+    padding-bottom: 0.125rem;
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+  }
+
+  .jump-month {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    min-width: 0;
+    padding-top: 0.25rem;
+    border-radius: var(--r-xs) var(--r-xs) 0 0;
+    transition: background-color var(--dur-micro) ease;
+  }
+
+  .jump-month:focus-visible {
+    outline-offset: -2px;
+  }
+
+  /* a month with messages always shows, however few */
+  .jump-month > i {
+    width: calc(100% - 0.375rem);
+    height: max(2px, calc(var(--h) * 100%));
+    border-radius: 1.5px 1.5px 0 0;
+    background: var(--mark);
+    opacity: 0.55;
+    transition: opacity var(--dur-micro) ease;
+  }
+
+  /* the months the chosen days reach stand out; the month in view is in ink */
+  .jump-month[data-in] > i {
+    opacity: 1;
+  }
+
+  .jump-month[aria-current] {
+    background: var(--fill-active);
+  }
+
+  .jump-month[aria-current] > i {
+    background: var(--text);
+    opacity: 1;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .jump-month:hover:not([aria-current]) {
+      background: var(--fill-hover);
+    }
+
+    .jump-month:hover > i {
+      opacity: 1;
+    }
+  }
+}

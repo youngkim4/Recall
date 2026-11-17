@@ -1,0 +1,504 @@
+/* Charts. Blue is what you sent and gray is what you received, as in the
+   bubbles; a mark that belongs to neither voice uses --mark. */
+
+@layer components {
+  /* ---- voice bar: one length, split between the two voices.
+     Measured from its left edge, so only the far end is rounded. ---- */
+  .voice-bar {
+    display: flex;
+    gap: 1px;
+    min-width: 0;
+    height: 0.375rem;
+  }
+
+  /* a voice that spoke at all stays visible */
+  .voice-bar > span {
+    flex-basis: 0;
+    min-width: 2px;
+  }
+
+  .voice-bar > .you {
+    background: var(--you);
+  }
+
+  .voice-bar > .them {
+    background: var(--them-mark);
+  }
+
+  .voice-bar > :last-child {
+    border-radius: 0 2px 2px 0;
+  }
+
+  /* ---- legend: a swatch beside each label; the label keeps the text color ---- */
+  .legend {
+    display: flex;
+    gap: var(--s-3);
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+  }
+
+  /* a swatch stands on the baseline at about cap height, like a letter */
+  .legend > span {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.375rem;
+  }
+
+  .legend i {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 2px;
+  }
+
+  .legend .you {
+    background: var(--you);
+  }
+
+  .legend .them {
+    background: var(--them-mark);
+  }
+}
+
+@layer components {
+  /* ---- activity: messages by day or by month, sent above the line and
+     received below. Both sides share one scale, and each side takes the room
+     its tallest bar needs. ---- */
+  .activity {
+    margin: 0;
+    container: activity / inline-size;
+  }
+
+  .activity-frame {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 2.5rem;
+    height: 10rem;
+  }
+
+  .activity-plot {
+    display: grid;
+    grid-template-columns: repeat(var(--count), minmax(0, 1fr));
+    border-block: 1px solid var(--line);
+    border-radius: 1px;
+    /* scrubbing across the chart must not select or scroll sideways */
+    touch-action: pan-y;
+  }
+
+  .activity-plot:focus-visible {
+    outline-offset: 4px;
+  }
+
+  .activity-slot {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    transition: background-color var(--dur-micro) ease;
+  }
+
+  .activity-slot.is-active {
+    background: var(--fill-hover);
+  }
+
+  .activity-up,
+  .activity-down {
+    display: flex;
+    flex: 0 1 0;
+    justify-content: center;
+    min-height: 0;
+  }
+
+  /* the line the two voices share */
+  .activity-up {
+    flex-grow: var(--above);
+    align-items: flex-end;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .activity-down {
+    flex-grow: var(--below);
+    align-items: flex-start;
+  }
+
+  /* A bar is drawn at its height. When the dates change under the same
+     conversation, it moves to the new one; nothing is staged on arrival. */
+  /* a bar fills its slot but for a hairline of air; with few bars it stops
+     at under half the slot and at 48px, so a bar never reads as a block */
+  .activity-slot i {
+    width: min(100% - 2px, 3rem, max(1.25rem, 45%));
+    transition: height var(--dur-short) var(--ease-out);
+  }
+
+  .activity-slot .you {
+    border-radius: 2px 2px 0 0;
+    background: var(--you);
+  }
+
+  .activity-slot .them {
+    border-radius: 0 0 2px 2px;
+    background: var(--them-mark);
+  }
+
+  /* what the top of each side stands for */
+  .activity-scale {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding-left: var(--s-2);
+    font-size: var(--t-caption);
+    line-height: var(--lh-caption);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+  }
+
+  .activity-axis {
+    position: relative;
+    height: var(--lh-caption);
+    margin: var(--s-1) 2.5rem 0 0;
+    font-size: var(--t-caption);
+    line-height: var(--lh-caption);
+    color: var(--text-3);
+  }
+
+  .activity-axis span {
+    position: absolute;
+    translate: -50%;
+    white-space: nowrap;
+  }
+
+  .activity-axis .is-first {
+    translate: none;
+  }
+
+  /* a narrow chart names every other bar; the names in between would touch */
+  @container activity (max-width: 24rem) {
+    .activity-axis.is-full > span:nth-child(even) {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .activity-slot i {
+      transition: none;
+    }
+  }
+}
+
+@layer components {
+  /* ---- voices over time: who wrote how much in all, and for the day or
+     month picked out on the chart beneath ---- */
+  .readout {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-4);
+    min-width: 0;
+    color: var(--text-2);
+  }
+
+  .readout-voice {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.375rem;
+    min-width: 0;
+  }
+
+  .readout-voice i {
+    flex: none;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 2px;
+  }
+
+  .readout-voice .you {
+    background: var(--you);
+  }
+
+  .readout-voice .them {
+    background: var(--them-mark);
+  }
+
+  .readout-name {
+    max-width: 16rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .readout b,
+  .heat-readout b {
+    font-weight: var(--w-medium);
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+
+  .readout-when {
+    margin-left: auto;
+    white-space: nowrap;
+    color: var(--text-3);
+  }
+
+  /* the bar under the figures re-balances as a day or month is picked out */
+  .voices > .voice-bar {
+    height: 0.5rem;
+    margin-top: var(--s-2);
+  }
+
+  .voices > .voice-bar > span {
+    transition: flex-grow var(--dur-short) var(--ease-out);
+  }
+
+  .voices > .activity {
+    margin-top: var(--s-5);
+  }
+
+  /* while loading: the bar, then the chart with its axis */
+  .voices-skeleton-bar {
+    height: 0.5rem;
+    margin-top: var(--s-2);
+  }
+
+  .voices-skeleton-chart {
+    height: 11.25rem;
+    margin-top: var(--s-5);
+  }
+}
+
+@layer components {
+  /* ---- heat maps: a cell is darker the more messages it holds, in five
+     steps. They count both voices together, so they take no voice's color. ---- */
+  :is(.days-grid, .hours-grid, .heat-legend) > i {
+    background: var(--heat-0);
+  }
+
+  :is(.days-grid, .hours-grid, .heat-legend) > [data-level='1'] {
+    background: var(--heat-1);
+  }
+
+  :is(.days-grid, .hours-grid, .heat-legend) > [data-level='2'] {
+    background: var(--heat-2);
+  }
+
+  :is(.days-grid, .hours-grid, .heat-legend) > [data-level='3'] {
+    background: var(--heat-3);
+  }
+
+  :is(.days-grid, .hours-grid, .heat-legend) > [data-level='4'] {
+    background: var(--heat-4);
+  }
+
+  /* the cell being read */
+  .days-grid > [data-active],
+  .hours-grid > [data-active] {
+    position: relative;
+    outline: 1.5px solid var(--text);
+    outline-offset: 1px;
+  }
+
+  .days-grid:focus-visible,
+  .hours-grid:focus-visible {
+    outline-offset: 4px;
+    border-radius: var(--r-xs);
+  }
+
+  /* the year is cut at its frame, which leaves 3px around it: 1 and the ring's 2 */
+  .days-grid:focus-visible {
+    outline-offset: 1px;
+  }
+
+  /* ---- stepper: what is in view, between the arrows that change it. The
+     value keeps one width, so the arrows stay where they are under the
+     pointer however many times they are pressed. ---- */
+  .stepper {
+    display: inline-flex;
+    align-items: center;
+    align-self: center;
+    /* close beside the heading it belongs to, and no taller than its line */
+    margin: -0.125rem 0 -0.125rem calc(var(--s-1) - var(--s-4));
+    color: var(--text-2);
+  }
+
+  .stepper-value {
+    min-width: 3.5rem;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+
+  /* beside a section's heading: what the cell being read holds, or the busiest when none is */
+  .heat-readout {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-2);
+    min-width: 0;
+    margin-left: auto;
+    color: var(--text-2);
+    white-space: nowrap;
+  }
+
+  .heat-readout > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .heat-foot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-1) var(--s-4);
+    margin-top: var(--s-3);
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+  }
+
+  .heat-legend {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+
+  .heat-legend > i {
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 2.5px;
+  }
+
+  .heat-legend > i:first-of-type {
+    margin-left: var(--s-1);
+  }
+
+  .heat-legend > i:last-of-type {
+    margin-right: var(--s-1);
+  }
+
+  /* ---- a year of days: a column a week, 10px cells 2px apart, which is the
+     whole year across a card in the reading column. The weekday names keep
+     their place; in a narrow window the newest weeks stay in view and the
+     oldest slide out of it. ---- */
+  .days {
+    --cell: 0.625rem;
+
+    display: grid;
+    grid-template-columns: 1.75rem minmax(0, 1fr);
+    column-gap: var(--s-1);
+    container: days / inline-size;
+  }
+
+  /* too narrow for the whole year: the oldest weeks fade out rather than stop at a cut */
+  @container days (max-width: 41.9rem) {
+    .days-view {
+      mask-image: linear-gradient(to right, transparent, #000 2rem);
+    }
+  }
+
+  .days-weekdays {
+    display: grid;
+    grid-template-rows: repeat(7, var(--cell));
+    row-gap: 2px;
+    /* level with the grid, under the row of month names */
+    padding-top: 1.25rem;
+    font-size: 0.625rem;
+    line-height: var(--cell);
+    color: var(--text-3);
+  }
+
+  .days-view {
+    display: flex;
+    justify-content: flex-end;
+    min-width: 0;
+    /* room for the ring around a cell on the edge */
+    margin: -3px;
+    padding: 3px;
+    overflow: hidden;
+  }
+
+  /* a year keeps its width: a narrow window cuts it short, it is never squeezed */
+  .days-step {
+    flex: none;
+  }
+
+  .days-year {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-1);
+  }
+
+  .days-months,
+  .days-grid {
+    display: grid;
+    flex: none;
+    column-gap: 2px;
+  }
+
+  .days-months {
+    grid-template-columns: repeat(53, var(--cell));
+    height: 1rem;
+    font-size: var(--t-caption);
+    line-height: var(--lh-caption);
+    color: var(--text-3);
+  }
+
+  .days-months > span {
+    grid-row: 1;
+    white-space: nowrap;
+  }
+
+  /* a month that starts in the last weeks ends its name on the edge instead of running past it */
+  .days-months > .is-last {
+    justify-self: end;
+  }
+
+  .days-grid {
+    grid-template-rows: repeat(7, var(--cell));
+    grid-auto-columns: var(--cell);
+    grid-auto-flow: column;
+    row-gap: 2px;
+  }
+
+  .days-grid > * {
+    border-radius: 2.5px;
+  }
+
+  /* ---- the hours of the week: a row a weekday, a column an hour ---- */
+  .hours {
+    display: grid;
+    grid-template-columns: 1.75rem minmax(0, 1fr);
+    gap: var(--s-1);
+  }
+
+  .hours-weekdays {
+    display: grid;
+    grid-template-rows: repeat(7, 1rem);
+    row-gap: 2px;
+    font-size: var(--t-caption);
+    line-height: 1rem;
+    color: var(--text-3);
+  }
+
+  .hours-grid,
+  .hours-names {
+    display: grid;
+    grid-template-columns: repeat(24, minmax(0, 1fr));
+    column-gap: 2px;
+  }
+
+  .hours-grid {
+    grid-template-rows: repeat(7, 1rem);
+    row-gap: 2px;
+  }
+
+  .hours-grid > i {
+    border-radius: 3px;
+  }
+
+  .hours-names {
+    grid-column: 2;
+    font-size: var(--t-caption);
+    line-height: var(--lh-caption);
+    color: var(--text-3);
+  }
+
+  .hours-names > span {
+    grid-row: 1;
+    white-space: nowrap;
+  }
+}

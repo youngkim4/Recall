@@ -1,0 +1,100 @@
+/* Analyze: every conversation on the left, the chosen one on the right. */
+
+@layer views {
+  /* a long list only lays out the rows near the window */
+  .conversations > li {
+    content-visibility: auto;
+    contain-intrinsic-block-size: auto 2.25rem;
+  }
+
+  /* ---- the conversation ---- */
+  .detail-title {
+    min-width: 0;
+    font-size: var(--t-heading);
+    line-height: var(--lh-heading);
+    letter-spacing: -0.01em;
+    overflow-wrap: anywhere;
+  }
+
+  .detail > header .section-head {
+    margin-bottom: 0;
+  }
+
+  .detail-sub {
+    margin-top: var(--s-1);
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- report: what it covers, how carefully, what that costs, go ---- */
+  .report {
+    margin-top: var(--s-6);
+  }
+
+  .report-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-2) var(--s-4);
+  }
+
+  /* the picker's words start on the page's text edge; its fill reaches past it */
+  .report-bar > .picker {
+    margin-left: calc(var(--s-3) * -1);
+  }
+
+  .report-go {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-4);
+    margin-left: auto;
+  }
+
+  .report-cost {
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .report > .notice {
+    margin-top: var(--s-3);
+  }
+
+  /* ---- what the figures say ---- */
+  .detail > .detail-body {
+    margin-top: var(--s-8);
+  }
+
+  .detail > .detail-body > * + .section {
+    margin-top: var(--s-12);
+  }
+
+  /* ---- people: everyone who wrote in a group, busiest first. Opened, the
+     rest of the list fills in around your own row. ---- */
+  .people .rows {
+    gap: 0;
+    margin-inline: calc(var(--s-2) * -1);
+  }
+
+  /* the pitch of a list with a 1px gap, kept across the parts of this one;
+     a closed part then takes no room at all */
+  .people .row {
+    margin-bottom: 1px;
+  }
+
+  .people-own {
+    box-shadow: inset 0 1px 0 transparent;
+    transition:
+      margin-top var(--dur-long) var(--ease-in-out),
+      padding-top var(--dur-long) var(--ease-in-out),
+      box-shadow var(--dur-long) var(--ease-in-out);
+  }
+
+  /* closed, a line says that places are skipped between the row above and yours */
+  .people-own.is-apart {
+    margin-top: var(--s-1);
+    padding-top: var(--s-1);
+    box-shadow: inset 0 1px 0 var(--line);
+  }
+
+}

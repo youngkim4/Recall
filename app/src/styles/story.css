@@ -1,0 +1,215 @@
+/* First words: the first message exchanged with each of the people written
+   to most, one at a time, on the whole window. This is the one place the app
+   stages an arrival, so the motion here is deliberate and nowhere else. */
+
+@layer views {
+  .story {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  .story[open] {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    transition: opacity var(--dur-long) ease;
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
+
+  .story::backdrop {
+    background: var(--bg);
+  }
+
+  /* ---- how far along: one bar a part; the one on show fills as its time runs ---- */
+  .story-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding: var(--s-3) var(--s-3) 0 var(--s-5);
+  }
+
+  .story-progress {
+    display: flex;
+    flex: 1;
+    gap: var(--s-1);
+  }
+
+  .story-progress > li {
+    flex: 1;
+  }
+
+  .story-progress button {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--fill-active);
+  }
+
+  /* the bar is thin; the place to press is not */
+  .story-progress button::after {
+    content: '';
+    position: absolute;
+    inset: -0.75rem 0;
+  }
+
+  .story:focus {
+    outline: none;
+  }
+
+  .story-progress i {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: var(--text);
+    scale: 0 1;
+    transform-origin: left;
+  }
+
+  .story-progress > [data-state] i {
+    scale: 1;
+  }
+
+  .story-progress i[data-running] {
+    animation: story-fill var(--ms) linear both;
+  }
+
+  @keyframes story-fill {
+    from {
+      scale: 0 1;
+    }
+  }
+
+  /* ---- the part on show ---- */
+  .story-stage {
+    display: grid;
+    place-items: center;
+    min-height: 0;
+    padding: var(--s-6) var(--s-6) 12vh;
+    overflow: auto;
+  }
+
+  .story-page {
+    width: min(100%, 34rem);
+    animation: story-in 0.4s var(--ease-out) both;
+  }
+
+  @keyframes story-in {
+    from {
+      opacity: 0;
+      translate: 0 0.5rem;
+    }
+  }
+
+  .story-kicker {
+    font-size: var(--t-reading);
+    line-height: var(--lh-reading);
+    color: var(--text-3);
+  }
+
+  .story-display {
+    font-size: var(--t-display-lg);
+    line-height: var(--lh-display-lg);
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+  }
+
+  .story-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    margin-top: var(--s-8);
+  }
+
+  /* ---- an exchange: who it is with, set over the thread the way Messages
+     names a conversation, then the first message and the first answer ---- */
+  .exchange-who {
+    margin-bottom: var(--s-3);
+    font-weight: var(--w-medium);
+    text-align: center;
+  }
+
+  /* a message and the dots that announce it share one place */
+  .arrival {
+    display: grid;
+    /* each message takes its turn: the first after a beat, the answer two seconds on */
+    --at: calc(0.5s + var(--order) * 2.1s);
+  }
+
+  .arrival > * {
+    grid-area: 1 / 1;
+  }
+
+  .arrival-typing {
+    align-self: end;
+    justify-self: start;
+    animation: typing-show 1.1s ease both;
+    animation-delay: var(--at);
+  }
+
+  @keyframes typing-show {
+    0% {
+      opacity: 0;
+      scale: 0.8;
+    }
+
+    15%,
+    85% {
+      opacity: 1;
+      scale: 1;
+    }
+
+    100% {
+      opacity: 0;
+    }
+  }
+
+  /* theirs grows from its tail once the dots have gone; yours rises from below */
+  .arrival-bubble {
+    transform-origin: bottom left;
+    animation: bubble-in 0.36s var(--ease-out) both;
+    animation-delay: calc(var(--at) + 1s);
+  }
+
+  .arrival.you > .arrival-bubble {
+    transform-origin: bottom right;
+    animation-delay: var(--at);
+  }
+
+  @keyframes bubble-in {
+    from {
+      opacity: 0;
+      scale: 0.9;
+      translate: 0 0.5rem;
+    }
+  }
+
+  /* with reduced motion the exchange is simply there */
+  .exchange[data-still] .arrival-typing {
+    display: none;
+  }
+
+  .exchange[data-still] .arrival-bubble,
+  .exchange[data-still] {
+    animation: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .story-page,
+    .story-progress i[data-running] {
+      animation: none;
+    }
+  }
+}

@@ -1,0 +1,203 @@
+/* The card maker: moments on the left, the card on the right. It opens as a
+   sheet over the app. */
+
+@layer components {
+  /* ---- sheet: a panel that takes the app's place for one task ---- */
+  .sheet {
+    width: min(100vw - 3rem, 56rem);
+    max-width: none;
+    height: min(100dvh - 3rem, 44rem);
+    max-height: none;
+    margin: auto;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    border-radius: var(--r-lg);
+    background: var(--bg-raised);
+    color: var(--text);
+    box-shadow: var(--shadow-pop);
+  }
+
+  .sheet[open] {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    transition:
+      opacity var(--dur-short) ease,
+      scale var(--dur-short) var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+      scale: var(--pop-scale);
+    }
+  }
+
+  .sheet::backdrop {
+    background: var(--scrim);
+    transition: opacity var(--dur-short) ease;
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
+
+  .sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-3);
+    padding: var(--s-2) var(--s-2) var(--s-2) var(--s-4);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .sheet-head h2 {
+    font-size: var(--t-body);
+    line-height: var(--lh-body);
+  }
+
+  /* ---- check: a box and its words ---- */
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-height: var(--control-h);
+  }
+
+  .check input {
+    display: grid;
+    flex: none;
+    place-content: center;
+    width: 1rem;
+    height: 1rem;
+    margin: 0;
+    border: 1px solid var(--line-field);
+    border-radius: var(--r-xs);
+    background: var(--bg-raised);
+    appearance: none;
+    transition:
+      background-color var(--dur-micro) ease,
+      border-color var(--dur-micro) ease;
+  }
+
+  /* the tick is drawn, and draws itself in when the box is ticked */
+  .check input::after {
+    content: '';
+    width: 0.3125rem;
+    height: 0.5625rem;
+    margin-top: -0.125rem;
+    border: solid var(--on-ink);
+    border-width: 0 1.5px 1.5px 0;
+    rotate: 45deg;
+    scale: 0;
+    transition: scale var(--dur-micro) var(--ease-out);
+  }
+
+  .check input:checked {
+    border-color: var(--ink);
+    background: var(--ink);
+  }
+
+  .check input:checked::after {
+    scale: 1;
+  }
+}
+
+@layer views {
+  .cards-body {
+    display: grid;
+    grid-template-columns: 17rem minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .cards-list {
+    display: grid;
+    align-content: start;
+    gap: var(--s-4);
+    min-height: 0;
+    padding: var(--s-3) var(--s-2);
+    overflow: auto;
+    border-right: 1px solid var(--line);
+  }
+
+  /* a group's name sits on the rows' text edge */
+  .cards-list h3 {
+    padding: 0 var(--s-2) var(--s-1);
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    font-weight: var(--w-regular);
+    color: var(--text-3);
+  }
+
+  /* the card, what is done with it, and a line for when that fails */
+  .cards-preview {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    grid-auto-rows: auto;
+    gap: var(--s-4);
+    min-height: 0;
+    padding: var(--s-5);
+    background: var(--bg-rail);
+  }
+
+  /* the card as large as the room allows, in its own proportions: as tall as
+     the room, or as wide as it, whichever comes first */
+  .cards-canvas {
+    display: grid;
+    place-items: center;
+    min-height: 0;
+    container-type: size;
+    transition: opacity var(--dur-short) ease;
+  }
+
+  .cards-canvas[aria-busy='true'] {
+    opacity: 0.5;
+  }
+
+  /* the card, or the place it will take while its figures are read */
+  .cards-canvas > :is(canvas, .cards-waiting) {
+    width: auto;
+    height: min(100cqh, 100cqw * 16 / 9);
+    border-radius: var(--r-md);
+    aspect-ratio: 9 / 16;
+  }
+
+  .cards-canvas > canvas {
+    box-shadow: var(--shadow-raised);
+  }
+
+  .cards-canvas[data-format='square'] > :is(canvas, .cards-waiting) {
+    height: min(100cqh, 100cqw);
+    aspect-ratio: 1;
+  }
+
+  .cards-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-2) var(--s-4);
+  }
+
+  /* what is done with the card keeps to the right edge */
+  .cards-actions {
+    display: flex;
+    gap: var(--s-2);
+    margin-left: auto;
+  }
+
+  /* wide enough for "Copied", so the word changing moves nothing */
+  .cards-actions > .btn:first-child {
+    min-width: 4.5rem;
+  }
+
+  /* in a narrow window the moments go above the card */
+  @media (max-width: 44rem) {
+    .cards-body {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: minmax(0, 12rem) minmax(0, 1fr);
+    }
+
+    .cards-list {
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+    }
+  }
+}

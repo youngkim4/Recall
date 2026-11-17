@@ -1,0 +1,177 @@
+/* Design tokens: the single source for color, type, space, shape, motion.
+
+   The palette is the one Messages uses: white and Apple's faintly cool grays,
+   blue for what you sent, gray for what you received. One gray family runs
+   through surfaces, lines, fills and bubbles so nothing clashes in hue.
+   light-dark() resolves from color-scheme, which follows the system unless
+   the Appearance preference pins it through data-theme.
+
+   Every text step is measured to hold 4.5:1 on each surface it can sit on,
+   hovered and selected rows included.
+
+   Sizes are rem on a 4px grid (1rem = 16px at the default text size), so the
+   interface scales as one piece when the text size changes. Hairlines stay
+   1px. */
+
+@layer base {
+  :root {
+    color-scheme: light dark;
+
+    /* ---- surfaces ---- */
+    --bg: light-dark(#ffffff, #1c1c1e);
+    --bg-rail: light-dark(#f5f5f7, #131315);
+    --bg-raised: light-dark(#ffffff, #2c2c2e);
+    /* fills are translucent, so each one steps from the surface beneath it */
+    --fill-hover: light-dark(rgb(120 120 128 / 0.08), rgb(120 120 128 / 0.16));
+    --fill-active: light-dark(rgb(120 120 128 / 0.16), rgb(120 120 128 / 0.28));
+    --fill-track: light-dark(rgb(120 120 128 / 0.12), rgb(120 120 128 / 0.24));
+    --scrim: light-dark(rgb(0 0 0 / 0.28), rgb(0 0 0 / 0.56));
+    /* bars that content scrolls beneath */
+    --bg-glass: light-dark(rgb(255 255 255 / 0.8), rgb(28 28 30 / 0.78));
+
+    /* ---- lines ---- */
+    --line: light-dark(rgb(60 60 67 / 0.12), rgb(235 235 245 / 0.12));
+    --line-strong: light-dark(rgb(60 60 67 / 0.18), rgb(235 235 245 / 0.18));
+    --line-field: light-dark(rgb(60 60 67 / 0.3), rgb(235 235 245 / 0.3));
+
+    /* ---- text ---- */
+    --text: light-dark(#1d1d1f, #f5f5f7);
+    --text-2: light-dark(#48484c, #c0c0c5);
+    --text-3: light-dark(#636368, #a8a8ad);
+    --text-off: light-dark(#aeaeb2, #636366);
+
+    /* ---- ink: the primary action ---- */
+    --ink: light-dark(#1d1d1f, #f5f5f7);
+    --ink-hover: light-dark(#3a3a3c, #ffffff);
+    --on-ink: light-dark(#ffffff, #1c1c1e);
+
+    /* ---- voices: the only hue in the chrome ---- */
+    --you: #0071e3;
+    --you-hover: #0077ed;
+    --on-you: #ffffff;
+    --you-ink: light-dark(#0064cc, #5aa9ff);
+    --you-soft: light-dark(rgb(0 113 227 / 0.12), rgb(90 169 255 / 0.2));
+    --them: light-dark(#e9e9eb, #3a3a3c);
+    --on-them: var(--text);
+    --them-mark: #8e8e93;
+    /* a mark that belongs to neither voice: totals, counts, rankings */
+    --mark: var(--text-3);
+
+    /* ---- heat: how much, in five steps of the text color ---- */
+    --heat-0: var(--fill-track);
+    --heat-1: light-dark(rgb(29 29 31 / 0.14), rgb(245 245 247 / 0.16));
+    --heat-2: light-dark(rgb(29 29 31 / 0.28), rgb(245 245 247 / 0.3));
+    --heat-3: light-dark(rgb(29 29 31 / 0.48), rgb(245 245 247 / 0.5));
+    --heat-4: light-dark(rgb(29 29 31 / 0.78), rgb(245 245 247 / 0.82));
+
+    /* the words a search found, picked out in the text the way find-in-page does */
+    --find: light-dark(#ffe58a, #7a6400);
+
+    /* ---- status ---- */
+    --ok: light-dark(#166534, #4ade80);
+    --warn: light-dark(#854d0e, #eab308);
+    --bad: light-dark(#b91c1c, #ff8a80);
+    --bad-soft: light-dark(rgb(185 28 28 / 0.08), rgb(255 138 128 / 0.14));
+
+    /* ---- elevation ----
+       raised: a hairline ring and a tight lift, for controls.
+       pop: the same ring with real depth, for surfaces that float.
+       In dark the lift is the lighter surface itself, so the shadows drop out. */
+    --ring: light-dark(rgb(60 60 67 / 0.12), rgb(235 235 245 / 0.1));
+    --ring-hover: light-dark(rgb(60 60 67 / 0.2), rgb(235 235 245 / 0.18));
+    --lift-near: light-dark(rgb(0 0 0 / 0.06), transparent);
+    --lift-far: light-dark(rgb(0 0 0 / 0.04), transparent);
+    --drop-near: light-dark(rgb(0 0 0 / 0.08), rgb(0 0 0 / 0.32));
+    --drop-far: light-dark(rgb(0 0 0 / 0.12), rgb(0 0 0 / 0.44));
+    --shadow-raised: 0 0 0 1px var(--ring), 0 1px 2px -1px var(--lift-near), 0 2px 4px 0 var(--lift-far);
+    --shadow-raised-hover: 0 0 0 1px var(--ring-hover), 0 1px 2px -1px var(--lift-near),
+      0 2px 4px 0 var(--lift-far);
+    --shadow-pop: 0 0 0 1px var(--ring), 0 4px 12px -2px var(--drop-near),
+      0 16px 40px -8px var(--drop-far);
+
+    /* ---- shape ---- */
+    --r-xs: 0.25rem; /* 4 */
+    --r-sm: 0.375rem; /* 6 */
+    --r-md: 0.5rem; /* 8: controls, rows */
+    --r-lg: 0.75rem; /* 12: popovers, panels */
+    --r-bubble: 1.125rem; /* 18 */
+    --r-full: 999px;
+
+    /* ---- space ---- */
+    --s-1: 0.25rem; /* 4 */
+    --s-2: 0.5rem; /* 8 */
+    --s-3: 0.75rem; /* 12 */
+    --s-4: 1rem; /* 16 */
+    --s-5: 1.25rem; /* 20 */
+    --s-6: 1.5rem; /* 24 */
+    --s-8: 2rem; /* 32 */
+    --s-10: 2.5rem; /* 40 */
+    --s-12: 3rem; /* 48 */
+    --s-16: 4rem; /* 64 */
+
+    /* ---- type: the system face, two weights ---- */
+    --font: -apple-system, BlinkMacSystemFont, system-ui, 'Helvetica Neue', sans-serif;
+    --w-regular: 400;
+    --w-medium: 500;
+    --t-caption: 0.6875rem; /* 11 */
+    --t-small: 0.75rem; /* 12 */
+    --t-body: 0.8125rem; /* 13 */
+    --t-reading: 0.9375rem; /* 15 */
+    --t-heading: 1.25rem; /* 20 */
+    --t-display: 1.75rem; /* 28 */
+    --t-display-lg: 2.5rem; /* 40 */
+    --lh-caption: 1rem; /* 16 */
+    --lh-small: 1rem; /* 16 */
+    --lh-body: 1.25rem; /* 20 */
+    --lh-reading: 1.5rem; /* 24 */
+    --lh-heading: 1.5rem; /* 24 */
+    --lh-display: 2rem; /* 32 */
+    --lh-display-lg: 2.75rem; /* 44 */
+    --measure: 65ch;
+
+    /* ---- motion ---- */
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --dur-micro: 120ms; /* press, color */
+    --dur-short: 200ms; /* popovers, fades */
+    --dur-long: 300ms; /* things that change size */
+
+    /* ---- layout ---- */
+    --rail-w: 14.75rem; /* 236 */
+    --rail-w-collapsed: 3rem; /* 48 = 8 + a 32px row + 8 */
+    --title-h: 2.75rem; /* 44 */
+    --control-h: 2rem; /* 32 */
+    --control-h-sm: 1.5rem; /* 24 */
+    --control-h-lg: 2.5rem; /* 40 */
+    --icon: 1rem; /* 16 */
+    --page-pad: 2rem; /* 32 */
+    --page-max: 45rem; /* 720 */
+  }
+
+  :root[data-theme='light'] {
+    color-scheme: light;
+  }
+
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+  }
+
+  /* Increase Contrast: lines firm up to 3:1, secondary text darkens, bars go solid */
+  @media (prefers-contrast: more) {
+    :root {
+      --line: light-dark(rgb(60 60 67 / 0.3), rgb(235 235 245 / 0.3));
+      --line-strong: light-dark(rgb(60 60 67 / 0.55), rgb(235 235 245 / 0.45));
+      --line-field: light-dark(rgb(60 60 67 / 0.7), rgb(235 235 245 / 0.6));
+      --ring: light-dark(rgb(60 60 67 / 0.55), rgb(235 235 245 / 0.45));
+      --text-2: light-dark(#2c2c2e, #e5e5ea);
+      --text-3: light-dark(#48484c, #c7c7cc);
+      --bg-glass: var(--bg);
+    }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    :root {
+      --bg-glass: var(--bg);
+    }
+  }
+}

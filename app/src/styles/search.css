@@ -1,0 +1,52 @@
+/* Search: the words to find, where to look, and what was found. */
+
+@layer views {
+  /* stays in reach while the matches scroll under it */
+  .search-bar {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    margin-block: calc(var(--s-3) * -1);
+    padding-block: var(--s-3);
+    background: var(--bg);
+  }
+
+  .search-bar > .search {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* the one thing this page is for is set a size up */
+  .search-lg > .field {
+    height: var(--control-h-lg);
+    padding-left: var(--s-10);
+    font-size: var(--t-reading);
+  }
+
+  .search-lg > .icon {
+    top: 0.75rem;
+    left: 0.75rem;
+  }
+
+  .search-lg > .search-clear {
+    top: var(--s-2);
+    right: var(--s-2);
+  }
+
+  /* how many were found; the line keeps its place when it is empty */
+  .search-status {
+    min-height: var(--lh-body);
+    margin-top: var(--s-6);
+    color: var(--text-3);
+  }
+
+  /* a row's fill reaches 8px past the column, so its words stay on the column's edge */
+  .hits {
+    display: grid;
+    gap: 1px;
+    margin: var(--s-2) calc(var(--s-2) * -1) 0;
+  }
+}

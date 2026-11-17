@@ -1,0 +1,213 @@
+/* The guide that builds the archive. It takes the whole window: one step in a
+   narrow column, how far along it is above, and what happens to the messages
+   at the foot, where it can be read at every step. */
+
+@layer views {
+  .setup {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    min-height: 100dvh;
+    padding: var(--s-8) var(--s-6);
+    background: var(--bg);
+  }
+
+  /* a little above the middle, where a window's first thing sits */
+  .setup-column {
+    align-self: center;
+    justify-self: center;
+    width: min(100%, 30rem);
+    padding-bottom: 8vh;
+  }
+
+  /* four short bars: done, now, to come */
+  .setup-steps {
+    display: flex;
+    gap: var(--s-1);
+    margin-bottom: var(--s-8);
+  }
+
+  .setup-steps > li {
+    width: 1.5rem;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--fill-active);
+    transition: background-color var(--dur-short) ease;
+  }
+
+  .setup-steps > [data-state='done'] {
+    background: var(--text-3);
+  }
+
+  .setup-steps > [data-state='now'] {
+    background: var(--text);
+  }
+
+  /* it holds the focus after a change of step, and shows no ring for that */
+  .setup-step:focus {
+    outline: none;
+  }
+
+  .setup-step h1 {
+    font-size: var(--t-display);
+    line-height: var(--lh-display);
+    letter-spacing: -0.02em;
+  }
+
+  .setup-lead,
+  .setup-size,
+  .setup-list,
+  .setup-phases {
+    font-size: var(--t-reading);
+    line-height: var(--lh-reading);
+  }
+
+  .setup-lead {
+    margin-top: var(--s-3);
+    color: var(--text-2);
+  }
+
+  /* how much is about to be read: a fact, set a step above the sentence under it */
+  .setup-size {
+    margin-top: var(--s-3);
+    font-weight: var(--w-medium);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .setup-size + .setup-lead {
+    margin-top: var(--s-1);
+  }
+
+  .setup-list {
+    display: grid;
+    gap: var(--s-2);
+    margin-top: var(--s-5);
+    padding-left: 1.25rem;
+    list-style: decimal;
+  }
+
+  .setup-list > li::marker {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+  }
+
+  .setup-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    margin-top: var(--s-8);
+  }
+
+  .setup-note {
+    margin-top: var(--s-3);
+    color: var(--text-3);
+  }
+
+  .setup-step > .notice {
+    margin-top: var(--s-4);
+  }
+
+  .setup-waiting {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    margin-top: var(--s-6);
+    color: var(--text-3);
+  }
+
+  .setup-notice {
+    display: grid;
+    justify-items: start;
+    gap: var(--s-3);
+    margin-top: var(--s-6);
+    padding: var(--s-3) var(--s-4);
+  }
+
+  /* ---- the way in without granting access ---- */
+  .setup-other {
+    margin-top: var(--s-8);
+    padding-top: var(--s-4);
+    border-top: 1px solid var(--line);
+  }
+
+  .setup-other .disclosure-body > div {
+    display: grid;
+    justify-items: start;
+    gap: var(--s-3);
+    color: var(--text-2);
+  }
+
+  .setup-other .disclosure-body.is-open > div {
+    padding-top: var(--s-2);
+  }
+
+  .setup-path {
+    display: flex;
+    gap: var(--s-2);
+    width: 100%;
+  }
+
+  /* ---- the import: three things done in order ---- */
+  .setup-phases {
+    display: grid;
+    gap: var(--s-3);
+    margin-top: var(--s-6);
+  }
+
+  .setup-phases > li {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    color: var(--text-3);
+    transition: color var(--dur-short) ease;
+  }
+
+  .setup-phases > [data-state] {
+    color: var(--text);
+  }
+
+  .setup-phase-mark {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: var(--r-full);
+    background: var(--fill-track);
+    font-size: var(--t-small);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    transition:
+      background-color var(--dur-short) ease,
+      color var(--dur-short) ease;
+  }
+
+  [data-state='done'] > .setup-phase-mark {
+    background: var(--ink);
+    color: var(--on-ink);
+  }
+
+  [data-state='now'] > .setup-phase-mark {
+    background: none;
+    color: var(--text);
+  }
+
+  /* the line the import last wrote keeps its place and never wraps */
+  .setup-said {
+    min-height: var(--lh-body);
+    margin-top: var(--s-5);
+    overflow: hidden;
+    font-variant-numeric: tabular-nums;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .setup-privacy {
+    justify-self: center;
+    max-width: 34rem;
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+    text-align: center;
+    text-wrap: balance;
+  }
+}
