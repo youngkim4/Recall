@@ -4,17 +4,17 @@ A reader gives a frame with all of its columns, also when there is nothing to
 give. It opens the database to read and nothing else: a path with no file
 makes no file, a copy gets no file beside it, and what is still in the -wal
 file is read. An error is the one sqlite3 raises, with no text of a query in
-it.
+it. A pull into the archive leaves the database byte for byte as it was.
 """
 import os
 import shutil
 import sqlite3
+from datetime import timedelta
 
 import pandas as pd
 import pytest
 
 import setup_status
-import ui_server
 from conversation import load_attachments, load_reactions
 from parse_imessage import (
     extract_attachments,
@@ -25,7 +25,10 @@ from parse_imessage import (
     search_contacts,
 )
 from setup_status import open_read_only
-from tests.invented_db import GROUP, apple_archive, fill, messages_db
+from tests.archive.builders import ChatDbBuilder
+from tests.archive_kit import PERSON, held, no_names, own_archives, pulled, run  # noqa: F401
+from tests.invented_db import apple_archive, fill, messages_db
+from tests.recall_services.state_data import START
 
 MESSAGE_COLUMNS = [
     "message_id", "timestamp", "sender", "text", "chat_id", "chat_display_name",
@@ -356,11 +359,156 @@ def test_a_copy_brought_with_its_wal_is_read_whole(tmp_path):
     assert set(extract_messages(str(copied / "chat.db"))["text"]) == {"first", "second"}
 
 
-def test_the_name_of_a_group_is_read_from_a_file_whose_name_has_marks_in_it(tmp_path):
-    db = messages_db(tmp_path / "what?#.db", ["one"], group_name="Project Crew")
+# ---- a pull into the archive leaves the database as it was ----
 
-    assert ui_server.group_display_names_from_database(db, [GROUP]) == {GROUP: "Project Crew"}
-    assert [path.name for path in tmp_path.iterdir()] == ["what?#.db"]
+
+def database_for_a_pull(path, texts, wal=False, keep_open=False):
+    """A database that the importer can read. In WAL mode, `keep_open` leaves the writer at work: what it wrote is in the -wal file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    builder = ChatDbBuilder(path, wal=wal)
+    if keep_open:
+        # nothing moves from the -wal file into the database while the writer holds it
+        builder.raw.execute("PRAGMA wal_autocheckpoint=0")
+    person = builder.handle(PERSON)
+    thread = builder.chat(PERSON, members=[person])
+    for place, text in enumerate(texts):
+        builder.message(thread, when=START + timedelta(minutes=place), text=text, handle=person, guid=f"guid-{text}")
+    if keep_open:
+        builder.commit()
+        return builder
+    builder.close()
+    return path
+
+
+def files_of(folder):
+    return {path.name: path.read_bytes() for path in folder.iterdir()}
+
+
+def first_setup(copy, archive_file):
+    return run("setup_import", {"dbPath": str(copy), "messagesPath": str(archive_file), "includeContacts": False})
+
+
+PULLS = pytest.mark.usefixtures("fresh_bundle_cache", "no_names", "own_archives")
+
+
+@PULLS
+@pytest.mark.parametrize("wal", [False, True])
+def test_a_pull_leaves_a_named_copy_byte_for_byte_as_it_was_and_makes_no_file_beside_it(tmp_path, wal):
+    copy = database_for_a_pull(tmp_path / "copies" / "chat.db", ["one", "two"], wal=wal)
+    before = files_of(copy.parent)
+    assert list(before) == ["chat.db"]
+
+    job = first_setup(copy, tmp_path / "saves" / "archive.sqlite3")
+
+    assert job["status"] == "completed", job["error"]
+    assert files_of(copy.parent) == before
+
+
+@PULLS
+@pytest.mark.parametrize("wal", [False, True])
+def test_an_update_leaves_the_database_of_messages_byte_for_byte_as_it_was(messages_home, tmp_path, wal):
+    archive_file = pulled(tmp_path / "saves" / "archive.sqlite3", ["one", "two"])
+    live = database_for_a_pull(messages_home / "chat.db", ["one", "two", "three"], wal=wal)
+    before = live.read_bytes()
+
+    job = run("setup_import", {"messagesPath": str(archive_file), "includeContacts": False})
+
+    assert job["status"] == "completed", job["error"]
+    assert sorted(held(archive_file).values()) == ["one", "three", "two"]
+    assert live.read_bytes() == before
+    # beside it there is at most what SQLite keeps for a reader of a database that can change
+    assert set(files_of(messages_home)) <= {"chat.db", "chat.db-wal", "chat.db-shm"}
+    if not wal:
+        assert list(files_of(messages_home)) == ["chat.db"]
+
+
+@PULLS
+def test_a_pull_that_fails_leaves_the_copy_as_it_was(tmp_path, monkeypatch):
+    from archive import source
+
+    copy = database_for_a_pull(tmp_path / "copies" / "chat.db", ["one", "two"], wal=True)
+    before = files_of(copy.parent)
+
+    def stop(*_args, **_more):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(source.SourceReader, "messages_after", stop)
+
+    job = first_setup(copy, tmp_path / "saves" / "archive.sqlite3")
+
+    assert job["status"] == "failed"
+    assert files_of(copy.parent) == before
+
+
+@PULLS
+def test_a_pull_reads_what_is_still_in_the_wal_and_leaves_the_database_and_its_wal(tmp_path):
+    writer = database_for_a_pull(tmp_path / "writing" / "chat.db", ["first", "second"], wal=True, keep_open=True)
+    try:
+        assert tables_in_the_file_alone(tmp_path / "writing" / "chat.db", tmp_path / "alone") == 0
+        before = files_of(tmp_path / "writing")
+
+        job = first_setup(tmp_path / "writing" / "chat.db", tmp_path / "saves" / "archive.sqlite3")
+
+        after = files_of(tmp_path / "writing")
+    finally:
+        writer.close()
+
+    assert job["status"] == "completed", job["error"]
+    assert sorted(held(tmp_path / "saves" / "archive.sqlite3").values()) == ["first", "second"]
+    assert sorted(after) == sorted(before)
+    assert (after["chat.db"], after["chat.db-wal"]) == (before["chat.db"], before["chat.db-wal"])
+
+
+@PULLS
+def test_a_copy_in_a_folder_that_cannot_be_written_to_is_pulled(tmp_path):
+    copy = database_for_a_pull(tmp_path / "closed" / "chat.db", ["one", "two"], wal=True)
+    copy.parent.chmod(0o555)
+    try:
+        if os.access(copy.parent, os.W_OK):
+            pytest.skip("this user writes to any folder")
+        job = first_setup(copy, tmp_path / "saves" / "archive.sqlite3")
+    finally:
+        copy.parent.chmod(0o755)
+
+    assert job["status"] == "completed", job["error"]
+    assert sorted(held(tmp_path / "saves" / "archive.sqlite3").values()) == ["one", "two"]
+    assert [path.name for path in copy.parent.iterdir()] == ["chat.db"]
+
+
+@PULLS
+@pytest.mark.parametrize("name", ["with space.db", "what?.db", "hash#tag.db", "per%20cent.db", "café.db"])
+def test_a_pull_reads_a_copy_whose_name_has_marks_in_it(tmp_path, name):
+    copy = database_for_a_pull(tmp_path / "copies" / name, ["one"])
+
+    job = first_setup(copy, tmp_path / "saves" / "archive.sqlite3")
+
+    assert job["status"] == "completed", job["error"]
+    assert held(tmp_path / "saves" / "archive.sqlite3") == {"guid-one": "one"}
+    assert [path.name for path in copy.parent.iterdir()] == [name]
+
+
+@PULLS
+def test_a_pull_opens_the_database_itself_to_read_only(tmp_path, monkeypatch):
+    copy = database_for_a_pull(tmp_path / "copies" / "chat.db", ["one", "two"], wal=True)
+    asked = addresses_asked_for(monkeypatch)
+
+    job = first_setup(copy, tmp_path / "saves" / "archive.sqlite3")
+
+    to_the_copy = [address for address in asked if "copies/chat.db" in address]
+    assert job["status"] == "completed", job["error"]
+    # the check opens it to read; the importer reads a work file of its own
+    assert to_the_copy and all("mode=ro" in address for address in to_the_copy)
+
+
+@PULLS
+def test_a_pull_makes_no_file_where_the_copy_is_not(tmp_path):
+    ghost = tmp_path / "copies" / "ghost.db"
+    ghost.parent.mkdir()
+
+    job = first_setup(ghost, tmp_path / "saves" / "archive.sqlite3")
+
+    assert job["status"] == "failed"
+    assert list(ghost.parent.iterdir()) == []
 
 
 # ---- an error is the one sqlite3 raises ----
