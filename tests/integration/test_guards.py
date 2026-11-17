@@ -65,7 +65,7 @@ def test_modules_that_read_the_home_folder_point_into_the_temp_folder() -> None:
 
     home = Path(os.environ["HOME"])
     for folder in (contact_names.ADDRESS_BOOK_DIR, setup_status.LIVE_CHAT_DB):
-        assert home in folder.parents or not folder.exists()
+        assert home in folder.parents
     assert setup_status.probe_database().status == "missing"
 
 
@@ -75,6 +75,32 @@ def test_no_socket_leaves_this_machine() -> None:
         socket.getaddrinfo("api.openai.com", 443)
     with pytest.raises(netguard.NetworkBlocked):
         socket.create_connection(("192.0.2.1", 9), timeout=1)
+
+
+@pytest.mark.parametrize(
+    "lookup",
+    [
+        lambda: socket.gethostbyname_ex("example.com"),
+        lambda: socket.gethostbyaddr("192.0.2.1"),
+        lambda: socket.getnameinfo(("192.0.2.1", 443), 0),
+    ],
+)
+def test_no_name_is_asked_of_another_machine(lookup: object) -> None:
+    with pytest.raises(OSError, match="blocked in tests"):
+        lookup()  # type: ignore[operator]
+
+
+def test_no_packet_is_sent_with_sendmsg() -> None:
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        with pytest.raises(OSError, match="blocked in tests"):
+            probe.sendmsg([b"x"], [], 0, ("192.0.2.1", 9))
+    finally:
+        probe.close()
+
+
+def test_the_names_of_this_machine_can_be_asked() -> None:
+    assert socket.gethostbyname_ex("localhost")[0]
 
 
 def test_loopback_stays_open() -> None:

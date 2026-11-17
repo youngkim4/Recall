@@ -7,7 +7,10 @@
 - makes load_dotenv do nothing: openai_client.py calls it with no path when the
   data folder has no .env, and it then walks up to a real .env above a worktree
 - points RECALL_DATA_DIR at a temp folder, so no default path reaches real data
-- blocks every socket that leaves this machine (loopback stays open)
+- blocks every socket that leaves this machine (loopback stays open), and the
+  lookups and the `sendmsg` that the socket guard of the archive tests leaves open
+
+A test must not start another process: no guard of this module holds there.
 
 This module imports nothing of the project but the socket guard of the
 archive tests, which uses the standard library only.
@@ -18,6 +21,7 @@ from __future__ import annotations
 import atexit
 import os
 import shutil
+import socket
 import tempfile
 import time
 from collections.abc import Iterator
@@ -60,6 +64,50 @@ def _read_no_dotenv(*_args: object, **_kwargs: object) -> bool:
     return False
 
 
+_GUARDED = "_recall_joined_guard"
+_THIS_MACHINE = frozenset({"", "localhost", "127.0.0.1", "::1"})
+_LOOKUPS = ("gethostbyname_ex", "gethostbyaddr", "getnameinfo")
+
+
+def _refuse(name: str) -> OSError:
+    return OSError(f"network access is blocked in tests: {name}")
+
+
+def _host_of(target: object) -> str:
+    return str(target[0] if isinstance(target, tuple) and target else target or "")
+
+
+def _guard_lookups() -> None:
+    """Refuse the lookups that the socket guard of the archive tests does not cover."""
+    for name in _LOOKUPS:
+        real = getattr(socket, name)
+        if getattr(real, _GUARDED, False):
+            continue
+
+        def guarded(target: object, *more: object, _real: object = real, _name: str = name) -> object:
+            if _host_of(target) not in _THIS_MACHINE:
+                raise _refuse(_name)
+            return _real(target, *more)  # type: ignore[operator]
+
+        setattr(guarded, _GUARDED, True)
+        setattr(socket, name, guarded)
+
+
+def _guard_sendmsg() -> None:
+    real = socket.socket.sendmsg
+    if getattr(real, _GUARDED, False):
+        return
+
+    def guarded(self: socket.socket, buffers: object, *more: object) -> int:
+        address = more[2] if len(more) > 2 else None
+        if address is not None and _host_of(address) not in _THIS_MACHINE:
+            raise _refuse("sendmsg")
+        return real(self, buffers, *more)  # type: ignore[arg-type]
+
+    setattr(guarded, _GUARDED, True)
+    socket.socket.sendmsg = guarded  # type: ignore[method-assign,assignment]
+
+
 def install() -> Path:
     """Set the guards and return the temp data folder. Safe to call again."""
     global _data_dir
@@ -74,6 +122,8 @@ def install() -> Path:
     os.environ["RECALL_DATA_DIR"] = _data_dir
     os.environ["HOME"] = str(Path(_data_dir) / HOME_LEAF)
     netguard.install()
+    _guard_lookups()
+    _guard_sendmsg()
     return Path(_data_dir)
 
 
