@@ -118,6 +118,7 @@ def check_tapbacks(
     order = (
         pd.DataFrame({"chat": frame["chat_id"].astype("string"), "when": frame["timestamp"]})
         .reset_index(drop=True)
+        .dropna(subset=["chat"])
         .sort_values(["chat", "when"], kind="stable")
     )
     with_quote = found = 0

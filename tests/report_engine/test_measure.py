@@ -5,6 +5,7 @@ import re
 import socket
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -243,10 +244,82 @@ def test_the_tool_runs_as_a_module_and_prints_numbers(tmp_path: Path) -> None:
     assert SECRET not in done.stdout and SECRET not in done.stderr
 
 
+def test_a_row_with_no_conversation_does_not_stop_the_tool(tmp_path: Path) -> None:
+    rows = [
+        *rows_of(conversation("2024-01-01", days=3), MINA),
+        odd_row(1, f"{SECRET} one", chat_id=None),
+        odd_row(2, f"Loved {OPEN}{SECRET}{CLOSE}", chat_id=None),
+    ]
+    path = tmp_path / "messages.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    code, lines = run_tool(path)
+    assert code == 0
+    assert any("rows with no conversation 2" in line for line in lines)
+    assert any(line.startswith("all conversations: read 1;") for line in lines)
+
+
+def test_no_warning_of_a_library_reaches_the_output(tmp_path: Path) -> None:
+    """A library can quote a cell of the file in a warning. The tool is run on
+    private data and all of its output is passed on, so it shows no warning."""
+    rows = rows_of(conversation("2024-01-01", days=3), MINA)
+    rows.append(odd_row(1, "hello", timestamp=f"2024-01-01 10:00:00 {SECRET[:3].upper()}"))
+    rows.append(odd_row(2, "hello", timestamp="2024-01-01T10:00:00-05:00"))
+    path = tmp_path / "messages.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        code, lines = run_tool(path)
+    assert code == 0
+    assert caught == []
+    done = subprocess.run(  # noqa: S603 - our own module, with a synthetic file
+        [sys.executable, "-m", "report_engine.measure", str(path), "--heuristic", "--top", "0"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        cwd=Path(measure.__file__).resolve().parents[1],
+        env={**os.environ, "OPENAI_API_KEY": "dummy-not-a-key"},
+        check=False,
+    )
+    assert done.returncode == 0
+    assert done.stderr == ""
+    assert SECRET[:3].upper() not in done.stdout
+
+
+def test_an_error_in_one_conversation_is_counted_and_the_others_are_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = measure.read_sized
+
+    def fails_for_the_group(frame: Any, chat: str, meter: Any) -> Any:
+        if chat == GROUP:
+            raise RuntimeError(f"row 3 holds: {SECRET}")
+        return real(frame, chat, meter)
+
+    monkeypatch.setattr(measure, "read_sized", fails_for_the_group)
+    code, lines = run_tool(export(tmp_path), "--top", "2")
+    assert code == 0
+    assert "not read, by type of error: RuntimeError 1" in lines
+    assert any(line.startswith("all conversations: read 1;") for line in lines)
+    assert SECRET not in "\n".join(lines)
+
+
+def test_the_tool_says_when_it_counts_without_the_tokenizer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(measure, "load_counter", lambda family: measure.HeuristicCounter())
+    lines: list[str] = []
+    code = measure.main([str(export(tmp_path)), "--top", "0", "--budgets", "600"], lines.append)
+    assert code == 0
+    assert any("the tokenizer did not load" in line for line in lines)
+    _, quiet = run_tool(export(tmp_path), "--top", "0")
+    assert not any("the tokenizer did not load" in line for line in quiet)
+
+
 def test_the_tool_can_shut_the_network(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in ("connect", "connect_ex", "sendto", "sendmsg"):
         monkeypatch.setattr(socket.socket, name, getattr(socket.socket, name))
-    monkeypatch.setattr(socket, "getaddrinfo", socket.getaddrinfo)
+    for name in measure.LOOKUPS:
+        monkeypatch.setattr(socket, name, getattr(socket, name))
     monkeypatch.setattr(socket, "create_connection", socket.create_connection)
     measure.block_network()
     with pytest.raises(OSError), socket.socket() as probe:
@@ -255,3 +328,5 @@ def test_the_tool_can_shut_the_network(monkeypatch: pytest.MonkeyPatch) -> None:
         socket.create_connection(("127.0.0.1", 9))
     with pytest.raises(OSError):
         socket.getaddrinfo("localhost", 80)
+    with pytest.raises(OSError):
+        socket.gethostbyname("localhost")

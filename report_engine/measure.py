@@ -16,6 +16,7 @@ import socket
 import sys
 import time
 import traceback
+import warnings
 from collections import Counter
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -33,7 +34,6 @@ from report_engine.chunking import (
     measure_days,
     plan_periods,
 )
-from report_engine.errors import ReportEngineError
 from report_engine.estimate import estimate
 from report_engine.frame_source import EXPORT_COLUMNS, FrameSource
 from report_engine.measure_file import (
@@ -47,6 +47,7 @@ from report_engine.model_info import ModelInfo
 from report_engine.options import DEFAULT_PERIOD_TOKEN_BUDGET, ReportOptions
 from report_engine.tokens import (
     ENGINE_ENCODING,
+    HEURISTIC_FAMILY,
     HeuristicCounter,
     TokenCounter,
     TokenMeter,
@@ -60,6 +61,7 @@ NO_LIMIT = 10**12
 DEFAULT_BUDGETS = (20_000, 40_000, DEFAULT_PERIOD_TOKEN_BUDGET, 120_000, 160_000)
 PERIOD_GROUPS = ((1, 1), (2, 5), (6, 20), (21, 50), (51, NO_LIMIT))
 PLAIN_NAME = "Contact"
+LOOKUPS = ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "gethostbyaddr", "getnameinfo")
 
 
 @dataclass(frozen=True)
@@ -93,8 +95,8 @@ def block_network() -> None:
     """After this call nothing in the process can open a connection."""
     for name in ("connect", "connect_ex", "sendto", "sendmsg"):
         setattr(socket.socket, name, _refuse)
-    socket.getaddrinfo = _refuse  # type: ignore[assignment]
-    socket.create_connection = _refuse  # type: ignore[assignment]
+    for name in (*LOOKUPS, "create_connection"):
+        setattr(socket, name, _refuse)
 
 
 @contextmanager
@@ -309,33 +311,38 @@ def run(args: argparse.Namespace, emit: Emit) -> None:
     meter = meter_for(model, counter)
     budgets = tuple(sorted(set(args.budgets)))
     emit(f"tokens counted with {meter.describe()}; message cap {MAX_MESSAGE_CHARS:,} characters")
+    if counter.family == HEURISTIC_FAMILY and not args.heuristic:
+        emit("the tokenizer did not load: the token counts are an estimate by class of character")
 
     totals: list[Total] = []
     failures: Counter[str] = Counter()
     chats = frame["chat_id"].astype("string")
-    groups = {str(chat): part for chat, part in frame.groupby(chats, sort=False)}
+    places = frame.groupby(chats, sort=False).indices
     started = time.perf_counter()
     for rank, (chat, rows) in enumerate(chats.value_counts().items(), start=1):
+        part = frame.iloc[places[chat]]
         try:
-            sized = read_sized(groups[str(chat)], str(chat), meter)
-        except ReportEngineError as exc:
+            sized = read_sized(part, str(chat), meter)
+            if sized is None:
+                failures["no message with text"] += 1
+                continue
+            periods = tuple(len(plan(sized, meter, budget)[0]) for budget in budgets)
+            if rank <= args.top:
+                _report_conversation(rank, int(rows), sized, meter, budgets, args.cuts, emit)
+            if rank <= args.estimates:
+                _report_estimate(rank, part, str(chat), model, counter, emit)
+        except Exception as exc:  # noqa: BLE001 - one conversation must not stop the others
+            # the type of an error is code; its text could hold a row
             failures[type(exc).__name__] += 1
-            continue
-        if sized is None:
-            failures["no message with text"] += 1
             continue
         totals.append(
             Total(
                 tokens=sized.tokens,
                 lines=len(sized.lines),
                 cut=sum(line.cut for line in sized.lines),
-                periods=tuple(len(plan(sized, meter, budget)[0]) for budget in budgets),
+                periods=periods,
             )
         )
-        if rank <= args.top:
-            _report_conversation(rank, int(rows), sized, meter, budgets, args.cuts, emit)
-        if rank <= args.estimates:
-            _report_estimate(rank, groups[str(chat)], str(chat), model, counter, emit)
     _report_all(totals, budgets, failures, time.perf_counter() - started, emit)
 
 
@@ -367,7 +374,9 @@ def _arguments(argv: Sequence[str]) -> argparse.Namespace:
 def main(argv: Sequence[str], emit: Emit = print) -> int:
     args = _arguments(argv)
     try:
-        with _quiet_engine():
+        # a warning of a library can quote a cell of the file: none is shown
+        with _quiet_engine(), warnings.catch_warnings():
+            warnings.simplefilter("ignore")
             run(args, emit)
     except Exception as exc:  # noqa: BLE001 - the text of an error could hold a row of the file
         frames = traceback.extract_tb(exc.__traceback__)
