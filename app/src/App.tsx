@@ -451,6 +451,8 @@ function App() {
       // no preview of the archive before the import is shown again, and no error from before it
       clearPreviewCache()
       setError(null)
+      // a report that was opened holds the figures of the archive before the import
+      setOpened(null)
       setShowOnboarding(false)
       setRerunSetup(false)
       setActiveView('home')
@@ -510,7 +512,19 @@ function App() {
     }
   }, [effectiveDefaults])
 
-  if (building) return <ArchiveWait job={building} onReload={reloadRuntimeData} />
+  if (building) {
+    return (
+      <ArchiveWait
+        job={building}
+        onReload={reloadRuntimeData}
+        onLeave={(failure) => {
+          // the app says what went wrong, and its Update door opens the setup guide
+          setBuilding(null)
+          setError(failure)
+        }}
+      />
+    )
+  }
 
   if (showOnboarding && setupStatus) {
     return (

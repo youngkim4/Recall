@@ -21,7 +21,8 @@ type ImportStepProps = {
   onBack: () => void
 }
 
-const PHASES = ['Reading the Messages database', 'Matching names from Contacts', 'Getting the archive ready']
+// in the order of the server's steps (import_messages in ui_server.py): the names are read first, for the pull
+const PHASES = ['Matching names from Contacts', 'Reading the Messages database', 'Getting the archive ready']
 
 // the size of what is about to be read, rounded the way the quick count is
 function sizeOf(db: SetupStatus['db']) {

@@ -9,13 +9,16 @@ type ArchiveWaitProps = {
   job: Job
   // loads the data of the app again; it fails with the reason when it cannot
   onReload: () => Promise<unknown>
+  // leaves the wait with what went wrong: the app has the door to the setup guide
+  onLeave: (failure: string) => void
 }
 
 // The archive is being loaded from an earlier export, and nothing can be
 // read until it is there. The wait takes the whole window, as the import of
-// the setup guide does: what the load is doing, or why it stopped and a way
-// to try again. The app takes the window back once its data has loaded.
-export function ArchiveWait({ job: first, onReload }: ArchiveWaitProps) {
+// the setup guide does: what the load is doing, or why it stopped, a way to
+// try again, and a way into the app, where the setup guide can be opened.
+// The app takes the window back once its data has loaded.
+export function ArchiveWait({ job: first, onReload, onLeave }: ArchiveWaitProps) {
   const { job, failure, loading, again } = useArchiveBuild(first, onReload)
   const view = buildView(job)
 
@@ -31,6 +34,9 @@ export function ArchiveWait({ job: first, onReload }: ArchiveWaitProps) {
             <button type="button" className="btn primary lg" disabled={loading} onClick={again}>
               {loading ? <span className="spinner" /> : null}
               Try again
+            </button>
+            <button type="button" className="btn quiet lg" disabled={loading} onClick={() => onLeave(failure)}>
+              Open Recall
             </button>
           </div>
         </>
