@@ -7,6 +7,7 @@ import {
   frameStep,
   guideStep,
   importRequest,
+  interruptedReason,
   notStartedJob,
   stepForDatabase,
   whyNotThisCopy,
@@ -212,4 +213,10 @@ test('an import that was never made did not start; one that was made did not fin
   assert.equal(failedHeading(never, false), 'The import did not start')
   assert.equal(failedHeading(job({ status: 'failed' }), true), 'The update did not finish')
   assert.equal(failedHeading(job({ status: 'failed' }), false), 'The import did not finish')
+})
+
+test('an update that was interrupted is called an update, and says what to do', () => {
+  assert.equal(interruptedReason(false), 'The import was interrupted.')
+  assert.match(interruptedReason(true), /^The update was interrupted\./)
+  assert.doesNotMatch(interruptedReason(true), /import/)
 })

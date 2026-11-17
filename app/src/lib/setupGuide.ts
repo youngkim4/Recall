@@ -101,3 +101,12 @@ export function notStartedJob(error: unknown, rerun: boolean): Job {
 export function failedHeading(job: Pick<Job, 'id'>, rerun: boolean) {
   return `The ${called(rerun)} did not ${job.id ? 'finish' : 'start'}`
 }
+
+// What is said when the server stops answering about an import. After an
+// update the archive file says nothing about this run, so the reader is told
+// how to be sure.
+export function interruptedReason(rerun: boolean) {
+  return rerun
+    ? 'The update was interrupted. Start it again to be sure that the archive is up to date.'
+    : 'The import was interrupted.'
+}

@@ -34,6 +34,8 @@ export function WelcomeStep({ onStart, onSkip }: { onStart: () => void; onSkip: 
 }
 
 type PermissionStepProps = SourceProps & {
+  // true for an update: after Recall opens again, the update is started again by hand
+  rerun: boolean
   // true once the reader has been to System Settings and come back
   returnedFromSettings: boolean
   onOpenSettings: () => void
@@ -41,7 +43,11 @@ type PermissionStepProps = SourceProps & {
   onSkip: () => void
 }
 
+// the way out of a step that asks for something: an update goes back to the app
+const wayOut = (rerun: boolean) => (rerun ? 'Not now' : 'Skip for now')
+
 export function PermissionStep({
+  rerun,
   returnedFromSettings,
   pickBusy,
   pickError,
@@ -70,15 +76,25 @@ export function PermissionStep({
           </button>
         ) : null}
         <button type="button" className="btn quiet lg" onClick={onSkip}>
-          Skip for now
+          {wayOut(rerun)}
         </button>
       </div>
       {returnedFromSettings ? (
-        // macOS applies the permission when an app starts, so the last step is a fresh start
+        // macOS applies the permission when an app starts, so the last step is a fresh start.
+        // A first setup carries on by itself after that; an update is not kept, and is started again.
         <div className="notice setup-notice">
           <p>
-            <strong>Reopen Recall to finish.</strong> macOS applies Full Disk Access when an app starts. Setup carries
-            on from here.
+            {rerun ? (
+              <>
+                <strong>Reopen Recall, then choose Update again.</strong> macOS applies Full Disk Access when an app
+                starts.
+              </>
+            ) : (
+              <>
+                <strong>Reopen Recall to finish.</strong> macOS applies Full Disk Access when an app starts. Setup
+                carries on from here.
+              </>
+            )}
           </p>
           {recallBridge.available ? (
             <button type="button" className="btn" onClick={onRelaunch}>
@@ -100,6 +116,7 @@ export function PermissionStep({
 }
 
 type NoMessagesStepProps = SourceProps & {
+  rerun: boolean
   // missing: no database on this Mac; empty: a database with nothing in it
   variant: 'missing' | 'empty'
   // true after "Check again" found the same thing
@@ -109,6 +126,7 @@ type NoMessagesStepProps = SourceProps & {
 }
 
 export function NoMessagesStep({
+  rerun,
   variant,
   stillNothing,
   pickBusy,
@@ -136,7 +154,7 @@ export function NoMessagesStep({
           Check again
         </button>
         <button type="button" className="btn quiet lg" onClick={onSkip}>
-          Skip for now
+          {wayOut(rerun)}
         </button>
       </div>
       <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} />
@@ -145,6 +163,7 @@ export function NoMessagesStep({
 }
 
 type DbProblemStepProps = SourceProps & {
+  rerun: boolean
   // invalid: the file that Messages keeps is not a database of Messages; unread: it could not be looked at
   variant: 'invalid' | 'unread'
   // what the check said, in its own words
@@ -156,6 +175,7 @@ type DbProblemStepProps = SourceProps & {
 // Messages itself cannot be read as a database. A copy that cannot be read
 // never comes here: it is refused where it is chosen.
 export function DbProblemStep({
+  rerun,
   variant,
   detail,
   pickBusy,
@@ -179,7 +199,7 @@ export function DbProblemStep({
           Try again
         </button>
         <button type="button" className="btn quiet lg" onClick={onBack}>
-          Back
+          {rerun ? 'Not now' : 'Back'}
         </button>
       </div>
       <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} />

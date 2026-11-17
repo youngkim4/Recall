@@ -7,6 +7,7 @@ import {
   frameStep,
   guideStep,
   importRequest,
+  interruptedReason,
   notStartedJob,
   whyNotThisCopy,
   type GuideStage,
@@ -154,7 +155,7 @@ export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, o
         if (next?.export.exists) {
           ended()
         } else {
-          setJob((current) => (current ? { ...current, status: 'failed', error: 'The import was interrupted.' } : current))
+          setJob((current) => (current ? { ...current, status: 'failed', error: interruptedReason(rerun) } : current))
         }
       } finally {
         asking = false
@@ -257,6 +258,7 @@ export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, o
         <WelcomeStep onStart={start} onSkip={skip} />
       ) : step === 'permission' ? (
         <PermissionStep
+          rerun={rerun}
           returnedFromSettings={returnedFromSettings}
           pickBusy={pickBusy}
           pickError={pickError}
@@ -271,6 +273,7 @@ export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, o
         />
       ) : step === 'no_messages' ? (
         <NoMessagesStep
+          rerun={rerun}
           variant={live.db.status === 'empty' ? 'empty' : 'missing'}
           pickBusy={pickBusy}
           pickError={pickError}
@@ -282,6 +285,7 @@ export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, o
         />
       ) : step === 'db_problem' ? (
         <DbProblemStep
+          rerun={rerun}
           variant={live.db.status === 'invalid' ? 'invalid' : 'unread'}
           detail={live.db.detail || ''}
           pickBusy={pickBusy}
