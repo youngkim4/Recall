@@ -3155,10 +3155,18 @@ class RecallHandler(BaseHTTPRequestHandler):
                     "archive": archive_summary(messages_path),
                 })
                 return
-            if why_unreadable(probe_database(db_path), archive_there=False):
+            probe = probe_database(db_path)
+            if why_unreadable(probe, archive_there=False):
                 send_json(self, 400, {"error": f"There is no archive at {messages_path}, and Messages cannot be read."})
                 return
-            df = decorate_contacts_frame(list_contacts(str(db_path), limit=limit))
+            try:
+                listed = list_contacts(str(db_path), limit=limit)
+            except sqlite3.Error as exc:
+                # a busy database can be asked again; the reason is a plain sentence either way
+                stopped = reading_stopped(exc, probe, archive_there=False)
+                send_json(self, 503 if isinstance(stopped, DatabaseBusy) else 500, {"error": str(stopped)})
+                return
+            df = decorate_contacts_frame(listed)
             send_json(self, 200, {
                 "contacts": df.to_dict(orient="records"),
                 "source": "database",

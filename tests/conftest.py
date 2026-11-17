@@ -138,7 +138,8 @@ def server():
         httpd = ui_server.LoopbackHTTPServer(("127.0.0.1", 0), ui_server.RecallHandler)
     except OSError as exc:
         pytest.skip(f"no loopback socket here: {exc}")
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    # a short wait between looks, so the server stops soon after a test ends
+    thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
     thread.start()
     yield httpd
     httpd.shutdown()
