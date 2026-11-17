@@ -69,6 +69,13 @@ def mask_handle(handle: str) -> str:
     return UNKNOWN_MASK
 
 
+def is_mask(label: str) -> bool:
+    """True when a label is one of the masks above, not a real name."""
+    text = str(label or "")
+    prefix = PHONE_MASK.format(tail="")
+    return text in (EMAIL_MASK, UNKNOWN_MASK) or text.startswith((prefix, GROUP_MASK))
+
+
 def _clean_name(name: object) -> str:
     text = " ".join(str(name or "").split())
     return "" if looks_like_handle(text) else text
