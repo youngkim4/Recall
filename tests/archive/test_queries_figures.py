@@ -5,10 +5,7 @@ The history is in tests/archive/worlds.py. Local time is America/Los_Angeles.
 
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
-import types
 from pathlib import Path
 from typing import Any
 
@@ -19,9 +16,9 @@ from archive import Archive, import_chat_db
 from tests.archive import worlds
 from tests.archive.builders import ChatDbBuilder
 from tests.archive.conftest import Harbor
+from tests.archive.legacy import load_legacy_conversation
 
 A, B, G = worlds.ROWAN_PHONE, worlds.ROWAN_EMAIL, worlds.HARBOR_GROUP_ID
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 BY_DAY = [
     ("2023-12-31", 1, 0, 1),
@@ -241,29 +238,12 @@ class TestStats:
             assert found["busiest_day_count"] == max(row["total"] for row in days)
 
 
-def _load_legacy_compute_stats(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Load conversation.py under a private name, with a stub tokenizer.
-
-    The real module loads a tiktoken vocabulary at import, which can need the
-    network. compute_stats does not use the tokenizer.
-    """
-    stub = types.ModuleType("tiktoken")
-    stub.get_encoding = lambda name: None  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "tiktoken", stub)
-    monkeypatch.setattr("dotenv.load_dotenv", lambda *args, **kwargs: False)  # never read a real .env
-    spec = importlib.util.spec_from_file_location("legacy_conversation_for_parity", REPO_ROOT / "conversation.py")
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.compute_stats
-
-
 class TestParityWithLegacyComputeStats:
     """stats() gives the same figures as compute_stats in conversation.py."""
 
     @pytest.mark.parametrize("conversation", [A, B, G])
     def test_same_figures(self, harbor: Harbor, monkeypatch: pytest.MonkeyPatch, conversation: str) -> None:
-        compute_stats = _load_legacy_compute_stats(monkeypatch)
+        compute_stats = load_legacy_conversation(monkeypatch).compute_stats
         messages = list(harbor.archive.iter_messages(conversation))
         frame = pd.DataFrame(
             {
