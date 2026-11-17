@@ -32,9 +32,24 @@ type OverviewViewProps = {
 const loadMoments = (messagesPath: string) => recallApi.memories({ messagesPath }).then((response) => response.memories)
 const loadPatterns = (messagesPath: string) => recallApi.overview({ messagesPath }).then((response) => response.overview)
 
-// The archive at a glance: how much it holds and how far it reaches, its
-// shape over the years, what is worth opening today, and when and with whom
-// the messages happen.
+// stands in for the chart of months while it loads
+function MonthsWaiting() {
+  return (
+    <div className="section" aria-hidden="true">
+      <div className="section-head">
+        <h2>By month</h2>
+      </div>
+      <div className="card card-pad">
+        <VoicesSkeleton />
+      </div>
+    </div>
+  )
+}
+
+// The archive at a glance: how much it holds, then two halves. One is what is
+// worth opening, today's moments and the busiest conversations. The other is
+// when the messages happen, by month, by day and by hour. A wide window sets
+// the halves side by side; a narrow one sets them one under the other.
 export function OverviewView({
   defaults,
   archive,
@@ -66,18 +81,17 @@ export function OverviewView({
   if (loading && !archive) {
     return (
       <div className="view">
-        <div className="page" aria-busy="true">
+        <div className="page wide" aria-busy="true">
           <p className="sr-only" role="status">
             Reading your archive
           </p>
           <ArchiveTilesSkeleton />
-          <MomentsSkeleton />
-          <div className="section" aria-hidden="true">
-            <div className="section-head">
-              <h2>By month</h2>
+          <div className="overview-cols">
+            <div className="overview-col">
+              <MomentsSkeleton />
             </div>
-            <div className="card card-pad">
-              <VoicesSkeleton />
+            <div className="overview-col">
+              <MonthsWaiting />
             </div>
           </div>
         </div>
@@ -88,13 +102,11 @@ export function OverviewView({
   if (!archive || !archive.conversations) {
     return (
       <div className="view">
-        <div className="page arrive-each">
+        <div className="pane-empty arrive-each">
           <h2 className="overview-lead">No messages imported yet</h2>
-          <div className="overview-actions">
-            <button type="button" className="btn primary" onClick={onOpenSetup}>
-              Build your archive
-            </button>
-          </div>
+          <button type="button" className="btn primary" onClick={onOpenSetup}>
+            Build your archive
+          </button>
         </div>
       </div>
     )
@@ -105,7 +117,7 @@ export function OverviewView({
 
   return (
     <div className="view">
-      <div className="page arrive-each">
+      <div className="page wide arrive-each">
         <ArchiveTiles
           archive={archive}
           months={patterns.state === 'ready' ? patterns.value.monthly : null}
@@ -114,76 +126,77 @@ export function OverviewView({
           onOpenSetup={onOpenSetup}
         />
 
-        {/* what today holds comes straight under the day itself */}
-        {moments.state === 'loading' ? (
-          <MomentsSkeleton />
-        ) : (
-          <Moments
-            memories={moments.state === 'ready' ? moments.value : null}
-            onRetry={retryMoments}
-            contacts={contacts}
-            onSelectContact={onSelectContact}
-            onOpenDay={setOpenDay}
-            onReplayFirstWords={onReplayFirstWords}
-            onMakeCard={() => setShowCardStudio(true)}
-          />
-        )}
-
-        {patterns.state === 'loading' ? (
-          <div className="section" aria-hidden="true">
-            <div className="section-head">
-              <h2>By month</h2>
-            </div>
-            <div className="card card-pad">
-              <VoicesSkeleton />
-            </div>
-          </div>
-        ) : patterns.state === 'failed' ? (
-          <p className="section section-note">
-            The shape of the archive could not be loaded.{' '}
-            <button type="button" className="link in-text" onClick={retryPatterns}>
-              Try again
-            </button>
-          </p>
-        ) : patterns.value.monthly.length ? (
-          <section className="section" aria-labelledby="months-title">
-            <div className="section-head">
-              <h2 id="months-title">By month</h2>
-            </div>
-            <div className="card card-pad">
-              <VoicesOverTime
-                points={patterns.value.monthly}
-                unit="month"
-                sent={voices.sent}
-                received={voices.received}
-                them="Everyone else"
+        <div className="overview-cols">
+          {/* what is worth opening */}
+          <div className="overview-col arrive-each">
+            {moments.state === 'loading' ? (
+              <MomentsSkeleton />
+            ) : (
+              <Moments
+                memories={moments.state === 'ready' ? moments.value : null}
+                onRetry={retryMoments}
+                contacts={contacts}
+                onSelectContact={onSelectContact}
+                onOpenDay={setOpenDay}
+                onReplayFirstWords={onReplayFirstWords}
+                onMakeCard={() => setShowCardStudio(true)}
               />
-            </div>
-          </section>
-        ) : null}
+            )}
+            {settled ? (
+              <TopConversations
+                ranked={ranked}
+                archive={archive}
+                onSelectContact={onSelectContact}
+                onViewAll={() => onViewChange('analyze')}
+              />
+            ) : null}
+          </div>
 
-        {settled ? (
-          <>
-            {patterns.state === 'ready' && patterns.value.daily.counts.length ? (
+          {/* when the messages happen */}
+          <div className="overview-col arrive-each">
+            {patterns.state === 'loading' ? (
+              <MonthsWaiting />
+            ) : patterns.state === 'failed' ? (
+              <p className="section section-note">
+                The shape of the archive could not be loaded.{' '}
+                <button type="button" className="link in-text" onClick={retryPatterns}>
+                  Try again
+                </button>
+              </p>
+            ) : patterns.value.monthly.length ? (
+              <section className="section" aria-labelledby="months-title">
+                <div className="section-head">
+                  <h2 id="months-title">By month</h2>
+                </div>
+                <div className="card card-pad">
+                  <VoicesOverTime
+                    points={patterns.value.monthly}
+                    unit="month"
+                    sent={voices.sent}
+                    received={voices.received}
+                    them="Everyone else"
+                  />
+                </div>
+              </section>
+            ) : null}
+            {settled ? (
               <>
-                <YearOfDays daily={patterns.value.daily} />
-                <Rhythm rhythm={patterns.value.rhythm} />
+                {patterns.state === 'ready' && patterns.value.daily.counts.length ? (
+                  <>
+                    <YearOfDays daily={patterns.value.daily} />
+                    <Rhythm rhythm={patterns.value.rhythm} />
+                  </>
+                ) : null}
+                <RecentReports
+                  reports={reports}
+                  onOpenReport={onOpenReport}
+                  onViewAll={() => onViewChange('reports')}
+                  onChooseConversation={() => onViewChange('analyze')}
+                />
               </>
             ) : null}
-            <TopConversations
-              ranked={ranked}
-              archive={archive}
-              onSelectContact={onSelectContact}
-              onViewAll={() => onViewChange('analyze')}
-            />
-            <RecentReports
-              reports={reports}
-              onOpenReport={onOpenReport}
-              onViewAll={() => onViewChange('reports')}
-              onChooseConversation={() => onViewChange('analyze')}
-            />
-          </>
-        ) : null}
+          </div>
+        </div>
       </div>
 
       {openDay ? (

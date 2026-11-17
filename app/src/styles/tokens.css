@@ -145,7 +145,8 @@
     --control-h-lg: 2.5rem; /* 40 */
     --icon: 1rem; /* 16 */
     --page-pad: 2rem; /* 32 */
-    --page-max: 45rem; /* 720 */
+    --page-max: 45rem; /* 720: one column to read */
+    --page-wide: 105rem; /* 1680: a page of columns side by side; it fills a 1920 window beside the open rail */
   }
 
   :root[data-theme='light'] {

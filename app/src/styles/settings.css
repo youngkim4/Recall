@@ -81,18 +81,12 @@
     }
   }
 
-  /* ---- jobs: what, how it stands, when ---- */
-  .jobs {
-    display: grid;
-  }
-
+  /* ---- jobs: what, how it stands, when; one row each in a card ---- */
   .job {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 6rem 5rem;
     align-items: baseline;
     gap: var(--s-4);
-    padding-block: var(--s-3);
-    border-bottom: 1px solid var(--line);
   }
 
   .job-main {

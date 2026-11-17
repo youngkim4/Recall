@@ -46,39 +46,49 @@ export function JobsView({ jobs, runningJob, contacts, onRefresh }: JobsViewProp
     return () => window.clearInterval(timer)
   }, [anyActive, onRefresh])
 
+  if (!listed.length) {
+    return (
+      <div className="view">
+        <div className="pane-empty arrive-each">
+          <p>No jobs yet</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="view">
-      <div className="page arrive-each">
-        {listed.length ? (
-          <ul className="jobs" role="list">
+      <div className="page wide arrive">
+        <div className="card">
+          <ul className="rows" role="list">
             {listed.map((job) => {
               const state = STATES[job.status]
               const detail = detailOf(job)
               const updated = parseDate(job.updatedAt)
               return (
-                <li key={job.id} className="job">
-                  <span className="job-main">
-                    <Truncate className="job-title">{jobTitle(job, contacts)}</Truncate>
-                    {detail ? <span className={job.status === 'failed' ? 'job-detail bad' : 'job-detail'}>{detail}</span> : null}
-                  </span>
-                  <span className={`status ${state.tone}`}>
-                    {isActiveJob(job) ? <span className="spinner" /> : null}
-                    {state.word}
-                  </span>
-                  {updated ? (
-                    <time className="job-when" dateTime={updated.toISOString()}>
-                      {relativeTime(updated.valueOf())}
-                    </time>
-                  ) : (
-                    <span className="job-when" />
-                  )}
+                <li key={job.id}>
+                  <div className="row job">
+                    <span className="job-main">
+                      <Truncate className="job-title">{jobTitle(job, contacts)}</Truncate>
+                      {detail ? <span className={job.status === 'failed' ? 'job-detail bad' : 'job-detail'}>{detail}</span> : null}
+                    </span>
+                    <span className={`status ${state.tone}`}>
+                      {isActiveJob(job) ? <span className="spinner" /> : null}
+                      {state.word}
+                    </span>
+                    {updated ? (
+                      <time className="job-when" dateTime={updated.toISOString()}>
+                        {relativeTime(updated.valueOf())}
+                      </time>
+                    ) : (
+                      <span className="job-when" />
+                    )}
+                  </div>
                 </li>
               )
             })}
           </ul>
-        ) : (
-          <p className="section-note">No jobs yet</p>
-        )}
+        </div>
       </div>
     </div>
   )

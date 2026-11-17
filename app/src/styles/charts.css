@@ -370,21 +370,28 @@
     margin-right: var(--s-1);
   }
 
-  /* ---- a year of days: a column a week, 10px cells 2px apart, which is the
-     whole year across a card in the reading column. The weekday names keep
-     their place; in a narrow window the newest weeks stay in view and the
-     oldest slide out of it. ---- */
+  /* ---- a year of days: a column a week, cells 2px apart, the whole year
+     from one edge of its card to the other. The weekday names keep their
+     place; in a card too narrow for the year the newest weeks stay in view
+     and the oldest slide out of it. ---- */
   .days {
-    --cell: 0.625rem;
-
     display: grid;
     grid-template-columns: 1.75rem minmax(0, 1fr);
     column-gap: var(--s-1);
     container: days / inline-size;
   }
 
-  /* too narrow for the whole year: the oldest weeks fade out rather than stop at a cut */
-  @container days (max-width: 41.9rem) {
+  /* A cell is as wide as lets the 53 weeks end on the card's own edges: the
+     width of the block less the weekday names (2rem) and the 52 gaps, over
+     53. It is set on what is inside the block, which can measure the block.
+     It stops at 8px, under which a day is too small to point at, and at 14px. */
+  .days > * {
+    --cell: clamp(0.5rem, calc((100cqi - 2rem - 104px) / 53), 0.875rem);
+  }
+
+  /* too narrow for the whole year at 8px a day (53 x 8 + 104 + 32 = 560):
+     the oldest weeks fade out rather than stop at a cut */
+  @container days (max-width: 34.9rem) {
     .days-view {
       mask-image: linear-gradient(to right, transparent, #000 2rem);
     }
