@@ -116,6 +116,10 @@ def test_search_accepts_an_alias_or_an_exact_name_and_rejects_unknown_ones() -> 
 def test_search_rejects_bad_arguments_without_touching_the_archive() -> None:
     bench = Bench()
     assert not bench.run("search_messages", query="   ").ok
+    assert not bench.run("search_messages", query="lease", limit="many").ok
+    assert not bench.run("search_messages", query="lease", from_me="yes").ok
+    assert not bench.run("search_messages", query=7).ok
+    assert not bench.run("search_messages", query="lease", conversations=[3]).ok
     assert not bench.run("search_messages", query="lease", since="last summer").ok
     assert not bench.run("search_messages", query="lease", order="sideways").ok
     assert not bench.box.prepare("search_messages", "{not json").run(3000).ok

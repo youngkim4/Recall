@@ -48,10 +48,12 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         "reference such as m12. All words must be in the same message. Put a phrase in double quotes. "
         "End a word with * to match its beginning. Case and accents do not matter. Use few, distinctive "
         'words. Set match to "any" to rank messages that hold any of the words: good for synonyms and '
-        "for words in other languages. For the first or the last time, set order.",
+        "for words in other languages. For the first or the last time, set order. "
+        "To read one conversation with no search word, leave query empty and give that one conversation: "
+        'order "oldest" reads it from its start, "newest" from its end; since and until read a period.',
         _schema(
             {
-                "query": {"type": "string", "description": "Words to look for."},
+                "query": _nullable("string", "Words to look for. Empty or null reads one conversation."),
                 "match": _nullable("string", '"all" (default) or "any".', enum=["all", "any", None]),
                 "conversations": _nullable("array", _CONVERSATIONS, items={"type": "string"}),
                 "since": _nullable("string", _DAY),
