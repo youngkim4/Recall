@@ -186,6 +186,17 @@ No period is larger than its budget. A message that is larger than a period is c
 Each size is the size of a text with the line break that follows it, and the header of each day is counted. So the size of a period is never less than the size of the text that is sent.
 A budget that cannot hold the header of a day and one line is a `ConfigError` before any model call.
 
+### How to choose the budget
+
+The budget does not change the input tokens of a report: each message is read one time. It changes the number of calls.
+
+- A smaller budget gives more periods. That is more calls one after the other, more output tokens and more period lines for the reduce call. A day that is larger than the budget is split into parts.
+- A larger budget gives fewer calls. Each call then reads more text for one summary and for 8 moments at most. A period that fails loses more. A run after new messages reads the whole last period again.
+
+The default of 80,000 was checked with `report_engine.measure` on a real archive: no day was split, and nearly all conversations were one period.
+With 120,000 the largest conversations needed about a third fewer calls: a shorter wait, for the same input tokens. Use 120,000 when the wait matters more than detail. Make sure that the long-context price of the model starts above that size.
+Do not go below the size of the busiest day of your largest conversation. The tool prints it as "largest day".
+
 ## Long messages
 
 An export can hold text that nobody typed, and one such row can be megabytes long.
@@ -395,7 +406,7 @@ venv/bin/python -m report_engine.measure /path/to/messages.csv
 The tool reads the export as the app reads it and runs the code of a report up to the period plan. It calls no model and shuts the network before it starts.
 It prints numbers only: no text of a message, no name and no handle. A conversation is named by its rank in size.
 
-- Rows that the engine leaves out, by kind. How many tapback rows quote the text of an earlier row.
+- Rows that the engine leaves out, by kind. Where the quoted text of the tapback rows is found: in an earlier row of the conversation, at the start of one, somewhere else, or not at all.
 - Text lengths, and the share of all characters that a cap at each length keeps.
 - For the largest conversations: lines, messages that were cut, tokens, the periods for each budget, periods over the budget, and cut points where the periods are not stable. The last two numbers must be 0.
 - Totals for all conversations and for each budget.
