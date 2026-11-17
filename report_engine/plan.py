@@ -12,7 +12,12 @@ from dataclasses import dataclass
 
 from report_engine.cache import period_key
 from report_engine.chunking import Period, line_sizer, measure_days, plan_periods
-from report_engine.errors import ConfigError, EmptyConversationError
+from report_engine.errors import (
+    ConfigError,
+    EmptyConversationError,
+    ReportEngineError,
+    SourceError,
+)
 from report_engine.figures import conversation_figures
 from report_engine.model_info import ModelInfo
 from report_engine.models import Scope
@@ -148,6 +153,19 @@ def _planned_periods(
     )
 
 
+def _read_lines(
+    source: ReportSource, conversation: str, scope: Scope, labeler: Labeler
+) -> tuple[Line, ...]:
+    """The source is foreign code. Its error becomes a SourceError that names
+    only the type: the text of the error could hold words of a message."""
+    try:
+        return build_lines(source.messages(conversation, scope.since, scope.until), labeler)
+    except ReportEngineError:
+        raise
+    except Exception as exc:
+        raise SourceError(f"the source raised {type(exc).__name__}") from exc
+
+
 def build_plan(
     *,
     source: ReportSource,
@@ -161,7 +179,7 @@ def build_plan(
     """Read the messages once and split them. Raises EmptyConversationError when
     the scope holds no message with text."""
     wanted = coerce_scope(scope)
-    lines = build_lines(source.messages(conversation, wanted.since, wanted.until), labeler)
+    lines = _read_lines(source, conversation, wanted, labeler)
     if not lines:
         raise EmptyConversationError("no message with text in this conversation and scope")
     meter = meter_for(model_info, counter, options.tokenizer_mismatch_margin)

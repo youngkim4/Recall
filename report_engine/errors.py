@@ -17,7 +17,7 @@ class ConfigError(ReportEngineError):
 
 
 class SourceError(ReportEngineError):
-    """The source port returned data the engine can not use."""
+    """The source or the labeler failed, or gave data the engine can not use."""
 
 
 class EmptyConversationError(ReportEngineError):

@@ -17,7 +17,7 @@ from typing import Any
 
 from report_engine.calls import Caller, Emit
 from report_engine.control import CancelToken, ProgressCallback, ProgressEvent, Runtime
-from report_engine.errors import AllPeriodsFailed, ReduceError, ReportEngineError, RunError
+from report_engine.errors import AllPeriodsFailed, ReduceError, RunError
 from report_engine.jsonsafe import jsonable
 from report_engine.map_step import MapResult, PeriodOutcome, PeriodStore, map_periods
 from report_engine.model_info import ModelInfo
@@ -234,7 +234,7 @@ def run_report(
             clock=clock,
             emit=emit,
         )
-    except ReportEngineError:
+    except RunError:
         raise
     except Exception as exc:
         raise RunError(

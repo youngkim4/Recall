@@ -132,12 +132,21 @@ def resolve_labels(senders: Iterable[str], labeler: Labeler) -> dict[str, str]:
     for sender in senders:
         if sender in names:
             continue
-        name = clean_label(labeler(sender))
+        name = clean_label(_ask(labeler, sender))
         if not name or name.casefold() == OWN_LABEL.casefold() or looks_like_handle(name):
             unsaved += 1
             name = UNSAVED_LABEL if unsaved == 1 else f"{UNSAVED_LABEL} {unsaved}"
         names[sender] = _cut_label(name, taken)
     return names
+
+
+def _ask(labeler: Labeler, sender: str) -> object:
+    """The labeler is foreign code. Its error becomes a SourceError that names
+    only the type: the text of the error could hold a handle."""
+    try:
+        return labeler(sender)
+    except Exception as exc:
+        raise SourceError(f"the labeler raised {type(exc).__name__}") from exc
 
 
 def _cut_label(name: str, taken: dict[str, str]) -> str:
