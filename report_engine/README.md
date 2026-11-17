@@ -80,8 +80,27 @@ The message of this `SourceError` gives only the type of the error, because the 
 `since` and `until` are days (`YYYY-MM-DD`) or full timestamps. Both ends are included. A day means the whole day.
 A scope with an unknown key or a bad date is a `ConfigError`. It never becomes "all dates".
 
-- `FrameSource(frame)` reads a pandas DataFrame with the export columns `message_id`, `timestamp`, `sender`, `text`, `chat_id`, `is_from_me`. It matches `chat_id` exactly. It reads rows by position. It converts a timestamp that has a zone to the local time of the machine.
+- `FrameSource(frame)` reads a pandas DataFrame with the export columns `message_id`, `timestamp`, `sender`, `text`, `chat_id`, `is_from_me`. It matches `chat_id` exactly. It reads rows by position. It converts a timestamp that has a zone to the local time of the machine. It leaves out the rows that are not messages (see below).
 - `ArchiveSource(archive)` reads `archive.iter_messages(conversation_id, since=..., until=...)`. It sends days only, asks for one day more than `until`, and applies the exact bounds itself. It skips rows whose `kind` is `system`. It reads one conversation id, not a list of ids. `ArchiveSource.open(path)` imports the `archive` package at that moment. It does not catch the errors of `Archive.open`: the archive contract says that a missing file is a `FileNotFoundError`. This adapter is tested with a stand-in only.
+
+### Rows that are not messages
+
+An export holds rows that no person wrote, or that do not say who wrote them. They are not in a transcript.
+
+| Row | What happens | Where |
+|-----|--------------|-------|
+| A tapback (`Loved “...”`, `Liked “...”`, `Laughed at an image`, `Removed a heart from “...”`, `Reacted <symbol> to “...”`) | Left out. | `FrameSource` |
+| `is_from_me` is empty or not a known value | Left out. If no row of the conversation says who sent it, the run stops with `SourceError`. | `FrameSource` |
+| No usable timestamp | Left out. | `FrameSource` |
+| Text is empty, or holds only the attachment placeholder (U+FFFC), control characters or zero-width marks | Left out. | the engine, for each source |
+| A message has words and a placeholder | The words stay. The placeholder goes. | the engine |
+
+Why tapbacks are left out: the export stores a tapback as text that holds the words of the other person. In a transcript those words stand under the name of the person who tapped, and a quote check finds them there.
+`report_engine.tapbacks` knows the English phrases only. A typed message that is exactly one of these phrases with quoted text is read as a tapback too.
+`ArchiveSource` needs no such rule: the archive does not give tapbacks as messages.
+
+`FrameSource` writes the count of each kind to the log (`report_engine.frame_source`). The log never holds a row.
+A known limit: a message that got only a tapback as its answer looks like a message with no answer.
 
 ### Labeler
 
@@ -101,6 +120,10 @@ Two senders with the same full name are one person and have one name.
 The conversation id never goes into a prompt.
 
 In a one-to-one chat the source can give an empty sender. Return the contact's name for the empty sender.
+
+WARNING: Return an empty string for a sender with no saved name. Do not return words such as "an unsaved contact".
+The engine reads one name as one person, so the same words for two senders make one speaker of two people.
+For an empty string the engine gives each sender a name of its own: `Unsaved contact`, `Unsaved contact 2`.
 
 ### Model facts
 
@@ -140,7 +163,7 @@ Its errors hold the HTTP status, the error code and the request id. They hold no
 | `reasoning` | `None` | Reasoning effort, passed to the model as given. |
 | `score_floor` | 0.4 | A moment below this score is not in the report. |
 | `max_moments` | 40 | Largest number of moments in the report. |
-| `max_message_chars` | 6,000 | A longer message keeps its start and its end. |
+| `max_message_chars` | 4,000 | A longer message keeps its start. See "Long messages". |
 | `carry_over_token_budget` | 4,000 | Room for notes from earlier periods. |
 | `tokenizer_mismatch_margin` | 1.35 | Safety margin for token counts. See "Tokens". |
 
@@ -157,6 +180,20 @@ New messages change only the last period. A period that is closed does not chang
 
 The budget is also limited by the model. One request must fit `max_input_tokens`, the context window and one minute of `tokens_per_minute`.
 The engine keeps room for the fixed prompt text, the speaker names and the notes.
+
+No period is larger than its budget. A message that is larger than a period is cut until it fits (see "Long messages").
+
+## Long messages
+
+An export can hold text that nobody typed, and one such row can be megabytes long.
+
+- A message longer than `max_message_chars` (4,000 characters) keeps its start. The line ends with the mark `[...]`.
+- The cut does not fall inside a word.
+- The cut is made one time, when the messages are read. The period sizes, the transcripts and the estimate all use the cut text.
+- The cap counts characters. Text can hold a token in every character, so a line can still be larger than a small period. Such a line is cut again until it fits.
+- The quote check reads the whole message, not the cut text.
+- The report has a warning with the number of messages that were cut.
+- The map prompt tells the model what the mark means.
 
 ## Cache
 
@@ -191,6 +228,8 @@ A `Moment` has `date`, `title`, `detail`, `category`, `score`, `quote`, `message
 - `title`, `detail` and `quote` are plain text. Escape them when you put them into HTML.
 
 Section `markdown` has no heading, link, image or HTML tag. The engine removes them from the model reply, also when they are nested.
+A line that starts with `#` has a backslash before the `#`, and no line holds only `=` or `-`: Python-Markdown reads both as headings.
+Render section text with `story_html` in `safe_html.py`, as `CONTRACTS.md` says.
 
 A `PeriodSummary` has `label`, `first_day`, `last_day`, `summary`, `carry_over`, `moments`, `usage`, `cache_key`, `from_cache`, `error`, `message_count`.
 For a period from the cache, `usage` is the cost of the call that made the entry. `report.usage` counts only the calls of this run.
@@ -203,6 +242,7 @@ For a period from the cache, `usage` is the cost of the call that made the entry
 - Two texts match when they are equal after white space, quote marks and Unicode composition are made the same. Letter case must match.
 - In Latin, Greek and Cyrillic text a quote cannot start or end in the middle of a word. `ok` is not a quote from `tokens`.
 - A quote that is not found is cleared. The report gets a warning with the count.
+- A quote longer than 600 characters is cut to that length, between words.
 - The name in `quote_speaker` comes from the message, not from its text. Text such as `Mina: I owe you` in a message of another person does not make Mina the speaker.
 
 ## Moments
@@ -229,6 +269,7 @@ All text from messages, names, summaries and notes is data in a prompt.
 | A period fails | The report is `partial`. A warning names the period. |
 | All periods fail | `AllPeriodsFailed`. No report. |
 | The summaries are too large for the model | The engine shortens them for the reduce call. A warning gives the count. |
+| A message is longer than the cap | The model reads its start. A warning gives the count. |
 | The reduce reply is empty, cut off or has an empty section | `ReduceError`. No report. |
 | The cancel token is set | `ReportCancelled`. No report. |
 | An error in the engine after the first call | `RunError`. No report. The cause is in `__cause__`. |
@@ -300,15 +341,20 @@ The engine has no spend limit of its own. Call `estimate` and ask the user befor
 
 Report files have mode `0600`. New folders have mode `0700`.
 
-`render_markdown(report)` gives the layout that the current Reports page and server read:
+`render_markdown(report)` gives the layout that the Reports page and the server read.
+It was checked against `CONTRACTS.md`, `ui_server.py` (`report_contact`, `report_scope`, `markdown_section`) and `safe_html.py` at commit `ab20b5e`.
 
-- Line 1: `# Conversation Analysis - <conversation id>`
+- Line 1: `# Conversation Analysis - <conversation id>`. The id is written as it is, on one line: `report_contact` reads it back.
 - `## Overview`. Its first line is the scope line: `- Scope: 2024-06-01 to 2024-06-30`, `- Scope: from 2024-06-01`, `- Scope: through 2024-06-30` or `- Scope: all dates`.
 - `## Key Events`. One `### <date> - <title>` block for each moment. The section is empty when the report has no moment.
 - `## Summary`. It is the last section and holds the four sections under `###` headings.
 
 In this layout `#`, `[`, `]` and `\` in titles, details, quotes and warnings have a backslash before them.
 Text from the model or from a message cannot make a heading, a link or an image.
+
+The server gives everything after `## Summary` to `story_html`, and the page cuts the result into chapters at its headings.
+The four `###` headings are the only headings of the story, so the chapters are always the four sections.
+The server reads the events from `events_timeline_*.csv`, not from `## Key Events`.
 
 `write_text_atomic(path, text)` writes a text file in one step.
 
@@ -317,26 +363,47 @@ Text from the model or from a message cannot make a heading, a link or an image.
 This package does not change the server. The wiring step must do these things.
 
 1. Make one `ModelInfo` for each model that the UI offers. Today the numbers are in `ai_config.py` and `cli.py`.
-2. Make a labeler from `resolve_contact_names`. Return the contact's name for the empty sender of a one-to-one chat.
+2. Make a labeler from `resolve_contact_names`. Return the contact's name for the empty sender of a one-to-one chat. Return an empty string for a sender with no saved name. Do not use `contact_label`: it gives the same words for different people.
 3. In `run_job`, action `analyze`, replace the call to `run_cli`:
    1. Make the source: `FrameSource` on the cached frame, or `ArchiveSource` when the archive is in place.
    2. Call `run_report`.
    3. Call `ReportStore.save`.
    4. Until the Reports page reads JSON, write the markdown file: `write_text_atomic(out_dir / f"analysis_{sanitize_filename(contact)}.md", render_markdown(report))`.
-4. Make the events for `build_analysis_payload` from `report.moments`. The engine does not write `events_timeline_*.csv`.
+4. Write `events_timeline_*.csv` from `report.moments` (columns `date`, `title`, `detail`, `category`, `score`, `quote`): `build_analysis_payload` reads the events from that file. The engine does not write it. When a report has no moment, remove the older events file, as `CONTRACTS.md` says.
 5. Send `ProgressEvent` to the job progress. Keep one `CancelToken` for each job and add a route that calls `cancel()`.
 6. Catch `RunError`, `EmptyConversationError`, `ConfigError` and `SourceError`. All of them are kinds of `ReportEngineError`. After the first model call a run ends only with a `RunError`. Record `error.usage` of a `RunError`. Show `report.warnings` when `status` is `partial`.
 7. In `preview_payload`, replace `estimate_cost` with `estimate`. Give it the same labeler as the run.
 8. Serve the JSON to the Reports page: the list from `list_reports`, one report from `load_report(...).model_dump(mode="json")`.
-9. Give `since` and `until` as days. The engine includes the whole `until` day. Today's server compares against midnight and drops that day.
+9. Give `since` and `until` as days. The engine includes the whole `until` day, as `within_dates` in `conversation.py` does at `ab20b5e`. The server at `212614a` compared against midnight and dropped that day.
+10. Increase `ANALYSIS_PAYLOAD_VERSION` when reports come from this engine: a stored analysis can then differ for the same key.
+11. Give the engine the frame that `load_messages` returns. `FrameSource` reads `is_from_me` as `parse_boolish` does.
 
 The engine does not write the HTML report of `html_report.py`.
+
+## Measure an export
+
+```bash
+venv/bin/python -m report_engine.measure /path/to/messages.csv
+```
+
+The tool reads the export as the app reads it and runs the code of a report up to the period plan. It calls no model and shuts the network before it starts.
+It prints numbers only: no text of a message, no name and no handle. A conversation is named by its rank in size.
+
+- Rows that the engine leaves out, by kind. How many tapback rows quote the text of an earlier row.
+- Text lengths, and the share of all characters that a cap at each length keeps.
+- For the largest conversations: lines, messages that were cut, tokens, the periods for each budget, periods over the budget, and cut points where the periods are not stable. The last two numbers must be 0.
+- Totals for all conversations and for each budget.
+
+Options: `--top N`, `--estimates N`, `--budgets 40000,80000`, `--cuts N`, `--heuristic` (count with no tokenizer), `--tokenizer-family NAME`.
+Use the numbers to set `max_message_chars` and `period_token_budget`.
 
 ## Tests
 
 ```bash
 venv/bin/python -m pytest tests/report_engine --cov=report_engine --cov-report=term-missing
 ```
+
+`test_contract_markdown.py` holds copies of the readers in `ui_server.py` at `ab20b5e`. Its last test uses the real `story_html` and is skipped until `safe_html` can be imported.
 
 `tests/report_engine/conftest.py` sets a dummy `OPENAI_API_KEY` before any import, removes proxy and address settings from the environment, and blocks all sockets that do not go to the local machine.
 The tests use invented conversations and `FakeLLM` only.
