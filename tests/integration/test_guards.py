@@ -52,6 +52,23 @@ def test_default_paths_are_in_a_temp_folder() -> None:
     assert default_archive_path() == folder / "saves" / "archive.sqlite3"
 
 
+def test_home_is_an_empty_temp_folder() -> None:
+    home = Path(os.environ["HOME"])
+    assert home == Path(os.environ["RECALL_DATA_DIR"]) / guards.HOME_LEAF
+    assert Path("~/Library/Messages").expanduser() == home / "Library" / "Messages"
+    assert list(home.iterdir()) == []
+
+
+def test_modules_that_read_the_home_folder_point_into_the_temp_folder() -> None:
+    import contact_names
+    import setup_status
+
+    home = Path(os.environ["HOME"])
+    for folder in (contact_names.ADDRESS_BOOK_DIR, setup_status.LIVE_CHAT_DB):
+        assert home in folder.parents or not folder.exists()
+    assert setup_status.probe_database().status == "missing"
+
+
 def test_no_socket_leaves_this_machine() -> None:
     assert netguard.blocks_outbound()
     with pytest.raises(netguard.NetworkBlocked):

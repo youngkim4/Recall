@@ -1,7 +1,9 @@
 """Guards shared by the tests of the joined branch.
 
-`install()` runs before any project import. It does four things:
+`install()` runs before any project import. It does five things:
 - sets a dummy OPENAI_API_KEY
+- points HOME at an empty temp folder: contact_names.py and setup_status.py take
+  the Contacts and Messages folders from it when they load
 - makes load_dotenv do nothing: openai_client.py calls it with no path when the
   data folder has no .env, and it then walks up to a real .env above a worktree
 - points RECALL_DATA_DIR at a temp folder, so no default path reaches real data
@@ -29,6 +31,7 @@ from tests.archive import netguard
 
 DUMMY_KEY = "test-key-not-real"
 TEST_TIME_ZONE = "America/Los_Angeles"
+HOME_LEAF = "home"
 DATA_FILES = {
     "SAVES_DIR": "saves",
     "OUT_DIR": "out",
@@ -67,7 +70,9 @@ def install() -> Path:
     if _data_dir is None:
         _data_dir = tempfile.mkdtemp(prefix="recall-joined-tests-")
         atexit.register(shutil.rmtree, _data_dir, True)
+        (Path(_data_dir) / HOME_LEAF).mkdir()
     os.environ["RECALL_DATA_DIR"] = _data_dir
+    os.environ["HOME"] = str(Path(_data_dir) / HOME_LEAF)
     netguard.install()
     return Path(_data_dir)
 
