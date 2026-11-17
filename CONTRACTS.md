@@ -26,6 +26,8 @@ Add a rule here when a review finds a new one.
   - Never compute received as `total` minus `sent`.
   - Server: `sent_mask` and `received_mask` in `conversation.py`. Client: `receivedCount` in `app/src/lib/conversations.ts`.
 - `isFromMe` in a message is `true`, `false` or `null`. `sent_by_me` in `ui_server.py` writes it. `isOutbound` in `app/src/lib/conversations.ts` reads it, and also accepts the older forms that saved chats hold.
+- The `direction` of a first message is `outgoing`, `incoming`, or any other value, which means unknown. Only `sentByMe` in `app/src/lib/direction.ts` reads it.
+- `voicesOf` in `app/src/lib/conversations.ts` gives what each side wrote in a conversation of the list, or null when the list does not say. The list read from the Messages database has totals only. A row with no voices draws one bar in the neutral color.
 - Rhythm rows start on Monday. `hour_by_weekday` writes them. `Rhythm.tsx` maps them to the week of the reader.
 - Heat levels use one scale for the whole archive. The busiest count is always level 4. `heatSteps` and `heatLevel` in `app/src/lib/heat.ts` hold this.
 - Search: `total` is the number of matches. `count` is the number of matches that the response holds. The screen shows `total`.
@@ -51,7 +53,12 @@ Add a rule here when a review finds a new one.
 - The conversation id must match exactly. This route never matches part of an id.
 - A day longer than the limit is given in part. `total` is the number of messages in the day and `offset` is the place of the first message given.
 - `previousDay` and `nextDay` are the nearest days that hold messages, or null.
-- A moment in `/api/memories` carries `day`, and `previewAt` when it quotes a message. The client opens the day at the message whose `timestamp` equals `previewAt`. The two must be written in the same form.
+- A moment in `/api/memories` carries `day`, and `previewAt` when it quotes a message. `previewAt` is written in the same form as `timestamp` in a message of `/api/day`.
+- The client finds the quoted message with `quotedIndex` in `app/src/lib/dayParts.ts`: first by `previewId` equal to `messageId`, then by `previewAt` equal to `timestamp`.
+- The client reads a long day in parts with `partToAsk`: it asks for the rows that are there and no more. `joinPart` adds a part only when it meets what is shown.
+- `DayReader.tsx` in `app/src/components/ui` shows a day: the arrows, the messages, the parts, the place that the reader left each day at. `DaySheet.tsx` is the dialog around it. Search shows the same reader in a pane.
+- `.dayview-scroll` has `overflow-anchor: none`. The reader puts the messages in place itself.
+- An on-this-day card takes its day from `day`. It does not work the day out from the clock of the client.
 
 ## Reports
 
@@ -64,6 +71,7 @@ Add a rule here when a review finds a new one.
 - A saved report shows figures for the days in its scope.
 - A run that finds no events removes the older events file. `write_events_timeline` in `analysis.py` does this.
 - The app shows an analysis only with the report file that it was read from. `App.tsx` keeps the file path with the analysis.
+- An analysis answer with no `analysis` is a failure. A job watch that has ended changes nothing.
 
 ## Story HTML
 
@@ -107,9 +115,14 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - A view asks for the width of the block that holds it, not for the width of the window. The blocks are `workspace`, `detail` and `half` (container queries).
 - One left edge: the title in the strip is 16px in. A page or a pane that fills its width starts on the same 16px. A column that sits in the middle has gutters of 32px or more.
 - A page has one of two limits in `app/src/styles/tokens.css`:
-  - `--page-max` is one column to read. Settings and Search use it.
+  - `--page-max` is one column to read. Settings uses it.
   - `--page-wide` is a page of columns. `.page.wide` fills the workspace up to this limit when the workspace is 64rem or wider. Overview and Jobs use it.
-- The two halves of the Overview and its row of tiles use the same gap, so the middle of the page is one line.
+- In a wide workspace no screen keeps its content in one narrow column with the rest empty. A screen is a page of rows (Overview, Jobs) or panes that fill the width (Chat, Analyze, Search, Reports).
+- The Overview is rows. The cards of a row have one height and end on one line.
+  - The first row and the row of tiles use the same gap, so the middle of the page is one line.
+  - The list of the busiest conversations shows the rows that fit beside the moments. `useRowsThatFit` reads `--fit` on the card; the style sheet sets it where the height of the card comes from outside.
+  - The row of the two heat maps is cut so that a day and an hour have the same size. The cut in `overview.css` and the cell sizes in `charts.css` use the same numbers: 53 weeks, 24 hours, gaps of 2px, 2rem of weekday names.
+- Code that scrolls a list from screen rectangles divides by the drawn scale (the width of the rectangle over `offsetWidth`). A panel that is opening is drawn smaller than its layout.
 - A pane with nothing to show puts its words in the middle with `.pane-empty` in `app/src/styles/shell.css`.
 - Each distance in a motion is multiplied by `--travel` in `app/src/styles/base.css`. Reduce Motion sets `--travel` to 0.
 - Use one motion for each kind of change:
