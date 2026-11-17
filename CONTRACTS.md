@@ -88,7 +88,7 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - The result holds only three attributes: `href` and `rel` on a link, and `start` on a numbered list.
 - A link address starts with `http://`, `https://` or `mailto:`. Each link has `rel="noopener noreferrer"`.
 - `story_html` limits its input: the length of the text (`STORY_LIMIT`), a run of one mark, and a run of empty lines.
-- `story_html` limits its work: an estimate of the work before the renderer starts (`STORY_WORK_LIMIT`) and the processor time of the renderer (`STORY_SECONDS`). A piece past a limit, or nested too deep, is shown as plain paragraphs. The limits hold for each chapter of `story_page`, and the whole story is cut to `STORY_LIMIT` first. `story_page` says whether a chapter is shown plain, and `/api/analysis` gives that as `shownPlain`.
+- `story_html` limits its work: an estimate of the work before the renderer starts (`STORY_WORK_LIMIT`) and the processor time of the renderer (`STORY_SECONDS`). A piece past a limit, or nested too deep, is shown as plain paragraphs. The limits hold for each chapter of `story_page`, all the chapters of one page share `STORY_PAGE_SECONDS`, and the whole story is cut to `STORY_LIMIT` first. A chapter is cut at its line whatever stands around it (a code fence too): each piece is made safe by itself. `story_page` says whether a chapter is shown plain, and `/api/analysis` gives that as `shownPlain`.
 - A picture becomes its caption.
 - The client puts this HTML into the page in one place: `ReportStory.tsx` in `app/src/components/reports`.
 - `readStory` in `app/src/lib/story.ts` cuts the story into an opening and chapters. It moves whole elements and changes heading levels only. It never makes markup from text.
@@ -142,9 +142,10 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 
 - A pull changes the archive or leaves it as it was. A database that cannot be read, a reader that stops, and a pull that is refused all leave the archive with the messages that it had.
 - A first pull that does not end leaves no archive file (`_forget_empty_archive`).
-- A database with no message to keep is not imported.
+- A database with no message to keep is not imported. A first pull of such a database leaves no archive file (`_forget_first_archive`). An update from one is stopped by the limit below.
 - A pull that would remove more than 20% of the stored messages is refused before it changes anything (`DEFAULT_MAX_REMOVED_SHARE`). The job fails with the code `removal_limit` and one sentence with the numbers.
   - Only a request that says `allowRemoval: true` lifts the limit. Any other value does not.
+  - The limit guards an archive that holds a message (`holds_messages`). An archive with none has nothing to lose, so a first setup is not held up by it.
   - The guide then says so in plain words and offers "Update anyway" (`failedImport` in `app/src/lib/setupGuide.ts`).
   - Rows that the bridge loaded (`legacy:` ids) are replaced by the first pull. The limit does not count them.
 - When the archive is written, the import did its work.
@@ -158,7 +159,8 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - The bridge loads `messages.csv` into the archive one time (`ensure_from_export`). The job is `bridge` (`load_export`).
   - At the start of the server, `load_export_at_start` starts that job when an export waits (`export_waits`).
   - A request that needs the archive when only an export is there starts the same job (`archive_for`) and answers 503 with the code `archive_building` and the job. The app shows a waiting state (`ArchiveWait.tsx`) and loads its data again when the job ends.
-  - An export that could not be loaded is not tried again until its file changes (`BRIDGE_FAILED`). The answer is then 500 with the code `archive_failed` and the sentence.
+  - A load that did not end well is not started again until the export file changes (`BRIDGE_FAILED`, `bridge_failure`). The answer is then 500 with the code `archive_failed` and the sentence. A load that met a busy archive is tried again after `BRIDGE_RETRY_SECONDS`.
+  - A request also waits (503, `archive_building`, the import job) while a first import fills an archive that holds nothing yet.
 - An export never replaces an archive that a pull filled.
 - No code lists the folder of the archive. Do not add code that takes a file in that folder for an archive because of its name.
 
@@ -173,7 +175,9 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - A body that is not JSON is answered with 400 on each POST route (`BadRequest`).
 - The answer to a new job is a copy of the job as it was made (`job_copy`). Its status is `queued`. The answer about a job is a copy too. A copy shares no list with the job.
 - A job always ends in the list. `run_job` marks a job as failed when its work is over and the list still says `queued` or `running`. A job that stays in one of these states holds up each later import.
-- A failed job has `error`, one plain sentence, and `code`, a fixed word for the client or null (`TOLD_IN_A_SENTENCE`).
+- A failed job has `error`, one plain sentence, and `code`, a fixed word for the client or null (`TOLD_IN_A_SENTENCE`). A failure that nobody planned for says `JOB_FAILED` with the code `job_failed`: what was raised goes to the log of the server and to no line of the job.
+- A step after the work of a job is a warning, not a failure: a count after an import (`counted`), the opening of a report that is written (`opened_report`).
+- What a thread that answers a request prints is never a line of a job (`_JobStreamRouter.answering`).
 
 ### What the reader is told
 
@@ -231,6 +235,7 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 - A child process has no socket guard. A test that starts one opens no socket there.
 - Code that blocks the network for a run gives it back when the run ends (`network_blocked` in `chat_engine/eval/volume.py`).
 - A test that needs a Messages database makes one with `messages_db` in `tests/invented_db.py`.
+- No test starts a helper of the app. WARNING: `export_contact_names` starts the Contacts helper with `open`, outside every guard of a process, and that helper reads the real Contacts. `tests/guards.py` refuses to start `open`, `osascript` and the compilers (`HelperBlocked`). A trial run of the server must block them too.
 
 ## Caches
 
@@ -250,6 +255,10 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
   - `/api/defaults` gives the default archive file as `messagesPath`.
 - `archive_for` in `ui_server.py` gives the archive of a request, or raises `ArchiveNotReady`. Its codes are `archive_building` (503, with the job), `no_archive` (400) and `archive_failed` (500). Each route answers with that status and `{error, code}`.
 - A read route with no archive gives an empty answer where the Overview needs one before setup (`bundle_or_none`): `/api/memories`, `/api/overview`, `/api/first-words`.
+- `named_archive` reads the archive file of a request. A name that is not text, that no system can hold, or that names no file is 400.
+- A request that fails in a way nobody planned for answers 500 with `SERVER_FAULT` and the code `server_error` (`server_fault`). What was raised goes to the log of the server. `/api/ask/stream` tells it as its last event when the stream is open.
+- The request log holds the path of a request and no query (`log_message`): a query holds handles and search words.
+- A message in no conversation is in no figure (`_parse_archive`), as it is in no list and no total.
 - The figures on pandas read `frame.messages_frame(state)`. A cache in memory is keyed by `archive_signature` (the place, `generation` and `file_mark()`). A cache on disk is keyed by `file_mark()` only: `generation` starts at 0 at each start of the server.
 - A message that was unsent is a row with no text in each list, each day and each figure. A payload gives it the label `UNSENT_LABEL` of `message_text.py` in `attachment`.
 - A message id is text: Apple's guid after a pull, `legacy:<ROWID>` after the bridge. No code reads it as a number.
@@ -269,7 +278,7 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 
 ### The key of the provider
 
-- `recall_services/keys.py` gives the key: `OPENAI_API_KEY` in the environment of the server, or in the file `.env` in the data folder. The file is read at each call. No file above the data folder is looked for.
+- `recall_services/keys.py` gives the key: `OPENAI_API_KEY` in the environment of the server, or in the file `.env` in the data folder. The file is read at each call, as it is written (nothing of the environment is filled in). No file above the data folder is looked for.
 - Each model client is given the address of the provider, and takes no proxy from the environment (`build_client` in `report_engine/openai_llm.py`, `_ready_client` in `chat_engine/openai_llm.py`).
 - WARNING: A run with a dummy key still sends its request. Tests and trial runs block the network.
 
