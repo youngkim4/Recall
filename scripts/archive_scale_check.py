@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Measure the archive importer and the query API on a large synthetic database.
 
     ./venv/bin/python scripts/archive_scale_check.py
@@ -28,7 +27,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from archive import Archive, import_chat_db  # noqa: E402
+from archive import Archive, import_chat_db
 
 MIB = 1024 * 1024
 
@@ -175,9 +174,9 @@ def parent(messages: int, compare: list[int]) -> None:
             report_import(f"first import, {size:,} messages", source, counts, data)
             if size == messages:
                 again = run_child("import", str(source), str(archives[size]))
-                report_import("second import of the same database (default mode)", source, counts, again)
-                full = run_child("import", str(source), str(archives[size]), "--full")
-                report_import("third import with full=True", source, counts, full)
+                report_import("second pull of the same database (full, the default)", source, counts, again)
+                partial = run_child("import", str(source), str(archives[size]), "--incremental")
+                report_import("third run with full=False (new rows only)", source, counts, partial)
                 print(f"  archive file: {archives[size].stat().st_size / MIB:.1f} MiB")
         print("first import by size")
         print("  messages | seconds | rows per second | peak memory MiB")
@@ -202,10 +201,10 @@ def main() -> int:
     parser.add_argument("paths", nargs="*")
     parser.add_argument("--messages", type=int, default=200_000)
     parser.add_argument("--compare", type=int, nargs="+", default=[50_000, 100_000])
-    parser.add_argument("--full", action="store_true")
+    parser.add_argument("--incremental", action="store_true")
     args = parser.parse_args()
     if args.mode == "import":
-        print(json.dumps(child_import(Path(args.paths[0]), Path(args.paths[1]), args.full)))
+        print(json.dumps(child_import(Path(args.paths[0]), Path(args.paths[1]), not args.incremental)))
     elif args.mode == "queries":
         print(json.dumps(child_queries(Path(args.paths[0]))))
     else:

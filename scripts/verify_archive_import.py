@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Check the archive importer against your own Messages database.
 
     ./venv/bin/python scripts/verify_archive_import.py
@@ -25,12 +24,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-from archive import ArchiveError, ImportResult, import_chat_db  # noqa: E402
-from archive.classify import classify  # noqa: E402
-from archive.errors import TypedStreamError  # noqa: E402
-from archive.records import MessageRecord  # noqa: E402
-from archive.source import open_snapshot  # noqa: E402
-from archive.typedstream import read_text, scan_text  # noqa: E402
+from archive import ImportResult, import_chat_db
+from archive.classify import classify
+from archive.errors import TypedStreamError
+from archive.records import MessageRecord
+from archive.source import open_snapshot
+from archive.typedstream import read_text, scan_text
 
 DEFAULT_DB = Path("~/Library/Messages/chat.db")
 BATCH_ROWS = 1000
@@ -106,8 +105,11 @@ def import_lines(result: ImportResult, seconds: float) -> list[tuple[str, float]
         ("text from the blob", result.blob_texts),
         ("blobs not readable", result.decode_failures),
     ]
-    reasons = ("empty", "no_date", "no_conversation", "no_guid", "no_target")
-    lines.extend((f"rows not stored, {reason.replace('_', ' ')}", result.skipped.get(reason, 0)) for reason in reasons)
+    lines.append(("messages with no conversation", result.counts.get("without_conversation", 0)))
+    lines.append(("texts longer than the search limit", result.oversize_texts))
+    lines.extend(
+        (f"rows not stored, {reason.replace('_', ' ')}", count) for reason, count in sorted(result.skipped.items())
+    )
     lines.append(("seconds", round(seconds, 2)))
     return lines
 
@@ -139,10 +141,7 @@ def main() -> int:
             result = import_chat_db(db_path, Path(folder) / "archive.sqlite3", full=True)
             seconds = time.monotonic() - started
             counts = check_decoders(db_path, Path(folder) / "decoder-check")
-    except ArchiveError as exc:
-        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)  # our own message: a path, never message text
-        return 1
-    except Exception as exc:  # noqa: BLE001 - the message of an unknown error can hold private text
+    except Exception as exc:  # noqa: BLE001 - the message of an error can wrap text of the database: print its type only
         print(f"failed: {type(exc).__name__}", file=sys.stderr)
         return 1
     print_section("import", import_lines(result, seconds))
