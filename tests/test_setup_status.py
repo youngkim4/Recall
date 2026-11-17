@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 from setup_status import DbProbe, derive_state, probe_database
 
 
@@ -63,6 +65,17 @@ def test_probe_never_creates_the_file(tmp_path):
     target = tmp_path / "ghost.db"
     probe_database(target)
     assert not target.exists()
+
+
+@pytest.mark.parametrize("name", ["with space.db", "what?.db", "hash#tag.db", "per%20cent.db"])
+def test_probe_reads_a_file_whose_name_has_marks_in_it(tmp_path, name):
+    db = tmp_path / name
+    make_messages_db(db, rows=3)
+
+    probe = probe_database(db)
+
+    assert (probe.status, probe.approx_messages) == ("readable", 3)
+    assert [path.name for path in tmp_path.iterdir()] == [name]
 
 
 def test_derive_state_matrix():

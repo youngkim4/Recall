@@ -11,6 +11,7 @@ import sqlite3
 import pandas as pd
 import pytest
 
+import ui_server
 from conversation import load_attachments, load_reactions
 from parse_imessage import (
     extract_attachments,
@@ -21,7 +22,7 @@ from parse_imessage import (
     read_frame,
     search_contacts,
 )
-from tests.invented_db import apple_archive, fill, messages_db
+from tests.invented_db import GROUP, apple_archive, fill, messages_db
 
 MESSAGE_COLUMNS = [
     "message_id", "timestamp", "sender", "text", "chat_id", "chat_display_name",
@@ -209,6 +210,13 @@ def test_a_copy_brought_with_its_wal_is_read_whole(tmp_path):
         writer.close()
 
     assert set(extract_messages(str(copied / "chat.db"))["text"]) == {"first", "second"}
+
+
+def test_the_name_of_a_group_is_read_from_a_file_whose_name_has_marks_in_it(tmp_path):
+    db = messages_db(tmp_path / "what?#.db", ["one"], group_name="Project Crew")
+
+    assert ui_server.group_display_names_from_database(db, [GROUP]) == {GROUP: "Project Crew"}
+    assert [path.name for path in tmp_path.iterdir()] == ["what?#.db"]
 
 
 # ---- an error is the one sqlite3 raises ----

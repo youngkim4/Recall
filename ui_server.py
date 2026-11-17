@@ -75,7 +75,7 @@ from group_names import derive_group_names
 from group_people import group_speakers
 from message_text import ATTACHMENT_PLACEHOLDER, attachment_label, clip_text, display_text
 from openai_client import _call_openai, _call_openai_stream
-from parse_imessage import extract_attachments, extract_messages, extract_reactions, list_contacts
+from parse_imessage import extract_attachments, extract_messages, extract_reactions, list_contacts, open_read_only
 from retrieval_planner import build_catalog, plan_retrieval
 from safe_html import story_html
 import semantic_index as sem
@@ -1289,7 +1289,7 @@ def group_display_names_from_database(db_path: Path | None, chat_ids) -> dict[st
         return {}
 
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=2.0)
+        conn = open_read_only(db_path, timeout=2.0)
     except sqlite3.Error:
         return {}
     try:
@@ -2913,7 +2913,7 @@ class RecallHandler(BaseHTTPRequestHandler):
             status = "missing"
             if live_db.exists():
                 try:
-                    conn = sqlite3.connect(f"file:{live_db}?mode=ro", uri=True)
+                    conn = open_read_only(live_db)
                     try:
                         conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
                     finally:

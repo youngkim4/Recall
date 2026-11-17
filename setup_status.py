@@ -2,8 +2,8 @@
 
 The onboarding wizard derives every screen from these answers, so the rules
 are strict: never crash (the endpoint always answers 200), never write a
-byte to the database (read-only sqlite URIs -- a bare connect() would CREATE
-a missing file), and never trust a plain FileNotFoundError on the live path:
+byte to the database (open_read_only -- a bare connect() would CREATE a
+missing file), and never trust a plain FileNotFoundError on the live path:
 without Full Disk Access, macOS TCC reports protected files as missing
 rather than permission-denied.
 """
@@ -15,6 +15,8 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+from parse_imessage import open_read_only
 
 LIVE_MESSAGES_DIR = Path("~/Library/Messages").expanduser()
 LIVE_CHAT_DB = LIVE_MESSAGES_DIR / "chat.db"
@@ -75,7 +77,7 @@ def probe_database(path: Path | str | None = None, deep: bool = False) -> DbProb
         return result("invalid", detail="not a SQLite database")
 
     try:
-        conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True, timeout=2.0)
+        conn = open_read_only(target, timeout=2.0)
     except sqlite3.OperationalError as exc:
         return result(_locked_or_invalid(exc), detail=str(exc))
 
