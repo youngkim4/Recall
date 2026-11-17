@@ -9,6 +9,7 @@ import {
   importRequest,
   interruptedReason,
   notStartedJob,
+  revealsFirstWords,
   stepForDatabase,
   whyNotThisCopy,
   type GuideStep,
@@ -219,4 +220,13 @@ test('an update that was interrupted is called an update, and says what to do', 
   assert.equal(interruptedReason(false), 'The import was interrupted.')
   assert.match(interruptedReason(true), /^The update was interrupted\./)
   assert.doesNotMatch(interruptedReason(true), /import/)
+})
+
+test('the first words are shown after the first setup, and not after an update', () => {
+  const result = { messages: 12, conversations: 2 }
+
+  assert.equal(revealsFirstWords(false, result), true)
+  assert.equal(revealsFirstWords(true, result), false)
+  // an archive that was already there brought nothing in
+  assert.equal(revealsFirstWords(false, null), false)
 })

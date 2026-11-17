@@ -26,6 +26,7 @@ import {
 import { NARROW_WINDOW } from './lib/layout'
 import { useLayout } from './lib/useLayout'
 import { nameReports } from './lib/reports'
+import { revealsFirstWords } from './lib/setupGuide'
 import { useMediaQuery } from './lib/useMediaQuery'
 import { clearPreviewCache, previewCacheStats } from './lib/cache'
 import { useConversationPreview } from './lib/useConversationPreview'
@@ -462,6 +463,8 @@ function App() {
 
   const finishOnboarding = useCallback(
     async (result: SetupImportResult | null) => {
+      // the first words follow the first setup, not each update
+      const reveal = revealsFirstWords(rerunSetup, result)
       setShowOnboarding(false)
       setRerunSetup(false)
       setActiveView('home')
@@ -473,7 +476,7 @@ function App() {
       } catch {
         // the shell still renders; data loads on the next interaction
       }
-      if (!result) return
+      if (!reveal) return
       try {
         const { firstWords: payload } = await recallApi.firstWords({ messagesPath: written || undefined })
         if (payload.entries.length) {
@@ -485,7 +488,7 @@ function App() {
         // the reveal is a nicety, never a blocker
       }
     },
-    [paths.messagesPath, reloadRuntimeData],
+    [paths.messagesPath, reloadRuntimeData, rerunSetup],
   )
 
   const skipOnboarding = useCallback(() => {

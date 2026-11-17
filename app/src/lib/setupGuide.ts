@@ -1,7 +1,7 @@
 // The rules of the setup guide, with no screen in them: which step shows for
 // what was last found, what an import is asked for, and what is said when one
 // does not start or does not end.
-import type { Job, SetupDbStatus, SetupStatus } from '../types'
+import type { Job, SetupDbStatus, SetupImportResult, SetupStatus } from '../types'
 
 // How far the reader has gone, apart from what the database allows. A first
 // setup opens on its welcome; an update opens on what there is to do.
@@ -109,4 +109,10 @@ export function interruptedReason(rerun: boolean) {
   return rerun
     ? 'The update was interrupted. Start it again to be sure that the archive is up to date.'
     : 'The import was interrupted.'
+}
+
+// The first words are shown once, after the first setup. An update ends
+// without them, and so does a setup that found the archive already there.
+export function revealsFirstWords(rerun: boolean, result: SetupImportResult | null) {
+  return !rerun && result !== null
 }
