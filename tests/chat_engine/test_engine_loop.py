@@ -102,8 +102,8 @@ def test_tool_output_cap_ends_the_loop_with_an_answer() -> None:
             [call("search_messages", query="lease", limit=20)],
             say("The lease was signed in 2021."),
         ],
-        total_tool_tokens=150,
-        result_tokens=120,
+        total_tool_tokens=420,
+        result_tokens=400,
     )
     result = engine.ask("zzz?")
     assert [request.allow_tools for request in fake.requests] == [True, False]
@@ -117,8 +117,8 @@ def test_lookups_after_the_cap_in_one_step_are_skipped() -> None:
             [call("search_messages", "a", query="lease", limit=20), call("search_messages", "b", query="sourdough")],
             say("Done."),
         ],
-        total_tool_tokens=150,
-        result_tokens=150,
+        total_tool_tokens=420,
+        result_tokens=400,
     )
     engine.ask("zzz?")
     second = tool_results(fake.requests[1])[1]

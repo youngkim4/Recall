@@ -23,6 +23,7 @@ _MAX_UNITS = 12
 _RANKING_UNITS = 6
 _COMMON_SHARE = 0.02
 _COMMON_FLOOR = 5
+_RANKED_CHARS = 10_000  # the archive searches the start of a very long text; the ranking reads no more
 _BURST_WINDOW = timedelta(minutes=10)
 _MOMENT_WINDOW = timedelta(minutes=30)
 _TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -229,7 +230,7 @@ def _score(
     candidates: list[_Candidate], weights: dict[str, float], request: SearchRequest
 ) -> list[Found]:
     for candidate in candidates:
-        spans = token_spans(candidate.message.get("text") or "")
+        spans = token_spans(str(candidate.message.get("text") or "")[:_RANKED_CHARS])
         candidate.units.update(unit for unit in weights if find_unit(unit, spans))
     bonus = 0.5 * max(weights.values())
     scored = []

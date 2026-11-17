@@ -9,6 +9,8 @@ from .registry import EvidenceRegistry
 from .render import ConversationBook
 from .verify import unverified_quotes
 
+_MASKED_SOURCE_CHARS = 40_000  # the model reads at most the start of a very long text: only that part is masked
+
 
 def citations(
     order: Sequence[str], registry: EvidenceRegistry, book: ConversationBook, text_cap: int = 0
@@ -57,8 +59,9 @@ def quote_sources(
             continue
         text = str(message.get("text") or "")
         sources.append(text)
-        masked = redact(text)
-        if masked != text:
+        start = text[:_MASKED_SOURCE_CHARS]
+        masked = redact(start)
+        if masked != start:
             sources.append(masked)
     sources.extend(book.labels())
     return sources

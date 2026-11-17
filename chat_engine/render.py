@@ -18,6 +18,8 @@ from .registry import ConversationAliases, EvidenceRegistry
 
 OWNER = "You"
 MIN_MESSAGE_CHARS = 200
+_LAST_RESORT_CHARS = 40  # the least text of a message that is worth a line
+NOTE_TOKENS = 70  # room kept free for the notes that say what a result leaves out
 _READ_AHEAD = 4  # source characters read for each character that can be shown
 _NUMBER_AT_END_RE = re.compile(r"(?:\d|[^\w\n]|_)+$")
 _NUMBER_AT_START_RE = re.compile(r"^(?:\d|[^\w\n]|_)+")
@@ -254,23 +256,51 @@ def render_block(
     return lines
 
 
+def squeeze(text: str, tokens: int, count_tokens: Callable[[str], int]) -> str:
+    """The start of `text` that fits in `tokens`. "" when nothing fits."""
+    kept = text if tokens > 0 else ""
+    while kept and count_tokens(kept) > tokens:
+        share = len(kept) * tokens // max(1, count_tokens(kept))
+        kept = kept[:max(0, min(len(kept) - 1, share))]
+    return kept.rstrip()
+
+
 class ResultWriter:
-    """Collects the lines of one tool result under a token budget."""
+    """Collects the lines of one tool result under a token budget.
+
+    The budget is hard: the text never counts more tokens than the budget.
+    Lines of content (`add`) leave `NOTE_TOKENS` free. A header or a note
+    (`add(..., force=True)`) can use that room, so a note that says "cut to
+    fit" is not cut itself.
+    """
 
     def __init__(self, budget_tokens: int, count_tokens: Callable[[str], int]) -> None:
         self._budget = max(0, budget_tokens)
+        self._content = max(0, self._budget - NOTE_TOKENS)
         self._count = count_tokens
         self._parts: list[str] = []
         self.tokens = 0
 
+    def _cost(self, text: str) -> int:
+        """The tokens of one more part: its text, and the line break before it."""
+        return self._count(text) + (1 if self._parts else 0)
+
     def fits(self, text: str) -> bool:
-        return self.tokens + self._count(text) <= self._budget
+        """True when a line of content fits."""
+        return self.tokens + self._cost(text) <= self._content
 
     def add(self, text: str, *, force: bool = False) -> bool:
-        if not force and not self.fits(text):
-            return False
+        """Add a part when it fits. With `force`, a part that does not fit is cut to what fits.
+
+        False when nothing was added.
+        """
+        if self.tokens + self._cost(text) > (self._budget if force else self._content):
+            room = self._budget - self.tokens - (1 if self._parts else 0)
+            text = squeeze(text, room, self._count) if force else ""
+            if not text:
+                return False
+        self.tokens += self._cost(text)
         self._parts.append(text)
-        self.tokens += self._count(text)
         return True
 
     def text(self) -> str:
@@ -323,23 +353,27 @@ def fit_messages(
 ) -> tuple[ResultWriter, list[Message]]:
     """Render messages under a header; drop messages until the text fits the budget.
 
-    Only the messages that are shown stay in the registry. One message is
-    always shown: when it alone is too long, it is cut shorter.
+    Only the messages that are shown stay in the registry. When one message
+    alone is too long, it is cut shorter. When the budget has no room for
+    one short line, no message is shown: the result is the header alone.
     """
     kept = list(messages)
     cap = limits.max_message_chars
-    while True:
+    while kept:
         writer = ResultWriter(budget, limits.count_tokens)
         writer.add(header(len(kept)), force=True)
         mark = registry.checkpoint()
         lines = render_block(kept, book=book, registry=registry, limits=_shorter(limits, cap), marks=marks)
-        block = "\n".join(lines if titled else lines[1:])
-        if writer.fits(block) or (len(kept) <= 1 and cap <= MIN_MESSAGE_CHARS):
-            writer.add(block, force=True)
+        if writer.add("\n".join(lines if titled else lines[1:])):
             return writer, kept
         registry.rollback(mark)
         if len(kept) > 1:
             fewer = drop(kept)
             kept = fewer if 0 < len(fewer) < len(kept) else kept[:-1]
+        elif cap > _LAST_RESORT_CHARS:
+            cap = max(_LAST_RESORT_CHARS, cap // 2)
         else:
-            cap = max(MIN_MESSAGE_CHARS, cap // 2)
+            kept = []
+    writer = ResultWriter(budget, limits.count_tokens)
+    writer.add(header(0), force=True)
+    return writer, []

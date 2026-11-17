@@ -35,7 +35,7 @@ from .tool_context import ToolOutcome
 from .tools import ToolBox
 
 Event = dict[str, Any]
-MIN_RESULT_TOKENS = 100
+MIN_RESULT_TOKENS = 300  # with less left, a lookup has no room for an answer worth a step
 _CARRIED_TOKENS = 1200
 _REPEATED = "Same lookup as before: its result is above. Try a different lookup, or answer."
 _SKIPPED = "Lookup skipped: the limit on lookups for this question is reached."

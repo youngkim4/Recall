@@ -503,3 +503,81 @@ def test_local_answer_gives_a_typed_error_when_the_archive_fails() -> None:
     with pytest.raises(ArchiveError) as caught:
         local_answer(Broken(tiny_messages(), CONVERSATIONS), "what about the lease?", labeler=tiny_labeler())
     assert "private" not in caught.value.message
+
+
+# --- hard caps -----------------------------------------------------------------
+
+
+def _heavy_archive() -> FakeArchive:
+    """Many messages, three very long ones, long names: everything that can make a result large."""
+    chat, group = "+15550000042", "chat4242"
+    huge = "needle start " + ("lorem ipsum dolor sit amet " * 12_000)
+    rows = [
+        make_message(
+            f"h{i:04d}", chat, f"2024-{1 + i % 12:02d}-{1 + i % 28:02d} 10:{i % 60:02d}:00", f"needle note {i} " * 30
+        )
+        for i in range(400)
+    ]
+    rows += [make_message(f"big{i}", chat, f"2024-06-1{i} 09:00:00", huge, sender=chat) for i in range(3)]
+    rows += [
+        make_message(
+            f"g{i:03d}", group, f"2023-01-{1 + i % 28:02d} 08:{i % 60:02d}:00", "needle in the group",
+            sender=f"+1555000{i:04d}",
+        )
+        for i in range(120)
+    ]
+    described = [{"id": group, "is_group": True, "name": "", "members": [f"+1555000{i:04d}" for i in range(120)]}]
+    return FakeArchive(rows, described)
+
+
+@pytest.mark.parametrize("budget", [100, 130, 200, 400, 1000, 3000])
+def test_no_tool_result_counts_more_tokens_than_its_budget(budget: int) -> None:
+    from chat_engine.registry import ConversationAliases, EvidenceRegistry
+    from chat_engine.render import Limits, estimate_tokens
+    from chat_engine.tools import ToolBox
+
+    archive = _heavy_archive()
+    registry = EvidenceRegistry()
+    box = ToolBox(archive, MaskingLabeler({}), registry, ConversationAliases(), Scope(), Limits())
+    chat = "a number ending in 0042"
+    calls: list[tuple[str, dict]] = [
+        ("search_messages", {"query": "needle", "limit": 20}),
+        ("search_messages", {"query": "needle lorem ipsum group note", "match": "any", "limit": 20}),
+        ("search_messages", {"query": "", "conversations": [chat], "order": "oldest", "limit": 20}),
+        ("search_messages", {"query": "", "conversations": [chat], "limit": 20, "until": "2024-06-12"}),
+        ("count_messages", {"group_by": "day"}),
+        ("count_messages", {"group_by": "sender"}),
+        ("count_messages", {"group_by": "conversation", "text": "needle"}),
+        ("list_conversations", {}),
+        ("list_conversations", {"name": "0042"}),
+        ("conversation_stats", {"conversation": chat}),
+        ("read_around", {"reference": "m1", "radius": 15}),
+        ("no_such_tool", {}),
+        ("search_messages", {"query": "needle", "conversations": ["x" * 500]}),
+    ]
+    for tool, arguments in calls:
+        outcome = box.prepare(tool, json.dumps(arguments)).run(budget)
+        assert estimate_tokens(outcome.text) <= budget, (tool, arguments, estimate_tokens(outcome.text))
+        shown = {line.split(" ", 1)[0] for line in outcome.text.splitlines() if line[:1] == "m" and line[1:2].isdigit()}
+        assert all(ref in registry for ref in shown)
+    if budget >= 400:
+        assert max(len(str(m["text"])) for m in registry.messages()) > 300_000
+
+
+def test_a_very_long_message_does_not_slow_the_ranking_or_the_quote_check() -> None:
+    import time
+
+    archive = _heavy_archive()
+
+    def cite(request: Any) -> list:
+        ref = ref_of_line(tool_results(request)[0], "needle start")
+        return say(f'It says "needle start lorem ipsum dolor sit amet" [{ref}] and "something that is made up".')
+
+    script = [[call("search_messages", "s1", query="needle lorem start", match="any", limit=20)], cite]
+    engine, _, _ = make_engine(script, archive=archive, labeler=MaskingLabeler({}))
+    started = time.perf_counter()
+    result = engine.ask("zz?")
+    assert time.perf_counter() - started < 5.0
+    assert result["unverified_quotes"] == ["something that is made up"]
+    cited = result["citations"][0]
+    assert cited["text_truncated"] is True and len(cited["text"]) == 4000

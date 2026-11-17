@@ -117,14 +117,17 @@ def test_render_block_starts_a_new_date_line_when_the_day_changes() -> None:
     assert lines[-1].endswith("[attachment: image]")
 
 
-def test_result_writer_stops_at_the_budget() -> None:
-    writer = ResultWriter(budget_tokens=10, count_tokens=estimate_tokens)
-    assert writer.fits("a" * 12)
-    writer.add("a" * 12)
-    assert not writer.fits("b" * 30)
-    writer.add("[cut]", force=True)
-    assert writer.text() == "a" * 12 + "\n[cut]"
-    assert writer.tokens >= 4
+def test_result_writer_keeps_room_for_a_note_and_never_passes_the_budget() -> None:
+    writer = ResultWriter(budget_tokens=100, count_tokens=estimate_tokens)
+    assert writer.add("a" * 60)
+    assert not writer.fits("b" * 60) and not writer.add("b" * 60)
+    assert writer.add("[cut to fit]", force=True)
+    assert writer.add("c" * 600, force=True)
+    text = writer.text()
+    assert text.startswith("a" * 60 + "\n[cut to fit]\nccc")
+    assert estimate_tokens(text) <= 100 and writer.tokens <= 100
+    assert not writer.add("more", force=True)
+    assert writer.text() == text
 
 
 def test_clip_text_keeps_the_start_and_adds_the_part_around_a_far_match() -> None:
@@ -191,11 +194,17 @@ def test_fit_messages_always_ends_and_always_shows_one_message() -> None:
     for drop in (list, lambda rows: []):
         registry = EvidenceRegistry()
         writer, kept = fit_messages(
-            messages, header=lambda count: f"{count} shown", drop=drop, budget=1,
+            messages, header=lambda count: f"{count} shown", drop=drop, budget=110,
             book=book, registry=registry, limits=Limits(), marks={},
         )
         assert len(kept) == 1 and len(registry) == 1
         assert kept[0]["text"] in writer.text()
+        registry = EvidenceRegistry()
+        writer, kept = fit_messages(
+            messages, header=lambda count: f"{count} shown", drop=drop, budget=1,
+            book=book, registry=registry, limits=Limits(), marks={},
+        )
+        assert kept == [] and len(registry) == 0 and writer.tokens <= 1
 
 
 def test_fit_messages_shortens_one_long_message_to_fit() -> None:
@@ -206,4 +215,4 @@ def test_fit_messages_shortens_one_long_message_to_fit() -> None:
         book=book, registry=EvidenceRegistry(), limits=Limits(), marks={},
     )
     assert len(kept) == 1 and "[cut: " in writer.text()
-    assert writer.tokens <= 150 + 20
+    assert writer.tokens <= 150

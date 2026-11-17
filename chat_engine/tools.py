@@ -12,7 +12,7 @@ from typing import Any, Callable, Mapping, Optional
 from .errors import ArchiveError, ChatEngineError
 from .ports import ChatArchive, Labeler, ToolSpec
 from .registry import ConversationAliases, EvidenceRegistry
-from .render import Limits
+from .render import Limits, squeeze
 from .scope import Scope
 from .tool_args import ToolInputError, parse_arguments
 from .tool_context import Prepared, ToolContext, ToolOutcome
@@ -191,7 +191,13 @@ class ToolBox:
         except ToolInputError as error:
             return self._refuse(f"Cannot run {name}: {error}", name).run(budget)
         redact = self.context.labeler.redact
-        return ToolOutcome(redact(outcome.text), redact(outcome.summary), outcome.ok)
+        text = redact(outcome.text)
+        count = self.context.limits.count_tokens
+        if count(text) > max(0, budget):
+            # a mask is longer than the handle it stands for; this is the last line of defence for the budget
+            logger.warning("the result of %s was cut after masking to fit its budget", name)
+            text = squeeze(text, max(0, budget), count)
+        return ToolOutcome(text, redact(outcome.summary), outcome.ok)
 
     def _refuse(self, reason: str, name: str) -> Prepared:
         """A call that is not run. The model gets the reason; no raw handle is echoed."""

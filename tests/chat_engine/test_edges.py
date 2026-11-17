@@ -152,8 +152,9 @@ def test_group_without_members_and_direct_thread_without_a_handle() -> None:
 
 def test_count_table_is_cut_at_the_budget() -> None:
     box, _ = _box()
-    text = _run(box, "count_messages", budget=30, group_by="conversation").text
-    assert "Result cut to fit" in text
+    text = _run(box, "count_messages", budget=120, group_by="conversation").text
+    assert text.endswith("[Result cut to fit. Narrow the dates or the conversations.]")
+    assert text.count("\n") < 7
 
 
 def test_count_rejects_an_unknown_group_and_since_after_until() -> None:
@@ -177,7 +178,7 @@ def test_read_around_is_trimmed_to_the_budget_around_the_message() -> None:
     _run(box, "search_messages", query="renew")
     ref = box.context.registry.ref_of("a5")
     full = _run(box, "read_around", reference=ref, radius=4)
-    tight = _run(box, "read_around", budget=60, reference=ref, radius=4)
+    tight = _run(box, "read_around", budget=150, reference=ref, radius=4)
     assert "9 messages around" in full.text
     assert "Result cut to fit" in tight.text and "the landlord wants to renew the lease" in tight.text
     assert tight.text.count("\nm") < full.text.count("\nm")
@@ -185,7 +186,9 @@ def test_read_around_is_trimmed_to_the_budget_around_the_message() -> None:
 
 def test_reading_a_conversation_is_trimmed_to_the_budget() -> None:
     box, aliases = _box()
-    text = _run(box, "search_messages", budget=50, query="", conversations=[aliases.alias(GROUP)], order="oldest").text
+    text = _run(
+        box, "search_messages", budget=130, query="", conversations=[aliases.alias(GROUP)], order="oldest"
+    ).text
     assert "Result cut to fit" in text and "flights to Lisbon are booked" in text
 
 
@@ -276,8 +279,8 @@ def test_tool_results_never_exceed_the_total_budget_by_much() -> None:
     searches = [call("search_messages", f"s{i}", query=word, limit=20) for i, word in enumerate(words)]
     engine, fake, _ = make_engine([searches, say("done")], total_tool_tokens=400, result_tokens=300)
     engine.ask("zzz?")
-    spent = sum(len(text.encode()) // 3 for text in tool_results(fake.requests[1]))
-    assert spent < 400 + 300
+    spent = sum((len(text.encode()) + 2) // 3 for text in tool_results(fake.requests[1]))
+    assert spent <= 400
     assert events_of("done", list(engine.stream("zzz?"))) == []
 
 

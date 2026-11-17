@@ -172,7 +172,7 @@ def test_a_block_that_does_not_fit_is_shown_with_shorter_messages_or_alone() -> 
     roomy = Bench(archive=FakeArchive(rows)).run("search_messages", budget=700, query="needle")
     assert "the needle  <<< match" in roomy.text
     assert roomy.text.count("[cut: ") == 4
-    tight = Bench(archive=FakeArchive(rows)).run("search_messages", budget=120, query="needle")
+    tight = Bench(archive=FakeArchive(rows)).run("search_messages", budget=200, query="needle")
     assert "the needle  <<< match" in tight.text and "[cut: " not in tight.text
     assert "more match" not in tight.text
 
