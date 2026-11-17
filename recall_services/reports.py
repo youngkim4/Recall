@@ -27,7 +27,8 @@ import csv
 import io
 import logging
 import os
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -35,6 +36,7 @@ from typing import Any
 
 import safe_html
 from archive import Archive
+from archive import ArchiveError as ArchiveFault
 from conversation import sanitize_filename
 from recall_services import inputs, models
 from recall_services.names import Names, ReportLabeler
@@ -71,6 +73,7 @@ STORY_MARKER = "## Summary"
 SHOWN_PLAIN = "The story of this report is long and dense. The app shows it as plain paragraphs, with no chapters."
 PAGE_REMOVED = "The page of an older report was removed: this report has no page."
 SAVED = "The report is saved."
+ARCHIVE_UNREADABLE = "The message archive could not be read. Update the archive, then try again."
 
 
 @dataclass(frozen=True)
@@ -172,6 +175,15 @@ def default_llm(info: ModelInfo) -> LLM:
     return OpenAIResponsesLLM(build_client(key), info.id)
 
 
+@contextmanager
+def _archive_faults() -> Iterator[None]:
+    """A failure of the archive itself, outside the engine, as the failure for the person."""
+    try:
+        yield
+    except ArchiveFault as error:
+        raise ReportFailure("archive_error", ARCHIVE_UNREADABLE) from error
+
+
 def _day(value: object) -> str | None:
     text = inputs.text(value).strip()
     if not text:
@@ -219,33 +231,35 @@ def estimate(
     for a missing conversation or a bad day, and a ModelChoiceError for a
     model that can not be run.
     """
-    asked = _asked(contact, model, since, until, archive, names)
     chosen = options or ReportOptions()
     cache_path = (places or default_places()).cache_path
-    try:
-        calls = planned_calls(
-            ArchiveSource(archive),
-            asked.conversation,
-            asked.scope,
-            asked.info,
-            PeriodCache(cache_path) if cache_path.exists() else None,
-            labeler=asked.labeler,
-            options=chosen,
-            counter=counter,
-        )
-    except ReportEngineError as error:
-        raise failure_of(error, None, _provider(asked.info), asked.info.id) from error
+    with _archive_faults():
+        asked = _asked(contact, model, since, until, archive, names)
+        try:
+            calls = planned_calls(
+                ArchiveSource(archive),
+                asked.conversation,
+                asked.scope,
+                asked.info,
+                PeriodCache(cache_path) if cache_path.exists() else None,
+                labeler=asked.labeler,
+                options=chosen,
+                counter=counter,
+            )
+        except ReportEngineError as error:
+            raise failure_of(error, None, _provider(asked.info), asked.info.id) from error
+        within = {"conversations": [asked.conversation], "since": asked.since, "until": asked.until}
+        parts = [call for call in calls if call.kind == "map"]
+        years = archive.count(group_by="year", **within) if len(parts) > 1 else []
+        messages = int(archive.count(**within))  # type: ignore[arg-type]
     to_send = [call for call in calls if not call.cached]
-    parts = [call for call in calls if call.kind == "map"]
     costs = (
         call_cost_usd(asked.info, LLMUsage(input_tokens=call.input_tokens, output_tokens=call.output_tokens))
         for call in to_send
     )
     rule = asked.info.long_context
-    within = {"conversations": [asked.conversation], "since": asked.since, "until": asked.until}
-    years = archive.count(group_by="year", **within) if len(parts) > 1 else []
     return {
-        "msg_count": int(archive.count(**within)),  # type: ignore[arg-type]
+        "msg_count": messages,
         "input_tokens": sum(call.input_tokens for call in to_send),
         "output_tokens": sum(call.output_tokens for call in to_send),
         "estimated_cost": float(sum(costs)),
@@ -330,9 +344,11 @@ def run(
     was written. Raises ValueError for a missing conversation or a bad day,
     and a ModelChoiceError for a model that can not be run.
     """
-    asked = _asked(contact, model, since, until, archive, names)
     where = places or default_places()
     teller = Teller(on_progress)
+    with _archive_faults():
+        asked = _asked(contact, model, since, until, archive, names)
+        figures = archive.stats(asked.conversation, since=asked.since, until=asked.until)
     watched = _Watched((llm_factory or default_llm)(asked.info))
     try:
         report = run_report(
@@ -343,7 +359,7 @@ def run(
             model_info=asked.info,
             labeler=asked.labeler,
             cache=PeriodCache(where.cache_path),
-            stats=archive.stats(asked.conversation, since=asked.since, until=asked.until),
+            stats=figures,
             options=options,
             counter=counter,
             on_progress=teller.engine_event,
