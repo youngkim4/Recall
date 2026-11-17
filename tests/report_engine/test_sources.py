@@ -1,8 +1,10 @@
 """Source adapters: today's export frame, and the archive that comes later."""
 
+import subprocess
 import sys
 import types
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -346,7 +348,19 @@ def test_archive_source_says_when_the_package_is_missing(monkeypatch: pytest.Mon
 
 
 def test_importing_the_adapter_does_not_import_the_archive_package() -> None:
-    assert "archive" not in sys.modules or sys.modules["archive"] is None
+    """In a process of its own: in this one another test can have the archive imported.
+    The child has no socket guard, so it imports only and opens nothing."""
+    code = "import sys; import report_engine.archive_source; print('archive' in sys.modules)"
+    done = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "False"
 
 
 def test_a_run_reads_from_an_archive() -> None:
