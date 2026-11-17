@@ -1,6 +1,18 @@
-// The arithmetic of the small pictures in the Overview's tiles.
+// The arithmetic of the small pictures in the Overview's tiles, and of the
+// lines under them.
+
+import { formatNumber } from './format.ts'
 
 const round = (value: number) => Math.round(value * 100) / 100
+
+// How many messages came in a day, over this many days, to the nearest one.
+// Fewer than one a day says so: it is not none, and it is not one. No line
+// when there are no days or no messages to speak of.
+export function aDay(messages: number, days: number) {
+  if (days <= 0 || messages <= 0) return ''
+  const each = messages / days
+  return each < 1 ? 'Under 1 a day' : `${formatNumber(Math.round(each))} a day`
+}
 
 // where each value sits: spread over the width, the largest at the top
 function sparkPoints(values: number[], width: number, height: number): Array<[number, number]> {

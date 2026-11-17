@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { sparkArea, sparkLine, topShares } from './spark.ts'
+import { aDay, sparkArea, sparkLine, topShares } from './spark.ts'
 
 test('the line runs the whole width, with the largest value at the top', () => {
   assert.equal(sparkLine([0, 5, 10], 100, 20), 'M0 20L50 10L100 0')
@@ -36,4 +36,20 @@ test('shares stop at the parts there are, and at nothing when the whole is nothi
 test('a part cannot be more than what is left of the whole', () => {
   // the list can be newer than the total it is set against
   assert.deepEqual(topShares([80, 70], 100, 2), [0.8, 0.2])
+})
+
+test('the line under a count of messages is how many came in a day, to the nearest one', () => {
+  assert.equal(aDay(300, 100), '3 a day')
+  assert.equal(aDay(250, 100), '3 a day')
+  assert.equal(aDay(100, 100), '1 a day')
+})
+
+test('fewer than one message a day says so, and does not read as none or as one', () => {
+  assert.equal(aDay(40, 100), 'Under 1 a day')
+  assert.equal(aDay(99, 100), 'Under 1 a day')
+})
+
+test('an archive with no days, or with no messages, has no such line', () => {
+  assert.equal(aDay(10, 0), '')
+  assert.equal(aDay(0, 100), '')
 })

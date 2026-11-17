@@ -7,9 +7,11 @@ import {
   isOutbound,
   messageCount,
   messageSource,
+  receivedCount,
   reportTitle,
   sentCount,
   shortName,
+  voicesOf,
 } from './conversations.ts'
 
 test('a saved name is the name a conversation goes by', () => {
@@ -99,6 +101,32 @@ test('a conversation never says it sent more than it holds', () => {
   assert.equal(messageCount({ chat_id: 'a' }), 0)
   assert.equal(sentCount({ chat_id: 'a', message_count: 12, sent_count: 5 }), 5)
   assert.equal(sentCount({ chat_id: 'a', message_count: 12, sent_count: 40 }), 12)
+})
+
+test('what each side wrote is what the list says, not what is left of the total', () => {
+  // three of the ten do not say who sent them: they are in the total and in neither voice
+  const contact = { chat_id: 'a', message_count: 10, sent_count: 4, received_count: 3 }
+
+  assert.deepEqual(voicesOf(contact), { sent: 4, received: 3 })
+  assert.equal(receivedCount(contact), 3)
+})
+
+test('a list that does not say who wrote what gives no count for either voice', () => {
+  // the Messages database is listed with totals only
+  assert.equal(voicesOf({ chat_id: 'a', message_count: 10 }), null)
+  assert.equal(voicesOf({ chat_id: 'a', message_count: 10, sent_count: 4 }), null)
+  // and what was received is not made up from the total
+  assert.equal(receivedCount({ chat_id: 'a', message_count: 10 }), 0)
+  assert.equal(receivedCount({ chat_id: 'a', message_count: 10, sent_count: 4 }), 0)
+})
+
+test('the two voices together are never more than the conversation holds', () => {
+  const within = (sent: number, received: number) =>
+    voicesOf({ chat_id: 'a', message_count: 12, sent_count: sent, received_count: received })
+
+  assert.deepEqual(within(5, 40), { sent: 5, received: 7 })
+  assert.deepEqual(within(40, 40), { sent: 12, received: 0 })
+  assert.deepEqual(within(5, -3), { sent: 5, received: 0 })
 })
 
 test('a message is yours when the server says so in any of its ways', () => {

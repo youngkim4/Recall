@@ -70,6 +70,17 @@ test('a range counts both of its ends, and an open side reaches the end', () => 
   assert.equal(countBetween(SHORT, '2023-12-31', '2023-12-31'), 0)
 })
 
+test('a range that the conversation does not reach holds nothing', () => {
+  // wholly before its first day
+  assert.equal(countBetween(LONG, '2023-01-01', '2023-06-01'), 0)
+  assert.equal(countBetween(LONG, '', '2023-06-01'), 0)
+  // wholly after its last day
+  assert.equal(countBetween(LONG, '2026-01-01', '2026-06-01'), 0)
+  assert.equal(countBetween(LONG, '2026-01-01', ''), 0)
+  // a range whose ends are the wrong way round
+  assert.equal(countBetween(LONG, '2024-06-01', '2024-01-01'), 0)
+})
+
 test('two days make a range in either order', () => {
   assert.deepEqual(orderDays('2024-01-03', '2023-12-30'), { since: '2023-12-30', until: '2024-01-03' })
 })

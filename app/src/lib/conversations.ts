@@ -48,15 +48,24 @@ export function messageCount(contact: Contact) {
   return Number(contact.message_count || 0)
 }
 
+// What each side wrote, as the list says it. Null when the list does not
+// say: the Messages database is listed with totals only. A message that does
+// not say who sent it is in the total and in neither voice, so what was
+// received is never worked out as the total less what you sent.
+export function voicesOf(contact: Contact): { sent: number; received: number } | null {
+  if (contact.sent_count === undefined || contact.received_count === undefined) return null
+  const total = messageCount(contact)
+  const sent = Math.min(total, Math.max(0, Number(contact.sent_count)))
+  return { sent, received: Math.min(total - sent, Math.max(0, Number(contact.received_count))) }
+}
+
 export function sentCount(contact: Contact) {
   return Math.min(messageCount(contact), Number(contact.sent_count || 0))
 }
 
-// What the other side wrote. A message that does not say who sent it is in
-// the total and in neither voice, so this is not the total less what you sent.
+// What the other side wrote; nothing when the list does not say.
 export function receivedCount(contact: Contact) {
-  const rest = messageCount(contact) - sentCount(contact)
-  return contact.received_count === undefined ? rest : Math.min(rest, Math.max(0, Number(contact.received_count)))
+  return voicesOf(contact)?.received ?? 0
 }
 
 // The server says true, false or null. A message kept by an older build may

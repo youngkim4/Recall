@@ -3,7 +3,7 @@ import type { ActivityPoint } from '../../lib/activity'
 import { messageCount } from '../../lib/conversations'
 import { daysSpanned } from '../../lib/days'
 import { formatDate, formatNumber, formatPercent, parseDate } from '../../lib/format'
-import { sparkArea, sparkLine, topShares } from '../../lib/spark'
+import { aDay, sparkArea, sparkLine, topShares } from '../../lib/spark'
 import type { ArchiveSummary, Contact } from '../../types'
 import { VoiceBar } from '../ui/VoiceBar'
 
@@ -70,7 +70,7 @@ export function ArchiveTiles({ archive, months, waiting, ranked, onOpenSetup }: 
             <span className="skeleton tile-waiting" />
           ) : null}
         </div>
-        <p className="tile-note">{days ? `${formatNumber(Math.round(archive.messages / days))} a day` : ''}</p>
+        <p className="tile-note">{aDay(archive.messages, days)}</p>
       </div>
 
       <div className="tile card">

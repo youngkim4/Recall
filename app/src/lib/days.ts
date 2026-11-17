@@ -50,10 +50,12 @@ export function countOn(daily: Daily, day: string) {
 }
 
 // Both ends are counted. An open side reaches the end of the conversation.
+// A range that the conversation does not reach holds nothing.
 export function countBetween(daily: Daily, since: string, until: string) {
   if (!daily.counts.length) return 0
   const from = since ? Math.max(0, daysBetween(daily.start, since)) : 0
   const to = until ? Math.min(daily.counts.length - 1, daysBetween(daily.start, until)) : daily.counts.length - 1
+  if (to < from) return 0
   return daily.counts.slice(from, to + 1).reduce((sum, count) => sum + count, 0)
 }
 
