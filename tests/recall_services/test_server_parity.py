@@ -1,104 +1,73 @@
-"""The services against the server's own payload builders at this commit.
+"""The server against the services that it calls.
 
 `ui_server` is imported here and in no service module. It is imported when
 this file is collected, as the base tests do: imported inside a test, it would
 keep the output stream of that one test.
 
-Each test gives one invented export to the server's builder and, through the
-legacy bridge, to the service, and compares the two payloads. A difference
-that is there on purpose is stated in the test that holds it.
+Each test loads one invented export into its archive. It asks a route of the
+server on a loopback port, and it asks the service for the same thing. The
+route must answer with the payload of the service: with the names of the
+Contacts cache, with what the address holds, and for a search with the last
+word as a prefix.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import pytest
 
 import ui_server
-from archive import Archive, import_legacy_csv
-from setup_status import DbProbe
-from recall_services import conversations, day, messages, reports, search, unreadable
+from archive import Archive
+from recall_services import conversations, day, messages, places, reports, search
 from recall_services.names import Names
+from tests.export_kit import archives, contacts_cache, get, loaded, row, save_names  # noqa: F401 - two are fixtures
 
-pytestmark = pytest.mark.usefixtures("fresh_bundle_cache")
+pytestmark = pytest.mark.usefixtures("archives", "contacts_cache")
 
 AVERY = "+15550180001"
 BLAKE = "+15550180002"
 UNSAVED = "+15550189999"
 GROUP = "chat880011"
 TITLED = "chat880022"
-RECORDS = [
-    {"name": "Avery Stone", "phones": [AVERY], "emails": []},
-    {"name": "Blake Reyes", "phones": [BLAKE], "emails": []},
-]
-COLUMNS = [
-    "message_id",
-    "timestamp",
-    "sender",
-    "text",
-    "chat_id",
-    "chat_display_name",
-    "is_from_me",
-    "service",
-    "attachment_types",
-    "attachment_files",
-]
+SAVED = {AVERY: "Avery Stone", BLAKE: "Blake Reyes"}
 PHOTO = "￼"
-
-
-def _row(chat: str, stamp: str, text: str, *, mine: bool = False, sender: str = "", title: str = "", kind: str = "") -> tuple:
-    # the old exporter wrote the handle of the other person on an own message of a one-to-one thread
-    writer = sender or (chat if not chat.startswith("chat") else "")
-    return (0, stamp, writer, text, chat, title, int(mine), "iMessage", kind, "~/Library/x.heic" if kind else "")
-
+LONG_TEXT = "pizza " + " ".join(["oven"] * 400)
 
 ROWS = [
-    _row(AVERY, "2025-01-01 09:00:00", "pizza night at mine"),
-    _row(AVERY, "2025-01-01 09:05:00", "bringing the pizza stone", mine=True),
-    _row(AVERY, "2025-01-01 09:06:00", PHOTO, kind="image/heic"),
-    _row(AVERY, "2025-01-02 19:30:00", "  that was a good pizza  "),
-    _row(AVERY, "2025-01-04 08:00:00", "back to salad"),
-    _row(UNSAVED, "2025-01-03 10:00:00", "your pizza order is ready"),
-    _row(GROUP, "2025-01-05 12:00:00", "pizza on friday?", sender=AVERY),
-    _row(GROUP, "2025-01-05 12:01:00", "yes to pizza", sender=BLAKE),
-    _row(GROUP, "2025-01-05 12:02:00", "count me in for pizza", sender=UNSAVED),
-    _row(GROUP, "2025-01-05 12:03:00", "booking a table", mine=True),
-    _row(TITLED, "2025-01-06 12:00:00", "minutes of the meeting", sender=BLAKE, title="Allotment Board"),
+    row(AVERY, "2025-01-01 09:00:00", "pizza night at mine"),
+    # the old exporter wrote the handle of the other person on an own message of a one-to-one thread
+    row(AVERY, "2025-01-01 09:05:00", "bringing the pizza stone", from_me=1),
+    row(AVERY, "2025-01-01 09:06:00", PHOTO, attachments="image/heic"),
+    row(AVERY, "2025-01-02 19:30:00", "  that was a good pizza  "),
+    row(AVERY, "2025-01-04 08:00:00", "back to salad"),
+    row(UNSAVED, "2025-01-03 10:00:00", "your pizza order is ready"),
+    row(GROUP, "2025-01-05 12:00:00", "pizza on friday?", sender=AVERY),
+    row(GROUP, "2025-01-05 12:01:00", "yes to pizza", sender=BLAKE),
+    row(GROUP, "2025-01-05 12:02:00", "count me in for pizza", sender=UNSAVED),
+    row(GROUP, "2025-01-05 12:03:00", "booking a table", from_me=1, sender=""),
+    row(TITLED, "2025-01-06 12:00:00", "minutes of the meeting", sender=BLAKE, group_name="Allotment Board"),
+    row(TITLED, "2025-01-07 12:00:00", LONG_TEXT, sender=BLAKE, group_name="Allotment Board"),
 ]
 
 
 @pytest.fixture
 def export(tmp_path: Path) -> Path:
-    frame = pd.DataFrame(ROWS, columns=COLUMNS)
-    path = tmp_path / "messages.csv"
-    frame.assign(message_id=range(1, len(frame) + 1)).to_csv(path, index=False)
-    return path
+    return loaded(tmp_path / "messages.csv", ROWS)
 
 
 @pytest.fixture
-def saved(monkeypatch: pytest.MonkeyPatch) -> Names:
-    """The same names for both sides. The server asks its own function, which is replaced here."""
-    names = Names.from_records(RECORDS)
-
-    def lookup(handles: Any, **_: Any) -> dict[str, str]:
-        found = {str(handle): names.saved(str(handle)) for handle in handles}
-        return {handle: name for handle, name in found.items() if name}
-
-    monkeypatch.setattr(ui_server, "resolve_contact_names", lookup)
-    return names
+def saved() -> Names:
+    """The names of the Contacts cache that the server reads, as the service gets them."""
+    cache = save_names(SAVED)
+    return Names.load(cache)
 
 
 @pytest.fixture
-def bridged(export: Path, tmp_path: Path) -> Iterator[Archive]:
-    path = tmp_path / "archive.sqlite3"
-    import_legacy_csv(export, path)
-    with Archive.open(path) as opened:
-        yield opened
+def archive(export: Path) -> Archive:
+    return places.state_for(export).archive()
 
 
 def as_json(value: Any) -> Any:
@@ -106,59 +75,40 @@ def as_json(value: Any) -> Any:
     return json.loads(json.dumps(value, default=ui_server.json_default))
 
 
-def same_message(old: dict[str, Any], new: dict[str, Any]) -> None:
-    """One message from both sides. Three keys differ on purpose."""
-    # the bridge names a message legacy:<ROWID>; the export named it by the ROWID
-    assert new["messageId"] == f"legacy:{old['messageId']}"
-    # an own message has no sender in the archive; the old export held the other person's handle there
-    assert new["sender"] == ("" if new["isFromMe"] else old["sender"])
-    if new["chatId"].startswith("chat"):
-        assert new["senderName"] == old["senderName"]
-    else:
-        # Outside a group the page already says who wrote it, and no screen reads this key there.
-        # The server names the writer only when the same person also wrote a group message among the results.
-        assert new["senderName"] == ""
-        assert old["senderName"] in ("", new["displayName"])
-    for key in ("chatId", "displayName", "timestamp", "text", "attachment", "isFromMe"):
-        assert new[key] == old[key], key
+# --- the routes that answer with the payload of a service ----------------------
 
 
-def test_the_text_limit_is_the_one_of_the_server() -> None:
-    assert messages.MESSAGE_TEXT_LIMIT == ui_server.MESSAGE_TEXT_LIMIT
+@pytest.mark.parametrize(
+    "asked",
+    [
+        {"query": "pizza"},
+        {"query": "pizza", "contact": AVERY, "limit": "2"},
+        {"query": "pizza", "contact": AVERY, "limit": "2", "offset": "2"},
+        {"query": "pizza", "contact": GROUP},
+        {"query": "friday pizza"},
+        {"query": '"pizza night"'},
+        {"query": "salad"},
+        {"query": "zeppelin"},
+        {"contact": AVERY, "limit": "3"},
+        {},
+    ],
+)
+def test_the_search_route_answers_with_the_payload_of_the_service(
+    server: Any, export: Path, archive: Archive, saved: Names, asked: dict[str, str]
+) -> None:
+    status, answer = get(server, "/api/search", messagesPath=export, **asked)
+    expected = search.payload(
+        archive, saved, asked.get("query", ""), asked.get("contact", ""), asked.get("limit", ""), asked.get("offset", ""), as_you_type=True
+    )
+    assert status == 200
+    assert answer == as_json(expected)
 
 
-@pytest.mark.parametrize(("query", "contact", "limit"), [("pizza", "", 60), ("pizza", AVERY, 2), ("pizza", GROUP, 60), ("salad", "", 60), ("zeppelin", "", 60)])
-def test_a_search_for_one_word(export: Path, bridged: Archive, saved: Names, query: str, contact: str, limit: int) -> None:
-    old = as_json(ui_server.search_messages_payload(export, query=query, contact=contact, limit=limit))
-    new = search.payload(bridged, saved, query, contact, limit)
-    assert set(new) == set(old) | {"offset"}
-    for key in ("query", "contact", "count", "total"):
-        assert new[key] == old[key], key
-    assert len(new["results"]) == len(old["results"])
-    for before, after in zip(old["results"], new["results"], strict=True):
-        same_message(before, after)
-
-
-def test_browsing_one_conversation_with_no_words(export: Path, bridged: Archive, saved: Names) -> None:
-    old = as_json(ui_server.search_messages_payload(export, contact=AVERY, limit=3))
-    new = search.payload(bridged, saved, "", AVERY, 3)
-    assert (new["count"], new["total"]) == (old["count"], old["total"]) == (3, 5)
-    for before, after in zip(old["results"], new["results"], strict=True):
-        same_message(before, after)
-
-
-def test_no_words_and_no_conversation_differ_on_purpose(export: Path, bridged: Archive, saved: Names) -> None:
-    # the server lists the newest messages of the whole archive; no screen asks for that, and the service gives none
-    assert ui_server.search_messages_payload(export, limit=3)["total"] == len(ROWS)
-    assert search.payload(bridged, saved, "", "", 3)["total"] == 0
-
-
-def test_a_part_of_a_word_differs_on_purpose(export: Path, bridged: Archive, saved: Names) -> None:
-    # the server matches plain text anywhere; the archive matches whole words, and a star makes a prefix
-    assert ui_server.search_messages_payload(export, query="piz")["total"] == 7
-    assert search.payload(bridged, saved, "piz")["total"] == 0
-    assert search.payload(bridged, saved, "piz*")["total"] == 7
-    assert search.payload(bridged, saved, "piz", as_you_type=True)["total"] == 7
+def test_the_search_route_reads_the_last_word_as_a_prefix(server: Any, export: Path, archive: Archive, saved: Names) -> None:
+    # the reader may still be typing: the service matches whole words unless the route says so
+    assert search.payload(archive, saved, "piz")["total"] == 0
+    status, answer = get(server, "/api/search", messagesPath=export, query="piz")
+    assert (status, answer["total"], answer["query"]) == (200, 8, "piz")
 
 
 @pytest.mark.parametrize(
@@ -168,63 +118,54 @@ def test_a_part_of_a_word_differs_on_purpose(export: Path, bridged: Archive, sav
         (AVERY, "2025-01-02", {}),
         (AVERY, "2025-01-03", {}),
         (GROUP, "2025-01-05", {}),
-        (GROUP, "2025-01-05", {"offset": 1, "limit": 2}),
-        (GROUP, "2025-01-05", {"around": "2025-01-05 12:02:00", "limit": 2}),
+        (GROUP, "2025-01-05", {"offset": "1", "limit": "2"}),
+        (GROUP, "2025-01-05", {"around": "2025-01-05 12:02:00", "limit": "2"}),
         (TITLED, "2025-01-06", {}),
         ("+15550180000", "2025-01-01", {}),
     ],
 )
-def test_a_day(export: Path, bridged: Archive, saved: Names, contact: str, when: str, more: dict[str, Any]) -> None:
-    old = as_json(ui_server.day_payload(export, contact, when, **more))
-    new = day.payload(bridged, saved, contact, when, **more)
-    assert set(new) == set(old)
-    for key in ("contact", "day", "total", "offset", "previousDay", "nextDay"):
-        assert new[key] == old[key], key
-    assert len(new["messages"]) == len(old["messages"])
-    for before, after in zip(old["messages"], new["messages"], strict=True):
-        same_message(before, after)
+def test_the_day_route_answers_with_the_payload_of_the_service(
+    server: Any, export: Path, archive: Archive, saved: Names, contact: str, when: str, more: dict[str, str]
+) -> None:
+    status, answer = get(server, "/api/day", messagesPath=export, contact=contact, day=when, **more)
+    expected = day.payload(
+        archive, saved, contact, when, around=more.get("around"), offset=more.get("offset", ""), limit=more.get("limit", "")
+    )
+    assert status == 200
+    assert answer == as_json(expected)
 
 
-def test_the_conversation_list(export: Path, bridged: Archive, saved: Names) -> None:
-    frame = ui_server.contacts_from_messages(export, limit=40, name_lookup=lambda handles: {h: saved.saved(h) for h in handles})
-    old = as_json(frame.to_dict(orient="records"))
-    new = conversations.rows(bridged, saved, 40)
-    assert [row["chat_id"] for row in new] == [row["chat_id"] for row in old]
-    for before, after in zip(old, new, strict=True):
-        assert set(after) == set(before)
-        assert after == before
-    assert conversations.name_count(new) == ui_server.count_display_names(frame)
+def test_the_conversation_list_route_answers_with_the_payload_of_the_service(
+    server: Any, export: Path, archive: Archive, saved: Names
+) -> None:
+    status, answer = get(server, "/api/contacts", messagesPath=export, limit="3")
+    # the answer names the archive file itself, as /api/defaults does
+    expected = conversations.payload(archive, saved, "3", str(places.archive_path_for(export)))
+    assert status == 200
+    assert answer == as_json(expected)
+    assert answer["messagesPath"] == str(export.with_suffix(".sqlite3"))
+    assert (len(answer["contacts"]), answer["archive"]["conversations"]) == (3, 4)
 
 
-def test_the_totals_of_the_archive(export: Path, bridged: Archive) -> None:
-    assert conversations.summary(bridged) == as_json(ui_server.archive_summary(export))
+def test_a_text_is_cut_at_the_limit_of_the_service_on_every_route(server: Any, export: Path, saved: Names) -> None:
+    _status, found = get(server, "/api/search", messagesPath=export, query="oven")
+    _status, opened = get(server, "/api/day", messagesPath=export, contact=TITLED, day="2025-01-07")
+    for shown in (found["results"][0]["text"], opened["messages"][0]["text"]):
+        assert len(shown) <= messages.MESSAGE_TEXT_LIMIT + 1
+        assert shown.endswith("…") and LONG_TEXT.startswith(shown[:-1])
+        assert len(shown) > messages.MESSAGE_TEXT_LIMIT - len("oven ")
 
 
-def test_the_name_of_each_conversation(export: Path, bridged: Archive, saved: Names) -> None:
-    _frame, _catalog, old = ui_server.cached_messages_bundle(export)
-    new = saved.conversations(bridged.conversations())
-    assert {key: name for key, name in new.items() if name} == {key: name for key, name in old.items() if name}
-    assert new[GROUP] == "Avery Stone, Blake Reyes and 1 other"
-    assert new[TITLED] == "Allotment Board"
+def test_the_totals_of_the_server_are_those_of_the_service(export: Path, archive: Archive) -> None:
+    assert as_json(ui_server.archive_summary(export)) == conversations.summary(archive)
 
 
-STATUSES = ("readable", "fda_blocked", "missing", "empty", "invalid", "locked", "error")
-
-
-@pytest.mark.parametrize("status", STATUSES)
-@pytest.mark.parametrize("kind", ["live", "copy"])
-@pytest.mark.parametrize("detail", ["", "not a SQLite database"])
-def test_the_reason_a_database_can_not_be_read_has_the_words_of_the_server(status: str, kind: str, detail: str) -> None:
-    probe = DbProbe(status=status, kind=kind, path="/invented/place/chat.db", detail=detail)
-    stopped = ui_server.why_unreadable(probe)
-    assert unreadable.why(probe) == (None if stopped is None else str(stopped))
-    assert unreadable.closed_to_recall(probe) == ui_server.closed_to_recall(probe)
-
-
-def test_the_last_words_say_that_the_archive_is_as_it_was() -> None:
-    assert unreadable.ARCHIVE_KEPT == ui_server.ARCHIVE_KEPT
-    probe = DbProbe(status="missing", kind="copy", path="/invented/place/chat.db")
-    assert str(unreadable.why(probe)).endswith(unreadable.ARCHIVE_KEPT)
+def test_the_name_of_each_conversation_is_the_one_of_the_service(export: Path, archive: Archive, saved: Names) -> None:
+    _frame, _catalog, held = ui_server.cached_messages_bundle(export)
+    assert held == saved.conversations(archive.conversations())
+    assert held[GROUP] == "Avery Stone, Blake Reyes and 1 other"
+    assert held[TITLED] == "Allotment Board"
+    assert (held[AVERY], held[UNSAVED]) == ("Avery Stone", "")
 
 
 # --- the files of a report, read by the server --------------------------------
@@ -242,13 +183,31 @@ def test_the_server_reads_the_files_that_a_run_writes(desk: Any) -> None:
     story = ui_server.markdown_section(text, "Summary", stop_at_next_heading=False)
     assert reports.story_of(text) == story and story.startswith("### The Arc")
     assert ui_server.markdown_to_html(story).count("<h3>") == 4
-    # the events, read as build_analysis_payload reads them
-    read_back = pd.read_csv(done.events_path).fillna("")
-    assert list(read_back.columns) == list(reports.EVENT_COLUMNS)
-    assert [str(value) for value in read_back["title"]] == [moment.title for moment in done.report.moments]
-    assert [float(value) for value in read_back["score"]] == [moment.score for moment in done.report.moments]
+    # the events file, read as the server reads the file of a report of the older kind
+    read_back = ui_server.events_of_file(str(done.events_path))
+    assert [set(event) for event in read_back] == [set(reports.EVENT_COLUMNS)] * len(done.report.moments)
+    assert [event["title"] for event in read_back] == [moment.title for moment in done.report.moments]
+    assert [event["score"] for event in read_back] == [moment.score for moment in done.report.moments]
     for name in (done.report_path.name, done.events_path.name):
         assert ui_server._REPORT_FILE_NAME.fullmatch(name), name
+
+
+def test_the_server_gives_the_moments_of_a_saved_report_what_opens_their_day(desk: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.recall_services.report_world import MODEL
+    from tests.report_engine.synth import MINA
+
+    done = reports.run(MINA, MODEL, "2023-01-01", "2023-02-28", **desk.more())
+    text = done.report_path.read_text(encoding="utf-8")
+    # the server finds the saved report in the data folder: here the places of this desk
+    monkeypatch.setattr(reports, "default_places", lambda: desk.places)
+
+    moments = ui_server.report_moments(MINA, text, str(done.events_path), desk.archive)
+
+    assert moments == reports.moments_for(done.report, desk.archive)
+    assert moments and all(moment["chatId"] == MINA and moment["day"] for moment in moments)
+    # a report of the older kind has no saved report: its events file is read, and nothing opens a day
+    older = ui_server.report_moments(MINA, "# Conversation Analysis - older", str(done.events_path), desk.archive)
+    assert [set(event) for event in older] == [set(reports.EVENT_COLUMNS)] * len(moments)
 
 
 @pytest.mark.parametrize(
