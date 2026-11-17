@@ -82,3 +82,29 @@ export function TopConversations({ ranked, archive, onSelectContact, onViewAll }
     </section>
   )
 }
+
+// stands in for the list while the conversations are read: the same heading
+// over a card of the fewest rows the list ever shows
+export function TopConversationsSkeleton() {
+  return (
+    <section className="section" aria-hidden="true">
+      <div className="section-head">
+        <h2>Most messages</h2>
+      </div>
+      <div className="card ranked-card">
+        <ol className="rows" role="list">
+          {Array.from({ length: FEWEST }, (_, row) => (
+            <li key={row}>
+              <div className="row ranked-row">
+                <span className="ranked-place">{row + 1}</span>
+                <span>
+                  <span className="skeleton">Conversation name</span>
+                </span>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
+  )
+}

@@ -10,7 +10,7 @@ import { ArchiveTiles, ArchiveTilesSkeleton } from './ArchiveTiles'
 import { Moments, MomentsSkeleton, type MomentOfDay } from './Moments'
 import { RecentReports } from './RecentReports'
 import { Rhythm } from './Rhythm'
-import { TopConversations } from './TopConversations'
+import { TopConversations, TopConversationsSkeleton } from './TopConversations'
 import { YearOfDays } from './YearOfDays'
 
 type OverviewViewProps = {
@@ -87,7 +87,12 @@ export function OverviewView({
             Reading your archive
           </p>
           <ArchiveTilesSkeleton />
-          <MomentsSkeleton />
+          <div className="overview-row">
+            <MomentsSkeleton />
+            <div className="overview-side">
+              <TopConversationsSkeleton />
+            </div>
+          </div>
           <MonthsWaiting />
         </div>
       </div>
