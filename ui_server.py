@@ -340,6 +340,13 @@ def closed_to_recall(probe: DbProbe) -> str:
     )
 
 
+def no_messages(probe: DbProbe) -> str:
+    """What to say of a database that holds no message to keep."""
+    if probe.kind == "live":
+        return "Messages holds no messages on this Mac."
+    return f"The copy at {probe.path} holds no messages."
+
+
 def why_unreadable(probe: DbProbe) -> Exception | None:
     """What stops an import before it starts, or None when the database can be tried.
 
@@ -356,8 +363,7 @@ def why_unreadable(probe: DbProbe) -> Exception | None:
         where = "There is no Messages database on this Mac." if live else f"There is no file at {probe.path}."
         return FileNotFoundError(f"{where} {ARCHIVE_KEPT}")
     if probe.status == "empty":
-        what = "Messages holds no messages on this Mac." if live else f"The copy at {probe.path} holds no messages."
-        return ValueError(f"{what} {ARCHIVE_KEPT}")
+        return ValueError(f"{no_messages(probe)} {ARCHIVE_KEPT}")
     said = f" ({probe.detail})" if probe.detail else ""
     what = (
         f"The Messages database on this Mac could not be read{said}."
@@ -374,6 +380,11 @@ def export_database(db_path: Path, messages_path: Path) -> dict:
     database holds. All three are read before a file is written, and each file
     is written beside its place and moved in whole: a failure leaves the
     archive as it was, and a request served meanwhile reads a complete file.
+
+    All three files are written each time. A database with no attachments or
+    no reactions gives a file with only its header, so no figure of an earlier
+    archive stays beside new messages. A database with no message to keep is
+    not imported: the archive would be empty.
     """
     probe = probe_database(db_path)
     stopped = why_unreadable(probe)
@@ -387,6 +398,8 @@ def export_database(db_path: Path, messages_path: Path) -> dict:
         if any(sign in str(exc).lower() for sign in ("unable to open", "permission", "not permitted", "authoriz")):
             raise PermissionError(f"{closed_to_recall(probe)} {ARCHIVE_KEPT}") from exc
         raise
+    if messages.empty:
+        raise ValueError(f"{no_messages(probe)} {ARCHIVE_KEPT}")
 
     # The messages go in last. The archive is known by its messages file, so
     # when that one is new the other two already are.
@@ -395,11 +408,9 @@ def export_database(db_path: Path, messages_path: Path) -> dict:
         (messages_path.with_name(f"{messages_path.stem}_reactions.csv"), reactions),
         (messages_path, messages),
     )
-    # a database with no attachments or no reactions writes no file for them
     staged = [
         (target.with_name(f"{target.stem}.tmp-export{target.suffix}"), target, frame)
         for target, frame in files
-        if target == messages_path or not frame.empty
     ]
     messages_path.parent.mkdir(parents=True, exist_ok=True)
     try:
