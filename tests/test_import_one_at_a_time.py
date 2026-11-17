@@ -179,3 +179,51 @@ def test_the_route_refuses_a_body_that_is_not_a_record(server, held_jobs, body):
 
     assert (status, answer) == (400, {"error": "The request must be a JSON object."})
     assert listed() == []
+
+
+# ---- a job always ends ----
+
+
+def register(action):
+    job = ui_server.job_record(action, {})
+    with ui_server.JOBS_LOCK:
+        ui_server.JOBS[job["id"]] = job
+    return job["id"]
+
+
+def state_of(job_id):
+    with ui_server.JOBS_LOCK:
+        return ui_server.JOBS[job_id]["status"], ui_server.JOBS[job_id]["error"]
+
+
+def test_a_job_that_ends_in_a_way_nothing_catches_is_failed_and_holds_up_no_import(monkeypatch, held_jobs):
+    def leave(*_args):
+        raise SystemExit("a library ended the thread")
+
+    monkeypatch.undo()
+    monkeypatch.setattr(ui_server, "export_when_free", leave)
+    job_id = register("export")
+
+    with pytest.raises(SystemExit):
+        ui_server.run_job(job_id, "export", {})
+
+    assert state_of(job_id) == ("failed", "The job stopped before it ended.")
+    monkeypatch.setattr(ui_server, "run_job", lambda *_args: held_jobs.wait(timeout=5))
+    assert ui_server.create_job("setup_import", {})["status"] == "queued"
+
+
+def test_an_import_whose_trace_cannot_be_written_is_still_failed_with_its_sentence(monkeypatch, tmp_path):
+    def closed(*_args, **_more):
+        raise ValueError("I/O operation on closed file")
+
+    def stop(*_args):
+        raise ui_server.ImportStopped("The copy could not be read.") from RuntimeError("what led to it")
+
+    monkeypatch.setattr(ui_server.traceback, "print_exception", closed)
+    monkeypatch.setattr(ui_server, "export_when_free", stop)
+    job_id = register("export")
+
+    ui_server.run_job(job_id, "export", {"messagesPath": str(tmp_path / "messages.csv")})
+
+    assert state_of(job_id) == ("failed", "The copy could not be read.")
+

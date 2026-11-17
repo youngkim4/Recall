@@ -886,7 +886,31 @@ def setup_status_payload(db_path: Path | None, messages_path: Path, deep: bool =
     }
 
 
+def fail_unfinished(job_id: str) -> None:
+    """Mark a job as failed when its work is over and the list still says queued or running.
+
+    However a job ends, it must not stay unfinished: it would hold up every
+    later job of its group.
+    """
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job and job["status"] in UNFINISHED:
+            job.update(
+                status="failed",
+                error="The job stopped before it ended.",
+                updatedAt=datetime.now().isoformat(timespec="seconds"),
+            )
+
+
 def run_job(job_id: str, action: str, payload: dict):
+    """Do the work of a job in its thread. When this returns or raises, the job is ended in the list."""
+    try:
+        work_job(job_id, action, payload)
+    finally:
+        fail_unfinished(job_id)
+
+
+def work_job(job_id: str, action: str, payload: dict):
     update_job(job_id, status="running")
     writer = JobWriter(job_id)
     _JOB_STDOUT.register(writer)
@@ -987,11 +1011,13 @@ def run_job(job_id: str, action: str, payload: dict):
         writer.flush()
         update_job(job_id, status="completed", result=result)
     except ImportStopped as exc:
-        writer.flush()
-        if exc.__cause__ is not None:
-            # what led to the sentence is for the log of the server, not for the page
-            traceback.print_exception(exc, file=sys.__stderr__)
         update_job(job_id, status="failed", error=str(exc))
+        # What led to the sentence is for the log of the server, not for the
+        # page. A log that cannot be written does not change how the job ended.
+        with contextlib.suppress(Exception):
+            writer.flush()
+            if exc.__cause__ is not None:
+                traceback.print_exception(exc, file=sys.__stderr__)
     except Exception as exc:
         writer.flush()
         append_log(job_id, traceback.format_exc())
