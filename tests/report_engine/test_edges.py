@@ -206,7 +206,8 @@ def test_small_helpers_at_their_edges() -> None:
     with pytest.raises(ValueError):
         TokenBudget(100, lambda: 0.0).delay(-1)
     index = MessageIndex(build_lines([message(1, "2024-06-01 09:00:00", "hi")], labeler))
-    assert index.has_day("2024-06-01") and not index.has_day("2024-06-02")
+    assert [line.id for line in index.near("2024-06-01", 0)] == ["1"]
+    assert list(index.near("2024-06-02", 0)) == []
     assert list(index.near("not a day", 3)) == []
 
 

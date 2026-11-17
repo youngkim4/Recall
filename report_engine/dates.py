@@ -38,13 +38,9 @@ def is_day(value: object) -> bool:
 
 
 def has_stamp_shape(value: object) -> bool:
-    """True for text shaped like YYYY-MM-DD HH:MM:SS. The day is not checked."""
+    """True for text shaped like YYYY-MM-DD HH:MM:SS, in plain digits. Text of this
+    shape compares in time order. The day itself is not checked here."""
     return isinstance(value, str) and bool(_STAMP_SHAPE.fullmatch(value))
-
-
-def is_stamp(value: object) -> bool:
-    """True for a real YYYY-MM-DD HH:MM:SS. Timestamps of this shape compare as text."""
-    return has_stamp_shape(value) and is_day(value[:DAY_LENGTH])  # type: ignore[index]
 
 
 def shift_day(day: str, days: int) -> str:

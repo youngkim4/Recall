@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from report_engine.calls import usage_of
-from report_engine.dates import is_stamp, parse_day, shift_day
+from report_engine.dates import has_stamp_shape, parse_day, shift_day
 from report_engine.errors import ConfigError
 from report_engine.jsonsafe import jsonable
 from report_engine.models import Moment, PeriodSummary, Report, Scope
@@ -53,11 +53,11 @@ def test_days_and_timestamps_must_use_plain_digits() -> None:
     wide = "".join(chr(0xFF10 + int(digit)) for digit in "2024") + "-02-03"
     with pytest.raises(ValueError):
         parse_day(wide)
-    assert not is_stamp(wide + " 10:00:00")
-    assert is_stamp("2024-02-03 10:00:00")
-    assert not is_stamp("2024-02-03T10:00:00")
-    assert not is_stamp("2024-02-03 10:00:00.5")
-    assert not is_stamp(None)
+    assert not has_stamp_shape(wide + " 10:00:00")
+    assert has_stamp_shape("2024-02-03 10:00:00")
+    assert not has_stamp_shape("2024-02-03T10:00:00")
+    assert not has_stamp_shape("2024-02-03 10:00:00.5")
+    assert not has_stamp_shape(None)
 
 
 @pytest.mark.parametrize("day, step", [("9999-12-31", 1), ("0001-01-01", -1)])

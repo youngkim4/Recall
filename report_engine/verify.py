@@ -117,9 +117,6 @@ class MessageIndex:
         self._by_day = {day: tuple(found) for day, found in by_day.items()}
         self._compare_form: dict[int, str] = {}
 
-    def has_day(self, day: str) -> bool:
-        return day in self._by_day
-
     def compare_form(self, line: Line) -> str:
         """`normalise(line.text)`, worked out once for each line."""
         key = id(line)

@@ -10,7 +10,7 @@ from report_engine.dates import lower_bound, upper_bound
 from report_engine.errors import ConfigError
 from report_engine.models import Scope
 
-__all__ = ["coerce_scope", "in_bounds", "inclusive_bounds", "lower_bound", "upper_bound"]
+__all__ = ["coerce_scope", "in_bounds", "lower_bound", "upper_bound"]
 
 
 def coerce_scope(value: Scope | Mapping[str, str | None] | None) -> Scope:
@@ -34,12 +34,9 @@ def coerce_scope(value: Scope | Mapping[str, str | None] | None) -> Scope:
         raise ConfigError(f"scope is not valid: {problems}") from exc
 
 
-def inclusive_bounds(scope: Scope) -> tuple[str | None, str | None]:
-    """Full timestamps, both included. Timestamps are fixed width, so strings compare."""
-    return lower_bound(scope.since), upper_bound(scope.until)
-
-
 def in_bounds(timestamp: str, low: str | None, high: str | None) -> bool:
+    """True when `timestamp` is inside the bounds, both included. All three have
+    the same fixed shape, so they compare as text."""
     if low is not None and timestamp < low:
         return False
     return high is None or timestamp <= high

@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from report_engine.dates import lower_bound, upper_bound
 from report_engine.models import (
     SCHEMA_VERSION,
     SECTION_KEYS,
@@ -14,7 +15,6 @@ from report_engine.models import (
     Section,
     Usage,
 )
-from report_engine.scope import inclusive_bounds
 
 
 def sections() -> tuple[Section, ...]:
@@ -138,9 +138,11 @@ def test_scope_rejects_bad_dates(since: str | None, until: str | None) -> None:
 
 
 def test_scope_bounds_cover_whole_days() -> None:
-    assert inclusive_bounds(Scope(since="2024-06-01", until="2024-06-30")) == (
+    whole = Scope(since="2024-06-01", until="2024-06-30")
+    assert (lower_bound(whole.since), upper_bound(whole.until)) == (
         "2024-06-01 00:00:00",
         "2024-06-30 23:59:59",
     )
-    assert inclusive_bounds(Scope()) == (None, None)
-    assert inclusive_bounds(Scope(since="2024-06-01 08:30:00")) == ("2024-06-01 08:30:00", None)
+    assert (lower_bound(None), upper_bound(None)) == (None, None)
+    assert lower_bound("2024-06-01 08:30:00") == "2024-06-01 08:30:00"
+    assert upper_bound("2024-06-30 08:30:00") == "2024-06-30 08:30:00"
