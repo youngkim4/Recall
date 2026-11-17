@@ -1,45 +1,34 @@
-import pandas as pd
 import pytest
 
 import ui_server
+from tests.export_kit import archives, contacts_cache, loaded, row, save_names  # noqa: F401 - two are fixtures
+
+pytestmark = pytest.mark.usefixtures("archives", "contacts_cache")
+
+MOM = "+15550000001"
+SAM = "+15550000002"
+LEE = "+15550000003"
+MOM_EMAIL = "mom@example.com"
 
 
-def write_messages_csv(path, rows):
-    """Rows name a direction for readability; the export itself stores is_from_me."""
-    frame = pd.DataFrame(
-        rows,
-        columns=["message_id", "chat_id", "timestamp", "direction", "text", "sender"],
-    )
-    frame = frame.assign(is_from_me=frame["direction"].eq("outgoing").astype(int)).drop(columns="direction")
-    frame.to_csv(path, index=False)
-    return path
-
-
-pytestmark = pytest.mark.usefixtures("fresh_bundle_cache")
-
-
-def test_first_words_basic(tmp_path, monkeypatch):
-    monkeypatch.setattr(ui_server, "resolve_contact_names", lambda handles, **_: {
-        "+15550000001": "Mom",
-        "+15550000002": "Sam Park",
-        "+15550000003": "Lee Min",
-    })
-    csv = write_messages_csv(tmp_path / "messages.csv", [
-        ("a1", "+15550000001", "2014-06-12 09:00:00", "incoming", "call me when you land, I love you", "+15550000001"),
-        ("a2", "+15550000001", "2014-06-12 09:05:00", "outgoing", "landed safe, love you too", "me"),
-        ("a3", "+15550000001", "2024-01-01 10:00:00", "incoming", "happy new year", "+15550000001"),
-        ("b1", "+15550000002", "2016-02-01 12:00:00", "outgoing", "yo is this sam?", "me"),
-        ("b2", "+15550000002", "2016-02-01 12:10:00", "incoming", "yeah who dis", "+15550000002"),
-        ("c1", "+15550000003", "2018-03-03 08:00:00", "incoming", "[Attachment: IMG_1.heic]", "+15550000003"),
-        ("c2", "+15550000003", "2018-03-03 08:01:00", "incoming", "https://example.com/x", "+15550000003"),
-        ("c3", "+15550000003", "2018-03-03 08:02:00", "incoming", "hey it's lee from class", "+15550000003"),
-        ("g1", "chat100200", "2013-01-01 00:00:00", "incoming", "group hello", "+15550000009"),
+def test_first_words_basic(tmp_path):
+    save_names({MOM: "Mom", SAM: "Sam Park", LEE: "Lee Min"})
+    csv = loaded(tmp_path / "messages.csv", [
+        row(MOM, "2014-06-12 09:00:00", "call me when you land, I love you"),
+        row(MOM, "2014-06-12 09:05:00", "landed safe, love you too", from_me=1),
+        row(MOM, "2024-01-01 10:00:00", "happy new year"),
+        row(SAM, "2016-02-01 12:00:00", "yo is this sam?", from_me=1),
+        row(SAM, "2016-02-01 12:10:00", "yeah who dis"),
+        row(LEE, "2018-03-03 08:00:00", "[Attachment: IMG_1.heic]"),
+        row(LEE, "2018-03-03 08:01:00", "https://example.com/x"),
+        row(LEE, "2018-03-03 08:02:00", "hey it's lee from class"),
+        row("chat100200", "2013-01-01 00:00:00", "group hello", sender="+15550000009"),
     ])
     payload = ui_server.first_words_payload(csv)
     entries = payload["entries"]
     by_person = {e["person"]: e for e in entries}
 
-    assert "Group" not in str(entries)
+    assert "chat100200" not in {entry["chatId"] for entry in entries}
     assert by_person["Mom"]["text"].startswith("call me when you land")
     assert by_person["Mom"]["direction"] == "incoming"
     assert by_person["Mom"]["reply"]["text"].startswith("landed safe")
@@ -50,18 +39,13 @@ def test_first_words_basic(tmp_path, monkeypatch):
     assert payload["totals"]["firstYear"] == 2013
 
 
-def test_first_words_merges_handles_by_name(tmp_path, monkeypatch):
-    monkeypatch.setattr(ui_server, "resolve_contact_names", lambda handles, **_: {
-        "+15550000001": "Mom",
-        "mom@icloud.com": "Mom",
-        "+15550000002": "Sam Park",
-        "+15550000003": "Lee Min",
-    })
-    csv = write_messages_csv(tmp_path / "messages.csv", [
-        ("a1", "mom@icloud.com", "2012-05-01 09:00:00", "incoming", "testing this email thing", "mom@icloud.com"),
-        ("a2", "+15550000001", "2014-06-12 09:00:00", "incoming", "switched to my new phone", "+15550000001"),
-        ("b1", "+15550000002", "2016-02-01 12:00:00", "outgoing", "yo is this sam?", "me"),
-        ("c1", "+15550000003", "2018-03-03 08:00:00", "incoming", "hey it's lee", "+15550000003"),
+def test_first_words_merges_handles_by_name(tmp_path):
+    save_names({MOM: "Mom", MOM_EMAIL: "Mom", SAM: "Sam Park", LEE: "Lee Min"})
+    csv = loaded(tmp_path / "messages.csv", [
+        row(MOM_EMAIL, "2012-05-01 09:00:00", "testing this email thing"),
+        row(MOM, "2014-06-12 09:00:00", "switched to my new phone"),
+        row(SAM, "2016-02-01 12:00:00", "yo is this sam?", from_me=1),
+        row(LEE, "2018-03-03 08:00:00", "hey it's lee"),
     ])
     entries = ui_server.first_words_payload(csv)["entries"]
     moms = [e for e in entries if e["person"] == "Mom"]
@@ -71,11 +55,10 @@ def test_first_words_merges_handles_by_name(tmp_path, monkeypatch):
     assert moms[0]["messageCount"] == 2
 
 
-def test_first_words_unnamed_fallback_masks_labels(tmp_path, monkeypatch):
-    monkeypatch.setattr(ui_server, "resolve_contact_names", lambda handles, **_: {})
-    csv = write_messages_csv(tmp_path / "messages.csv", [
-        ("a1", "+15550000001", "2020-01-01 09:00:00", "incoming", "first hello", "+15550000001"),
-        ("b1", "+15550000002", "2021-01-01 09:00:00", "outgoing", "second hello", "me"),
+def test_first_words_unnamed_fallback_masks_labels(tmp_path):
+    csv = loaded(tmp_path / "messages.csv", [
+        row(MOM, "2020-01-01 09:00:00", "first hello"),
+        row(SAM, "2021-01-01 09:00:00", "second hello", from_me=1),
     ])
     entries = ui_server.first_words_payload(csv)["entries"]
     assert entries, "unnamed fallback should still produce entries"
@@ -86,23 +69,14 @@ def test_first_words_unnamed_fallback_masks_labels(tmp_path, monkeypatch):
         assert entry["chatId"].startswith("+1555000000")
 
 
-def test_first_words_reads_direction_from_a_real_export(tmp_path, monkeypatch):
-    # a real export has is_from_me and no direction column
-    monkeypatch.setattr(ui_server, "resolve_contact_names", lambda handles, **_: {
-        "+15550000001": "Mom",
-        "+15550000002": "Sam Park",
-    })
-    frame = pd.DataFrame(
-        [
-            (1, "2014-06-12 09:00:00", "+15550000001", "call me when you land", "+15550000001", "", 0),
-            (2, "2014-06-12 09:05:00", "+15550000001", "landed safe, love you", "+15550000001", "", 1),
-            (3, "2016-02-01 12:00:00", "+15550000002", "yo is this sam?", "+15550000002", "", 1),
-            (4, "2016-02-01 12:10:00", "+15550000002", "yeah who is this", "+15550000002", "", 0),
-        ],
-        columns=["message_id", "timestamp", "sender", "text", "chat_id", "chat_display_name", "is_from_me"],
-    )
-    csv = tmp_path / "messages.csv"
-    frame.to_csv(csv, index=False)
+def test_first_words_say_who_wrote_first_and_who_answered(tmp_path):
+    save_names({MOM: "Mom", SAM: "Sam Park"})
+    csv = loaded(tmp_path / "messages.csv", [
+        row(MOM, "2014-06-12 09:00:00", "call me when you land"),
+        row(MOM, "2014-06-12 09:05:00", "landed safe, love you", from_me=1),
+        row(SAM, "2016-02-01 12:00:00", "yo is this sam?", from_me=1),
+        row(SAM, "2016-02-01 12:10:00", "yeah who is this"),
+    ])
 
     by_person = {entry["person"]: entry for entry in ui_server.first_words_payload(csv)["entries"]}
 
@@ -113,13 +87,44 @@ def test_first_words_reads_direction_from_a_real_export(tmp_path, monkeypatch):
     assert by_person["Sam Park"]["reply"]["direction"] == "incoming"
 
 
-def test_first_words_missing_csv(tmp_path):
+def test_first_words_with_no_archive(tmp_path):
     payload = ui_server.first_words_payload(tmp_path / "absent.csv")
     assert payload == {
         "entries": [],
         "signature": "",
         "totals": {"messages": 0, "people": 0},
     }
+
+
+def test_the_signature_of_first_words_changes_with_the_archive(tmp_path):
+    # the app shows the first words once for one content of the archive
+    rows = [row(MOM, "2020-01-01 09:00:00", "first hello")]
+    csv = loaded(tmp_path / "messages.csv", rows)
+    before = ui_server.first_words_payload(csv)["signature"]
+
+    again = ui_server.first_words_payload(csv)["signature"]
+    loaded(csv, [*rows, row(SAM, "2021-01-01 09:00:00", "second hello")])
+    after = ui_server.first_words_payload(csv)["signature"]
+
+    assert before and before == again
+    assert after and after != before
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="first_words_payload counts the rows of the frame, and the frame holds the messages that no "
+    "conversation holds: totals.messages is more than the count that the Overview and the import give",
+)
+def test_first_words_count_the_messages_that_the_overview_counts(tmp_path):
+    csv = loaded(tmp_path / "messages.csv", [
+        row(MOM, "2020-01-01 09:00:00", "first hello"),
+        row(MOM, "2020-01-01 09:01:00", "hello back", from_me=1),
+        # a message that no conversation holds is shown nowhere, so it is in no count
+        row("", "2020-01-02 09:00:00", "from no conversation", sender=SAM),
+    ])
+
+    assert ui_server.archive_summary(csv)["messages"] == 2
+    assert ui_server.first_words_payload(csv)["totals"]["messages"] == 2
 
 
 def test_setup_marker_roundtrip(tmp_path, monkeypatch):
