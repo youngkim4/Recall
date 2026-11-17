@@ -111,17 +111,95 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 
 ## Import and update
 
+### Which database is read
+
 - `database_for` in `ui_server.py` names the database that a job reads. No other code selects a database for a job.
   - An update (the `export` job) reads the database of Messages on this Mac. A path from the client does not change this.
   - The setup guide (the `setup_import` job) can name a copy. The copy is read for that import only. With no copy named, the job reads Messages.
   - No other job reads a database. A report is written from the archive as it is.
 - An import does not merge a second source. After an import, the archive holds what the database holds. `merge_export.py` is a hand tool. The app does not call it.
-- `export_database` reads the messages, the attachments and the reactions before it writes a file. It writes each file beside its place and then moves it. A failure leaves the three files as they were.
-- `export_database` moves the messages file last, so the other two files are new before the messages file changes.
-- `why_unreadable` gives the reason when a database cannot be read. It uses `probe_database`, because macOS can show a protected file as missing.
+- `probe_database` in `setup_status.py` knows the database of Messages by the parts of its path (`in_messages_folder`). A folder whose name only starts like the folder of Messages holds a copy.
+
+### How a database is read
+
+- Each reader of a Messages database opens it with `open_read_only` in `parse_imessage.py`: the five readers in that file, `probe_database` in `setup_status.py`, and `group_display_names_from_database` and the route `/api/permissions/fulldisk` in `ui_server.py`.
+  - The database is opened to read only. A path that holds no file makes no file.
+  - The path is quoted in the address, so a `?`, a `#` or a `%` in a file name is part of the name.
+  - The database is not opened as immutable. The reader also gets what Messages wrote to the `-wal` file.
+  - For a database in WAL mode, SQLite can make the `-wal` file and the `-shm` file beside it. The database file itself is not changed.
+- A reader runs a query with `read_frame`. An error is the error that `sqlite3` raises. It holds no text of a query.
+- A reader gives a table with all of its columns when the result is empty.
+
+### The three files of the archive
+
+- An archive is three files: the messages file, and beside it `<stem>_attachments.csv` and `<stem>_reactions.csv`. `archive_files` in `ui_server.py` names them.
+- An import writes all three files each time. A database with no attachments or no reactions gives a file with only its header. `_load_companion` in `conversation.py` reads that file as an empty table.
+- A database with no message to keep is not imported. The archive stays as it was.
+- An import changes all three files or none of them. `export_database` and `move_in` in `ui_server.py` do these steps in this order:
+  1. Read the messages, the attachments and the reactions. No file is written before all three are read.
+  2. Write each new file beside its place, with `.tmp-export` in its name.
+  3. Keep each earlier file beside its place, with `.before-update` in its name. The earlier file is a hard link, or a copy on a volume with no hard links.
+  4. Move each new file to its place in one step: the attachments, then the reactions, then the messages.
+  5. Remove the earlier files.
+- A failure at any step leaves the three files as they were. When a move fails, the files that moved before it are put back from the earlier files.
+- If an earlier file cannot be put back, it stays beside the archive and the error says so (`ArchiveInParts`).
+- A request that the server answers during the moves reads a whole file at each of the three places.
+  - For a moment it can read new attachments or new reactions beside the earlier messages.
+  - It never reads new messages beside earlier attachments or earlier reactions, because the messages move last.
+- If the process ends during the moves, the places can hold new attachments or new reactions beside the earlier messages. Files with `.tmp-export` or `.before-update` in their names can stay. The next import removes those files and writes all three places.
+- No code lists the folder of the archive. Do not add code that takes a file in that folder for an archive because of its name.
+
+### One import at a time
+
+- One import writes the archive at a time. `create_job` in `ui_server.py` decides this once, with `JOBS_LOCK` held, when the job is made. `ONE_AT_A_TIME` holds the rule. The same rule holds for the build of the semantic index.
+- The first job runs. The second is refused: `/api/jobs` answers 409 with a plain sentence, and no job is made.
+- `create_job` refuses an import whose `messagesPath` is not text, and a `setup_import` whose `dbPath` is not text. `/api/jobs` answers 400, and no job is made.
+
+### What the reader is told
+
+- `why_unreadable` in `ui_server.py` gives the reason when a database cannot be read. It uses `probe_database`, because macOS can show a protected file as missing.
+- A busy database (`locked`) is tried. `export_when_free` tries it once more after `BUSY_WAIT_SECONDS`.
+- An import that stops raises `ImportStopped`. Its text is one plain sentence for the reader. `why_unreadable`, `reading_stopped` and `writing_stopped` write the sentences.
+  - The sentence holds no text of a query. What a reader raised goes to the log of the server. It does not go to the lines of the job.
+  - The sentence ends with "The archive was not changed." only when there was an archive.
+- `/api/contacts` answers a busy database with 503 and a database that fails with 500. The error is a plain sentence from `reading_stopped`.
+
+### What is kept
+
 - The server keeps no path to a database. `read_setup_marker` drops `pickedDbPath`. `/api/defaults` names no database. `/api/contacts` takes no database from the client.
+- `setup_marker_updates` takes only `true` and `false` for `completed`, `skipped` and `firstWordsShown`. `write_setup_marker` holds `SETUP_MARKER_LOCK` from its read to its write.
 - The client keeps no path to a database. `RuntimePaths` holds the archive file and the reports folder only.
-- The setup guide opens an update on the state of the database (`phaseForDatabase` in `OnboardingWizard.tsx`), not on the state of setup.
+
+### The guide
+
+- `guideStep` in `app/src/lib/setupGuide.ts` gives the step that the guide shows. `OnboardingWizard.tsx` keeps no step.
+  - The step comes from the last check of the database (`db.status`), not from the state of setup (`state`). A first setup and an update use the same rule.
+  - `canImport` is true for `readable` and for `locked`. The import is not offered for another status.
+  - A copy that the reader chose is kept apart from the check of Messages. It is for one import. Back gives it up.
+- `importRequest` builds the request for an import. It names the archive file that the app reads (`messagesPath`).
+- An import that the server refused has no id. The guide shows what the server said under "did not start".
+- `SetupFrame.tsx` moves the focus to the step when the step changes. `import`, `import_running` and `import_failed` are three steps.
+- `revealsFirstWords` decides whether the first words show: after the first setup, and not after an update.
+
+## Message text
+
+- The text of a message is stored as Messages has it. The export does not trim it.
+  - Spaces and line breaks at the ends stay. A text of only spaces is a row.
+  - Invisible characters stay: emoji joiners, variation selectors, direction marks.
+- `extract_messages` in `parse_imessage.py` takes the text from the text column. When that column is empty, it takes the text from `attributedBody` with `extract_text_from_attributed_body`.
+  - That function gives the whole text or no text. It never gives a part of a text.
+  - It drops only the C0 control characters other than tab and newline (`_DROPPED_CONTROLS`).
+- `display_text` in `message_text.py` is the code that trims. It removes the attachment mark (U+FFFC) and the spaces at the ends. `clip_text` shortens a text for a list.
+- Code that shows a text, or that tests a text for emptiness, uses `display_text`. Do not trim a text when you write it to the export.
+
+WARNING: Do not run `merge_export.py` on an archive that was written before the decoder fix (commit `5ac7086`). The tool compares the text in the archive with the text that the decoder gives. The texts that the earlier decoder cut or trimmed are different, so the tool adds those rows a second time.
+
+## Tests
+
+- No test reads the Messages database or the Contacts of this Mac, and no test connects to another host. `tests/conftest.py` holds this for each test file:
+  - Before the project is imported, it sets a key that is not a key and an empty home folder.
+  - It refuses a connection to a host that is not this machine.
+- A test that needs a Messages database makes one with `messages_db` in `tests/invented_db.py`.
 
 ## Caches
 
