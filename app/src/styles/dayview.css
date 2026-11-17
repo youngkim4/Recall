@@ -74,13 +74,19 @@
 
   /* Where the messages stand is set by the reader: at the message a day was
      opened for, where a day was left, and unmoved when earlier messages are
-     put above. The browser's own anchoring would move them a second time. */
+     put above. The browser's own anchoring would move them a second time.
+     The messages take the keyboard when a day opens, so that the arrow keys
+     move through them. They show no ring for it: a ring is for a control,
+     and one around the whole pane is cut by the corners of the sheet. */
   .dayview-scroll {
     overflow: auto;
     overflow-anchor: none;
     overscroll-behavior: contain;
     padding: var(--s-4);
-    outline-offset: -2px;
+  }
+
+  .dayview-scroll:focus-visible {
+    outline: none;
   }
 
   /* the message the day was opened for */
