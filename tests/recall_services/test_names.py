@@ -193,6 +193,26 @@ def test_a_group_name_is_the_one_the_conversation_list_makes_today(saved: Names)
     assert today["chat109"] == "Tomas Reyes, Ines Calder and 2 others"
 
 
+def test_a_member_who_never_wrote_is_a_person_of_the_group(saved: Names) -> None:
+    """A difference from the list of today, on purpose: the archive knows every member, the export only the writers."""
+    writers = [TOMAS] * 3 + [INES_PHONE] * 2
+    frame = pd.DataFrame({"chat_id": "chat110", "sender": writers, "is_from_me": 0})
+    today = derive_group_names(frame, ["chat110"], lambda handles: {h: saved.saved(h) for h in handles})
+    assert today["chat110"] == "Tomas Reyes and Ines Calder"
+    members = [TOMAS, INES_PHONE, UNSAVED]  # the last one is in the group and wrote nothing
+    assert saved.conversation(conversation("chat110", members)) == "Tomas Reyes, Ines Calder and 1 other"
+
+
+def test_a_person_with_two_handles_stands_where_the_busier_handle_stands(saved: Names) -> None:
+    """A difference from the list of today: that rule adds the messages of both handles of one person."""
+    writers = [TOMAS] * 3 + [INES_PHONE] * 2 + [INES_EMAIL] * 2
+    frame = pd.DataFrame({"chat_id": "chat111", "sender": writers, "is_from_me": 0})
+    today = derive_group_names(frame, ["chat111"], lambda handles: {h: saved.saved(h) for h in handles})
+    assert today["chat111"] == "Ines Calder and Tomas Reyes"
+    members = [TOMAS, INES_PHONE, INES_EMAIL]  # by the count of each handle, as the archive lists them
+    assert saved.conversation(conversation("chat111", members)) == "Tomas Reyes and Ines Calder"
+
+
 def test_names_of_many_conversations(saved: Names) -> None:
     listed = [
         conversation(INES_PHONE, [INES_PHONE]),
@@ -229,11 +249,16 @@ def test_the_chat_labeler_uses_saved_names_and_masks_everyone_else(saved: Names)
 
 
 def test_the_chat_labeler_masks_an_unsaved_handle_inside_text(saved: Names) -> None:
-    listed = [conversation(UNSAVED, [UNSAVED]), conversation(INES_PHONE, [INES_PHONE])]
+    """Before the labeler named anyone: text of one conversation can hold the number of another."""
+    listed = [
+        conversation(UNSAVED, [UNSAVED]),
+        conversation(INES_PHONE, [INES_PHONE]),
+        conversation("chat100", [INES_PHONE, UNSAVED_EMAIL]),
+    ]
     labeler = saved.chat_labeler(listed)
-    labeler.conversation(listed[0])  # type: ignore[arg-type]
-    masked = labeler.redact("call +1 555 017 9999 or (555) 017-0001")
+    masked = labeler.redact(f"call +1 555 017 9999 or (555) 017-0001, or write to {UNSAVED_EMAIL}")
     assert "9999" in masked and "555 017 9999" not in masked
+    assert UNSAVED_EMAIL not in masked
     assert "(555) 017-0001" in masked  # a saved number is not masked
 
 

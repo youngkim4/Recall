@@ -113,6 +113,13 @@ class Names:
 
         `members` are handles with the busiest writer first, as the archive
         lists them. Two handles of one saved name are one person.
+
+        Two differences from `group_names.derive_group_names`, which counts
+        the writers of an export:
+        - A member who never wrote is a person of the group. The archive
+          knows every member; the export knew only the writers.
+        - A person with two handles stands where the busier handle stands.
+          The export rule added the messages of both handles.
         """
         people: dict[str, str | None] = {}
         for handle in members:
@@ -143,7 +150,8 @@ class Names:
 
         `conversations` are the conversations of the archive. Each of their
         handles is given with the name that `saved` gives, so chat and the
-        screens name a person by one rule.
+        screens name a person by one rule. Each handle that is not saved is
+        given too, so `redact` masks it in any text from the first call.
         """
         handles: dict[str, None] = {}
         for conversation in conversations:
@@ -151,7 +159,11 @@ class Names:
                 if isinstance(handle, str):
                     handles.setdefault(handle)
         named = {handle: self.saved(handle) for handle in handles}
-        return MaskingLabeler({handle: name for handle, name in named.items() if name})
+        return MaskingLabeler(
+            {handle: name for handle, name in named.items() if name},
+            # known from the start: text of one conversation can hold the handle of another
+            known_handles=[handle for handle, name in named.items() if not name],
+        )
 
     def report_labeler(self, conversation: Mapping[str, Any]) -> ReportLabeler:
         """The labeler for a report on one conversation.
