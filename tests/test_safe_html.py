@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from safe_html import sanitize, story_html
+from safe_html import STORY_LIMIT, STORY_WORK_LIMIT, prepared, sanitize, story_html, story_work
 from tests.html_shape import assert_only_allowed, shape
 
 
@@ -311,4 +311,133 @@ def test_a_story_nested_too_deep_is_shown_as_plain_text(hostile):
 def test_a_story_longer_than_any_report_is_cut():
     rendered = story_html("word " * 200_000)
     assert len(rendered) < 300_000
+    assert_only_allowed(rendered)
+
+
+# ---- a story cannot make the page wait
+
+# What the renderer is slow to read. Each of these, repeated, took from
+# seconds to minutes at a length a story was allowed to have; "__\\" took
+# twenty seconds at 2,400 characters.
+SLOW_UNITS = [
+    "[a](", "![a](", "> ", "**a *b ", "*a ", '](a "', "![", "[a][", "`a ", "_a ", "#\n",
+    "__\\", "![\\", "[\\*", '["', "a\n\n", "it's\n\n", "- a\n", "- __\\\n",
+]
+
+
+def repeated(unit, length):
+    return (unit * (length // len(unit) + 1))[:length]
+
+
+def seconds_to_render(text):
+    started = time.perf_counter()
+    rendered = story_html(text)
+    return time.perf_counter() - started, rendered
+
+
+@pytest.mark.parametrize("unit", SLOW_UNITS)
+@pytest.mark.parametrize("length", [STORY_LIMIT, 200_000])
+def test_a_slow_shape_as_long_as_a_story_can_be_is_still_quick(unit, length):
+    took, rendered = seconds_to_render(repeated(unit, length))
+
+    assert took < 3.0
+    assert_only_allowed(rendered)
+
+
+def most_that_is_rendered(unit):
+    """The longest paragraph of this unit that is still read as markdown."""
+    low, high = 0, STORY_LIMIT
+    while high - low > 1:
+        middle = (low + high) // 2
+        low, high = (middle, high) if story_work(prepared(repeated(unit, middle))) <= STORY_WORK_LIMIT else (low, middle)
+    return repeated(unit, low)
+
+
+@pytest.mark.parametrize("unit", SLOW_UNITS)
+def test_the_most_of_a_slow_shape_that_the_renderer_is_given_is_still_quick(unit):
+    hostile = most_that_is_rendered(unit)
+    assert len(hostile) > 100
+
+    # the renderer reads it, or is stopped while it does
+    took, rendered = seconds_to_render(hostile)
+
+    assert took < 3.0
+    assert_only_allowed(rendered)
+
+
+def test_a_story_that_asks_for_too_much_work_is_shown_as_plain_paragraphs():
+    hostile = repeated("[a](", 20_000)
+    assert story_work(prepared(hostile)) > STORY_WORK_LIMIT
+
+    rendered = story_html(hostile + "\n\n**not read**")
+
+    assert "<strong>" not in rendered
+    assert "**not read**" in rendered
+    assert_only_allowed(rendered)
+    assert set(shape(rendered).tags) == {"p"}
+
+
+def test_a_story_that_takes_the_renderer_too_long_is_shown_as_plain_paragraphs():
+    # short enough to be given to the renderer, which then starts it again and again
+    hostile = repeated("__\\", 2_000)
+    assert story_work(prepared(hostile)) <= STORY_WORK_LIMIT
+
+    took, rendered = seconds_to_render(hostile + "\n\n**not read**")
+
+    assert took < 3.0
+    assert "<strong>" not in rendered
+    assert "**not read**" in rendered
+    assert set(shape(rendered).tags) == {"p"}
+
+
+def test_a_list_is_counted_an_item_at_a_time():
+    items = "\n".join(f"- **Label {number}:** it's a line with \"words\" in it, and more." for number in range(400))
+
+    rendered = story_html(items)
+
+    # as one paragraph of this length it would be far past the limit
+    assert story_work(prepared(items)) * 4 < STORY_WORK_LIMIT
+    assert rendered.count("<li>") == rendered.count("<strong>") == 400
+
+
+def an_ordinary_story(length):
+    """Writing the way a report is written: headings, paragraphs with marks
+    and quotes in them, lists, a quoted line, a table."""
+    paragraph = (
+        'On 2024-06-10 you wrote "see you at 8", and it\'s clear they didn\'t mind. '
+        "**The plans** they made that summer were mostly about dinner. "
+        "*You wrote first* most mornings, and they answered late but warmly. "
+    ) * 4
+    parts = [
+        "### Timeline",
+        paragraph,
+        "\n".join(f"- **Phase {number}:** it's a line with \"words\" in it, and more." for number in range(1, 9)),
+        "> see you at 8",
+        "| Year | Messages |\n|---|---|\n| 2023 | 410 |\n| 2024 | 1,932 |",
+        "### Takeaways",
+        paragraph,
+    ]
+    story = "\n\n".join(parts)
+    return "\n\n".join([story] * (length // len(story)))
+
+
+def test_an_ordinary_story_as_long_as_a_story_can_be_is_rendered():
+    story = an_ordinary_story(STORY_LIMIT)
+    assert STORY_LIMIT * 0.9 < len(story) <= STORY_LIMIT
+
+    took, rendered = seconds_to_render(story)
+
+    assert took < 3.0
+    assert rendered.count("<h3>") == story.count("### ")
+    assert rendered.count("<strong>") == story.count("**") // 2
+    assert rendered.count("<table>") == story.count("| Year |")
+    # writing this full of marks, at this length, is still well inside the limit
+    assert story_work(prepared(story)) * 3 < STORY_WORK_LIMIT
+
+
+def test_a_link_title_far_longer_than_a_title_is_not_looked_for():
+    # the search for the end of a title is bounded, so it cannot be made slow
+    took, rendered = seconds_to_render(repeated('](a "', STORY_LIMIT))
+
+    assert took < 3.0
     assert_only_allowed(rendered)

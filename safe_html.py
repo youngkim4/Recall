@@ -15,10 +15,13 @@ result reads back as the same tags it was written with.
 from __future__ import annotations
 
 import re
+import time
 from html import escape, unescape
 from html.parser import HTMLParser
+from typing import Callable
 
 import markdown as markdown_lib
+from markdown.extensions import Extension
 
 ALLOWED_TAGS = frozenset({
     "p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "em", "strong", "del", "code", "pre",
@@ -38,15 +41,82 @@ _WHOLE_NUMBER = re.compile(r"[0-9]{1,9}")
 # Tables and tidy lists are all a story needs. Neither lets the text name an
 # attribute, which the "extra" set did through attribute lists.
 STORY_EXTENSIONS = ("tables", "sane_lists")
-# far more than a model writes about one conversation; what is past it is not read
-STORY_LIMIT = 200_000
+# several times what a model writes about one conversation; what is past it is not read
+STORY_LIMIT = 60_000
 # a run of one mark longer than any writing uses, which the renderer is slow to read
 _LONG_RUN = re.compile(r"([^\w\s])\1{16,}")
 _LONG_BREAK = re.compile(r"\n{4,}")
 _QUOTE_MARK = re.compile(r"(?m)^([ \t]*)&gt; ?")
-_LINK_TITLE = re.compile(r"(\]\([^()\s]+)\s+(?:&quot;.*?&quot;|&#x27;.*?&#x27;)\)")
+# Each part has an end, so no text makes the search for a title long: an
+# address and a title longer than these are not an address and a title.
+_LINK_TITLE = re.compile(r"(\]\([^()\s]{1,2000})\s+(?:&quot;.{0,200}?&quot;|&#x27;.{0,200}?&#x27;)\)")
+
+# Two limits keep the renderer quick. A story past either one is shown as
+# plain paragraphs.
+#
+# The renderer is stopped when it has used STORY_SECONDS of processor time.
+# It can only be stopped between two of its steps, so no step may be long.
+#
+# What makes a step long is a paragraph with many marks in it: the renderer
+# reads the paragraph again for each mark. story_work adds up, over the
+# paragraphs of a story, the length of each times the marks it holds, and a
+# story that asks for more than STORY_WORK_LIMIT is not given to the renderer.
+# Ordinary writing as long as a story can be asks for a small part of it and
+# takes a small part of the time.
+STORY_SECONDS = 0.3
+STORY_WORK_LIMIT = 60_000_000
+_BLANK_LINE = re.compile(r"(?<=\n)[ \t]+\n")
+# a mark is anything that is not a letter, a digit, a space or a tab
+_MARK = re.compile(r"[^\w \t]|_")
+# The marks of emphasis are looked for by the slowest rules. The marks that
+# open a link or code make the renderer start the paragraph again.
+_EMPHASIS_MARK = re.compile(r"[*_]")
+_EMPHASIS_WEIGHT = 3
+_OPENING_MARK = re.compile(r"[\[\]`]")
+_OPENING_WEIGHT = 10
+# the renderer puts a longer token in the place of an escaped mark and of an
+# entity, so a paragraph that holds them is longer when it is read again
+_GROWS = re.compile(r"[\\&]")
+_GROWTH = 14
+# what a paragraph or a list item costs before anything in it is read
+_PIECE_WORK = 20_000
+# The renderer reads a list an item at a time. That is only sure when each
+# line of the paragraph is an item of one kind, so only then are the lines
+# counted by themselves.
+_LIST_LINES = (re.compile(r" {0,3}[*+-] +\S"), re.compile(r" {0,3}\d+\. +\S"))
 
 Attributes = list[tuple[str, str | None]]
+
+
+class _TooSlow(Exception):
+    """The renderer has used the processor time a story is given."""
+
+
+class _Deadline(Extension):
+    """Stops a render that has run too long. The renderer cannot be stopped
+    from outside, so each of its steps asks first whether there is time left:
+    a step is one use of a rule on a paragraph, or one block read. The time is
+    the processor time of this thread, so a busy machine does not use it up."""
+
+    def __init__(self, seconds: float) -> None:
+        super().__init__()
+        self._seconds = seconds
+
+    def extendMarkdown(self, md: markdown_lib.Markdown) -> None:
+        stop_at = time.thread_time() + self._seconds
+
+        def checked(step: Callable) -> Callable:
+            def run(*args, **kwargs):
+                if time.thread_time() > stop_at:
+                    raise _TooSlow
+                return step(*args, **kwargs)
+
+            return run
+
+        for rule in md.inlinePatterns:
+            rule.handleMatch = checked(rule.handleMatch)
+        for reader in md.parser.blockprocessors:
+            reader.run = checked(reader.run)
 
 
 def ordinary_address(value: str | None) -> str:
@@ -142,28 +212,75 @@ def sanitize(html: str | None, *, code_escaped_twice: bool = False) -> str:
     return rebuilder.result()
 
 
-def story_html(text: str | None) -> str:
-    """Markdown written by a model, as HTML that is safe to put into a page.
+def _tamed(text: str) -> str:
+    """The story cut to the length one can have, with runs of one mark and of
+    empty lines cut to a length no writing needs."""
+    return _LONG_BREAK.sub("\n\n\n", _LONG_RUN.sub(lambda run: run.group(1) * 16, text[:STORY_LIMIT]))
 
-    A link goes to an ordinary address or is only its words, a picture is only
-    its caption, and no tag carries a handler, a style or a name. Showing the
-    result runs nothing and loads nothing."""
-    if not text:
-        return ""
-    # The text can be steered by whoever wrote the messages. Runs of one mark
-    # and of empty lines are cut to a length no writing needs, and the whole
-    # to a length no report reaches, so that reading it stays quick.
-    tamed = _LONG_BREAK.sub("\n\n\n", _LONG_RUN.sub(lambda run: run.group(1) * 16, text[:STORY_LIMIT]))
-    escaped = escape(tamed)
+
+def prepared(text: str) -> str:
+    """The story as the renderer is given it: cut, and with all of it escaped."""
+    escaped = escape(_tamed(text))
     # escaping turns the marker of a quoted line into &gt; before markdown can
     # see it; the ones that start a line are put back, so quotes stay quotes
     escaped = _QUOTE_MARK.sub(r"\1> ", escaped)
     # escaping also hides the quotes around a link's title, which would then be
     # read as part of its address; the title is dropped and the address kept
-    escaped = _LINK_TITLE.sub(r"\1)", escaped)
+    return _LINK_TITLE.sub(r"\1)", escaped)
+
+
+def _read_together(block: str) -> list[str]:
+    """The pieces of a paragraph that the renderer reads by themselves."""
+    lines = block.strip("\n").split("\n")
+    if len(lines) > 1 and any(all(item.match(line) for line in lines) for item in _LIST_LINES):
+        return lines
+    return [block]
+
+
+def _piece_work(piece: str) -> int:
+    marks = (
+        len(_MARK.findall(piece))
+        + (_EMPHASIS_WEIGHT - 1) * len(_EMPHASIS_MARK.findall(piece))
+        + (_OPENING_WEIGHT - 1) * len(_OPENING_MARK.findall(piece))
+    )
+    length = len(piece) + _GROWTH * len(_GROWS.findall(piece))
+    return _PIECE_WORK + length * marks
+
+
+def story_work(ready: str) -> int:
+    """How much the renderer has to do to read a prepared story: for each
+    paragraph, its length times the marks in it. The paragraphs are split
+    where the renderer splits them, at empty lines."""
+    blocks = _BLANK_LINE.sub("\n", ready).split("\n\n")
+    return sum(_piece_work(piece) for block in blocks for piece in _read_together(block))
+
+
+def _plain(text: str) -> str:
+    """The words of a story as they are, a paragraph for each."""
+    return "".join(f"<p>{part}</p>" for part in escape(_tamed(text)).split("\n\n") if part.strip())
+
+
+def story_html(text: str | None) -> str:
+    """Markdown written by a model, as HTML that is safe to put into a page.
+
+    A link goes to an ordinary address or is only its words, a picture is only
+    its caption, and no tag carries a handler, a style or a name. Showing the
+    result runs nothing and loads nothing.
+
+    The text can be steered by whoever wrote the messages, so reading it is
+    kept quick: it is cut to the length a story can have, and a story that
+    would take the renderer long is shown as plain paragraphs."""
+    if not text:
+        return ""
+    ready = prepared(text)
+    if story_work(ready) > STORY_WORK_LIMIT:
+        return _plain(text)
     try:
-        rendered = markdown_lib.markdown(escaped, extensions=list(STORY_EXTENSIONS), output_format="html5")
-    except RecursionError:
-        # nested deeper than the renderer can follow: the words are shown as they are
-        return "".join(f"<p>{part}</p>" for part in escape(tamed).split("\n\n") if part.strip())
+        # the deadline is named last, so it holds every rule the others added
+        rules = [*STORY_EXTENSIONS, _Deadline(STORY_SECONDS)]
+        rendered = markdown_lib.markdown(ready, extensions=rules, output_format="html5")
+    except (RecursionError, _TooSlow):
+        # nested deeper than the renderer can follow, or slow to read: the
+        # words are shown as they are
+        return _plain(text)
     return sanitize(rendered, code_escaped_twice=True)

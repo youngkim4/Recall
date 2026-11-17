@@ -983,8 +983,9 @@ def file_cache_signature(path: Path | str | None) -> tuple | None:
 
 # Bump when an opened report changes in shape or in how its story is rendered,
 # so that a stored one is not served as it was. A change to story_html in
-# safe_html is such a change.
-ANALYSIS_PAYLOAD_VERSION = 4
+# safe_html is such a change. Version 5: a story is cut at a shorter length,
+# and one that is slow to render is shown as plain paragraphs.
+ANALYSIS_PAYLOAD_VERSION = 5
 
 
 def analysis_cache_key(
