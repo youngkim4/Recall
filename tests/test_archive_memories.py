@@ -265,3 +265,133 @@ def test_the_patterns_of_an_archive_leave_a_row_that_does_not_say_out_of_both_vo
     (november,) = ui_server.archive_patterns(csv)["monthly"]
 
     assert november == {"key": "2024-11", "total": 3, "sent": 1, "received": 1}
+
+
+# ---- a moment and the day it opens count the same messages
+
+
+def test_a_moment_counts_every_message_of_its_day(tmp_path, saved_names):
+    csv = write_export(tmp_path / "messages.csv", [
+        row(AVERY, "2024-11-16 09:00:00", "a line long enough to be worth quoting back"),
+        # a picture with no words is a message of that day as well
+        row(AVERY, "2024-11-16 09:01:00", ""),
+        row(AVERY, "2024-11-16 09:02:00", None, from_me=1),
+        row(AVERY, "2024-11-16 23:59:59", "late"),
+        row(AVERY, "2024-11-17 00:00:00", "the next day"),
+        row(BLAKE, "2024-11-16 10:00:00", "another conversation on the same day"),
+    ])
+
+    by_chat = {item["chatId"]: item for item in ui_server.memories_payload(csv, now=NOW)["onThisDay"]}
+    moment = by_chat[AVERY]
+    day = ui_server.day_payload(csv, AVERY, moment["day"])
+
+    assert moment["count"] == day["total"] == 4
+    assert moment["preview"] == "a line long enough to be worth quoting back"
+
+
+def test_a_day_with_no_words_is_not_a_moment(tmp_path, saved_names):
+    csv = write_export(tmp_path / "messages.csv", [
+        row(AVERY, "2024-11-16 09:00:00", ""),
+        row(AVERY, "2024-11-16 09:01:00", None),
+        row(BLAKE, "2025-03-01 10:00:00", "some other day"),
+    ])
+
+    assert ui_server.memories_payload(csv, now=NOW)["onThisDay"] == []
+
+
+def test_the_busiest_days_come_first_by_every_message_they_hold(tmp_path, saved_names):
+    csv = write_export(tmp_path / "messages.csv", [
+        row(AVERY, "2024-11-16 09:00:00", "two messages with words"),
+        row(AVERY, "2024-11-16 09:01:00", "and this is the second"),
+        row(BLAKE, "2023-11-16 09:00:00", "one message with words"),
+        row(BLAKE, "2023-11-16 09:01:00", ""),
+        row(BLAKE, "2023-11-16 09:02:00", ""),
+    ])
+
+    moments = ui_server.memories_payload(csv, now=NOW)["onThisDay"]
+
+    assert [(item["chatId"], item["count"]) for item in moments] == [(BLAKE, 3), (AVERY, 2)]
+
+
+def test_a_moment_names_the_message_it_quotes(tmp_path, saved_names):
+    csv = write_export(tmp_path / "messages.csv", [
+        row(AVERY, "2024-11-16 09:00:00", "ok"),
+        row(AVERY, "2024-11-16 21:15:00", "short"),
+        row(AVERY, "2024-11-16 21:15:00", "a line long enough to be worth quoting back"),
+        row(AVERY, "2024-11-16 21:15:00", "also short"),
+    ])
+
+    (moment,) = ui_server.memories_payload(csv, now=NOW)["onThisDay"]
+    messages = ui_server.day_payload(csv, AVERY, moment["day"])["messages"]
+
+    # three messages share that second, so the time does not say which was quoted
+    assert sum(message["timestamp"] == moment["previewAt"] for message in messages) == 3
+    assert [message["text"] for message in messages if message["messageId"] == moment["previewId"]] == [
+        "a line long enough to be worth quoting back",
+    ]
+
+
+def test_a_moment_with_nothing_to_quote_names_no_message(tmp_path, saved_names):
+    csv = write_export(tmp_path / "messages.csv", [row(AVERY, "2024-11-16 09:00:00", "https://example.com/a")])
+
+    (moment,) = ui_server.memories_payload(csv, now=NOW)["onThisDay"]
+
+    assert (moment["preview"], moment["previewId"], moment["previewAt"]) == ("", "", None)
+
+
+# ---- anniversaries
+
+
+def hourly(chat_id, first, count):
+    """count messages, one an hour, starting at first."""
+    return [row(chat_id, str(stamp), "ok") for stamp in pd.date_range(start=first, periods=count, freq="h")]
+
+
+def test_an_anniversary_early_in_january_is_seen_from_late_december(tmp_path, saved_names):
+    csv = write_export(tmp_path / "messages.csv", hourly(AVERY, "2020-01-02 09:00:00", 300))
+
+    (item,) = ui_server.memories_payload(csv, now=pd.Timestamp("2026-12-28 12:00:00"))["anniversaries"]
+
+    assert (item["chatId"], item["date"], item["years"], item["inDays"]) == (AVERY, "2020-01-02", 7, 5)
+
+
+def test_a_first_anniversary_is_seen_before_the_year_turns(tmp_path, saved_names):
+    csv = write_export(tmp_path / "messages.csv", hourly(AVERY, "2026-01-02 09:00:00", 300))
+
+    (item,) = ui_server.memories_payload(csv, now=pd.Timestamp("2026-12-28 12:00:00"))["anniversaries"]
+
+    assert (item["years"], item["inDays"]) == (1, 5)
+
+
+def test_an_anniversary_is_seen_for_a_week_and_on_its_day(tmp_path, saved_names):
+    csv = write_export(tmp_path / "messages.csv", hourly(AVERY, "2020-11-23 09:00:00", 300))
+
+    def in_days(now):
+        return [item["inDays"] for item in ui_server.memories_payload(csv, now=pd.Timestamp(now))["anniversaries"]]
+
+    assert in_days("2026-11-15 12:00:00") == []
+    assert in_days("2026-11-16 12:00:00") == [7]
+    assert in_days("2026-11-23 23:00:00") == [0]
+    # the day after, the next one is a year away
+    assert in_days("2026-11-24 00:30:00") == []
+
+
+def test_a_conversation_that_started_this_year_has_no_anniversary_yet(tmp_path, saved_names):
+    csv = write_export(tmp_path / "messages.csv", hourly(AVERY, "2026-11-10 09:00:00", 300))
+
+    assert ui_server.memories_payload(csv, now=pd.Timestamp("2026-11-23 12:00:00"))["anniversaries"] == []
+
+
+# ---- times that cannot be read
+
+
+def test_a_conversation_with_no_readable_times_does_not_stop_the_moments(tmp_path, saved_names):
+    # Avery's first message has its anniversary two days after NOW
+    readable = thread(AVERY, "2024-11-18 20:00:00", 1000)
+    unreadable = [row(BLAKE, "not a time", "ok") for _ in range(1000)]
+    csv = write_export(tmp_path / "messages.csv", readable + unreadable)
+
+    memories = ui_server.memories_payload(csv, now=NOW)
+
+    assert [item["chatId"] for item in memories["anniversaries"]] == [AVERY]
+    assert memories["reconnect"] == []

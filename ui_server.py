@@ -1380,6 +1380,11 @@ def _row_str(row, key: str, default: str = "") -> str:
 MESSAGE_TEXT_LIMIT = 600
 
 
+def message_id_text(row) -> str:
+    """The id of a message, written one way wherever a payload names one."""
+    return _row_str(row, "message_id")
+
+
 def message_row_payload(
     row,
     name_map: dict[str, str] | None = None,
@@ -1394,7 +1399,7 @@ def message_row_payload(
     # the saved name or "": the interface labels a sender who is not in Contacts
     sender_name = (sender_map or {}).get(sender, "") if mine is not True and sender else ""
     return {
-        "messageId": _row_str(row, "message_id"),
+        "messageId": message_id_text(row),
         "chatId": chat_id,
         "displayName": display_name,
         "senderName": sender_name,
@@ -2029,6 +2034,24 @@ def first_words_payload(messages_path: Path, limit: int = 5) -> dict:
     }
 
 
+# an anniversary is shown from this many days before it
+ANNIVERSARY_DAYS_AHEAD = 7
+
+
+def _next_anniversary(first: pd.Timestamp, today: pd.Timestamp) -> pd.Timestamp | None:
+    """The next day, today or later, with the month and day of `first`. It can
+    be in the year after this one: 2 January is days away on 28 December.
+    None for a 29 February when neither year has one."""
+    for year in (today.year, today.year + 1):
+        try:
+            candidate = first.replace(year=year).normalize()
+        except ValueError:
+            continue
+        if candidate >= today:
+            return candidate
+    return None
+
+
 def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> dict:
     """Proactive memories computed from the cached dataframe -- no AI calls.
     On-this-day moments from past years, upcoming first-message anniversaries,
@@ -2058,7 +2081,7 @@ def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> di
     def memory_quote(cid: str, day_rows: pd.DataFrame) -> dict:
         """A quote that reads like a memory: conversational, never a link or a
         paste. Says who sent it, so it is never shown as someone else's words."""
-        blank = {"preview": "", "previewFromMe": None, "previewSender": "", "previewAt": None}
+        blank = {"preview": "", "previewFromMe": None, "previewSender": "", "previewAt": None, "previewId": ""}
         texts = day_rows["text"].map(display_text)
         clean = texts[
             ~texts.str.contains("http", case=False, na=False)
@@ -2079,34 +2102,31 @@ def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> di
             "previewSender": str(resolve_contact_names([sender]).get(sender) or "") if in_group else "",
             # when it was sent, so the day can be opened at this message
             "previewAt": _row_str(chosen, "timestamp") or None,
+            # and which message it is: two sent in the same second share a time
+            "previewId": message_id_text(chosen),
         }
 
     # --- on this day, in past years ---
     on_this_day: list[dict] = []
     ts = df["timestamp"]
-    day_mask = (
-        (ts.dt.month == now.month)
-        & (ts.dt.day == now.day)
-        & (ts.dt.year < now.year)
-        & df["text"].fillna("").astype(str).str.strip().ne("")
-    )
-    past_today = df[day_mask]
+    past_today = df[(ts.dt.month == now.month) & (ts.dt.day == now.day) & (ts.dt.year < now.year)]
     if not past_today.empty:
-        grouped = (
-            past_today.groupby(
-                [past_today["timestamp"].dt.year.rename("year"), cids[day_mask].rename("cid")]
-            )
-            .size()
-            .rename("count")
+        day_years = past_today["timestamp"].dt.year
+        day_cids = cids[past_today.index]
+        worded = past_today["text"].fillna("").astype(str).str.strip().ne("")
+        # A day is counted in full, the way the day view and the calendar count
+        # it. It is a moment only when someone wrote words on it.
+        per_day = (
+            pd.DataFrame({"year": day_years, "cid": day_cids, "worded": worded})
+            .groupby(["year", "cid"])["worded"]
+            .agg(count="size", worded="sum")
             .reset_index()
-            .sort_values("count", ascending=False)
-            .head(6)
         )
-        for _, row in grouped.iterrows():
+        busiest = per_day[per_day["worded"] > 0].sort_values("count", ascending=False, kind="stable").head(6)
+        for _, row in busiest.iterrows():
             year, cid, count = int(row["year"]), str(row["cid"]), int(row["count"])
-            day_rows = past_today[
-                (past_today["timestamp"].dt.year == year) & (cids[day_mask] == cid)
-            ]
+            # the quote is picked from the messages that hold words
+            day_rows = past_today[(day_years == year) & (day_cids == cid) & worded]
             on_this_day.append(
                 {
                     "chatId": cid,
@@ -2125,18 +2145,17 @@ def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> di
 
     # --- first-message anniversaries in the next week (named contacts only) ---
     anniversaries: list[dict] = []
-    for cid, first in firsts.items():
+    today = now.normalize()
+    # a conversation with no time that can be read has no first day
+    for cid, first in firsts.dropna().items():
         if int(counts.get(cid, 0)) < 300 or not names.get(str(cid)):
             continue
-        years = int(now.year - first.year)
-        if years < 1:
+        upcoming = _next_anniversary(first, today)
+        if upcoming is None:
             continue
-        try:
-            next_anniversary = first.replace(year=now.year)
-        except ValueError:  # Feb 29 origin
-            continue
-        in_days = int((next_anniversary.normalize() - now.normalize()).days)
-        if 0 <= in_days <= 7:
+        years = int(upcoming.year - first.year)
+        in_days = int((upcoming - today).days)
+        if years >= 1 and in_days <= ANNIVERSARY_DAYS_AHEAD:
             anniversaries.append(
                 {
                     "chatId": str(cid),
@@ -2151,7 +2170,7 @@ def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> di
 
     # --- reconnect: big 1:1 threads gone quiet ---
     reconnect: list[dict] = []
-    for cid, last in lasts.items():
+    for cid, last in lasts.dropna().items():
         cid = str(cid)
         if is_group_chat(cid) or int(counts.get(cid, 0)) < 1000:
             continue
