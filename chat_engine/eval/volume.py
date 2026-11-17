@@ -24,8 +24,9 @@ import statistics
 import sys
 import time
 import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Iterator, Optional, Sequence
 
 from ..browse import browse
 from ..engine import ChatEngine, EngineConfig
@@ -57,16 +58,29 @@ def _refuse(*_args: object, **_kwargs: object) -> None:
     raise _NetworkBlocked("the volume run must not use the network")
 
 
-def block_network() -> None:
-    """After this call no code of this process can open a connection."""
-    targets = (
-        (socket.socket, "connect"),
-        (socket.socket, "connect_ex"),
-        (socket, "create_connection"),
-        (socket, "getaddrinfo"),
-    )
-    for owner, name in targets:
+_MISSING = object()
+_WAYS_OUT: tuple[tuple[Any, str], ...] = (
+    (socket.socket, "connect"),
+    (socket.socket, "connect_ex"),
+    (socket, "create_connection"),
+    (socket, "getaddrinfo"),
+)
+
+
+@contextmanager
+def network_blocked() -> Iterator[None]:
+    """Inside the block no code of this process can open a connection. After it the process is as it was."""
+    kept = [(owner, name, vars(owner).get(name, _MISSING)) for owner, name in _WAYS_OUT]
+    for owner, name, _ in kept:
         setattr(owner, name, _refuse)
+    try:
+        yield
+    finally:
+        for owner, name, real in kept:
+            if real is _MISSING:  # the class took it from its base
+                delattr(owner, name)
+            else:
+                setattr(owner, name, real)
 
 
 @dataclass(frozen=True)
@@ -303,14 +317,14 @@ def main(argv: Optional[Sequence[str]] = None, out: Out = print) -> int:
     arguments = parser.parse_args(argv)
     if bool(arguments.path) == (arguments.invented > 0):
         parser.error("give the export file, or --invented ROWS")
-    block_network()
-    warnings.simplefilter("ignore")  # a warning can quote a value of the file
-    logged = logging.root.manager.disable
-    logging.disable(logging.CRITICAL)  # a log line can hold the text of an error, and that text a row of the file
-    try:
-        return _run(arguments, out)
-    finally:
-        logging.disable(logged)
+    with network_blocked():
+        warnings.simplefilter("ignore")  # a warning can quote a value of the file
+        logged = logging.root.manager.disable
+        logging.disable(logging.CRITICAL)  # a log line can hold the text of an error, and that text a row of the file
+        try:
+            return _run(arguments, out)
+        finally:
+            logging.disable(logged)
 
 
 def _run(arguments: argparse.Namespace, out: Out) -> int:

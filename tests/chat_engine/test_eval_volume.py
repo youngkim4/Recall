@@ -1,7 +1,11 @@
 """The volume run, on an invented export. The real export is never read by a test."""
 
 import re
+import socket
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -83,26 +87,68 @@ def test_a_file_that_is_not_an_export_is_reported_by_the_type_of_the_error_only(
 
 def test_the_run_blocks_the_network_first(export: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     order: list[str] = []
-    monkeypatch.setattr(volume, "block_network", lambda: order.append("block"))
+
+    @contextmanager
+    def blocked() -> Iterator[None]:
+        order.append("block")
+        yield
+        order.append("open")
+
+    monkeypatch.setattr(volume, "network_blocked", blocked)
     def load(_path: str, _invented: int, _out: object) -> None:
         order.append("load")
         raise ValueError
 
     monkeypatch.setattr(volume, "load", load)
     assert volume.main([str(export)], out=lambda line: None) == 1
-    assert order == ["block", "load"]
+    assert order == ["block", "load", "open"]
 
 
-def test_block_network_stops_every_way_out() -> None:
-    import socket
+WAYS_OUT = ((socket.socket, "connect"), (socket.socket, "connect_ex"), (socket, "create_connection"), (socket, "getaddrinfo"))
 
-    volume.block_network()
-    with pytest.raises(RuntimeError):
-        socket.create_connection(("example.com", 443), timeout=1)
-    with pytest.raises(RuntimeError):
-        socket.socket().connect(("127.0.0.1", 9))
-    with pytest.raises(RuntimeError):
-        socket.getaddrinfo("example.com", 443)
+
+def ways_out_now() -> list[Any]:
+    """What each way out is at this moment. None: the class takes it from its base."""
+    return [vars(owner).get(name) for owner, name in WAYS_OUT]
+
+
+def test_inside_the_block_every_way_out_is_stopped() -> None:
+    with volume.network_blocked():
+        with pytest.raises(RuntimeError):
+            socket.create_connection(("example.com", 443), timeout=1)
+        with pytest.raises(RuntimeError):
+            socket.socket().connect(("127.0.0.1", 9))
+        with pytest.raises(RuntimeError):
+            socket.socket().connect_ex(("127.0.0.1", 9))
+        with pytest.raises(RuntimeError):
+            socket.getaddrinfo("example.com", 443)
+
+
+def test_after_the_block_the_process_is_as_it_was() -> None:
+    before = ways_out_now()
+    with volume.network_blocked():
+        assert all(now is not was for now, was in zip(ways_out_now(), before))
+    assert ways_out_now() == before
+
+
+def test_an_error_inside_the_block_does_not_keep_the_network_shut() -> None:
+    before = ways_out_now()
+    with pytest.raises(ValueError), volume.network_blocked():
+        raise ValueError
+    assert ways_out_now() == before
+
+
+def test_a_way_out_that_the_class_takes_from_its_base_is_given_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delattr(socket.socket, "connect")
+    with volume.network_blocked():
+        assert "connect" in vars(socket.socket)
+    assert "connect" not in vars(socket.socket)
+
+
+def test_a_run_leaves_the_process_as_it_found_it() -> None:
+    before = ways_out_now()
+    assert volume.main(["--invented", "600", "--repeat", "1"], out=lambda line: None) == 0
+    assert ways_out_now() == before
 
 
 def test_an_invented_export_has_the_shape_of_a_real_one() -> None:
