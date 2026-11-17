@@ -66,7 +66,7 @@ export function SettingsView({
       <div className="page wide settings-page arrive-each">
         {/* how the app looks and thinks */}
         <div className="settings-col">
-          <section aria-labelledby="settings-look">
+          <section className="section ruled" aria-labelledby="settings-look">
             <div className="section-head">
               <h2 id="settings-look">Appearance</h2>
             </div>
@@ -79,7 +79,7 @@ export function SettingsView({
             </div>
           </section>
 
-          <section className="section" aria-labelledby="settings-ai">
+          <section className="section ruled" aria-labelledby="settings-ai">
             <div className="section-head">
               <h2 id="settings-ai">AI</h2>
             </div>
@@ -99,7 +99,7 @@ export function SettingsView({
 
         {/* the archive and where it is kept */}
         <div className="settings-col">
-          <section aria-labelledby="settings-archive">
+          <section className="section ruled" aria-labelledby="settings-archive">
             <div className="section-head">
               <h2 id="settings-archive">Archive</h2>
             </div>
@@ -139,7 +139,7 @@ export function SettingsView({
             </div>
           </section>
 
-          <section className="section">
+          <section className="section ruled">
             <Disclosure className="setting-more" summary="File locations">
               <FileLocations paths={paths} defaultPaths={defaultPaths} busy={busy} onApply={onApplyPaths} />
             </Disclosure>
