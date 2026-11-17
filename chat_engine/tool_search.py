@@ -8,7 +8,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from .ports import Message
 from .registry import normalize_ref
-from .render import ResultWriter, fit_messages, render_block
+from .render import ResultWriter, add_block, fit_messages
 from .search import Found, SearchOutcome, SearchRequest, run_search
 from .tool_args import ToolInputError, bool_arg, choice_arg, day_arg, int_arg, list_arg, text_arg
 from .tool_browse import prepare_browse
@@ -19,8 +19,8 @@ SEARCH_RADIUS = 2
 READ_RADIUS_DEFAULT = 6
 READ_RADIUS_MAX = 15
 _ORDER_WORDS = {"newest": "newest first", "oldest": "oldest first", "relevance": "best match first"}
-_NARROW_HINT = "Narrow the search with dates, conversations or more words, or raise limit."
 _EXCHANGE = timedelta(hours=36)
+_ECHO_CHARS = 40
 _TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
@@ -71,19 +71,29 @@ def run_search_tool(
     windows = build_windows(ctx, outcome.hits, radius)
     writer = ResultWriter(budget, ctx.limits.count_tokens)
     writer.add(_header(ctx, request, outcome), force=True)
-    shown = 0
+    visible: set[str] = set()
+    fitted = True
     for window in windows:
-        mark = ctx.registry.checkpoint()
-        block = render_block(
-            window.messages, book=ctx.book, registry=ctx.registry, limits=ctx.limits,
-            marks={message_id: "match" for message_id in window.hits}, focus=window.focus,
-        )
-        if not writer.add("\n" + "\n".join(block)):
-            ctx.registry.rollback(mark)
+        shown = _add_window(ctx, writer, window, outcome.matched)
+        if not shown:
+            fitted = False
             break
-        shown += len(window.hits)
-    writer.add(_footer(outcome, shown), force=True)
-    return ToolOutcome(writer.text().rstrip(), _summary(request, outcome, shown))
+        visible |= shown
+    writer.add(_footer(request, outcome, len(visible), fitted), force=True)
+    return ToolOutcome(writer.text().rstrip(), _summary(request, outcome, len(visible)))
+
+
+def _add_window(ctx: ToolContext, writer: ResultWriter, window: Window, matched: frozenset[str]) -> set[str]:
+    """Add one exchange, or only its hits when the exchange does not fit. The ids of the matches shown."""
+    for messages in (window.messages, tuple(m for m in window.messages if str(m["id"]) in window.hits)):
+        marks = {str(m["id"]): "match" for m in messages if str(m["id"]) in matched | window.hits}
+        fits = add_block(
+            writer, messages, book=ctx.book, registry=ctx.registry, limits=ctx.limits,
+            marks=marks, focus=window.focus,
+        )
+        if fits:
+            return set(marks)
+    return set()
 
 
 def build_windows(ctx: ToolContext, hits: Sequence[Found], radius: int) -> list[Window]:
@@ -150,9 +160,7 @@ def _header(ctx: ToolContext, request: SearchRequest, outcome: SearchOutcome) ->
             text += f" All words must be in one message. Messages per word: {alone}."
         return text
     text = f'Search "{request.query}" in {place}: {plural(outcome.total, "message")} '
-    text += "matches." if outcome.total == 1 else "match."
-    if len(outcome.hits) < outcome.total:
-        text += f" Showing {len(outcome.hits)}, {_ORDER_WORDS[request.order]}, at most 2 per exchange."
+    text += "matches." if outcome.total == 1 else f"match. {_ORDER_WORDS[request.order].capitalize()}."
     return text
 
 
@@ -172,22 +180,32 @@ def _any_header(request: SearchRequest, outcome: SearchOutcome, place: str) -> s
     return " ".join(parts)
 
 
-def _footer(outcome: SearchOutcome, shown: int) -> str:
-    planned = len(outcome.hits)
-    if shown < planned:
-        left = (outcome.total or planned) - shown
-        return f"\n[Result cut to fit. {plural(left, 'more match', 'more matches')} not shown. {_NARROW_HINT}]"
-    if outcome.total is not None and outcome.total > shown:
-        left = outcome.total - shown
-        return f"\n[{plural(left, 'more match', 'more matches')} not shown. {_NARROW_HINT}]"
-    return ""
-
-
-def _summary(request: SearchRequest, outcome: SearchOutcome, shown: int) -> str:
+def _footer(request: SearchRequest, outcome: SearchOutcome, visible: int, fitted: bool) -> str:
+    """What the result leaves out, and what would show it. Empty when nothing is left out."""
+    known = len(outcome.matched) if outcome.total is None else outcome.total
+    left = known - visible
+    if left <= 0:
+        return ""
+    cut = "Result cut to fit. " if not fitted else ""
     if outcome.total is None:
-        return f"Searched for any of “{request.query}”: {plural(shown, 'match', 'matches')} shown"
+        return (
+            f"\n[{cut}At least {plural(left, 'more message')} hold one of the words. "
+            "Raise limit, or search one word alone to list them all.]"
+        )
+    hints = ["Narrow the search with dates, conversations or more words"]
+    if fitted and len(outcome.hits) >= request.limit and request.limit < SEARCH_LIMIT_MAX:
+        hints.append("or raise limit")
+    text = f"\n[{cut}{plural(left, 'more match', 'more matches')} not shown. {', '.join(hints)}."
+    if len(outcome.hits) < min(request.limit, len(outcome.matched)):
+        text += " One exchange opens at most 2 matches: use read_around to read on."
+    return text + "]"
+
+
+def _summary(request: SearchRequest, outcome: SearchOutcome, visible: int) -> str:
+    if outcome.total is None:
+        return f"Searched for any of “{request.query}”: {plural(visible, 'match', 'matches')} shown"
     text = f"Searched for “{request.query}”: {plural(outcome.total, 'match', 'matches')}"
-    return text if shown == outcome.total else f"{text}, {shown} shown"
+    return text if visible >= outcome.total else f"{text}, {visible} shown"
 
 
 def prepare_read(ctx: ToolContext, arguments: Mapping[str, Any]) -> Prepared:
@@ -195,7 +213,8 @@ def prepare_read(ctx: ToolContext, arguments: Mapping[str, Any]) -> Prepared:
     ref = normalize_ref(raw)
     anchor = ctx.registry.get(ref) if ref else None
     if anchor is None:
-        raise ToolInputError(f'"{raw}" is not a known reference. Use one like m12 from an earlier result.')
+        shown = " ".join(str(raw).split())[:_ECHO_CHARS]
+        raise ToolInputError(f'"{shown}" is not a known reference. Use one like m12 from an earlier result.')
     if not ctx.allows(anchor):
         raise ToolInputError(OUTSIDE_SCOPE)
     radius = int_arg(arguments, "radius", default=READ_RADIUS_DEFAULT, low=1, high=READ_RADIUS_MAX)

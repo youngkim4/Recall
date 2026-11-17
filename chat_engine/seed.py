@@ -73,7 +73,7 @@ def named_entries(directory: Directory, names: Sequence[str]) -> list[Entry]:
     """Entries any name matches; those that match more names come first."""
     scored: dict[str, tuple[int, Entry]] = {}
     for name in names:
-        for entry in directory.find(name):
+        for entry in directory.find(name, loose_digits=True):
             key = str(entry.conversation["id"])
             count, _ = scored.get(key, (0, entry))
             scored[key] = (count + 1, entry)

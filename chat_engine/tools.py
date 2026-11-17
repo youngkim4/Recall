@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Mapping, Optional
 
-from .errors import ArchiveError
+from .errors import ArchiveError, ChatEngineError
 from .ports import ChatArchive, Labeler, ToolSpec
 from .registry import ConversationAliases, EvidenceRegistry
 from .render import Limits
@@ -22,6 +22,7 @@ from .tool_search import READ_RADIUS_MAX, prepare_read, prepare_search
 
 logger = logging.getLogger(__name__)
 
+_ECHO_CHARS = 40
 _DAY = "A day as YYYY-MM-DD in local time. The day itself is included."
 _CONVERSATIONS = (
     "Conversation aliases such as c3, from list_conversations or an earlier result. "
@@ -159,11 +160,11 @@ class ToolBox:
         """Check a call. A refused call still runs: it tells the model why."""
         builder = _BUILDERS.get(name)
         if builder is None:
-            return _refused(f'There is no tool named "{name}".', name)
+            return self._refuse(f'There is no tool named "{_brief(name)}".', name)
         try:
             prepared = self.guard(lambda: builder(self.context, parse_arguments(raw_arguments)))
         except ToolInputError as error:
-            return _refused(f"Cannot run {name}: {error}", name)
+            return self._refuse(f"Cannot run {name}: {error}", name)
         return self.wrap(name, prepared)
 
     def wrap(self, name: str, prepared: Prepared) -> Prepared:
@@ -175,7 +176,7 @@ class ToolBox:
         """Run archive work. An unexpected failure becomes a typed ArchiveError."""
         try:
             return action()
-        except ToolInputError:
+        except (ToolInputError, ChatEngineError):
             raise
         except Exception as error:
             logger.exception("archive lookup failed")
@@ -185,11 +186,18 @@ class ToolBox:
         try:
             outcome = self.guard(lambda: prepared.run(max(0, budget)))
         except ToolInputError as error:
-            return _refused(f"Cannot run {name}: {error}", name).run(budget)
+            return self._refuse(f"Cannot run {name}: {error}", name).run(budget)
         redact = self.context.labeler.redact
         return ToolOutcome(redact(outcome.text), redact(outcome.summary), outcome.ok)
 
+    def _refuse(self, reason: str, name: str) -> Prepared:
+        """A call that is not run. The model gets the reason; no raw handle is echoed."""
+        redact = self.context.labeler.redact
+        outcome = ToolOutcome(redact(reason), f"Could not run {_brief(name)}", ok=False)
+        return Prepared("", lambda _budget: outcome)
 
-def _refused(reason: str, name: str) -> Prepared:
-    outcome = ToolOutcome(reason, f"Could not run {name}", ok=False)
-    return Prepared("", lambda _budget: outcome)
+
+def _brief(value: object) -> str:
+    """Model input cut short before it is echoed."""
+    text = " ".join(str(value).split())
+    return text if len(text) <= _ECHO_CHARS else text[:_ECHO_CHARS] + "..."

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import math
+import re
+from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
 from .directory import Entry
@@ -26,6 +29,7 @@ LIST_LIMIT_MAX = 30
 _MEMBERS_SHOWN = 4
 _OWN_KEYS = ("", "me", "You")
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_PLAIN_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _KNOWN_FIGURES = frozenset(
     {
         "conversation", "total_messages", "sent_count", "received_count", "first_timestamp",
@@ -33,6 +37,33 @@ _KNOWN_FIGURES = frozenset(
         "longest_gap_days", "longest_gap_start", "longest_gap_end",
     }
 )
+
+
+def _number(value: Any) -> float:
+    """A figure as a number. Anything that is not a number counts as 0."""
+    if isinstance(value, bool):
+        return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) else 0.0
+
+
+@dataclass(frozen=True)
+class _Line:
+    """One row of a count table, ready to show."""
+
+    label: str
+    total: int
+    sent: int
+    received: int
+
+
+def _line(row: Mapping[str, Any], label: str) -> _Line:
+    total, sent = int(_number(row.get("total"))), int(_number(row.get("sent")))
+    received = row.get("received")
+    return _Line(label, total, sent, total - sent if received is None else int(_number(received)))
 
 
 # --- count_messages ---------------------------------------------------------
@@ -79,7 +110,7 @@ def run_count(ctx: ToolContext, filters: Mapping[str, Any], budget: int) -> Tool
     )
     subject = _subject(ctx, filters)
     if filters["group_by"] is None:
-        total = int(result) if isinstance(result, int) else 0
+        total = int(_number(result))
         return ToolOutcome(f"{subject}: {total:,}.", f"Counted messages: {total:,}")
     rows = [row for row in result if isinstance(row, dict)] if isinstance(result, list) else []
     return _count_table(ctx, subject, str(filters["group_by"]), rows, budget)
@@ -89,44 +120,58 @@ def _count_table(
     ctx: ToolContext, subject: str, group_by: str, rows: Sequence[CountRow], budget: int
 ) -> ToolOutcome:
     word = _GROUP_WORDS[group_by]
-    total = sum(int(row.get("total") or 0) for row in rows)
-    sent = sum(int(row.get("sent") or 0) for row in rows)
-    split = "" if group_by == "sender" else f" (you {sent:,}, others {total - sent:,})"
+    lines = _table_lines(ctx, group_by, rows)
+    total = sum(line.total for line in lines)
+    sent, received = sum(line.sent for line in lines), sum(line.received for line in lines)
+    split = "" if group_by == "sender" else _split(sent, received)
     writer = ResultWriter(budget, ctx.limits.count_tokens)
     writer.add(f"{subject} by {word}. Total {total:,}{split}.", force=True)
-    shown = _table_rows(rows, group_by)
-    if len(shown) < len(rows):
-        writer.add(f"Showing the {len(shown)} busiest of {len(rows):,} rows.", force=True)
-    for row in shown:
-        if not writer.add(_count_line(ctx, group_by, row)):
+    shown = _shown_lines(lines, group_by)
+    if len(shown) < len(lines):
+        writer.add(f"Showing the {len(shown)} busiest of {len(lines):,} rows.", force=True)
+    for line in shown:
+        text = f"{line.label}: {line.total:,}" + ("" if group_by == "sender" else _split(line.sent, line.received))
+        if not writer.add(text):
             writer.add("[Result cut to fit. Narrow the dates or the conversations.]", force=True)
             break
-    return ToolOutcome(writer.text(), f"Counted messages by {word}: {plural(len(rows), 'row')}")
+    return ToolOutcome(writer.text(), f"Counted messages by {word}: {plural(len(lines), 'row')}")
 
 
-def _table_rows(rows: Sequence[CountRow], group_by: str) -> list[CountRow]:
-    by_total = sorted(rows, key=lambda row: -int(row.get("total") or 0))
-    if len(rows) > _TABLE_ROWS_ALL:
-        return by_total[:_TABLE_ROWS_TOP]
-    if group_by in ("conversation", "sender"):
-        return by_total
-    return sorted(rows, key=lambda row: str(row.get("key") or ""))
+def _split(sent: int, received: int) -> str:
+    return f" (you {sent:,}, others {received:,})"
 
 
-def _count_line(ctx: ToolContext, group_by: str, row: CountRow) -> str:
-    key = str(row.get("key") or "")
-    total = int(row.get("total") or 0)
-    sent = int(row.get("sent") or 0)
+def _table_lines(ctx: ToolContext, group_by: str, rows: Sequence[CountRow]) -> list[_Line]:
+    """Rows with the label the model reads. One person with two handles is one sender row."""
     if group_by == "sender":
-        label = OWNER if key in _OWN_KEYS else ctx.labeler.sender(key)
-        return f"{label}: {total:,}"
+        return _by_person(ctx, rows)
     if group_by == "conversation":
-        label = ctx.book.title(key)
-    elif group_by == "weekday_hour":
-        label = weekday_hour(key)
-    else:
-        label = key
-    return f"{label}: {total:,} (you {sent:,}, others {total - sent:,})"
+        top = sorted(rows, key=lambda row: -_number(row.get("total")))
+        named = [_line(row, ctx.book.title(str(row.get("key") or ""))) for row in top[:_TABLE_ROWS_TOP]]
+        return named + [_line(row, "") for row in top[_TABLE_ROWS_TOP:]]
+    label = weekday_hour if group_by == "weekday_hour" else str
+    ordered = sorted(rows, key=lambda row: str(row.get("key") or ""))
+    return [_line(row, label(str(row.get("key") or ""))) for row in ordered]
+
+
+def _by_person(ctx: ToolContext, rows: Sequence[CountRow]) -> list[_Line]:
+    merged: dict[str, _Line] = {}
+    for row in rows:
+        key = str(row.get("key") or "")
+        one = _line(row, OWNER if key in _OWN_KEYS else ctx.labeler.sender(key))
+        known = merged.get(one.label)
+        merged[one.label] = one if known is None else _Line(
+            one.label, known.total + one.total, known.sent + one.sent, known.received + one.received
+        )
+    return sorted(merged.values(), key=lambda line: -line.total)
+
+
+def _shown_lines(lines: Sequence[_Line], group_by: str) -> list[_Line]:
+    if group_by == "conversation":
+        return list(lines[:_TABLE_ROWS_TOP])
+    if len(lines) > _TABLE_ROWS_ALL:
+        return sorted(lines, key=lambda line: -line.total)[:_TABLE_ROWS_TOP]
+    return list(lines)
 
 
 def weekday_hour(key: str) -> str:
@@ -158,7 +203,7 @@ def list_entries(
 ) -> ToolOutcome:
     directory = ctx.directory()
     shown = list(found[:limit])
-    scoped = " in the scope the user chose" if ctx.scope.conversations else ""
+    scoped = " in the scope the user chose" if ctx.scope.is_limited else ""
     if name and not found:
         return ToolOutcome(f'No conversation matches "{name}"{scoped}.', f"Looked up “{name}”: nothing found")
     if name:
@@ -168,49 +213,29 @@ def list_entries(
     else:
         header = f"{plural(len(shown), 'conversation')} with the most messages (of {len(directory)}){scoped}:"
         summary = f"Listed {plural(len(shown), 'conversation')}"
-    ranged = _ranged_counts(ctx)
     writer = ResultWriter(budget, ctx.limits.count_tokens)
     writer.add(header, force=True)
     for entry in shown:
-        if not writer.add(_entry_line(ctx, entry, directory.entries, ranged)):
+        if not writer.add(_entry_line(ctx, entry, directory.entries)):
             writer.add("[Result cut to fit. Ask for a name to list fewer.]", force=True)
             break
     return ToolOutcome(writer.text(), summary)
 
 
-def _ranged_counts(ctx: ToolContext) -> Optional[dict[str, CountRow]]:
-    """Counts inside the days of the scope, when the scope has days."""
-    if not (ctx.scope.since or ctx.scope.until):
-        return None
-    rows = ctx.archive.count(
-        conversations=list(ctx.scope.conversations) or None,
-        since=ctx.scope.since,
-        until=ctx.scope.until,
-        from_me=None,
-        text=None,
-        group_by="conversation",
-    )
-    return {str(row["key"]): row for row in rows} if isinstance(rows, list) else {}
-
-
-def _entry_line(
-    ctx: ToolContext, entry: Entry, entries: Sequence[Entry], ranged: Optional[Mapping[str, CountRow]]
-) -> str:
+def _entry_line(ctx: ToolContext, entry: Entry, entries: Sequence[Entry]) -> str:
     conversation = entry.conversation
-    conversation_id = str(conversation["id"])
-    is_group = bool(conversation.get("is_group"))
-    other = "others" if is_group else "them"
-    parts = [ctx.book.alias(conversation_id), entry.label, _kind(ctx, entry)]
-    if ranged is None:
-        total = int(conversation.get("message_count") or 0)
-        sent = int(conversation.get("sent_count") or 0)
-        parts.append(f"{plural(total, 'message')} (you {sent:,}, {other} {total - sent:,})")
+    other = "others" if conversation.get("is_group") else "them"
+    parts = [ctx.book.alias(str(conversation["id"])), entry.label, _kind(ctx, entry)]
+    if entry.counted is None:
+        sent = int(_number(conversation.get("sent_count")))
+        received = int(_number(conversation.get("received_count")))
+        parts.append(f"{plural(entry.total, 'message')} (you {sent:,}, {other} {received:,})")
         first, last = conversation.get("first_timestamp"), conversation.get("last_timestamp")
         parts.append(f"{str(first)[:10]} to {str(last)[:10]}" if first and last else "no messages")
     else:
-        row = ranged.get(conversation_id)
-        total, sent = (int(row["total"]), int(row["sent"])) if row else (0, 0)
-        parts.append(f"{plural(total, 'message')} in the scope dates (you {sent:,}, {other} {total - sent:,})")
+        counted = _line(entry.counted, "")
+        counts = f"(you {counted.sent:,}, {other} {counted.received:,})"
+        parts.append(f"{plural(counted.total, 'message')} in the scope dates {counts}")
     twin = _same_person(ctx, entry, entries)
     if twin:
         parts.append(f"same person as {twin}")
@@ -261,7 +286,7 @@ def run_stats(
     span = ctx.when(since, until) or ", all time"
     writer = ResultWriter(budget, ctx.limits.count_tokens)
     writer.add(f"Figures for {ctx.book.title(conversation_id)}{span}:", force=True)
-    for line in stats_lines(figures or {}):
+    for line in stats_lines(figures if isinstance(figures, Mapping) else {}):
         if not writer.add(line):
             break
     return ToolOutcome(writer.text(), f"Read the figures for {ctx.book.label(conversation_id)}")
@@ -269,22 +294,24 @@ def run_stats(
 
 def stats_lines(figures: Mapping[str, Any]) -> list[str]:
     """The figures in plain words. A value that could name a person is left out."""
-    total = int(figures.get("total_messages") or 0)
-    sent = int(figures.get("sent_count") or 0)
-    lines = [f"messages: {total:,} (you {sent:,}, others {total - sent:,})"]
+    total = int(_number(figures.get("total_messages")))
+    sent = int(_number(figures.get("sent_count")))
+    received = figures.get("received_count")
+    others = total - sent if received is None else int(_number(received))
+    lines = [f"messages: {total:,} (you {sent:,}, others {others:,})"]
     if figures.get("first_timestamp"):
         lines.append(f"first message: {figures['first_timestamp']}")
     if figures.get("last_timestamp"):
         lines.append(f"last message: {figures['last_timestamp']}")
-    active = int(figures.get("active_days") or 0)
+    active = int(_number(figures.get("active_days")))
     if active:
-        average = float(figures.get("avg_messages_per_day") or 0.0)
+        average = _number(figures.get("avg_messages_per_day"))
         lines.append(f"active days: {active:,} ({average:.1f} messages on an active day)")
     if figures.get("busiest_day"):
-        count = int(figures.get("busiest_day_count") or 0)
+        count = int(_number(figures.get("busiest_day_count")))
         lines.append(f"busiest day: {str(figures['busiest_day'])[:10]} ({plural(count, 'message')})")
     if figures.get("longest_gap_start") and figures.get("longest_gap_end"):
-        days = float(figures.get("longest_gap_days") or 0.0)
+        days = _number(figures.get("longest_gap_days"))
         lines.append(
             f"longest gap: {days:.1f} days, from {figures['longest_gap_start']} to {figures['longest_gap_end']}"
         )
@@ -292,6 +319,7 @@ def stats_lines(figures: Mapping[str, Any]) -> list[str]:
     return lines
 
 
-def _extra(key: str, value: Any) -> bool:
-    """A field this module does not know: show it only when it is a plain number."""
-    return key not in _KNOWN_FIGURES and isinstance(value, (int, float)) and not isinstance(value, bool)
+def _extra(key: object, value: Any) -> bool:
+    """A field this module does not know: shown only when its name and its value are plain."""
+    plain_key = isinstance(key, str) and key not in _KNOWN_FIGURES and bool(_PLAIN_KEY_RE.match(key))
+    return plain_key and isinstance(value, (int, float)) and not isinstance(value, bool)

@@ -188,7 +188,7 @@ def test_fit_messages_always_ends_and_always_shows_one_message() -> None:
     archive = tiny_archive()
     book = ConversationBook(archive, tiny_labeler(), ConversationAliases())
     messages = archive.context("a5", radius=3)
-    for drop in (lambda rows: list(rows), lambda rows: []):
+    for drop in (list, lambda rows: []):
         registry = EvidenceRegistry()
         writer, kept = fit_messages(
             messages, header=lambda count: f"{count} shown", drop=drop, budget=1,

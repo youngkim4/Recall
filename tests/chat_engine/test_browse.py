@@ -2,7 +2,10 @@
 
 import json
 
-from chat_engine.browse import browse
+import pytest
+
+from chat_engine import tool_browse
+from chat_engine.browse import Browsed, browse
 from chat_engine.fake_archive import FakeArchive, make_message
 from chat_engine.registry import ConversationAliases, EvidenceRegistry
 from chat_engine.render import Limits
@@ -109,8 +112,15 @@ def _gap_archive() -> FakeArchive:
     return FakeArchive(rows)
 
 
-def test_period_with_no_text_cannot_be_anchored() -> None:
+def test_period_with_no_text_is_found_by_walking_the_pages() -> None:
     result = browse(_gap_archive(), LONG, edge="oldest", limit=5, since="2021-05-01", until="2021-05-31")
+    assert _ids(result) == ["p0", "p1", "p2", "p3", "p4"] and result.anchored and result.reached_edge
+
+
+def test_period_with_no_text_and_too_far_to_walk_is_not_anchored() -> None:
+    result = browse(
+        _gap_archive(), LONG, edge="oldest", limit=5, since="2021-05-01", until="2021-05-31", max_hops=0
+    )
     assert result.messages == () and not result.anchored
 
 
@@ -142,7 +152,8 @@ def test_search_tool_with_no_query_reads_the_start_of_one_conversation() -> None
     assert prepared.status == "Reading the first messages with a number ending in 0199"
     outcome = prepared.run(3000)
     assert outcome.ok
-    assert outcome.text.splitlines()[0] == f"First 3 messages of {alias} · a number ending in 0199 · direct (all of it):"
+    header = outcome.text.splitlines()[0]
+    assert header == f"First 3 messages of {alias} · a number ending in 0199 · direct (all of it):"
     assert "hey this is Dana from the climbing gym" in outcome.text
     assert registry.ref_of("u1") == "m1"
     assert outcome.summary == "Read the first 3 messages with a number ending in 0199"
@@ -182,7 +193,7 @@ def test_search_tool_with_no_query_uses_the_scope_conversation() -> None:
     assert "sourdough starter is alive" in outcome.text
 
 
-def test_search_tool_reads_a_period_and_says_when_it_cannot() -> None:
+def test_search_tool_reads_a_period_and_says_when_it_cannot(monkeypatch: pytest.MonkeyPatch) -> None:
     box, aliases, _ = _box(archive=_long_archive())
     alias = aliases.alias(LONG)
     arguments = {"query": "", "conversations": [alias], "order": "oldest", "since": "2021-03-01", "until": "2021-03-31"}
@@ -191,8 +202,10 @@ def test_search_tool_reads_a_period_and_says_when_it_cannot() -> None:
     assert "2021-03-01 to 2021-03-31" in outcome.text.splitlines()[0]
     box, aliases, _ = _box(archive=_gap_archive())
     arguments = {"query": "", "conversations": [aliases.alias(LONG)], "since": "2021-05-01", "until": "2021-05-31"}
+    monkeypatch.setattr(tool_browse, "browse", lambda *_args, **_kwargs: Browsed((), False, anchored=False))
     nothing = box.prepare("search_messages", json.dumps(arguments)).run(3000)
     assert not nothing.ok and "count_messages" in nothing.text
+    monkeypatch.undo()
     box, aliases, _ = _box()
     jonas = aliases.alias(JONAS_PHONE)
     arguments = {"query": "", "conversations": [jonas], "since": "2010-01-01", "until": "2010-12-31"}

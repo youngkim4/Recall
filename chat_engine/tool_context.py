@@ -23,6 +23,7 @@ _MONTHS = (
     "July", "August", "September", "October", "November", "December",
 )
 _NAMED_IN_WHERE = 3
+_ECHO_CHARS = 40
 
 
 @dataclass(frozen=True)
@@ -83,7 +84,7 @@ class ToolContext:
         """Aliases or exact names, as ids the scope allows. None means all."""
         requested = None if values is None else [self._resolve(value) for value in values]
         allowed = self.scope.narrow(requested)
-        if allowed is not None and not allowed:
+        if requested is not None and len(allowed or ()) < len(set(requested)):
             raise ToolInputError(OUTSIDE_SCOPE)
         return allowed
 
@@ -108,13 +109,14 @@ class ToolContext:
         matches = [e for e in self.directory().entries if wanted and fold(e.label) == wanted]
         if len(matches) == 1:
             return str(matches[0].conversation["id"])
+        shown = value if len(value) <= _ECHO_CHARS else value[:_ECHO_CHARS] + "..."
         if matches:
             raise ToolInputError(
-                f'more than one conversation is named "{value}". '
+                f'more than one conversation is named "{shown}". '
                 "Call list_conversations and use the c-number."
             )
         raise ToolInputError(
-            f'"{value}" is not a known conversation. Call list_conversations to get its c-number.'
+            f'"{shown}" is not a known conversation. Call list_conversations to get its c-number.'
         )
 
     # --- words ---

@@ -1,17 +1,22 @@
 """Read one conversation from its start or its end, with no search word.
 
 The archive pages a conversation by message id: `before`, `after`, `around`.
-It has no call for "the first messages". So this module finds the edge itself:
-it asks for one page, jumps close to the edge with a search for a frequent
-word, then walks page by page until no older (or newer) page is left.
-The result is right whichever edge the first page shows.
+It has no call for "the first messages" or "the messages of that week". So
+this module finds the place itself:
+
+1. It asks for one page. Which edge that page shows does not matter.
+2. It goes to the period: by a search for a frequent word when that works,
+   else page by page.
+3. It walks to the edge that was asked for, then back until it has enough.
+
+Every walk has a limit. When the limit stops it, the result says so.
 """
 
 from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Optional
 
 from .ports import ChatArchive, Message, MessagePage
 from .textnorm import words
@@ -19,13 +24,76 @@ from .textnorm import words
 PAGE = 200
 MAX_HOPS = 60
 _PROBES = 3
+OLDER, NEWER = "older", "newer"
 
 
 @dataclass(frozen=True)
 class Browsed:
     messages: tuple[Message, ...]
-    reached_edge: bool  # False: the walk stopped at the hop limit
-    anchored: bool = True  # False: no way was found into the period
+    reached_edge: bool  # False: a walk stopped at its limit before the edge
+    anchored: bool = True  # False: the period was not found within the limit
+
+
+@dataclass(frozen=True)
+class _Period:
+    since: Optional[str]
+    until: Optional[str]
+
+    def holds(self, message: Message) -> bool:
+        day = _day(message)
+        return not ((self.since and day < self.since) or (self.until and day > self.until))
+
+    def side_of(self, page: MessagePage) -> str:
+        """Where the period lies from a page: OLDER, NEWER, or "" when the page reaches into it."""
+        if self.until and _day(page["messages"][0]) > self.until:
+            return OLDER
+        if self.since and _day(page["messages"][-1]) < self.since:
+            return NEWER
+        return ""
+
+    def goes_past(self, page: MessagePage, direction: str) -> bool:
+        """True when the period can hold messages beyond this page in `direction`."""
+        if direction == OLDER:
+            return bool(page["has_older"]) and not (self.since and _day(page["messages"][0]) < self.since)
+        return bool(page["has_newer"]) and not (self.until and _day(page["messages"][-1]) > self.until)
+
+
+class _Walk:
+    """Pages of one conversation, with a limit on how many are fetched."""
+
+    def __init__(self, archive: ChatArchive, conversation_id: str, max_hops: int) -> None:
+        self._archive = archive
+        self._conversation = conversation_id
+        self._left = max_hops
+
+    @property
+    def spent(self) -> bool:
+        return self._left <= 0
+
+    def first(self) -> MessagePage:
+        return self._archive.messages(self._conversation, limit=PAGE)
+
+    def around(self, message_id: str) -> MessagePage:
+        return self._archive.messages(self._conversation, around=message_id, limit=PAGE)
+
+    def step(self, page: MessagePage, direction: str) -> MessagePage:
+        self._left -= 1
+        if direction == OLDER:
+            return self._archive.messages(self._conversation, before=str(page["messages"][0]["id"]), limit=PAGE)
+        return self._archive.messages(self._conversation, after=str(page["messages"][-1]["id"]), limit=PAGE)
+
+    def probe(self, sample: list[Message], edge: str, period: _Period) -> Optional[Message]:
+        """A message near the wanted edge: the oldest (or newest) hit of a frequent word."""
+        counts = Counter(token for message in sample for token in set(words(message.get("text") or "")))
+        best: Optional[Message] = None
+        for token, _ in counts.most_common(_PROBES):
+            result = self._archive.search(
+                token, conversations=[self._conversation], since=period.since, until=period.until,
+                from_me=None, limit=1, offset=0, order=edge,
+            )
+            for hit in result["hits"][:1]:
+                best = _nearer(best, hit["message"], edge == "oldest")
+        return best
 
 
 def browse(
@@ -38,87 +106,51 @@ def browse(
     until: Optional[str] = None,
     max_hops: int = MAX_HOPS,
 ) -> Browsed:
-    """The first (`edge="oldest"`) or last messages of a conversation or a period."""
-    backwards = edge == "oldest"
-    page = archive.messages(conversation_id, limit=PAGE)
+    """The first (`edge="oldest"`) or last messages of a conversation or of a period in it."""
+    walk = _Walk(archive, conversation_id, max_hops)
+    period = _Period(since, until)
+    toward, away = (OLDER, NEWER) if edge == "oldest" else (NEWER, OLDER)
+    page = walk.first()
     if not page["messages"]:
         return Browsed((), True)
-    inside = _inside(since, until)
-    whole = not page["has_older"] and not page["has_newer"]
-    in_period = any(inside(message) for message in page["messages"])
-    if not whole and (_more(page, backwards, since, until) or not in_period):
-        anchor = _probe(archive, conversation_id, page["messages"], edge, since, until)
-        if anchor is not None:
-            jumped = archive.messages(conversation_id, around=str(anchor["id"]), limit=PAGE)
-            page = jumped if jumped["messages"] else page
-        elif not in_period:
+    if period.side_of(page) or period.goes_past(page, toward):
+        anchor = walk.probe(page["messages"], edge, period)
+        jumped = walk.around(str(anchor["id"])) if anchor is not None else None
+        page = jumped if jumped and jumped["messages"] else page
+    while period.side_of(page):
+        side = period.side_of(page)
+        if not page["has_older" if side == OLDER else "has_newer"]:
+            return Browsed((), True)  # the conversation ends before the period starts
+        if walk.spent:
             return Browsed((), False, anchored=False)
-    kept = _edge([m for m in page["messages"] if inside(m)], backwards, limit)
-    hops = 0
-    while _more(page, backwards, since, until) and hops < max_hops:
-        page = _next_page(archive, conversation_id, page, backwards)
+        page = walk.step(page, side)
+        if not page["messages"]:
+            return Browsed((), True)
+    while period.goes_past(page, toward) and not walk.spent:
+        further = walk.step(page, toward)
+        if not further["messages"]:
+            break
+        page = further
+    reached = not period.goes_past(page, toward)
+    kept = [message for message in page["messages"] if period.holds(message)]
+    while len(kept) < limit and period.goes_past(page, away) and not walk.spent:
+        page = walk.step(page, away)
         if not page["messages"]:
             break
-        fresh = [m for m in page["messages"] if inside(m)]
-        kept = _edge(fresh + kept if backwards else kept + fresh, backwards, limit)
-        hops += 1
-    return Browsed(tuple(kept), not _more(page, backwards, since, until))
+        more = [message for message in page["messages"] if period.holds(message)]
+        kept = kept + more if away == NEWER else more + kept
+    return Browsed(tuple(kept[:limit] if edge == "oldest" else kept[-limit:]), reached)
 
 
-def _edge(messages: list[Message], backwards: bool, limit: int) -> list[Message]:
-    return messages[:limit] if backwards else messages[-limit:]
+def _day(message: Message) -> str:
+    return str(message.get("timestamp") or "")[:10]
 
 
-def _inside(since: Optional[str], until: Optional[str]) -> Callable[[Message], bool]:
-    def check(message: Message) -> bool:
-        day = str(message.get("timestamp") or "")[:10]
-        return not ((since and day < since) or (until and day > until))
-
-    return check
-
-
-def _more(page: MessagePage, backwards: bool, since: Optional[str], until: Optional[str]) -> bool:
-    """True while the edge we want is not on this page."""
-    if not page["messages"]:
-        return False
-    if backwards:
-        first_day = str(page["messages"][0].get("timestamp") or "")[:10]
-        return bool(page["has_older"]) and (since is None or first_day >= since)
-    last_day = str(page["messages"][-1].get("timestamp") or "")[:10]
-    return bool(page["has_newer"]) and (until is None or last_day <= until)
-
-
-def _next_page(archive: ChatArchive, conversation_id: str, page: MessagePage, backwards: bool) -> MessagePage:
-    if backwards:
-        return archive.messages(conversation_id, before=str(page["messages"][0]["id"]), limit=PAGE)
-    return archive.messages(conversation_id, after=str(page["messages"][-1]["id"]), limit=PAGE)
-
-
-def _probe(
-    archive: ChatArchive,
-    conversation_id: str,
-    sample: list[Message],
-    edge: str,
-    since: Optional[str],
-    until: Optional[str],
-) -> Optional[Message]:
-    """A message near the edge: the oldest (or newest) hit of a frequent word."""
-    counts = Counter(token for message in sample for token in set(words(message.get("text") or "")))
-    best: Optional[Message] = None
-    for token, _ in counts.most_common(_PROBES):
-        result = archive.search(
-            token, conversations=[conversation_id], since=since, until=until, from_me=None,
-            limit=1, offset=0, order=edge,
-        )
-        for hit in result["hits"][:1]:
-            best = _nearer(best, hit["message"], edge == "oldest")
-    return best
-
-
-def _nearer(current: Optional[Message], candidate: Message, backwards: bool) -> Message:
+def _nearer(current: Optional[Message], candidate: Message, oldest: bool) -> Message:
     if current is None:
         return candidate
-    key = lambda m: (str(m.get("timestamp") or ""), m.get("sent_at") or 0)  # noqa: E731
-    if backwards:
-        return candidate if key(candidate) < key(current) else current
-    return candidate if key(candidate) > key(current) else current
+    one = (str(candidate.get("timestamp") or ""), candidate.get("sent_at") or 0)
+    other = (str(current.get("timestamp") or ""), current.get("sent_at") or 0)
+    if oldest:
+        return candidate if one < other else current
+    return candidate if one > other else current

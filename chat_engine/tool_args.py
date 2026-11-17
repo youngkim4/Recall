@@ -3,21 +3,28 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, Mapping, Optional, Sequence
 
 from .scope import parse_day
 
 _MAX_TEXT = 300
+_MAX_ITEMS = 30
+_MAX_ITEM_CHARS = 120
 
 
 class ToolInputError(ValueError):
     """The arguments cannot be used. The message goes back to the model."""
 
 
+def _not_a_number(constant: str) -> None:
+    raise ValueError(f"{constant} is not a JSON number")
+
+
 def parse_arguments(raw: str) -> dict[str, Any]:
     try:
-        value = json.loads(raw or "{}")
-    except (TypeError, ValueError) as error:
+        value = json.loads(raw or "{}", parse_constant=_not_a_number)
+    except (TypeError, ValueError, RecursionError) as error:
         raise ToolInputError("the arguments are not valid JSON.") from error
     if not isinstance(value, dict):
         raise ToolInputError("the arguments must be a JSON object.")
@@ -54,7 +61,8 @@ def int_arg(arguments: Mapping[str, Any], key: str, *, default: int, low: int, h
     value = arguments.get(key)
     if value is None:
         return default
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or int(value) != value:
+    whole = isinstance(value, int) or (isinstance(value, float) and math.isfinite(value) and value == int(value))
+    if isinstance(value, bool) or not whole:
         raise ToolInputError(f"{key} must be a whole number.")
     return max(low, min(high, int(value)))
 
@@ -74,8 +82,8 @@ def list_arg(arguments: Mapping[str, Any], key: str) -> Optional[list[str]]:
     value = arguments.get(key)
     if value is None or value in ([], ""):
         return None
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list) and all(isinstance(item, str) for item in value):
-        return list(value)
-    raise ToolInputError(f"{key} must be a list of conversation aliases like c3.")
+    items = [value] if isinstance(value, str) else value
+    fine = isinstance(items, list) and len(items) <= _MAX_ITEMS
+    if not fine or not all(isinstance(item, str) and len(item) <= _MAX_ITEM_CHARS for item in items):
+        raise ToolInputError(f"{key} must be a short list of conversation aliases like c3.")
+    return list(items)

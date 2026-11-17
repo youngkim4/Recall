@@ -50,6 +50,6 @@ def test_every_module_imports_in_a_clean_process_without_network_or_old_code() -
     )
     env = {**os.environ, "OPENAI_API_KEY": "test-key-not-real"}
     done = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=120
+        [sys.executable, "-c", code], capture_output=True, text=True, env=env, timeout=120, check=False
     )
     assert done.returncode == 0, done.stderr

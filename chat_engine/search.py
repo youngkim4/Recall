@@ -52,6 +52,7 @@ class Found:
 class SearchOutcome:
     hits: tuple[Found, ...]
     total: Optional[int] = None  # exact; None when words were ranked ("any")
+    matched: frozenset[str] = frozenset()  # ids of every message this search knows to match
     word_counts: tuple[tuple[str, int], ...] = ()
     used: tuple[str, ...] = ()
     common: tuple[str, ...] = ()
@@ -130,7 +131,12 @@ def _search_all(archive: ChatArchive, request: SearchRequest, units: list[str]) 
     word_counts: tuple[tuple[str, int], ...] = ()
     if total == 0 and len(units) > 1:
         word_counts = tuple((unit, _count(archive, request, unit)) for unit in units)
-    return SearchOutcome(hits=_capped(founds, request.limit), total=total, word_counts=word_counts)
+    return SearchOutcome(
+        hits=_capped(founds, request.limit),
+        total=total,
+        matched=frozenset(str(found.message["id"]) for found in founds),
+        word_counts=word_counts,
+    )
 
 
 def _weigh(archive: ChatArchive, request: SearchRequest, units: list[str]) -> tuple[int, dict[str, int]]:
@@ -164,6 +170,7 @@ def _search_any(archive: ChatArchive, request: SearchRequest, units: list[str]) 
     founds = _score(candidates, weights, request)
     return SearchOutcome(
         hits=_capped(founds, request.limit),
+        matched=frozenset(str(found.message["id"]) for found in founds),
         word_counts=outcome.word_counts,
         used=outcome.used,
         common=common,

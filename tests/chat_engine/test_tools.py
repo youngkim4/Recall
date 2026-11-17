@@ -236,7 +236,7 @@ def test_list_conversations_by_name_shows_every_thread_of_a_person() -> None:
 
 
 def test_list_conversations_by_digits_never_shows_the_handle() -> None:
-    outcome = Bench().run("list_conversations", name="720")
+    outcome = Bench().run("list_conversations", name="0199")
     assert "a number ending in 0199 · direct, phone" in outcome.text
     for raw in RAW_HANDLES:
         assert raw not in outcome.text

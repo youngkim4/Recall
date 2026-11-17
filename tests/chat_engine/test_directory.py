@@ -43,10 +43,13 @@ def test_find_ignores_case_and_diacritics_and_allows_prefixes() -> None:
 
 def test_find_by_digits_matches_handles_without_showing_them() -> None:
     directory, _ = _directory()
-    found = directory.find("720")
+    assert directory.find("720") == [] and directory.find("72055") == []
+    found = directory.find("720", loose_digits=True)
     assert _ids(found) == [GROUP, UNSAVED_PHONE]
     assert all("720" not in entry.label for entry in found)
     assert _ids(directory.find("0199")) == [GROUP, UNSAVED_PHONE]
+    assert _ids(directory.find("720 555 0199")) == []
+    assert _ids(directory.find("7205550199")) == [GROUP, UNSAVED_PHONE]
 
 
 def test_mask_words_are_not_names() -> None:

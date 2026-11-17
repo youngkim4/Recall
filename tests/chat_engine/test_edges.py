@@ -113,9 +113,9 @@ def test_date_scope_is_in_the_prompt_and_limits_the_seed() -> None:
 def test_list_conversations_counts_inside_the_days_of_a_date_scope() -> None:
     box, _ = _box(Scope(since="2023-01-01", until="2023-12-31"))
     text = _run(box, "list_conversations", name="maya").text
+    assert "1 of 1." in text
     assert "3 messages in the scope dates (you 1, them 2)" in text
-    assert "0 messages in the scope dates" in text
-    assert "9 messages" not in text
+    assert "0 messages" not in text and "9 messages" not in text and "Lisbon" not in text
 
 
 def test_list_conversations_says_when_it_shows_only_some() -> None:
@@ -206,7 +206,9 @@ def test_search_with_dates_and_sender_says_so_in_its_first_line() -> None:
 
 
 def test_any_search_with_nothing_to_rank_by_says_so() -> None:
-    rows = [make_message(f"n{i}", "+15550000001", f"2020-01-{1 + i % 28:02d} 12:00:00", "dinner plans") for i in range(300)]
+    rows = [
+        make_message(f"n{i}", "+15550000001", f"2020-01-{1 + i % 28:02d} 12:00:00", "dinner plans") for i in range(300)
+    ]
     box, _ = _box(archive=FakeArchive(rows))
     out = _run(box, "search_messages", query="dinner plans zzz", match="any")
     assert "Too common to rank by" in out.text and "Nothing to show." in out.text
@@ -270,7 +272,8 @@ def test_closing_the_event_iterator_closes_the_model_stream() -> None:
 
 
 def test_tool_results_never_exceed_the_total_budget_by_much() -> None:
-    searches = [call("search_messages", f"s{i}", query=word, limit=20) for i, word in enumerate(["lease", "the", "you"])]
+    words = ["lease", "the", "you"]
+    searches = [call("search_messages", f"s{i}", query=word, limit=20) for i, word in enumerate(words)]
     engine, fake, _ = make_engine([searches, say("done")], total_tool_tokens=400, result_tokens=300)
     engine.ask("zzz?")
     spent = sum(len(text.encode()) // 3 for text in tool_results(fake.requests[1]))
