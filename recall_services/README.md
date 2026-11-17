@@ -2,7 +2,7 @@
 
 The functions that the server calls. Each one reads the archive and returns the JSON shape that its route returns today.
 
-No route calls these functions yet. The hook-up edits `ui_server.py` and `app/`, and it is a later step.
+`ui_server.py` calls these functions for every route that reads messages. "The archive and the services" in `CONTRACTS.md` holds the rules of the hook-up.
 
 ## Rules
 
@@ -15,13 +15,17 @@ No route calls these functions yet. The hook-up edits `ui_server.py` and `app/`,
 ## What the server keeps
 
 ```python
-from recall_services import archive_state, names
+from recall_services import names, places
 
-state = archive_state.shared()                    # the archive at the default place
+state = places.state_for(messages_path)           # the archive that stands for the file that the app named
 saved = names.cached(CONTACTS_CACHE_PATH)         # read again only when the file changes
 ```
 
 Ask for `state.archive()` and for `names.cached(...)` at the start of each request. Do not keep the answers between requests.
+
+`places.py` says which archive stands for a `messagesPath`: nothing named, the default export or the default archive is the archive at the default place (`archive_state.shared()`); a name that ends in `.sqlite3` is the archive itself; any other name is an export of an earlier build, and its archive stands beside it with the ending `.sqlite3`.
+
+`keys.py` gives the key of the model provider: `OPENAI_API_KEY` in the environment, or in the file `.env` in the data folder, read at each call.
 
 ## Functions
 

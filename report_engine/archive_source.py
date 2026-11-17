@@ -1,7 +1,8 @@
 """ReportSource over the archive package's query API.
 
-The archive package is not part of this branch. This adapter is written
-against its published contract and is checked only with a stand-in:
+The tests of this package check this adapter with a stand-in.
+`tests/integration/test_report_on_archive.py` runs a whole report through it
+on a real archive. It reads the archive with one call:
 
     Archive.iter_messages(conversation_id, *, since=None, until=None)
 

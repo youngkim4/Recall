@@ -1,8 +1,8 @@
 """The real archive behind the `ChatArchive` port.
 
-NOT TESTED AGAINST THE REAL PACKAGE. `archive/` is built in another branch and
-is not in the base of this one. The tests use a stand-in. Run the chat tests
-against a real archive when both branches are merged.
+The tests of this package use a stand-in for the archive.
+`tests/integration/test_chat_on_archive.py` runs whole questions through this
+adapter on a real archive.
 
 The `archive` package is imported only inside `open_archive`, so importing
 `chat_engine` never needs it. Every call passes its keywords by name: a

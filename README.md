@@ -43,7 +43,11 @@ open http://127.0.0.1:8765
 
 The local server serves the React build from `app/dist` when present and falls back to the dependency-free `ui/` surface otherwise. The UI lets you browse conversations, preview message volume, estimate model cost, launch analysis, and open generated reports without memorizing CLI flags.
 
-Settings in the app can refresh Contacts names, rebuild the local message export, change the model preference, and clear the preview cache.
+Settings in the app can refresh Contacts names, update the archive from Messages, change the model level, and clear the preview cache.
+
+The app keeps its own archive of your messages in `saves/archive.sqlite3`. An update is one full pull of the Messages database of this Mac into that archive. If an earlier build left a `messages.csv` here, the app loads it into the archive one time at its first start, and it does not delete the file.
+
+Chat and reports need a key of the model provider. Put `OPENAI_API_KEY=...` in the file `.env` in the data folder (this checkout for a development run, `~/Library/Application Support/Recall` for the packaged app).
 
 ### CLI
 
@@ -88,7 +92,7 @@ python cli.py --contact +12165551234 --no-confirm
 
 - `chat_id` is usually the phone number for 1:1 chats, or starts with `chat` for group chats. Use `--list-contacts` to discover IDs.
 - If the DB is locked, close Messages or copy it first. Copy `chat.db`, `chat.db-wal` and `chat.db-shm` to a folder outside this checkout, for example `cp ~/Library/Messages/chat.db* ~/Desktop/`, and name the copy with `--db`.
-- WARNING: `cli.py --db` writes `messages.csv` in the current folder. In this checkout that file is the archive of the app. Run the command in another folder, or name another file with `--messages`. The app does not read a `chat.db` in this folder.
+- WARNING: `cli.py --db` writes `messages.csv` in the current folder. In this checkout that file is the export that the app loads into its archive when it has none. Run the command in another folder, or name another file with `--messages`. The app does not read a `chat.db` in this folder.
 - Full conversation history is sent to the OpenAI API with `store=false` -- cost estimates are shown before any API call.
 
 ## License

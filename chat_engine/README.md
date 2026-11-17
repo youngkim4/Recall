@@ -378,10 +378,8 @@ In `app/`:
 4. Show `unverified_quotes` as a warning near the answer.
 5. Send the chat id with each question.
 
-After the wiring, these parts of the old pipeline have no caller:
-`ask_messages_payload`, `ai_ask_answer`, `query_terms`, `_burst_scores`, `build_context_windows`,
-`format_context_windows`, `_dedupe_moments`, `_renumber_citations`, `retrieval_planner.py`.
-The engine does not use `semantic_index.py`.
+The server is wired: `/api/ask`, `/api/ask/stream` and `/api/ask/cancel` call `recall_services/chat.py`.
+The old pipeline is removed (`ask_messages_payload` and its helpers, `retrieval_planner.py`, `semantic_index.py`).
 
 `report_engine` has classes with the same names and other shapes: `OpenAIResponsesLLM`, `CancelToken`, `Scope`.
 Import each one from its own package.
@@ -390,7 +388,7 @@ Import each one from its own package.
 
 Archive (`archive.queries.Archive`, read through `archive_adapter.py`):
 
-- `archive_adapter.py` is not tested against the real package. The package is not in the base of this branch.
+- `archive_adapter.py` runs on a real archive in `tests/integration/test_chat_on_archive.py`. The tests of this package use a stand-in.
 - `open_archive()` calls `Archive.open(path, readonly=True)`. `path=None` opens the default archive.
 - One archive object serves all request threads.
 - The adapter passes `include_system=False` by name in every call that takes it.
