@@ -62,7 +62,7 @@ export function JobDetail({ job, contacts, report, onOpenReport, onShowList }: J
         ) : null}
 
         {figures.length ? (
-          <dl className="card job-figures">
+          <dl className="job-figures">
             {figures.map((figure) => (
               <div key={figure.label}>
                 <dt>{figure.label}</dt>

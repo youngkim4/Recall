@@ -107,7 +107,7 @@
      Those behind are filled, the one in hand is the strongest, those ahead
      are the bare track. ---- */
   .job-progress {
-    margin-top: var(--s-6);
+    margin-top: var(--s-8);
   }
 
   .job-steps {
@@ -142,27 +142,32 @@
 
   /* ---- how it ended: why it stopped, or what it read ---- */
   .job-detail > .notice {
-    margin-top: var(--s-6);
+    margin-top: var(--s-8);
   }
 
   .job-detail > .job-figures + .notice {
     margin-top: var(--s-3);
   }
 
-  /* What a job read, as figures: a name over a number. They stand two
-     across, and in a pane with room for it all of them on one line. */
+  /* What a job read, as figures: a name over a number, set apart by
+     hairlines and not by a card. The figures are equal columns, as many on a
+     line as have 10rem each: 20px on both sides of a figure and the width of
+     its longest number, a span of years. Each figure draws its line on its
+     left. The row is 20px wider than its column on each side and is cut back
+     to the column: the first figure of a line starts on the column's edge
+     with no line before it, and the last one ends on it. */
   .job-figures {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--s-4);
-    margin-top: var(--s-6);
-    padding: var(--s-4);
+    grid-template-columns: repeat(auto-fit, minmax(min(10rem, 100%), 1fr));
+    row-gap: var(--s-6);
+    margin: var(--s-8) calc(var(--s-5) * -1) 0;
+    clip-path: inset(0 var(--s-5));
   }
 
-  @container detail (min-width: 34rem) {
-    .job-figures {
-      grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
-    }
+  .job-figures > div {
+    min-width: 0;
+    padding-inline: var(--s-5);
+    box-shadow: -1px 0 0 var(--line);
   }
 
   .job-figures dt {
@@ -181,21 +186,12 @@
     white-space: nowrap;
   }
 
-  /* two across in a narrow pane, a figure is set a size down so that a span
-     of years stays on one line */
-  @container detail (max-width: 20rem) {
-    .job-figures dd {
-      font-size: var(--t-reading);
-      line-height: var(--lh-body);
-    }
-  }
-
-  /* ---- what it wrote: the card takes the height the pane has left and
-     scrolls inside itself. Never shorter than a few lines. ---- */
+  /* ---- what it wrote: the one card of the pane. It takes the height the
+     pane has left and scrolls inside itself. Never shorter than a few lines. ---- */
   .job-detail > .job-log {
     flex: 1 1 12rem;
     min-height: 12rem;
-    margin-top: var(--s-6);
+    margin-top: var(--s-8);
     overflow: auto;
     overscroll-behavior: contain;
     padding: var(--s-3) var(--s-4);
