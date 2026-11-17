@@ -1,24 +1,42 @@
 """What an import says when it stops.
 
-The reason is a plain sentence. No text of a query is in it, and none is in the
-lines the job wrote. It says that the archive was not changed only when there
-was an archive. A busy database is tried once more.
+The reason is a plain sentence. No text of a query, no trace and no name of a
+Python error is in it, and none is in the lines that the job wrote: what the
+reader raised goes to the log of the server. The sentence says that the
+archive was not changed only when there was an archive.
 """
 import sqlite3
 
-import pandas as pd
 import pytest
 
 import ui_server
+from archive import importer, run_control, source
 from setup_status import DbProbe
-from tests.archive_kit import import_from, left_behind, messages_csv, run, said, unchanged
-from tests.invented_db import messages_db
+from tests.archive.builders import ChatDbBuilder
+from tests.archive_kit import (
+    KEPT,
+    PERSON,
+    held,
+    import_from,
+    no_names,  # noqa: F401
+    own_archives,  # noqa: F401
+    picture,
+    pulled,
+    put_in_messages,
+    run,
+    said,
+    unchanged,
+    write_database,
+)
+from tests.recall_services.state_data import START
 
-pytestmark = pytest.mark.usefixtures("fresh_bundle_cache", "no_saved_names", "messages_home")
+pytestmark = pytest.mark.usefixtures("fresh_bundle_cache", "no_names", "own_archives", "messages_home")
 
 COPY = "/copies/chat.db"
-KEPT = "The archive was not changed."
 QUERY = "SELECT message.ROWID AS message_id FROM message"
+# words that a reader of the app must never be shown
+NOT_PLAIN = ("SELECT", "Traceback", "Error", "Exception", "sqlite3", ".py")
+FDA = "Give it Full Disk Access"
 
 
 def probe(status, kind="live", detail=""):
@@ -26,10 +44,23 @@ def probe(status, kind="live", detail=""):
 
 
 def raising(error):
-    def reader(_path, *_more):
+    def reader(*_args, **_more):
         raise error
 
     return reader
+
+
+@pytest.fixture
+def filled(tmp_path):
+    """An archive that a pull filled with three messages."""
+    return pulled(tmp_path / "saves" / "archive.sqlite3", ["one", "two", "three"])
+
+
+def plain(job, raised=None):
+    """True when nothing that the job tells the reader holds the words of code."""
+    told = said(job)
+    hidden = [*NOT_PLAIN, *([str(raised), type(raised).__name__] if raised is not None else [])]
+    return not any(word in told for word in hidden)
 
 
 # ---- what the check of the database says ----
@@ -83,13 +114,6 @@ def test_the_archive_is_spoken_of_only_when_there_is_one(status, kind):
     assert "archive" not in without
 
 
-def test_a_first_import_that_cannot_start_says_nothing_of_an_archive(tmp_path):
-    job = import_from(tmp_path / "gone.db", tmp_path / "new" / "messages.csv")
-
-    assert job["status"] == "failed"
-    assert job["error"] == f"There is no file at {(tmp_path / 'gone.db').resolve()}."
-
-
 def test_a_probe_error_of_the_system_is_told_without_its_number(tmp_path, monkeypatch):
     import builtins
 
@@ -109,248 +133,303 @@ def test_a_probe_error_of_the_system_is_told_without_its_number(tmp_path, monkey
     assert (found.status, found.detail) == ("error", "Input/output error")
 
 
+# ---- a database that the check stops ----
+
+
+def test_a_first_import_that_cannot_start_says_nothing_of_an_archive(tmp_path):
+    job = import_from(tmp_path / "gone.db", tmp_path / "new" / "archive.sqlite3")
+
+    assert job["status"] == "failed"
+    assert job["error"] == f"There is no file at {(tmp_path / 'gone.db').resolve()}."
+    assert job["code"] is None
+
+
+def test_an_update_that_cannot_start_says_that_the_archive_was_not_changed(filled, tmp_path):
+    job = import_from(tmp_path / "gone.db", filled)
+
+    assert job["status"] == "failed"
+    assert job["error"] == f"There is no Messages database on this Mac. {KEPT}"
+    assert job["code"] is None
+
+
+def not_a_database(folder):
+    wrong = folder / "notes.db"
+    wrong.write_bytes(b"these are notes, and no database of any kind. " * 40)
+    return wrong
+
+
+def test_a_file_that_is_no_database_is_told_in_a_plain_sentence(filled, tmp_path):
+    update = import_from(not_a_database(tmp_path), filled)
+    first = import_from(not_a_database(tmp_path), tmp_path / "new" / "archive.sqlite3")
+
+    live = "The file that Messages keeps on this Mac is not a Messages database (not a SQLite database)."
+    copy = f"The copy at {(tmp_path / 'notes.db').resolve()} is not a Messages database (not a SQLite database)."
+    assert (update["status"], update["error"]) == ("failed", f"{live} {KEPT}")
+    assert (first["status"], first["error"]) == ("failed", copy)
+
+
+def test_a_database_with_no_message_is_told_in_a_plain_sentence(filled, tmp_path):
+    update = import_from(write_database(tmp_path / "empty.db", []), filled)
+    first = import_from(write_database(tmp_path / "empty.db", []), tmp_path / "new" / "archive.sqlite3")
+
+    assert (update["status"], update["error"]) == ("failed", f"Messages holds no messages on this Mac. {KEPT}")
+    assert (first["status"], first["error"]) == ("failed", f"The copy at {(tmp_path / 'empty.db').resolve()} holds no messages.")
+
+
 # ---- a read that fails ----
 
 
-@pytest.mark.parametrize("raised, words", [
-    (sqlite3.OperationalError("unable to open database file"), "Give it Full Disk Access"),
-    (sqlite3.OperationalError("authorization denied"), "Give it Full Disk Access"),
-    (sqlite3.OperationalError("no such table: handle"), "is not a Messages database."),
-    (sqlite3.OperationalError("no such column: message.attributedBody"), "is not a Messages database."),
-    (sqlite3.DatabaseError("file is not a database"), "is not a Messages database."),
-    (sqlite3.DatabaseError("database disk image is malformed"), "could not be read."),
-    (sqlite3.OperationalError("disk I/O error"), "could not be read."),
-    (pd.errors.DatabaseError(f"Execution failed on sql '{QUERY}': near FROM"), "could not be read."),
-    (RuntimeError(f"anything else, even with {QUERY} in it"), "could not be read."),
-])
-@pytest.mark.parametrize("reader", ["extract_messages", "extract_attachments", "extract_reactions"])
-def test_a_read_that_fails_is_told_in_a_plain_sentence(archive, tmp_path, monkeypatch, raised, words, reader):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    monkeypatch.setattr(ui_server, reader, raising(raised))
+def cannot_open(monkeypatch, raised):
+    """The importer cannot bring the database to its work file: sqlite3 raised `raised`."""
 
-    job = import_from(copy, messages_csv(archive))
+    def fail(path, *_more):
+        raise source.SourceError(f"cannot open {path}: {raised}") from raised
+
+    monkeypatch.setattr(source, "copy_source", fail)
+
+
+def stops_midway(monkeypatch, raised):
+    """The reader raises `raised` after one batch of one row."""
+    monkeypatch.setattr(importer, "BATCH_ROWS", 1)
+    real = source.SourceReader.messages_after
+
+    def one_batch_then_stop(reader, rowid, size):
+        yield next(real(reader, rowid, size))
+        raise raised
+
+    monkeypatch.setattr(source.SourceReader, "messages_after", one_batch_then_stop)
+
+
+AT_THE_OPEN = [
+    (sqlite3.OperationalError("unable to open database file"), ("Recall cannot read Messages.", FDA)),
+    (sqlite3.OperationalError("authorization denied"), ("Recall cannot read Messages.", FDA)),
+    (sqlite3.OperationalError("no such table: handle"), ("The file that Messages keeps", "is not a Messages database.")),
+    (sqlite3.OperationalError("no such column: message.attributedBody"), ("The file that Messages keeps", "is not a Messages database.")),
+    (sqlite3.DatabaseError("file is not a database"), ("The file that Messages keeps", "is not a Messages database.")),
+    (sqlite3.DatabaseError("database disk image is malformed"), ("The Messages database", "could not be read.")),
+    (sqlite3.OperationalError("disk I/O error"), ("The Messages database", "could not be read.")),
+    (sqlite3.OperationalError("database is locked"), ("The Messages database", "is busy. Quit Messages or wait a moment, then try again.")),
+    (sqlite3.OperationalError(f"near FROM: syntax error in {QUERY}"), ("The Messages database", "could not be read.")),
+]
+
+IN_THE_MIDDLE = [
+    sqlite3.OperationalError("disk I/O error"),
+    sqlite3.OperationalError("database or disk is full"),
+    sqlite3.DatabaseError("database disk image is malformed"),
+    sqlite3.OperationalError(f"near FROM: syntax error in {QUERY}"),
+    RuntimeError(f"anything else, even with {QUERY} in it"),
+    OSError(28, "No space left on device"),
+    KeyError("handle_id"),
+]
+
+
+@pytest.mark.parametrize("raised, words", AT_THE_OPEN, ids=lambda value: str(value) if isinstance(value, Exception) else "")
+def test_a_database_that_cannot_be_opened_is_told_in_a_plain_sentence(filled, tmp_path, monkeypatch, capfd, raised, words):
+    before = picture(filled)
+    cannot_open(monkeypatch, raised)
+
+    job = import_from(write_database(tmp_path / "chat.db", ["one", "two", "three", "four"]), filled)
+
+    starts, says = words
+    assert job["status"] == "failed"
+    assert job["error"].startswith(starts) and says in job["error"] and job["error"].endswith(KEPT)
+    # neither the reason nor a line of the job holds what the reader raised
+    assert plain(job, raised)
+    assert job["code"] is None
+    assert unchanged(filled, before)
+    # the log of the server holds it
+    assert str(raised) in capfd.readouterr().err
+
+
+@pytest.mark.parametrize("raised", IN_THE_MIDDLE, ids=str)
+def test_a_read_that_fails_in_the_middle_is_told_in_a_plain_sentence(filled, tmp_path, monkeypatch, capfd, raised):
+    before = picture(filled)
+    stops_midway(monkeypatch, raised)
+
+    job = import_from(write_database(tmp_path / "chat.db", ["one", "two", "three", "four"]), filled)
 
     assert job["status"] == "failed"
-    assert job["error"].startswith(("Recall cannot read Messages.", "The file that Messages keeps", "The Messages database"))
-    assert words in job["error"] and job["error"].endswith(KEPT)
-    # neither the reason nor a line the job wrote holds what the reader raised
-    assert str(raised) not in said(job) and "SELECT" not in said(job) and "Traceback" not in said(job)
-    assert unchanged(archive)
-    assert left_behind(archive) == []
+    assert job["error"] == f"The update failed. {KEPT}"
+    assert plain(job, raised)
+    assert unchanged(filled, before)
+    assert str(raised) in capfd.readouterr().err
 
 
-def test_messages_itself_that_macos_closes_during_the_read_asks_for_full_disk_access(messages_home, archive, monkeypatch):
-    messages_db(messages_home / "chat.db", ["one"])
-    monkeypatch.setattr(ui_server, "extract_messages", raising(sqlite3.OperationalError("unable to open database file")))
+@pytest.mark.parametrize("raised, says", [
+    (sqlite3.OperationalError("unable to open database file"), "macOS keeps that folder closed to it"),
+    (sqlite3.OperationalError("no such table: handle"), "is not a Messages database."),
+    (sqlite3.OperationalError("disk I/O error"), "could not be read."),
+    (sqlite3.OperationalError("database is locked"), "is busy. Close the app that has it open, then try again."),
+], ids=lambda value: str(value) if isinstance(value, Exception) else "")
+def test_a_copy_that_cannot_be_opened_in_a_first_setup_is_named_and_no_archive_is_spoken_of(tmp_path, monkeypatch, raised, says):
+    copy = write_database(tmp_path / "copy.db", ["one"])
+    cannot_open(monkeypatch, raised)
 
-    job = run("export", {"messagesPath": str(messages_csv(archive))})
+    job = import_from(copy, tmp_path / "new" / "archive.sqlite3")
+
+    assert job["status"] == "failed"
+    assert str(copy.resolve()) in job["error"] and says in job["error"]
+    assert "The archive" not in job["error"]
+    assert plain(job, raised)
+
+
+@pytest.mark.parametrize("raised", IN_THE_MIDDLE, ids=str)
+def test_a_first_setup_that_fails_in_the_middle_speaks_of_no_archive(tmp_path, monkeypatch, raised):
+    copy = write_database(tmp_path / "copy.db", ["one", "two"])
+    stops_midway(monkeypatch, raised)
+
+    job = import_from(copy, tmp_path / "new" / "archive.sqlite3")
+
+    assert job["status"] == "failed"
+    assert job["error"] == "The update failed."
+    assert plain(job, raised)
+
+
+def test_messages_itself_that_macos_closes_during_the_read_asks_for_full_disk_access(messages_home, filled, monkeypatch):
+    write_database(messages_home / "chat.db", ["one", "two", "three"])
+    cannot_open(monkeypatch, sqlite3.OperationalError("unable to open database file"))
+
+    job = run("export", {"messagesPath": str(filled)})
 
     assert job["status"] == "failed"
     assert "Full Disk Access" in job["error"] and job["error"].endswith(KEPT)
 
 
-def test_a_database_that_lacks_a_table_is_told_with_no_text_of_a_query(archive, tmp_path):
-    # the check passes: the messages are there. A table that the readers join is not.
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    conn = sqlite3.connect(str(copy))
+def test_a_database_that_lacks_a_table_is_told_with_no_text_of_a_query(filled, tmp_path):
+    # the check passes: the messages are there. A table that the importer reads is not.
+    later = write_database(tmp_path / "chat.db", ["one", "two", "three"])
+    conn = sqlite3.connect(str(later))
     conn.execute("DROP TABLE handle")
     conn.commit()
     conn.close()
+    before = picture(filled)
 
-    job = import_from(copy, messages_csv(archive))
+    job = import_from(later, filled)
 
     assert job["status"] == "failed"
     assert job["error"] == f"The file that Messages keeps on this Mac is not a Messages database. {KEPT}"
-    assert "SELECT" not in said(job) and "FROM message" not in said(job)
-    assert unchanged(archive)
+    assert plain(job) and "FROM message" not in said(job)
+    assert unchanged(filled, before)
+
+
+def test_another_program_that_writes_the_archive_is_an_import_that_runs(messages_home, filled, monkeypatch):
+    write_database(messages_home / "chat.db", ["one", "two", "three", "four"])
+    monkeypatch.setattr(run_control, "LOCK_WAIT_SECONDS", 0.05)
+    writer = sqlite3.connect(filled, isolation_level=None)
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        job = run("setup_import", {"messagesPath": str(filled), "includeContacts": False})
+    finally:
+        writer.execute("ROLLBACK")
+        writer.close()
+
+    assert (job["status"], job["error"]) == ("failed", "An import is already running. Wait until it ends.")
+    assert len(held(filled)) == 3
+
+
+# ---- an import that is written ----
 
 
 WRITTEN_NOT_COUNTED = "The archive is written. Recall could not read it back to count it."
 
 
-def test_an_import_whose_files_are_in_place_ends_as_completed_with_a_warning(archive, tmp_path, monkeypatch):
-    # the three files are written; what fails comes after them, so the import did its work
-    copy = messages_db(tmp_path / "copy.db", ["one", "two"])
-    monkeypatch.setattr(ui_server, "cached_messages_bundle", raising(RuntimeError(f"a failure with {QUERY} in it")))
+def test_an_import_whose_archive_is_written_ends_as_completed_with_a_warning(filled, tmp_path, monkeypatch, capfd):
+    # the archive is written; what fails comes after it, so the import did its work
+    later = write_database(tmp_path / "chat.db", ["one", "two", "three", "four"])
+    monkeypatch.setattr(ui_server, "archive_summary", raising(RuntimeError(f"a failure with {QUERY} in it")))
 
-    job = import_from(copy, messages_csv(archive))
+    job = import_from(later, filled)
 
     assert job["status"] == "completed", job["error"]
-    assert job["result"] == {"messages": 2, "contactsSkipped": False, "warning": WRITTEN_NOT_COUNTED}
+    assert job["result"] == {"messages": 4, "conversations": 1, "contactsSkipped": False, "warning": WRITTEN_NOT_COUNTED}
     assert WRITTEN_NOT_COUNTED in said(job)
-    assert "SELECT" not in said(job) and "Traceback" not in said(job)
-    assert not unchanged(archive)
+    assert plain(job)
+    assert len(held(filled)) == 4
+    assert QUERY in capfd.readouterr().err
 
 
-def test_an_import_counts_messages_the_way_the_overview_does(archive, tmp_path):
-    # one message is in no conversation: the app shows it nowhere, so it is not in the count
-    copy = messages_db(tmp_path / "copy.db", ["one", "two"], photo=False, reaction=False)
-    conn = sqlite3.connect(str(copy))
-    conn.execute("INSERT INTO message VALUES (50, 0, 1, 'in no conversation', NULL, 0, 'iMessage', NULL, 0)")
-    conn.commit()
-    conn.close()
+def test_a_first_import_that_cannot_be_counted_is_completed_too(tmp_path, monkeypatch):
+    target = tmp_path / "new" / "archive.sqlite3"
+    monkeypatch.setattr(ui_server, "what_the_archive_holds", raising(sqlite3.OperationalError("disk I/O error")))
 
-    job = import_from(copy, messages_csv(archive))
+    job = import_from(write_database(tmp_path / "copy.db", ["one", "two"]), target)
 
     assert job["status"] == "completed", job["error"]
-    assert len(pd.read_csv(messages_csv(archive))) == 3
-    assert job["result"]["messages"] == ui_server.archive_summary(messages_csv(archive))["messages"] == 2
+    assert job["result"] == {"messages": 2, "conversations": 1, "contactsSkipped": False, "warning": WRITTEN_NOT_COUNTED}
+    assert sorted(held(target).values()) == ["one", "two"]
+
+
+def test_an_import_counts_messages_the_way_the_overview_does(tmp_path):
+    # one message is in no conversation: the app shows it nowhere, so it is not in the count
+    builder = ChatDbBuilder(tmp_path / "copy.db")
+    person = builder.handle(PERSON)
+    thread = builder.chat(PERSON, members=[person])
+    for text in ("one", "two"):
+        builder.message(thread, when=START, text=text, handle=person)
+    builder.message(None, when=START, text="in no conversation", handle=person)
+    builder.close()
+    target = tmp_path / "new" / "archive.sqlite3"
+
+    job = import_from(tmp_path / "copy.db", target)
+
+    assert job["status"] == "completed", job["error"]
+    assert len(held(target)) == 3
+    assert job["result"]["messages"] == ui_server.archive_summary(target)["messages"] == 2
     assert job["result"]["conversations"] == 1
     assert "warning" not in job["result"]
 
 
-def test_after_an_import_no_preview_of_the_earlier_archive_is_kept(archive, tmp_path):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    ui_server.set_cache_entry(ui_server.PREVIEW_CACHE_NAMESPACE, "of-the-earlier-archive", {"stats": {}})
-    with ui_server.PREVIEW_CACHE_LOCK:
-        ui_server.PREVIEW_CACHE["of-the-earlier-archive"] = {"stats": {}}
-
-    job = import_from(copy, messages_csv(archive))
-
-    assert job["status"] == "completed", job["error"]
-    assert ui_server.get_cache_entry(ui_server.PREVIEW_CACHE_NAMESPACE, "of-the-earlier-archive") is None
-    assert "of-the-earlier-archive" not in ui_server.PREVIEW_CACHE
-
-
-def test_previews_that_cannot_be_dropped_do_not_fail_an_import_that_is_in_place(archive, tmp_path, monkeypatch):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
+def test_previews_that_cannot_be_dropped_do_not_fail_an_import_that_is_written(filled, tmp_path, monkeypatch):
+    later = write_database(tmp_path / "chat.db", ["one", "two", "three", "four"])
     monkeypatch.setattr(ui_server, "clear_cache_namespace", raising(RuntimeError("the store is closed")))
 
-    job = import_from(copy, messages_csv(archive))
+    job = import_from(later, filled)
 
     assert job["status"] == "completed", job["error"]
+    assert "warning" not in job["result"]
+    assert len(held(filled)) == 4
 
 
-def test_contacts_that_cannot_be_read_are_told_in_a_plain_line(archive, tmp_path, monkeypatch):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
+def test_contacts_that_cannot_be_read_are_told_in_a_plain_line(filled, tmp_path, monkeypatch, capfd):
+    later = write_database(tmp_path / "chat.db", ["one", "two", "three", "four"])
     monkeypatch.setattr(ui_server, "export_contact_names", raising(RuntimeError(f"a failure with {QUERY} in it")))
 
-    job = import_from(copy, messages_csv(archive), contacts=True)
+    job = import_from(later, filled, contacts=True)
 
     assert job["status"] == "completed", job["error"]
     assert job["result"]["contactsSkipped"] is True
     assert "Contacts could not be read. Some people show as numbers." in said(job)
-    assert "SELECT" not in said(job) and "Traceback" not in said(job)
+    assert plain(job)
+    assert len(held(filled)) == 4
+    assert QUERY in capfd.readouterr().err
 
 
-def test_a_job_of_another_kind_keeps_its_trace(archive):
+def test_contacts_that_are_read_are_not_said_to_be_skipped(filled, tmp_path, monkeypatch):
+    later = write_database(tmp_path / "chat.db", ["one", "two", "three", "four"])
+    monkeypatch.setattr(ui_server, "export_contact_names", lambda: {"count": 0})
+
+    job = import_from(later, filled, contacts=True)
+
+    assert job["status"] == "completed", job["error"]
+    assert job["result"]["contactsSkipped"] is False
+    assert "Contacts could not be read" not in said(job)
+
+
+def test_a_job_of_another_kind_keeps_its_trace(filled):
     # this is not a reason that an import gives, so the job says where it came from
-    job = run("analyze", {"messagesPath": str(messages_csv(archive))})
+    job = run("analyze", {"messagesPath": str(filled)})
 
     assert job["status"] == "failed"
-    assert job["error"] == "Select a contact before starting analysis"
+    assert job["error"] == "Select a conversation before you start a report."
     assert "Traceback" in said(job)
 
 
-# ---- a busy database ----
+def test_a_copy_for_an_archive_that_holds_messages_is_refused_in_a_plain_sentence(filled, tmp_path):
+    copy = write_database(tmp_path / "copy.db", ["from a copy"])
+    put_in_messages(write_database(tmp_path / "chat.db", ["one", "two", "three"]))
 
-
-@pytest.fixture
-def no_wait(monkeypatch):
-    """The wait before the second try, as the list of waits that were asked for."""
-    waits = []
-    monkeypatch.setattr(ui_server.time, "sleep", waits.append)
-    return waits
-
-
-def busy_for(monkeypatch, times):
-    """Make the first `times` reads of the messages find the database busy. Gives the list of reads."""
-    real = ui_server.extract_messages
-    reads = []
-
-    def reader(path):
-        reads.append(path)
-        if len(reads) <= times:
-            raise sqlite3.OperationalError("database is locked")
-        return real(path)
-
-    monkeypatch.setattr(ui_server, "extract_messages", reader)
-    return reads
-
-
-def busy_lines(job):
-    return [entry["message"] for entry in job["logs"] if "busy" in entry["message"]]
-
-
-def test_a_busy_database_is_tried_once_more(messages_home, archive, monkeypatch, no_wait):
-    messages_db(messages_home / "chat.db", ["one"])
-    reads = busy_for(monkeypatch, times=1)
-
-    job = run("export", {"messagesPath": str(messages_csv(archive))})
-
-    assert job["status"] == "completed", job["error"]
-    assert (len(reads), no_wait) == (2, [ui_server.BUSY_WAIT_SECONDS])
-    assert busy_lines(job) == ["The database is busy. Trying again in a moment"]
-
-
-def test_a_database_that_is_busy_twice_stops_the_import(messages_home, archive, monkeypatch, no_wait):
-    messages_db(messages_home / "chat.db", ["one"])
-    reads = busy_for(monkeypatch, times=5)
-
-    job = run("export", {"messagesPath": str(messages_csv(archive))})
+    job = run("setup_import", {"dbPath": str(copy), "messagesPath": str(filled), "includeContacts": False})
 
     assert job["status"] == "failed"
-    assert (len(reads), no_wait) == (2, [ui_server.BUSY_WAIT_SECONDS])
-    assert job["error"] == f"The Messages database on this Mac is busy. Quit Messages or wait a moment, then try again. {KEPT}"
-    assert unchanged(archive)
-    assert left_behind(archive) == []
-
-
-def test_a_database_that_is_not_busy_is_read_once(messages_home, archive, monkeypatch, no_wait):
-    messages_db(messages_home / "chat.db", ["one"])
-    reads = busy_for(monkeypatch, times=0)
-
-    job = run("export", {"messagesPath": str(messages_csv(archive))})
-
-    assert job["status"] == "completed", job["error"]
-    assert (len(reads), no_wait, busy_lines(job)) == (1, [], [])
-
-
-def test_a_failure_that_is_not_busy_is_not_tried_again(messages_home, archive, monkeypatch, no_wait):
-    messages_db(messages_home / "chat.db", ["one"])
-    reads = []
-
-    def reader(path):
-        reads.append(path)
-        raise sqlite3.OperationalError("no such table: handle")
-
-    monkeypatch.setattr(ui_server, "extract_messages", reader)
-
-    job = run("export", {"messagesPath": str(messages_csv(archive))})
-
-    assert job["status"] == "failed"
-    assert (len(reads), no_wait, busy_lines(job)) == (1, [], [])
-
-
-def test_export_when_free_gives_what_the_second_try_gives(messages_home, tmp_path, monkeypatch, no_wait):
-    live = messages_db(messages_home / "chat.db", ["one", "two"])
-    busy_for(monkeypatch, times=1)
-
-    result = ui_server.export_when_free("no-such-job", live, tmp_path / "messages.csv")
-
-    assert (result["messages"], result["messagesPath"]) == (2, str(tmp_path / "messages.csv"))
-
-
-def test_a_busy_copy_is_named_in_what_went_wrong(tmp_path, monkeypatch, no_wait):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    busy_for(monkeypatch, times=5)
-
-    job = import_from(copy, tmp_path / "new" / "messages.csv")
-
-    assert job["error"] == f"The copy at {copy.resolve()} is busy. Close the app that has it open, then try again."
-
-
-@pytest.mark.parametrize("raised, words", [
-    (sqlite3.OperationalError("unable to open database file"), "macOS keeps that folder closed to it"),
-    (sqlite3.OperationalError("no such table: handle"), "is not a Messages database."),
-    (sqlite3.OperationalError("disk I/O error"), "could not be read."),
-])
-def test_a_copy_that_fails_in_a_first_setup_is_named_and_no_archive_is_spoken_of(tmp_path, monkeypatch, raised, words):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    monkeypatch.setattr(ui_server, "extract_messages", raising(raised))
-
-    job = import_from(copy, tmp_path / "new" / "messages.csv")
-
-    assert job["status"] == "failed"
-    assert str(copy.resolve()) in job["error"] and words in job["error"]
-    assert "archive" not in job["error"]
+    assert job["error"] == f"An update reads Messages on this Mac. It does not read a copy. {KEPT}"
+    assert plain(job)
