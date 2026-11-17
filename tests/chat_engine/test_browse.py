@@ -98,7 +98,7 @@ def test_period_inside_the_first_page_needs_no_search() -> None:
     archive = tiny_archive()
     result = browse(archive, GROUP, edge="oldest", limit=5, since="2019-06-02", until="2019-06-02")
     assert _ids(result) == ["g5"] and result.anchored and result.reached_edge
-    assert [name for name, _ in archive.calls] == ["messages"]
+    assert [name for name, _ in archive.calls] == ["count", "messages"]
 
 
 def _gap_archive() -> FakeArchive:

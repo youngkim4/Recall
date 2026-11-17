@@ -4,10 +4,12 @@ The archive pages a conversation by message id: `before`, `after`, `around`.
 It has no call for "the first messages" or "the messages of that week". So
 this module finds the place itself:
 
-1. It asks for one page. Which edge that page shows does not matter.
-2. It goes to the period: by a search for a frequent word when that works,
+1. With a period, it counts the messages of the period. A period with no
+   message is empty: no walk can prove that in a very long conversation.
+2. It asks for one page. Which edge that page shows does not matter.
+3. It goes to the period: by a search for a frequent word when that works,
    else page by page.
-3. It walks to the edge that was asked for, then back until it has enough.
+4. It walks to the edge that was asked for, then back until it has enough.
 
 Every walk has a limit. When the limit stops it, the result says so.
 
@@ -131,6 +133,8 @@ def _walk_to(
     until: Optional[str],
     max_hops: int,
 ) -> Browsed:
+    if (since or until) and _is_empty(archive, conversation_id, since, until):
+        return Browsed((), True)
     walk = _Walk(archive, conversation_id, max_hops)
     period = _Period(since, until)
     toward, away = (OLDER, NEWER) if edge == "oldest" else (NEWER, OLDER)
@@ -168,6 +172,14 @@ def _walk_to(
         more = [message for message in page["messages"] if period.holds(message)]
         kept = kept + more if away == NEWER else more + kept
     return Browsed(tuple(kept[:limit] if edge == "oldest" else kept[-limit:]), reached)
+
+
+def _is_empty(archive: ChatArchive, conversation_id: str, since: Optional[str], until: Optional[str]) -> bool:
+    """True when the archive counts no message of the conversation in the period."""
+    total = archive.count(
+        conversations=[conversation_id], since=since, until=until, from_me=None, text=None, group_by=None
+    )
+    return isinstance(total, int) and not isinstance(total, bool) and total == 0
 
 
 def _day(message: Message) -> str:

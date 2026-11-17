@@ -67,7 +67,11 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
                     "string", '"newest" (default), "oldest" or "relevance".',
                     enum=["newest", "oldest", "relevance", None],
                 ),
-                "limit": _nullable("integer", f"Hits to show, 1 to {SEARCH_LIMIT_MAX}. Default 8."),
+                "limit": _nullable(
+                    "integer",
+                    f"Hits to show, 1 to {SEARCH_LIMIT_MAX}. Default 8. "
+                    "Each hit also shows up to 2 messages before it and 2 after it.",
+                ),
             }
         ),
     ),

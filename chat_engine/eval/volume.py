@@ -204,11 +204,14 @@ def _walks(archive: FrameArchive, picks: Picks, repeat: int) -> list[Measured]:
             return "".join(f"m{number} \n" for number in range(1, len(got.messages) + 1))
         return run
 
+    year = {"since": picks.chat_since, "until": picks.chat_until}
+    empty = {"since": picks.empty_since, "until": picks.empty_until}
     return [
         measure("page walk to the first messages", walk("oldest"), repeat),
-        measure("page walk to the first messages of one year", walk("oldest", since=picks.since, until=picks.until),
-                repeat),
-        measure("page walk to the latest messages up to a day", walk("newest", until=picks.until), repeat),
+        measure("page walk to the first messages of one year", walk("oldest", **year), repeat),
+        measure("page walk to the latest messages up to a day", walk("newest", until=picks.chat_until), repeat),
+        measure("page walk to a year with no message", walk("oldest", **empty), repeat),
+        measure("page walk to the latest before the start", walk("newest", until=picks.empty_until), repeat),
     ]
 
 

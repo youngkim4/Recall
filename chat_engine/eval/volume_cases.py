@@ -37,8 +37,12 @@ class Picks:
     largest: str  # conversation ids
     group: Optional[str]
     middle: str
-    since: str
+    since: str  # one year in the middle of the archive
     until: str
+    chat_since: str  # one year in the middle of the largest conversation
+    chat_until: str
+    empty_since: str  # one year before the largest conversation starts: it holds no message
+    empty_until: str
     digits: str
     longest: Optional[str]  # id of the message with the longest text
     longest_word: str
@@ -92,6 +96,8 @@ def pick(archive: FrameArchive) -> Picks:
     direct = [conversation for conversation in conversations if not conversation["is_group"]]
     common, medium, rare = _words(archive)
     largest = str(conversations[0]["id"])
+    chat_first = int(str(conversations[0]["first_timestamp"])[:4])
+    chat_year = (chat_first + int(str(conversations[0]["last_timestamp"])[:4])) // 2
     longest, longest_word = _longest(archive)
     return Picks(
         common=common,
@@ -103,6 +109,10 @@ def pick(archive: FrameArchive) -> Picks:
         middle=str(conversations[len(conversations) // 2]["id"]),
         since=f"{year}-01-01",
         until=f"{year}-12-31",
+        chat_since=f"{chat_year}-01-01",
+        chat_until=f"{chat_year}-12-31",
+        empty_since=f"{chat_first - 1}-01-01",
+        empty_until=f"{chat_first - 1}-12-31",
         digits=re.sub(r"\D", "", str(direct[0]["id"]) if direct else "")[-4:],
         longest=longest,
         longest_word=longest_word,
@@ -140,9 +150,15 @@ def browse_cases(picks: Picks, alias: Mapping[str, str]) -> list[Case]:
              {"query": "", "conversations": largest, "order": "oldest"}),
         Case("read the latest messages", "search_messages", {"query": "", "conversations": largest}),
         Case("read the first messages of one year", "search_messages",
-             {"query": "", "conversations": largest, "order": "oldest", "since": picks.since, "until": picks.until}),
+             {"query": "", "conversations": largest, "order": "oldest", "since": picks.chat_since,
+              "until": picks.chat_until}),
         Case("read the latest messages up to a day", "search_messages",
-             {"query": "", "conversations": largest, "until": picks.until, "limit": 20}),
+             {"query": "", "conversations": largest, "until": picks.chat_until, "limit": 20}),
+        Case("read a year with no message", "search_messages",
+             {"query": "", "conversations": largest, "order": "oldest", "since": picks.empty_since,
+              "until": picks.empty_until}),
+        Case("read the latest messages before the start", "search_messages",
+             {"query": "", "conversations": largest, "until": picks.empty_until}),
     ]
 
 
@@ -163,7 +179,7 @@ def figure_cases(picks: Picks, alias: Mapping[str, str]) -> list[Case]:
         Case("list the largest conversations", "list_conversations", {"limit": 30}),
         Case("figures of the largest conversation", "conversation_stats", {"conversation": largest[0]}),
         Case("figures of one year", "conversation_stats",
-             {"conversation": largest[0], "since": picks.since, "until": picks.until}),
+             {"conversation": largest[0], "since": picks.chat_since, "until": picks.chat_until}),
         Case("figures of a middle conversation", "conversation_stats", {"conversation": alias[picks.middle]}),
     ]
     if picks.digits:

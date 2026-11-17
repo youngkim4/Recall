@@ -154,6 +154,15 @@ A simple recall question then ends in one model call.
 Words go to the archive as the user or the model wrote them, in lower case.
 The engine compares words without case or diacritics only inside its own code.
 
+What `limit` of `search_messages` counts:
+
+- `limit` is the number of matches, not the number of lines.
+- Each match comes with up to 2 messages before it and 2 after it. Matches that are near each other share one block.
+- So `limit=20` can show up to 100 messages. The token budget of the result still holds: when the blocks do not fit, a note says how many matches are not shown.
+
+To read a conversation with no search word, the engine first counts the messages of the period.
+A period with no message is empty at once. No page walk can prove that in a very long conversation.
+
 ## Reactions and attachments
 
 - A reaction is not a message. Search, counts, lists and figures do not see it.
@@ -260,15 +269,16 @@ Results on this machine for 565,821 invented rows (548,543 messages, 1,414 conve
 
 | Measure | Result |
 |---|---|
-| Build the archive from the frame | 1.7 s |
-| Build the search index | 4.5 s |
-| Memory at its peak | 488 MB |
-| Read and label every conversation, once for each question | 136 ms |
-| Slowest of 41 lookups | 76 ms (count by sender over the whole archive) |
-| A search | 2 to 13 ms |
-| A whole question without the model time | 137 to 148 ms |
+| Build the archive from the frame | 1.6 s |
+| Build the search index | 4.7 s |
+| Memory at its peak | 489 MB |
+| Read and label every conversation, once for each question | 59 ms at the first question, less after |
+| Slowest of 45 lookups | 70 ms (count by sender over the whole archive) |
+| A search | 2 to 20 ms |
+| A whole question without the model time | 74 to 94 ms |
 | Largest tool result | 2,932 tokens of 3,000 |
 | Lookups over the budget | 0 |
+| Lookups that failed | 0 |
 
 WARNING: The command below reads a real export. Run it only on your own file. It prints numbers only.
 
@@ -276,8 +286,10 @@ WARNING: The command below reads a real export. Run it only on your own file. It
 venv/bin/python -m chat_engine.eval.volume /path/to/messages.csv
 ```
 
-The run on the real export of the owner was NOT done in the session that wrote this package.
-The permission check of that session refused the read. The owner can run the command above.
+The session that wrote this package did not read a real export: its permission check refused that.
+Another session of the owner ran the command on the real export and gave back the numbers.
+That run found one fault, which is now fixed and has a test: a period before the first message of a very long conversation.
+The numbers of that run are in the hand-over note of the sessions. They are not in this repository.
 
 ## Evaluation
 
@@ -407,6 +419,7 @@ Screens (redesign commit `ab20b5e`):
 - The search has no meaning search. The model can use `match="any"` with other words for the same thing.
 - The engine reads message text only. It does not read attachments or reactions.
 - The default token count is an estimate of three bytes for each token.
-- Each question lists and labels every conversation again (136 ms for 1,414 conversations).
+- Each question lists and labels every conversation again. The parsed handles are remembered, so this costs about 25 microseconds for each conversation after the first question.
+- The list is not kept between questions. A contact or a group can get a new name with no new message, and then no count of the archive changes.
 - A typed message that has the exact form of a reaction phrase is left out by `FrameArchive`.
 - The volume numbers above come from invented text. Real text has more different words.

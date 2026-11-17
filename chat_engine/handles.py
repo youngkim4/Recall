@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Generic, Iterator, Optional, TypeVar
 
 EMAIL_MASK = "an unsaved email contact"
@@ -29,6 +30,7 @@ _INDEX_DIGITS = 7
 _LOCAL_DIGITS = 7  # the form without an area code
 _NATIONAL_DIGITS = 10  # a number this long has a shorter local form
 _TRUNK = "0"  # written after a country code in some countries: +44 (0)7911 ...
+_REMEMBERED = 65_536  # parsed handles kept: every question reads the handles of the whole archive again
 
 _PREFIX_RE = re.compile(r"^(?:(?:imessage|sms|rcs|tel|mailto|p|e)(?:;[-+];|:))+", re.IGNORECASE)
 _EMAIL_BODY = r"[\w.+\-]{1,64}@[\w\-]{1,63}(?:\.[\w\-]{1,63}){1,8}"
@@ -43,7 +45,12 @@ Value = TypeVar("Value")
 
 def strip_prefix(handle: object) -> str:
     """The handle without a service prefix such as "tel:" or "iMessage;-;"."""
-    return _PREFIX_RE.sub("", str(handle or "").strip()).strip("; \t")
+    return _stripped(str(handle or ""))
+
+
+@lru_cache(maxsize=_REMEMBERED)
+def _stripped(text: str) -> str:
+    return _PREFIX_RE.sub("", text.strip()).strip("; \t")
 
 
 @dataclass(frozen=True)
@@ -58,7 +65,12 @@ class Phone:
 
 def parse_phone(handle: object) -> Optional[Phone]:
     """The phone number a handle spells, or None when it is not one."""
-    text = strip_prefix(handle)
+    return _parsed(str(handle or ""))
+
+
+@lru_cache(maxsize=_REMEMBERED)
+def _parsed(raw: str) -> Optional[Phone]:
+    text = _stripped(raw)
     digits = re.sub(r"\D", "", text)
     if len(digits) < MIN_PHONE_DIGITS or not _NUMBER_MARKS_RE.fullmatch(text):
         return None
@@ -80,7 +92,12 @@ def same_phone(one: Phone, other: Phone) -> bool:
 
 def handle_kind(handle: object) -> str:
     """ "email", "phone", "short_code" or "other" (a group id, a name, nothing)."""
-    text = strip_prefix(handle)
+    return _kind(str(handle or ""))
+
+
+@lru_cache(maxsize=_REMEMBERED)
+def _kind(raw: str) -> str:
+    text = _stripped(raw)
     if _EMAIL_ONLY_RE.fullmatch(text):
         return "email"
     if parse_phone(text) is not None:

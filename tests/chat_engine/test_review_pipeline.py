@@ -614,3 +614,45 @@ def test_a_received_message_with_no_handle_is_not_counted_as_the_owner() -> None
         engine, fake, _ = make_engine([[call("count_messages", "c1", group_by="sender")], say("ok")], archive=archive)
         engine.ask("zz?")
         assert tool_results(fake.requests[1])[0].splitlines()[1:] == ["an unsaved contact: 2", "You: 1"]
+
+
+# --- found by the volume run on a real export ----------------------------------
+
+
+def _long_chat(count: int = 13_000) -> tuple[str, FakeArchive]:
+    """One conversation that is longer than the page walk can cross: it starts in 2021."""
+    chat = "+15550000042"
+    first = datetime(2021, 1, 1, 12, 0, 0)
+    rows = [
+        make_message(f"d{i:05d}", chat, (first + timedelta(minutes=17 * i)).strftime("%Y-%m-%d %H:%M:%S"), "note")
+        for i in range(count)
+    ]
+    return chat, FakeArchive(rows)
+
+
+@pytest.mark.parametrize(
+    ("edge", "days"),
+    [
+        ("oldest", {"since": "2020-01-01", "until": "2020-12-31"}),
+        ("newest", {"until": "2020-12-31"}),
+        ("newest", {"since": "2019-01-01", "until": "2020-06-30"}),
+        ("oldest", {"since": "2031-01-01"}),
+    ],
+)
+def test_a_period_with_no_message_in_a_very_long_conversation_is_known_at_once(edge: str, days: dict) -> None:
+    chat, archive = _long_chat()
+    found = browse(archive, chat, edge=edge, limit=8, **days)
+    assert found.messages == () and found.anchored and found.reached_edge
+    assert [name for name, _ in archive.calls] == ["count"]
+
+
+def test_reading_before_the_start_of_a_very_long_conversation_says_no_messages() -> None:
+    chat, archive = _long_chat()
+    script = [
+        [call("search_messages", "s1", query="", conversations=["a number ending in 0042"], until="2020-12-31")],
+        say("ok"),
+    ]
+    engine, fake, _ = make_engine(script, archive=archive)
+    engine.ask("zz?")
+    said = tool_results(fake.requests[1])[0]
+    assert said == "No messages in c1 · a number ending in 0042 · direct, up to 2020-12-31."
