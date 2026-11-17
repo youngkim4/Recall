@@ -72,19 +72,28 @@ Different values give different periods and different cache keys.
 
 ### Source
 
-A message is a dict: `id` (str), `timestamp` (`YYYY-MM-DD HH:MM:SS`, local time, no zone), `is_from_me` (bool), `sender` (str), `text` (str).
+A message is a dict: `id` (str), `timestamp` (`YYYY-MM-DD HH:MM:SS`, local time, no zone), `is_from_me` (`True`, `False`, `1` or `0`), `sender` (str), `text` (str).
+A message that does not have this shape stops the run with `SourceError` before any model call.
 
 `since` and `until` are days (`YYYY-MM-DD`) or full timestamps. Both ends are included. A day means the whole day.
+A scope with an unknown key or a bad date is a `ConfigError`. It never becomes "all dates".
 
-- `FrameSource(frame)` reads a pandas DataFrame with the export columns `message_id`, `timestamp`, `sender`, `text`, `chat_id`, `is_from_me`. It matches `chat_id` exactly.
-- `ArchiveSource(archive)` reads `archive.iter_messages(conversation_id, since=..., until=...)`. It skips rows whose `kind` is `system`. `ArchiveSource.open(path)` imports the `archive` package at that moment. This adapter is tested with a stand-in only.
+- `FrameSource(frame)` reads a pandas DataFrame with the export columns `message_id`, `timestamp`, `sender`, `text`, `chat_id`, `is_from_me`. It matches `chat_id` exactly. It reads rows by position. It converts a timestamp that has a zone to the local time of the machine.
+- `ArchiveSource(archive)` reads `archive.iter_messages(conversation_id, since=..., until=...)`. It sends days only, asks for one day more than `until`, and applies the exact bounds itself. It skips rows whose `kind` is `system`. `ArchiveSource.open(path)` imports the `archive` package at that moment. This adapter is tested with a stand-in only.
 
 ### Labeler
 
 The engine calls the labeler one time for each sender that is not the owner.
 Own messages always get the name `You`.
 
-The engine replaces a name with `Unsaved contact` when the name is empty, is `You`, or looks like a phone number or an e-mail address.
+The engine replaces a name with `Unsaved contact` when the name:
+
+- is empty or is `You`;
+- contains `@`;
+- has 7 or more digits;
+- has digits and no letter (a short code).
+
+The check reads the full name. After the check, the name is cut to 40 characters.
 The conversation id never goes into a prompt.
 
 In a one-to-one chat the source can give an empty sender. Return the contact's name for the empty sender.
@@ -104,11 +113,14 @@ Prices are in USD for one million tokens.
 - `usage.input_tokens` includes the cached tokens. `usage.cached_input_tokens` is the cached part.
 - `status` is `completed`, `incomplete`, `refused` or `failed`.
 - The port raises `LLMError` when it cannot answer. It does its own retries.
+- An error of any other type from the port fails that call. The engine names only the type of the error.
 
 `OpenAIResponsesLLM` sends `store=False`, a timeout and `max_output_tokens` with every request.
 It retries a rate limit, a timeout, a connection error and a 5xx reply, 2 times by default.
 It waits the time that `retry-after` gives. When that time is longer than 60 seconds it stops and raises.
 It does not send a cut-off reply again.
+Its errors hold the HTTP status, the error code and the request id. They hold no text from the service and no link to the request.
+`build_client` always sets the address of the service. `OPENAI_BASE_URL` in the environment has no effect.
 
 `FakeLLM` (`report_engine.fake_llm`) is a model for tests. It makes no network call.
 
@@ -129,6 +141,7 @@ It does not send a cut-off reply again.
 | `tokenizer_mismatch_margin` | 1.35 | Safety margin for token counts. See "Tokens". |
 
 The output limits include reasoning tokens. Set them high enough for the reasoning effort.
+With a low `tokens_per_minute`, set them lower: one request is the input plus the output limit.
 
 ## Periods
 
@@ -139,6 +152,7 @@ A day that is larger than the budget stands alone and is split by messages.
 New messages change only the last period. A period that is closed does not change.
 
 The budget is also limited by the model. One request must fit `max_input_tokens`, the context window and one minute of `tokens_per_minute`.
+The engine keeps room for the fixed prompt text, the speaker names and the notes.
 
 ## Cache
 
@@ -148,26 +162,30 @@ The key does not hold the notes from earlier periods. A change in an old period 
 The key does not hold the reasoning effort. To force a new run, call `PeriodCache.clear()`.
 
 A failed period has no cache entry. The next run tries it again.
-The cache file holds summaries and quotes. Keep it with the archive.
+The cache file holds summaries and quotes. The engine sets its mode to `0600`. Keep it with the archive.
 
 ## The report
 
 `Report` is a pydantic model. `report.model_dump(mode="json")` gives the JSON form.
 
-- `schema_version`, `id`, `conversation`, `scope` (`since`, `until`), `model`, `created_at` (UTC)
+- `schema_version`, `id`, `conversation`, `scope` (`since`, `until`), `model`, `created_at` (always in UTC)
 - `status`: `complete` or `partial`
 - `warnings`: text lines
 - `sections`: always `arc`, `dynamics`, `defining_moments`, `big_picture`, in this order. Each has `key`, `title`, `markdown`.
 - `moments`: the selected moments, oldest first
 - `periods`: one `PeriodSummary` for each period
 - `usage`: `input_tokens`, `cached_input_tokens`, `output_tokens`, `cost_usd`, `calls` of this run
-- `stats`: the figures from the caller
+- `stats`: the figures from the caller, changed to plain JSON values
 
-A `Moment` has `date`, `title`, `detail`, `category`, `score`, `quote`, `message_ids`, `quote_verified`.
+A `Moment` has `date`, `title`, `detail`, `category`, `score`, `quote`, `message_ids`, `quote_verified`, `quote_message_id`, `quote_speaker`.
 
 - `message_ids` are real message ids. Use them to open the exchange. The list can be empty.
 - `date` is always a day on which the period has a message.
-- `quote` is empty when `quote_verified` is false.
+- When `quote_verified` is true, `quote` is in the message `quote_message_id`, and `quote_speaker` is the name of the person who wrote that message.
+- When `quote_verified` is false, `quote`, `quote_message_id` and `quote_speaker` are empty.
+- `title`, `detail` and `quote` are plain text. Escape them when you put them into HTML.
+
+Section `markdown` has no heading, link, image or HTML tag. The engine removes them from the model reply.
 
 A `PeriodSummary` has `label`, `first_day`, `last_day`, `summary`, `carry_over`, `moments`, `usage`, `cache_key`, `from_cache`, `error`, `message_count`.
 For a period from the cache, `usage` is the cost of the call that made the entry. `report.usage` counts only the calls of this run.
@@ -178,7 +196,26 @@ For a period from the cache, `usage` is the cost of the call that made the entry
 - A date must be a day of the period. A wrong date moves to the earliest cited day. A moment with no usable date is dropped.
 - A quote must be part of a cited message, or of a message within three days of the moment's date. A quote of fewer than 8 characters must be in a cited message.
 - Two texts match when they are equal after white space, quote marks and Unicode composition are made the same. Letter case must match.
+- In Latin, Greek and Cyrillic text a quote cannot start or end in the middle of a word. `ok` is not a quote from `tokens`.
 - A quote that is not found is cleared. The report gets a warning with the count.
+- The name in `quote_speaker` comes from the message, not from its text. Text such as `Mina: I owe you` in a message of another person does not make Mina the speaker.
+
+## Moments
+
+1. The engine removes duplicates. Two moments from different periods are one event when they hold the same message, or when their dates are 7 days apart or less and their titles have the same words. The moment with the higher score stays. Two moments of one period are never duplicates.
+2. It removes moments below `score_floor`.
+3. It takes the best moment of each period, then the second best of each period, until `max_moments`.
+
+A quiet period gives no moment. The engine adds nothing to fill the list.
+
+## Prompt safety
+
+All text from messages, names, summaries and notes is data in a prompt.
+
+- Each piece is put on one line.
+- Each block of data is in a frame: `<transcript>`, `<notes>`, `<periods>`, `<moments>`.
+- Text that contains a frame tag gets an invisible character in the tag. It cannot close a frame.
+- The prompts tell the model not to follow instructions inside the data.
 
 ## Failures
 
@@ -186,12 +223,15 @@ For a period from the cache, `usage` is the cost of the call that made the entry
 |-------|--------|
 | A period fails | The report is `partial`. A warning names the period. |
 | All periods fail | `AllPeriodsFailed`. No report. |
+| The summaries are too large for the model | The engine shortens them for the reduce call. A warning gives the count. |
 | The reduce reply is empty, cut off or has an empty section | `ReduceError`. No report. |
 | The cancel token is set | `ReportCancelled`. No report. |
+| An error in the engine after the first call | `RunError`. No report. The cause is in `__cause__`. |
 | The scope has no message with text | `EmptyConversationError`. No model call. |
-| The model limits leave no room for a period | `ConfigError`. No model call. |
+| The model limits leave no room for a period or for the reduce call | `ConfigError`. No model call. |
 
-`AllPeriodsFailed`, `ReduceError` and `ReportCancelled` have a `usage` attribute. It holds the tokens and the cost of the run until that moment.
+`ReportCancelled`, `AllPeriodsFailed` and `ReduceError` are kinds of `RunError`. Each `RunError` has a `usage` attribute with the tokens and the cost of the run until that moment.
+A call that ends with an error from the port gives no usage. The engine cannot count it.
 Period results stay in the cache. The next run does not pay for them again.
 
 ## Cancel and progress
@@ -209,11 +249,17 @@ Period results stay in the cache. The next run does not pay for them again.
 The engine counts tokens with `tiktoken`.
 It uses the encoding with the name `ModelInfo.tokenizer_family` when `tiktoken` has it. If not, it uses `o200k_base`.
 When the encoding is not the tokenizer family of the model, each count is multiplied by `tokenizer_mismatch_margin`.
-When no vocabulary file can load, the engine counts one token for each three bytes and writes a warning to the log.
+
+`tiktoken` gets its vocabulary file from the network the first time it runs on a machine.
+To stay offline, set `TIKTOKEN_CACHE_DIR` to a folder that has the file, or give `run_report` and `estimate` a `counter`.
+
+When no vocabulary file can load, the engine counts by class of character and writes a warning to the log.
+This count is 1.0 to 1.5 times the `o200k_base` count on chat text in the languages that were measured.
 The engine does not load a tokenizer at import time.
 
 Before each call the engine reserves the input estimate plus the output limit in a 60-second window.
 It waits when the window is full. After the call it replaces the reserve with the real usage.
+Retries inside the model port are counted after the call, at the time of the last send.
 
 ## Estimate
 
@@ -229,7 +275,8 @@ It waits when the window is full. After the call it replaces the reserve with th
 | `periods_cached` | Number of periods in the cache. |
 
 `labeler` is necessary: the speaker names are part of the cache key.
-An empty scope gives zeros.
+An empty scope gives zeros. `estimate` raises the same `ConfigError` as `run_report` when the model limits leave no room.
+The engine has no spend limit of its own. Call `estimate` and ask the user before a run.
 
 ## Store
 
@@ -244,12 +291,17 @@ An empty scope gives zeros.
 - `load_report(conversation, report_id)` gives a `Report`, or raises `ReportNotFound`.
 - `latest_report(conversation)` gives a `Report` or `None`.
 
+Report files have mode `0600`. New folders have mode `0700`.
+
 `render_markdown(report)` gives the layout that the current Reports page and server read:
 
 - Line 1: `# Conversation Analysis - <conversation id>`
 - `## Overview`. Its first line is the scope line: `- Scope: 2024-06-01 to 2024-06-30`, `- Scope: from 2024-06-01`, `- Scope: through 2024-06-30` or `- Scope: all dates`.
-- `## Key Events`. One `### <date> - <title>` block for each moment.
+- `## Key Events`. One `### <date> - <title>` block for each moment. The section is empty when the report has no moment.
 - `## Summary`. It is the last section and holds the four sections under `###` headings.
+
+In this layout `#`, `[`, `]` and `\` in titles, details, quotes and warnings have a backslash before them.
+Text from the model or from a message cannot make a heading, a link or an image.
 
 `write_text_atomic(path, text)` writes a text file in one step.
 
@@ -266,9 +318,10 @@ This package does not change the server. The wiring step must do these things.
    4. Until the Reports page reads JSON, write the markdown file: `write_text_atomic(out_dir / f"analysis_{sanitize_filename(contact)}.md", render_markdown(report))`.
 4. Make the events for `build_analysis_payload` from `report.moments`. The engine does not write `events_timeline_*.csv`.
 5. Send `ProgressEvent` to the job progress. Keep one `CancelToken` for each job and add a route that calls `cancel()`.
-6. Catch `ReportCancelled`, `ReduceError`, `AllPeriodsFailed`, `EmptyConversationError` and `ConfigError`. Show `report.warnings` when `status` is `partial`.
-7. In `preview_payload`, replace `estimate_cost` with `estimate`.
+6. Catch `RunError`, `EmptyConversationError`, `ConfigError` and `SourceError`. Record `error.usage` of a `RunError`. Show `report.warnings` when `status` is `partial`.
+7. In `preview_payload`, replace `estimate_cost` with `estimate`. Give it the same labeler as the run.
 8. Serve the JSON to the Reports page: the list from `list_reports`, one report from `load_report(...).model_dump(mode="json")`.
+9. Give `since` and `until` as days. The engine includes the whole `until` day. Today's server compares against midnight and drops that day.
 
 The engine does not write the HTML report of `html_report.py`.
 
@@ -278,5 +331,5 @@ The engine does not write the HTML report of `html_report.py`.
 venv/bin/python -m pytest tests/report_engine --cov=report_engine --cov-report=term-missing
 ```
 
-`tests/report_engine/conftest.py` sets a dummy `OPENAI_API_KEY` before any import and blocks all sockets that do not go to the local machine.
+`tests/report_engine/conftest.py` sets a dummy `OPENAI_API_KEY` before any import, removes proxy and address settings from the environment, and blocks all sockets that do not go to the local machine.
 The tests use invented conversations and `FakeLLM` only.
