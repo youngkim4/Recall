@@ -7,6 +7,24 @@ import pandas as pd
 from conversation import ConversationStats, sanitize_filename
 
 
+def _day(value) -> str:
+    return pd.to_datetime(value).strftime("%Y-%m-%d") if value else ""
+
+
+def scope_text(since=None, until=None) -> str:
+    """The dates a report was asked to cover, as the report states them. The
+    Reports page reads this line back (report_scope in ui_server), so the
+    figures it shows beside the story are for the same days."""
+    first, last = _day(since), _day(until)
+    if first and last:
+        return f"{first} to {last}"
+    if first:
+        return f"from {first}"
+    if last:
+        return f"through {last}"
+    return "all dates"
+
+
 def write_markdown_report(
     out_dir: str,
     contact: str,
@@ -14,6 +32,8 @@ def write_markdown_report(
     monthly: pd.DataFrame,
     summary_text: str,
     events_df: pd.DataFrame = None,
+    since=None,
+    until=None,
 ) -> str:
     """Write a Markdown report."""
     os.makedirs(out_dir, exist_ok=True)
@@ -22,6 +42,7 @@ def write_markdown_report(
     with open(fname, "w", encoding="utf-8") as f:
         f.write(f"# Conversation Analysis - {contact}\n\n")
         f.write("## Overview\n")
+        f.write(f"- Scope: {scope_text(since, until)}\n")
         f.write(f"- Total messages: {stats.total_messages:,}\n")
         f.write(f"- Sent / Received: {stats.sent_count:,} / {stats.received_count:,}\n")
         f.write(f"- First / Last: {stats.first_timestamp} / {stats.last_timestamp}\n")

@@ -63,6 +63,26 @@ def sanitize_filename(value: str) -> str:
     return safe or "conversation"
 
 
+# Messages names a group conversation "chat" and a run of digits
+_GROUP_CHAT_ID = r"chat[0-9]+"
+
+
+def is_group_chat(chat_id) -> bool:
+    """True for the id of a group conversation: "chat" and digits, nothing
+    more. An address that only starts with those letters is one person. The
+    interface reads an id the same way (isGroupChat)."""
+    return isinstance(chat_id, str) and re.fullmatch(_GROUP_CHAT_ID, chat_id) is not None
+
+
+def group_chat_mask(chat_ids: pd.Series) -> pd.Series:
+    """is_group_chat for a whole column of ids at once."""
+    return chat_ids.astype("string").str.fullmatch(_GROUP_CHAT_ID).fillna(False).astype(bool)
+
+
+_SENT_VALUES = frozenset({"1", "1.0", "true", "t", "yes", "y"})
+_RECEIVED_VALUES = frozenset({"0", "0.0", "false", "f", "no", "n"})
+
+
 def parse_boolish(value) -> Optional[int]:
     """Normalize iMessage direction values from CSV/SQLite into 1, 0, or NA."""
     if pd.isna(value):
@@ -71,16 +91,40 @@ def parse_boolish(value) -> Optional[int]:
         return int(value)
     if isinstance(value, (int, float)):
         return int(value == 1)
+    # the same words the whole-column masks below read, so one value and a
+    # column of them are never told apart: "1.0" is how a 1 reads back from a
+    # column that also holds blanks
     text = str(value).strip().lower()
-    if text in {"1", "true", "t", "yes", "y"}:
+    if text in _SENT_VALUES:
         return 1
-    if text in {"0", "false", "f", "no", "n"}:
+    if text in _RECEIVED_VALUES:
         return 0
     return pd.NA
 
 
 def count_sent(series: pd.Series) -> int:
     return int(series.map(parse_boolish).dropna().astype(int).sum())
+
+
+def count_directions(series: pd.Series) -> Tuple[int, int]:
+    """How many values say sent and how many say received. A value that says
+    neither is in neither count, so the two need not add up to the rows."""
+    known = series.map(parse_boolish).dropna().astype(int)
+    sent = int(known.sum())
+    return sent, int(len(known)) - sent
+
+
+def sent_mask(series: pd.Series) -> pd.Series:
+    """True where is_from_me marks a message as sent by the user. Agrees with
+    parse_boolish, but works on the whole column at once."""
+    return series.astype("string").str.strip().str.lower().isin(_SENT_VALUES)
+
+
+def received_mask(series: pd.Series) -> pd.Series:
+    """True where is_from_me marks a message as received. A row that does not
+    say is neither sent nor received. Agrees with parse_boolish for the values
+    an export holds, but works on the whole column at once."""
+    return series.astype("string").str.strip().str.lower().isin(_RECEIVED_VALUES)
 
 
 def direction_label(value) -> str:
@@ -90,17 +134,32 @@ def direction_label(value) -> str:
     return "ME" if int(normalized) == 1 else "THEM"
 
 
+def direction_word(value) -> str:
+    """ "outgoing" or "incoming" for an is_from_me value; "" when the export does not say."""
+    normalized = parse_boolish(value)
+    if pd.isna(normalized):
+        return ""
+    return "outgoing" if int(normalized) == 1 else "incoming"
+
+
+def within_dates(df: pd.DataFrame, since=None, until=None) -> pd.DataFrame:
+    """The rows from the start of the since day to the end of the until day.
+    Either side can be left open. A range is named by its days, so the last
+    day belongs to it in full."""
+    if since:
+        df = df[df["timestamp"] >= pd.to_datetime(since)]
+    if until:
+        df = df[df["timestamp"] < pd.to_datetime(until).normalize() + pd.Timedelta(days=1)]
+    return df
+
+
 def load_messages(csv_path: str, since: datetime = None, until: datetime = None) -> pd.DataFrame:
     """Load messages CSV with optional date filtering."""
     df = pd.read_csv(csv_path, dtype={"chat_id": "string", "sender": "string"})
     if "timestamp" not in df.columns:
         raise ValueError("messages CSV must contain a 'timestamp' column")
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-
-    if since:
-        df = df[df["timestamp"] >= pd.to_datetime(since)]
-    if until:
-        df = df[df["timestamp"] <= pd.to_datetime(until)]
+    df = within_dates(df, since, until)
 
     if "is_from_me" not in df.columns:
         df["is_from_me"] = pd.NA
@@ -109,22 +168,33 @@ def load_messages(csv_path: str, since: datetime = None, until: datetime = None)
     return df
 
 
-def load_attachments(csv_path: str) -> pd.DataFrame:
-    """Load attachments CSV if it exists."""
-    p = Path(csv_path)
-    att_path = p.with_name(p.stem + "_attachments.csv")
-    if att_path.exists():
-        return pd.read_csv(str(att_path))
-    return pd.DataFrame()
+def _companion_within_dates(df: pd.DataFrame, since=None, until=None) -> pd.DataFrame:
+    """Attachments and reactions carry their time as text. They are narrowed
+    to the same days as the messages they belong to, so a figure shown beside
+    a range of dates is a figure for those dates."""
+    if df.empty or "timestamp" not in df.columns or not (since or until):
+        return df
+    stamps = pd.DataFrame({"timestamp": pd.to_datetime(df["timestamp"], errors="coerce")}, index=df.index)
+    return df.loc[within_dates(stamps, since, until).index]
 
 
-def load_reactions(csv_path: str) -> pd.DataFrame:
-    """Load reactions CSV if it exists."""
+def _load_companion(csv_path: str, suffix: str, since=None, until=None) -> pd.DataFrame:
     p = Path(csv_path)
-    react_path = p.with_name(p.stem + "_reactions.csv")
-    if react_path.exists():
-        return pd.read_csv(str(react_path))
-    return pd.DataFrame()
+    companion = p.with_name(p.stem + suffix)
+    if not companion.exists():
+        return pd.DataFrame()
+    # a phone number read as a number would lose its plus sign and match no conversation
+    return _companion_within_dates(pd.read_csv(str(companion), dtype={"chat_id": "string"}), since, until)
+
+
+def load_attachments(csv_path: str, since=None, until=None) -> pd.DataFrame:
+    """Load attachments CSV if it exists, with the same date filtering as the messages."""
+    return _load_companion(csv_path, "_attachments.csv", since, until)
+
+
+def load_reactions(csv_path: str, since=None, until=None) -> pd.DataFrame:
+    """Load reactions CSV if it exists, with the same date filtering as the messages."""
+    return _load_companion(csv_path, "_reactions.csv", since, until)
 
 
 def filter_conversation(df: pd.DataFrame, contact: str) -> pd.DataFrame:
@@ -159,8 +229,7 @@ def compute_attachment_stats(attachments_df: pd.DataFrame, contact: str) -> Atta
         stats.other = int(cats.get("other", 0)) + int(cats.get("unknown", 0))
 
     if "is_from_me" in filtered.columns:
-        stats.sent_attachments = count_sent(filtered["is_from_me"])
-        stats.received_attachments = stats.total - stats.sent_attachments
+        stats.sent_attachments, stats.received_attachments = count_directions(filtered["is_from_me"])
 
     return stats
 
@@ -189,8 +258,7 @@ def compute_reaction_stats(reactions_df: pd.DataFrame, contact: str) -> Reaction
         stats.questions = int(types.get("question", 0))
 
     if "is_from_me" in filtered.columns:
-        stats.sent_reactions = count_sent(filtered["is_from_me"])
-        stats.received_reactions = stats.total - stats.sent_reactions
+        stats.sent_reactions, stats.received_reactions = count_directions(filtered["is_from_me"])
 
     return stats
 
@@ -210,11 +278,8 @@ def compute_stats(conv: pd.DataFrame, attachments_df: pd.DataFrame = None, react
     conv["date"] = conv["timestamp"].dt.date
     total = len(conv)
     direction_col = conv["is_from_me"] if "is_from_me" in conv.columns else pd.Series([pd.NA] * len(conv))
-    normalized_direction = direction_col.map(parse_boolish)
-    known_direction = normalized_direction.dropna().astype(int)
-    sent = int(known_direction.sum()) if not known_direction.empty else 0
-    unknown_dir = total - len(known_direction)
-    received = max(0, total - sent - unknown_dir)
+    sent, received = count_directions(direction_col)
+    unknown_dir = total - sent - received
     first_ts = pd.to_datetime(conv["timestamp"].min())
     last_ts = pd.to_datetime(conv["timestamp"].max())
     per_day = conv.groupby("date").size()
@@ -248,17 +313,110 @@ def compute_stats(conv: pd.DataFrame, attachments_df: pd.DataFrame = None, react
     )
 
 
+def _voices_by(conv: pd.DataFrame, moments: pd.Series) -> pd.DataFrame:
+    """Messages counted for each moment (a month, a day) in both voices. A row
+    that does not say who sent it adds to the total and to neither voice, the
+    way compute_stats counts it, so a chart and the figures beside it agree."""
+    # counted on whole columns: this also runs over an entire archive
+    counted = pd.DataFrame({
+        "moment": moments,
+        "sent": sent_mask(conv["is_from_me"]).astype(int),
+        "received": received_mask(conv["is_from_me"]).astype(int),
+    })
+    return counted.groupby("moment").agg(total=("sent", "size"), sent=("sent", "sum"), received=("received", "sum"))
+
+
 def progression_series(conv: pd.DataFrame) -> pd.DataFrame:
     """Aggregate conversation by month and compute sent ratio over time."""
-    conv = conv.copy()
-    conv["month"] = conv["timestamp"].dt.to_period("M").dt.to_timestamp()
-    monthly = conv.groupby("month").agg(
-        total=("text", "size"),
-        sent=("is_from_me", count_sent),
-    )
-    monthly["received"] = monthly["total"] - monthly["sent"]
-    monthly["sent_ratio"] = monthly.apply(lambda r: (r["sent"] / r["total"]) if r["total"] else 0.0, axis=1)
-    return monthly.sort_index().reset_index()
+    monthly = _voices_by(conv, conv["timestamp"].dt.to_period("M").dt.to_timestamp()).rename_axis("month")
+    sent_ratio = (monthly["sent"] / monthly["total"].where(monthly["total"] > 0)).fillna(0.0)
+    return monthly.assign(sent_ratio=sent_ratio).sort_index().reset_index()
+
+
+def fill_months(monthly: pd.DataFrame) -> pd.DataFrame:
+    """A row for every calendar month from the first to the last, so a month
+    with no messages keeps its place on a time axis."""
+    if monthly.empty:
+        return monthly
+    months = pd.date_range(monthly["month"].min(), monthly["month"].max(), freq="MS")
+    filled = monthly.set_index("month").reindex(months, fill_value=0).rename_axis("month").reset_index()
+    return filled.assign(sent_ratio=filled["sent_ratio"].astype(float))
+
+
+# a stretch up to two months long is charted by day; a longer one by month
+ACTIVITY_DAYS_LIMIT = 62
+
+
+def _as_points(counted: pd.DataFrame, key_format: str) -> list[dict]:
+    return [
+        {
+            "key": stamp.strftime(key_format),
+            "total": int(row["total"]),
+            "sent": int(row["sent"]),
+            "received": int(row["received"]),
+        }
+        for stamp, row in counted.iterrows()
+    ]
+
+
+def month_points(conv: pd.DataFrame) -> list[dict]:
+    """Messages by month in both voices, silent months included:
+    [{"key": "2024-11", "total": 3, "sent": 1, "received": 2}]."""
+    frame = conv.dropna(subset=["timestamp"])
+    if frame.empty:
+        return []
+    return _as_points(fill_months(progression_series(frame)).set_index("month"), "%Y-%m")
+
+
+def day_points(conv: pd.DataFrame) -> list[dict]:
+    """Messages by day in both voices, silent days included. A day's key is "2024-11-05"."""
+    frame = conv.dropna(subset=["timestamp"])
+    if frame.empty:
+        return []
+    days = frame["timestamp"].dt.normalize()
+    counted = _voices_by(frame, days)
+    return _as_points(counted.reindex(pd.date_range(days.min(), days.max(), freq="D"), fill_value=0), "%Y-%m-%d")
+
+
+def activity_series(conv: pd.DataFrame) -> dict:
+    """Messages over time at the scale the stretch calls for: by day up to two
+    months, by month beyond: {"unit": "day", "points": [...]}."""
+    stamps = conv["timestamp"].dropna()
+    if stamps.empty:
+        return {"unit": "month", "points": []}
+    days_covered = (stamps.max().normalize() - stamps.min().normalize()).days + 1
+    if days_covered > ACTIVITY_DAYS_LIMIT:
+        return {"unit": "month", "points": month_points(conv)}
+    return {"unit": "day", "points": day_points(conv)}
+
+
+WEEKDAYS = 7
+HOURS = 24
+
+
+def hour_by_weekday(conv: pd.DataFrame) -> list[list[int]]:
+    """How many messages fall in each hour of each weekday: seven rows from
+    Monday, twenty-four hours from midnight."""
+    stamps = conv["timestamp"].dropna()
+    if stamps.empty:
+        return [[0] * HOURS for _ in range(WEEKDAYS)]
+    counts = pd.crosstab(stamps.dt.dayofweek, stamps.dt.hour)
+    return counts.reindex(index=range(WEEKDAYS), columns=range(HOURS), fill_value=0).astype(int).values.tolist()
+
+
+def day_totals(conv: pd.DataFrame) -> dict:
+    """How many messages each day holds, from the first day to the last, silent
+    days included: {"start": "2024-11-05", "counts": [12, 0, 3]}. The counts
+    run one a day from the start, which keeps years of days small."""
+    stamps = conv["timestamp"].dropna()
+    if stamps.empty:
+        return {"start": "", "counts": []}
+    counts = stamps.dt.normalize().value_counts()
+    days = pd.date_range(counts.index.min(), counts.index.max(), freq="D")
+    return {
+        "start": days[0].strftime("%Y-%m-%d"),
+        "counts": [int(count) for count in counts.reindex(days, fill_value=0)],
+    }
 
 
 def _speaker_labels(conv: pd.DataFrame, sender_names: Optional[Dict[str, str]] = None) -> pd.Series:

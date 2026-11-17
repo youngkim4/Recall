@@ -13,6 +13,19 @@ def tmp_dir(tmp_path):
 
 
 @pytest.fixture
+def fresh_bundle_cache():
+    """Empty the parsed-export cache around a test, so each one reads its own CSV."""
+    import ui_server
+
+    blank = {"sig": None, "df": None, "catalog": None, "names": None}
+    with ui_server._ASK_CACHE_LOCK:
+        ui_server._ASK_CACHE.update(blank)
+    yield
+    with ui_server._ASK_CACHE_LOCK:
+        ui_server._ASK_CACHE.update(blank)
+
+
+@pytest.fixture
 def sample_messages_df():
     """Minimal messages DataFrame for testing."""
     return pd.DataFrame({

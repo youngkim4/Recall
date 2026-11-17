@@ -106,6 +106,32 @@ class TestListContacts:
         df = list_contacts(mock_chat_db, limit=1)
         assert len(df) <= 1
 
+    def test_a_group_is_an_id_made_of_chat_and_digits(self, mock_chat_db):
+        conn = sqlite3.connect(mock_chat_db)
+        base_ns = 726915600 * 1_000_000_000
+        chats = ["chat4471", "chatterbox@example.com", "chat12a", "chat", "Chat99"]
+        for offset, identifier in enumerate(chats, start=2):
+            conn.execute("INSERT INTO chat VALUES (?, ?)", (offset, identifier))
+            conn.execute(
+                "INSERT INTO message VALUES (?, ?, 1, 'hi', NULL, 0, 'iMessage', NULL, 0)",
+                (100 + offset, base_ns + offset * 60_000_000_000),
+            )
+            conn.execute("INSERT INTO chat_message_join VALUES (?, ?)", (offset, 100 + offset))
+        conn.commit()
+        conn.close()
+
+        groups = list_contacts(mock_chat_db, limit=20).set_index("chat_id")["is_group"].to_dict()
+
+        # an address that only starts with "chat" is one person, the same as everywhere else
+        assert groups == {
+            "+15551234567": 0,
+            "chat4471": 1,
+            "chatterbox@example.com": 0,
+            "chat12a": 0,
+            "chat": 0,
+            "Chat99": 0,
+        }
+
     def test_columns_present(self, mock_chat_db):
         df = list_contacts(mock_chat_db)
         for col in ["chat_id", "display_name", "message_count", "first_msg", "last_msg", "is_group"]:

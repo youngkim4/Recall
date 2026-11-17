@@ -236,7 +236,10 @@ def list_contacts(db_path: str, limit: int = 20) -> pd.DataFrame:
             COUNT(message.ROWID) AS message_count,
             MIN({imessage_timestamp_sql("message.date")}) AS first_msg,
             MAX({imessage_timestamp_sql("message.date")}) AS last_msg,
-            CASE WHEN chat.chat_identifier LIKE 'chat%' THEN 1 ELSE 0 END AS is_group
+            -- a group is "chat" and digits, nothing more (is_group_chat in conversation)
+            CASE WHEN chat.chat_identifier GLOB 'chat[0-9]*'
+                      AND substr(chat.chat_identifier, 5) NOT GLOB '*[^0-9]*'
+                 THEN 1 ELSE 0 END AS is_group
         FROM message
         LEFT JOIN chat_message_join ON message.ROWID = chat_message_join.message_id
         LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id

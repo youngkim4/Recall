@@ -68,6 +68,12 @@ class TestLoadMessages:
         df = load_messages(sample_messages_csv, until=datetime(2024, 1, 31))
         assert len(df) == 2  # 2x Jan
 
+    def test_until_includes_the_whole_of_that_day(self, sample_messages_csv):
+        from datetime import datetime
+        # February's message was sent at 14:30 on the 20th
+        df = load_messages(sample_messages_csv, until=datetime(2024, 2, 20))
+        assert len(df) == 3  # 2x Jan + Feb
+
     def test_missing_timestamp_raises(self, tmp_path):
         csv = tmp_path / "bad.csv"
         pd.DataFrame({"text": ["hi"]}).to_csv(csv, index=False)
@@ -383,3 +389,238 @@ class TestConstants:
 
     def test_seconds_per_day(self):
         assert SECONDS_PER_DAY == 86_400.0
+
+
+class TestMonthsOnACalendar:
+    def test_a_month_with_no_messages_is_filled_in(self):
+        from conversation import fill_months, progression_series
+
+        conv = pd.DataFrame({
+            "timestamp": pd.to_datetime(["2024-01-15 10:00", "2024-03-10 09:00", "2024-03-11 09:00"]),
+            "text": ["a", "b", "c"],
+            "is_from_me": [1, 0, 1],
+        })
+
+        filled = fill_months(progression_series(conv))
+
+        assert [str(month.date()) for month in filled["month"]] == ["2024-01-01", "2024-02-01", "2024-03-01"]
+        assert filled["total"].tolist() == [1, 0, 2]
+        assert filled["sent"].tolist() == [1, 0, 1]
+        assert filled["received"].tolist() == [0, 0, 1]
+
+    def test_day_totals_run_from_the_first_day_to_the_last(self):
+        from conversation import day_totals
+
+        conv = pd.DataFrame({"timestamp": pd.to_datetime(["2023-12-30 23:59", "2024-01-01 00:00", "2024-01-01 08:00", None])})
+
+        assert day_totals(conv) == {"start": "2023-12-30", "counts": [1, 0, 2]}
+
+    def test_no_messages_means_no_days(self):
+        from conversation import day_totals
+
+        assert day_totals(pd.DataFrame({"timestamp": pd.to_datetime([])})) == {"start": "", "counts": []}
+
+
+class TestAttachmentsAndReactionsFollowTheDates:
+    def test_attachments_are_narrowed_to_the_days_asked_for(self, tmp_path, sample_attachments_csv):
+        from datetime import datetime
+        from conversation import load_attachments
+
+        loaded = load_attachments(str(tmp_path / "messages.csv"), since=datetime(2024, 2, 1))
+
+        assert loaded["filename"].tolist() == ["doc.pdf"]
+
+    def test_reactions_include_the_whole_of_the_last_day(self, tmp_path, sample_reactions_csv):
+        from datetime import datetime
+        from conversation import load_reactions
+
+        loaded = load_reactions(str(tmp_path / "messages.csv"), until=datetime(2024, 1, 15))
+
+        assert loaded["reaction_type"].tolist() == ["love", "like"]
+
+    def test_with_no_dates_everything_is_loaded(self, tmp_path, sample_attachments_csv, sample_reactions_csv):
+        from conversation import load_attachments, load_reactions
+
+        assert len(load_attachments(str(tmp_path / "messages.csv"))) == 3
+        assert len(load_reactions(str(tmp_path / "messages.csv"))) == 3
+
+    def test_a_phone_number_keeps_its_plus_sign(self, tmp_path):
+        from conversation import load_attachments
+
+        pd.DataFrame({"chat_id": ["+15550000001"], "category": ["photo"]}).to_csv(
+            tmp_path / "messages_attachments.csv", index=False
+        )
+
+        assert load_attachments(str(tmp_path / "messages.csv"))["chat_id"].tolist() == ["+15550000001"]
+
+
+class TestActivitySeries:
+    def test_a_short_stretch_is_counted_by_day(self):
+        from conversation import activity_series
+
+        conv = pd.DataFrame({
+            "timestamp": pd.to_datetime(["2024-01-30 10:00", "2024-01-30 11:00", "2024-02-01 09:00"]),
+            "text": ["a", "b", "c"],
+            "is_from_me": [1, 0, 1],
+        })
+
+        assert activity_series(conv) == {
+            "unit": "day",
+            "points": [
+                {"key": "2024-01-30", "total": 2, "sent": 1, "received": 1},
+                {"key": "2024-01-31", "total": 0, "sent": 0, "received": 0},
+                {"key": "2024-02-01", "total": 1, "sent": 1, "received": 0},
+            ],
+        }
+
+    def test_a_long_stretch_is_counted_by_month(self):
+        from conversation import activity_series
+
+        conv = pd.DataFrame({
+            "timestamp": pd.to_datetime(["2024-01-15 10:00", "2024-04-10 09:00"]),
+            "text": ["a", "b"],
+            "is_from_me": [1, 0],
+        })
+
+        series = activity_series(conv)
+
+        assert series["unit"] == "month"
+        assert [point["key"] for point in series["points"]] == ["2024-01", "2024-02", "2024-03", "2024-04"]
+        assert series["points"][0] == {"key": "2024-01", "total": 1, "sent": 1, "received": 0}
+
+    def test_the_longest_stretch_counted_by_day_is_two_months(self):
+        from conversation import ACTIVITY_DAYS_LIMIT, activity_series
+
+        def spanning(days):
+            return pd.DataFrame({
+                "timestamp": [pd.Timestamp("2024-01-01 09:00"), pd.Timestamp("2024-01-01 09:00") + pd.Timedelta(days=days - 1)],
+                "text": ["a", "b"],
+                "is_from_me": [1, 0],
+            })
+
+        assert activity_series(spanning(ACTIVITY_DAYS_LIMIT))["unit"] == "day"
+        assert activity_series(spanning(ACTIVITY_DAYS_LIMIT + 1))["unit"] == "month"
+
+    def test_no_messages_is_an_empty_series(self):
+        from conversation import activity_series
+
+        empty = pd.DataFrame({"timestamp": pd.to_datetime([]), "text": [], "is_from_me": []})
+
+        assert activity_series(empty) == {"unit": "month", "points": []}
+
+
+class TestDirectionMasks:
+    VALUES = [1, 0, 1.0, 0.0, "1", "0", "1.0", "0.0", "true", "false", "T", "F", "yes", "no", "y", "n", None, "", "maybe"]
+
+    def test_the_masks_agree_with_the_rule_for_one_value(self):
+        from conversation import parse_boolish, received_mask, sent_mask
+
+        series = pd.Series(self.VALUES, dtype="object")
+        parsed = [parse_boolish(value) for value in self.VALUES]
+
+        assert sent_mask(series).tolist() == [not pd.isna(value) and value == 1 for value in parsed]
+        assert received_mask(series).tolist() == [not pd.isna(value) and value == 0 for value in parsed]
+
+    def test_a_value_that_does_not_say_is_neither_sent_nor_received(self):
+        from conversation import received_mask, sent_mask
+
+        series = pd.Series([None, "", "maybe"], dtype="object")
+
+        assert not sent_mask(series).any()
+        assert not received_mask(series).any()
+
+
+class TestARowThatDoesNotSayWhoSentIt:
+    """A row with no direction adds to the total and to neither voice, in every count."""
+
+    @staticmethod
+    def conversation(stamps):
+        # each stamp holds one sent, one received and one row that does not say
+        rows = [(stamp, direction) for stamp in stamps for direction in (1, 0, None)]
+        return pd.DataFrame({
+            "timestamp": pd.to_datetime([stamp for stamp, _ in rows]),
+            "text": ["x"] * len(rows),
+            "chat_id": ["+1234"] * len(rows),
+            "is_from_me": pd.Series([direction for _, direction in rows], dtype="object"),
+        })
+
+    def test_months_count_it_in_the_total_only(self):
+        monthly = progression_series(self.conversation(["2024-01-15 10:00", "2024-03-02 09:00"]))
+
+        assert monthly["total"].tolist() == [3, 3]
+        assert monthly["sent"].tolist() == [1, 1]
+        assert monthly["received"].tolist() == [1, 1]
+
+    def test_month_points_count_it_in_the_total_only(self):
+        from conversation import month_points
+
+        points = month_points(self.conversation(["2024-01-15 10:00", "2024-03-02 09:00"]))
+
+        assert points == [
+            {"key": "2024-01", "total": 3, "sent": 1, "received": 1},
+            {"key": "2024-02", "total": 0, "sent": 0, "received": 0},
+            {"key": "2024-03", "total": 3, "sent": 1, "received": 1},
+        ]
+
+    def test_day_points_count_it_in_the_total_only(self):
+        from conversation import activity_series
+
+        series = activity_series(self.conversation(["2024-01-30 10:00", "2024-02-01 09:00"]))
+
+        assert series == {
+            "unit": "day",
+            "points": [
+                {"key": "2024-01-30", "total": 3, "sent": 1, "received": 1},
+                {"key": "2024-01-31", "total": 0, "sent": 0, "received": 0},
+                {"key": "2024-02-01", "total": 3, "sent": 1, "received": 1},
+            ],
+        }
+
+    def test_the_series_add_up_to_the_figures_beside_them(self):
+        from conversation import activity_series, month_points
+
+        conv = self.conversation(["2024-01-15 10:00", "2024-01-16 10:00", "2024-06-02 09:00"])
+        stats = compute_stats(conv)
+
+        assert (stats.sent_count, stats.received_count, stats.unknown_direction_count) == (3, 3, 3)
+        for points in (month_points(conv), activity_series(conv)["points"]):
+            assert sum(point["sent"] for point in points) == stats.sent_count
+            assert sum(point["received"] for point in points) == stats.received_count
+            assert sum(point["total"] for point in points) == stats.total_messages
+
+    def test_attachments_count_it_in_the_total_only(self):
+        attachments = pd.DataFrame({
+            "chat_id": ["+1234"] * 4,
+            "category": ["photo"] * 4,
+            "is_from_me": pd.Series([1, 0, 0, None], dtype="object"),
+        })
+
+        stats = compute_attachment_stats(attachments, "+1234")
+
+        assert (stats.total, stats.sent_attachments, stats.received_attachments) == (4, 1, 2)
+
+    def test_reactions_count_it_in_the_total_only(self):
+        reactions = pd.DataFrame({
+            "chat_id": ["+1234"] * 4,
+            "reaction_type": ["love"] * 4,
+            "is_add": [True] * 4,
+            "is_from_me": pd.Series([1, 1, 0, None], dtype="object"),
+        })
+
+        stats = compute_reaction_stats(reactions, "+1234")
+
+        assert (stats.total, stats.sent_reactions, stats.received_reactions) == (4, 2, 1)
+
+    def test_a_blank_read_back_from_a_file_is_a_row_that_does_not_say(self, tmp_path):
+        csv = tmp_path / "messages.csv"
+        csv.write_text(
+            "message_id,timestamp,sender,text,chat_id,is_from_me\n"
+            "1,2024-01-15 10:00:00,+1234,a,+1234,1\n"
+            "2,2024-01-15 10:01:00,+1234,b,+1234,0\n"
+            "3,2024-01-15 10:02:00,+1234,c,+1234,\n",
+            encoding="utf-8",
+        )
+
+        monthly = progression_series(load_messages(str(csv)))
+
+        assert monthly[["total", "sent", "received"]].values.tolist() == [[3, 1, 1]]

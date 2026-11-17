@@ -66,6 +66,21 @@ from openai_client import (
 from reports import write_markdown_report
 
 
+def write_events_timeline(out_dir: str, contact: str, events_df) -> Optional[str]:
+    """Write the events a run found beside its report, and return the path.
+    A run that found none leaves no file: one left by an earlier report on the
+    same conversation would be shown beside the new report as its own."""
+    events_path = os.path.join(out_dir, f"events_timeline_{sanitize_filename(contact)}.csv")
+    if events_df is None or events_df.empty:
+        try:
+            os.remove(events_path)
+        except FileNotFoundError:
+            pass
+        return None
+    events_df.to_csv(events_path, index=False)
+    return events_path
+
+
 def run_cli(
     messages_csv: str,
     contact: str,
@@ -81,8 +96,9 @@ def run_cli(
     if conv.empty:
         raise ValueError(f"No messages found for contact '{contact}'")
 
-    attachments_df = load_attachments(messages_csv)
-    reactions_df = load_reactions(messages_csv)
+    # the same days as the messages, so the report's counts are for its dates
+    attachments_df = load_attachments(messages_csv, since, until)
+    reactions_df = load_reactions(messages_csv, since, until)
 
     stats = compute_stats(conv, attachments_df, reactions_df)
     monthly = progression_series(conv)
@@ -135,12 +151,10 @@ def run_cli(
         )
         pbar.update(1)
 
-    report_path = write_markdown_report(out_dir, contact, stats, monthly, summary_text, events_df)
-
-    events_path = None
-    if events_df is not None and not events_df.empty:
-        events_path = os.path.join(out_dir, f"events_timeline_{sanitize_filename(contact)}.csv")
-        events_df.to_csv(events_path, index=False)
+    report_path = write_markdown_report(
+        out_dir, contact, stats, monthly, summary_text, events_df, since=since, until=until,
+    )
+    events_path = write_events_timeline(out_dir, contact, events_df)
 
     html_path = None
     if html:

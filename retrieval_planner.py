@@ -20,6 +20,7 @@ import pandas as pd
 from openai import OpenAI
 
 from ai_config import DEFAULT_MODEL
+from conversation import is_group_chat
 from openai_client import _call_openai
 
 PLAN_TEXT_FORMAT = {
@@ -164,7 +165,7 @@ def build_catalog(
 
 
 def _masked_handle(chat_id: str) -> str:
-    if str(chat_id).startswith("chat"):
+    if is_group_chat(str(chat_id)):
         return "group chat"
     if "@" in str(chat_id):
         return "email"
