@@ -156,7 +156,7 @@ The bridge loads ONE legacy export (`messages.csv` from `parse_imessage.py`) int
 - The file is read as strict CSV. A quote that is never closed raises `SourceFormatError`. A row with too few or too many fields, with no usable `message_id` or with no `is_from_me` is not stored: reason `bad_row`.
 
 - An archive that holds anything is refused with `ArchiveNotEmptyError`.
-- A later `import_chat_db` replaces every row that the bridge loaded. That first pull is always a full pull, and bridge rows do not count for the safety valve. Message ids change in that pull. Conversation ids do not.
+- A later `import_chat_db` replaces every row that the bridge loaded. That first pull is always a full pull. Bridge rows have no guid of the source, so the safety valve compares totals for them: when the source holds fewer rows in all than the bridge rows less the share, the pull stops with `RemovalLimitError` before it changes anything. Message ids change in that pull. Conversation ids do not.
 - A merged export (`merge_export.py`) also holds rows that the database no longer has, with ids above 1,000,000,000. The bridge loads them. The first pull from the database removes them: the database is the truth.
 - A bridge archive has no group events, no unsent messages, no edit marks, no reply links and no reactions. It has no conversation and no handle without a message.
 - A row with a time at or before 2001-01-01 UTC has no date: reason `no_date`. The old exporter wrote that time for a row with no date.

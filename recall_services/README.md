@@ -106,7 +106,7 @@ The command line importer can write the archive too. The lock of the state holds
 - `saved(handle)`: the saved name, or `""`.
 - `conversation(record)`: a saved name, the title of a group, a name made from the saved members with the busiest first, or `""`.
 - `chat_labeler(conversations)`: the labeler for the chat engine. It gives a saved name or a mask.
-- `report_labeler(record)`: the labeler for a report. It gives `""` for a sender who is not saved.
+- `report_labeler(record)`: the labeler for a report. It gives `""` for a sender who is not saved. `reports.py` also masks each unsaved handle in the text of a message, as chat does.
 
 A handle matches a record as the archive matches people: a phone number by its last 10 digits, an address in lower case.
 

@@ -40,7 +40,7 @@ Add a rule here when a review finds a new one.
   - Server, for text that the user reads: `conversation_label` in `conversation.py` (the saved report of the hand tool uses it).
   - The two functions must use the same words.
 - No screen shows a full telephone number.
-- Text that goes to the AI model never holds a handle that is not saved. Chat uses `names.chat_labeler`: a saved name or a mask. A report uses `names.report_labeler`: a saved name, or a name that the report engine gives each unsaved writer. The hand tool uses `contact_label` in `conversation.py`, and `tests/test_prompt_privacy.py` checks its prompts.
+- Text that goes to the AI model never holds a handle that is not saved. Chat uses `names.chat_labeler`: a saved name or a mask. A report uses `names.report_labeler` for the writers: a saved name, or a name that the report engine gives each unsaved writer. Both mask a handle that is not saved where it stands in the text of a message (`MaskingLabeler.redact`; `_Masked` in `recall_services/reports.py` for a report). The hand tool uses `contact_label` in `conversation.py`, and `tests/test_prompt_privacy.py` checks its prompts.
 - The title of a saved HTML report is `conversation_label`. The file name and the heading of the Markdown report keep the conversation id.
 - A group id is `chat` followed by digits only. Three places hold this rule and must change together:
   - `is_group_chat` and `group_chat_mask` in `conversation.py`.
@@ -75,6 +75,7 @@ Add a rule here when a review finds a new one.
   - `- Scope: all dates`
 - A saved report shows figures for the days in its scope.
 - A run that finds no events removes the older events file. `write` in `recall_services/report_files.py` does this (`write_events_timeline` in `analysis.py` for the hand tool).
+- The steps of an import have one order on the server (`import_messages`) and in the guide (`PHASES` in `ImportStep.tsx`): names, reading, archive. `tests/test_server_faults.py` holds the two together.
 - The app shows an analysis only with the report file that it was read from. `App.tsx` keeps the file path with the analysis.
 - An analysis answer with no `analysis` is a failure. A job watch that has ended changes nothing.
 
@@ -147,7 +148,7 @@ WARNING: The story of a report is written by an AI model from the messages of ot
   - Only a request that says `allowRemoval: true` lifts the limit. Any other value does not.
   - The limit guards an archive that holds a message (`holds_messages`). An archive with none has nothing to lose, so a first setup is not held up by it.
   - The guide then says so in plain words and offers "Update anyway" (`failedImport` in `app/src/lib/setupGuide.ts`).
-  - Rows that the bridge loaded (`legacy:` ids) are replaced by the first pull. The limit does not count them.
+  - Rows that the bridge loaded (`legacy:` ids) are replaced by the first pull. They have no id of Messages, so the limit compares totals for them (`_check_bridge_rows` in `archive/mirror.py`): a database that holds far fewer rows than the export gave is refused in the same way. An export that reaches further back than Messages is not lost without a question.
 - When the archive is written, the import did its work.
   - The server then drops each preview and each opened report that it keeps (`forget_previews`), and the guide clears the previews that the browser keeps (`finishOnboarding` in `App.tsx`). `useConversationPreview.ts` drops the figures that it holds in memory (`previewGeneration` in `app/src/lib/cache.ts`).
   - A later step of the job that fails does not make the import a failed one. The job ends as completed, with a plain `warning` in its result and in its log (`counted`). The Done step shows the warning.
@@ -252,7 +253,7 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
   - Nothing named, the default export or the default archive: `saves/archive.sqlite3` in the data folder.
   - A name that ends in `.sqlite3`: that file is the archive.
   - Any other name is an export of an earlier build. Its archive stands beside it with the ending `.sqlite3`.
-  - `/api/defaults` gives the default archive file as `messagesPath`.
+  - `/api/defaults` gives the default archive file as `messagesPath`. Its `hasMessages` is `holds_messages`: an archive that a first import is still filling holds nothing yet, so setup is not taken for done.
 - `archive_for` in `ui_server.py` gives the archive of a request, or raises `ArchiveNotReady`. Its codes are `archive_building` (503, with the job), `no_archive` (400) and `archive_failed` (500). Each route answers with that status and `{error, code}`.
 - A read route with no archive gives an empty answer where the Overview needs one before setup (`bundle_or_none`): `/api/memories`, `/api/overview`, `/api/first-words`.
 - `named_archive` reads the archive file of a request. A name that is not text, that no system can hold, or that names no file is 400.
@@ -293,6 +294,8 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 ### Reports
 
 - The `analyze` job runs `recall_services/reports.run` (`write_report`). It writes the report file and the events file together, saves the report as JSON, and writes no HTML page.
+- A report can be read when its conversation left the archive: `/api/analysis` then gives the story with no figures (`empty_preview`).
+- A moment that was written on the rows of the bridge is found again after the first pull by its row number, when the conversation and the day agree (`_quoted` in `recall_services/reports.py`).
 - `/api/analysis` reads a saved report by the text of its report file (`saved_report`). Each moment then carries `chatId`, `day`, `at` and `pickedId`, and the Reports page opens its day at the quoted message (`MomentDate.tsx`, `ReportDays.tsx`). A report of the older kind has no saved report: its events file is read with each cell as text (`events_of_file`).
 - The estimate of a preview is the plan of the report engine (`reports.estimate`). `preview_cache_key` holds the file of what earlier runs read, so the estimate follows a run at once. With no plan, `estimate` is null and `estimateError` is one sentence.
 - `shownPlain` in `/api/analysis` is true when a chapter of the story is shown as plain paragraphs. The Reports page then says so in one line (`ReportPage.tsx`).
