@@ -17,6 +17,13 @@ is a heading with or without a space after it, and a line of `=` or `-`
 under a line of text makes that text a heading. Section text has neither.
 It also has no `[` or `]` without a backslash, so no form of a link or an
 image can be read from it.
+
+The server cuts a story before the renderer reads it: a run of 17 of one mark
+to 16, and four line breaks in a row to three. The renderer takes U+0002 and
+U+0003 out. A cut or a removal next to a backslash can take the guard off the
+mark after it. So the text of a report has nothing that is cut or removed: no
+run of one mark longer than 15, no more than two empty lines in a row, and no
+control character but a tab and a line break.
 """
 
 from __future__ import annotations
@@ -33,6 +40,22 @@ _LINE_MARKS = r"(?:\s|>|[-*+:](?=\s)|\d+[.)](?=\s))*"
 _LEADING_HASH = re.compile(rf"^({_LINE_MARKS})#")
 _UNDERLINE = re.compile(r"^(?:\s|>)*[=-]+\s*$")
 _SECOND_HASH = re.compile(r"(?<=#)#")
+# One less than the run that the server keeps: the cleaning can put one
+# backslash before a run of backslashes, and that run must not be cut either.
+MAX_MARK_RUN = 15
+# Inline text gets every backslash twice, and one more before a guarded mark.
+MAX_INLINE_SLASHES = (MAX_MARK_RUN - 1) // 2
+_MARK_RUN = re.compile(rf"([^\w\s])\1{{{MAX_MARK_RUN},}}")
+_SLASH_RUN = re.compile(rf"\\{{{MAX_INLINE_SLASHES + 1},}}")
+_EMPTY_LINES = re.compile(r"\n{4,}")
+# Control characters that are not a tab or a line break go. U+001F is white
+# space to Python and becomes a space.
+_CONTROLS: dict[int, str | None] = {
+    **dict.fromkeys(
+        (*range(0x00, 0x09), *range(0x0E, 0x1C), *range(0x7F, 0x85), *range(0x86, 0xA0))
+    ),
+    0x1F: " ",
+}
 # a link or an image of the plain kind: words with no bracket, an address with no space
 _PLAIN_LINK = re.compile(r'(?<!\\)!?\[([^\[\]\\]*)\]\([^()\s]*(?:\s+"[^"()]*")?\)')
 _LINK_DEFINITION = re.compile(r"^\s{0,3}\[[^\[\]]*\]:")
@@ -61,9 +84,18 @@ def _one_line(text: str) -> str:
     return " ".join(text.split())
 
 
+def _short_runs(text: str) -> str:
+    """The text with no run of one mark longer than MAX_MARK_RUN."""
+    return _MARK_RUN.sub(lambda run: run.group(1) * MAX_MARK_RUN, text)
+
+
 def _inline(text: str) -> str:
-    """Plain text on one line. No character in it starts a heading or a link."""
-    return _one_line(text).translate(_INLINE_ESCAPES)
+    """Plain text on one line. No character in it starts a heading or a link.
+    A run of backslashes is cut before each one is written twice, so the run
+    in the file stays shorter than a run that the server cuts."""
+    flat = _short_runs(_one_line(text.translate(_CONTROLS)))
+    flat = _SLASH_RUN.sub(lambda _run: "\\" * MAX_INLINE_SLASHES, flat)
+    return flat.translate(_INLINE_ESCAPES)
 
 
 def _strip_markup(line: str) -> str:
@@ -117,26 +149,32 @@ def _escape_brackets(line: str) -> str:
 
 
 def _clean_once(markdown: str) -> str:
+    """One pass. The runs are cut after the heading step, which can add marks,
+    and before the bracket step, which adds at most one backslash to a run:
+    the result of one pass has no run that the server cuts."""
     lines: list[str] = []
-    for raw in markdown.strip().splitlines():
+    for raw in markdown.translate(_CONTROLS).strip().splitlines():
         line = _strip_markup(raw)
         if _LINK_DEFINITION.match(line) or _UNDERLINE.match(line):
             continue
-        lines.append(_escape_brackets(_without_heading(line)).rstrip())
-    return "\n".join(lines).strip()
+        lines.append(_escape_brackets(_short_runs(_without_heading(line))).rstrip())
+    return _EMPTY_LINES.sub("\n\n\n", "\n".join(lines).strip())
 
 
 def clean_section(markdown: str) -> str:
     """Section text with its formatting kept and its active parts removed.
 
+    - A control character goes. A tab and a line break stay.
     - A heading line becomes a bold line. Any other line that starts with `#`
       gets a backslash before it, and a line of only `=` or `-` goes.
     - A tag goes. A link or an image of the plain kind becomes its words.
+    - A run of one mark keeps 15 of them, and a run of empty lines keeps two.
     - Every `[` and `]` that is left gets a backslash, so no other form of a
       link or an image can be read from the text.
 
-    Cleaning the result again changes nothing. The time is in proportion to
-    the length of the text."""
+    Cleaning the result again changes nothing, and the cuts that the server
+    makes before it renders a story change nothing in it. The time is in
+    proportion to the length of the text."""
     for _ in range(MAX_CLEAN_PASSES):
         cleaned = _clean_once(markdown)
         if cleaned == markdown:
@@ -169,7 +207,8 @@ def _overview(report: Report) -> list[str]:
 def _event(moment: Moment) -> list[str]:
     rows = [f"### {moment.date} - {_inline(moment.title)}", _inline(moment.detail)]
     if moment.quote:
-        rows.append(f'> "{_inline(moment.quote)}"')
+        # the quote marks of the row can make a run of quote marks longer
+        rows.append(_short_runs(f'> "{_inline(moment.quote)}"'))
     rows.append(f"*Category: {moment.category}*")
     return rows + [""]
 

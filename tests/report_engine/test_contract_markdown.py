@@ -1,15 +1,13 @@
 """The report file against the code that reads it in the redesign (commit ab20b5e).
 
-The readers below are copies of `report_contact`, `markdown_section` and
+The readers are copies of `report_contact`, `markdown_section` and
 `report_scope` in `ui_server.py`, and of the steps of `story_html` in
-`safe_html.py`, as CONTRACTS.md at that commit names them. When `safe_html`
-can be imported, the real `story_html` is used too.
+`safe_html.py`, as CONTRACTS.md at that commit names them. They are in
+`story_reader.py`. When `safe_html` can be imported, the real `story_html`
+is used too.
 """
 
-import re
 import time
-from html import escape
-from html.parser import HTMLParser
 from typing import Any
 
 import markdown as markdown_lib
@@ -19,77 +17,25 @@ from report_engine.errors import StoreError
 from report_engine.markdown import clean_section, render_markdown
 from report_engine.models import SECTION_KEYS, SECTION_TITLES, Scope, Section
 
+from .story_reader import (
+    STORY_EXTENSIONS,
+    headings_of,
+    markdown_section,
+    report_contact,
+    stated_scope,
+    story_html_steps,
+    story_of,
+)
 from .test_models import report as make_report
 
-REPORT_HEADING = re.compile(r"^# Conversation Analysis - (.+)$", re.MULTILINE)
-REPORT_SCOPE = re.compile(r"^- Scope: (.*)$", re.MULTILINE)
-QUOTE_MARK = re.compile(r"(?m)^([ \t]*)&gt; ?")
-STORY_EXTENSIONS = ["tables", "sane_lists"]
 TITLES = [SECTION_TITLES[key] for key in SECTION_KEYS]
+BACKSLASH = "\\"
 
 
-def report_contact(text: str) -> str:
-    match = REPORT_HEADING.search(text.splitlines(keepends=True)[0])
-    return match.group(1).strip() if match else ""
-
-
-def markdown_section(text: str, heading: str, stop_at_next_heading: bool = True) -> str:
-    marker = f"## {heading}"
-    start = text.find(marker)
-    if start < 0:
-        return ""
-    start = text.find("\n", start)
-    if start < 0:
-        return ""
-    next_heading = text.find("\n## ", start + 1) if stop_at_next_heading else -1
-    section = text[start : next_heading if next_heading >= 0 else len(text)]
-    return section.strip()
-
-
-def stated_scope(text: str) -> str:
-    line = REPORT_SCOPE.search(markdown_section(text, "Overview"))
-    return line.group(1).strip() if line else ""
-
-
-def story_html_steps(text: str) -> str:
-    """What story_html does to a story before it is cleaned of tags."""
-    escaped = QUOTE_MARK.sub(r"\1> ", escape(text))
-    return markdown_lib.markdown(escaped, extensions=STORY_EXTENSIONS, output_format="html5")
-
-
-class Headings(HTMLParser):
-    """Every heading of a page, with its level, its depth in other tags and its words."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.found: list[tuple[int, int, str]] = []
-        self.tags: list[str] = []
-        self._depth = 0
-        self._open: list[Any] | None = None
-
-    def handle_starttag(self, tag: str, attrs: Any) -> None:
-        self.tags.append(tag)
-        if re.fullmatch(r"h[1-6]", tag):
-            self._open = [int(tag[1]), self._depth, ""]
-        if tag not in ("br", "hr"):
-            self._depth += 1
-
-    def handle_endtag(self, tag: str) -> None:
-        self._depth = max(0, self._depth - 1)
-        if self._open is not None and re.fullmatch(r"h[1-6]", tag):
-            self.found.append((self._open[0], self._open[1], self._open[2].strip()))
-            self._open = None
-
-    def handle_data(self, data: str) -> None:
-        if self._open is not None:
-            self._open[2] += data
-
-
-def headings_of(html: str) -> Headings:
-    reader = Headings()
-    reader.feed(html)
-    reader.close()
-    return reader
+def guarded_link(slashes: int) -> str:
+    """A link with a run of backslashes before each of its brackets."""
+    run = BACKSLASH * slashes
+    return f"see {run}[the plan{run}](https://attacker.example/x) now"
 
 
 def with_bodies(body: str, **fields: Any) -> Any:
@@ -140,7 +86,7 @@ def test_the_reader_of_the_scope_finds_the_line_that_was_written(scope: Scope, s
 
 def test_the_story_is_everything_after_the_summary_marker_and_nothing_else() -> None:
     text = render_markdown(with_bodies("One line.\n\nplain ## Summary and ## Overview inside"))
-    story = markdown_section(text, "Summary", stop_at_next_heading=False)
+    story = story_of(text)
     assert story.startswith(f"### {TITLES[0]}\nOne line.")
     assert [line[4:] for line in story.splitlines() if line.startswith("### ")] == TITLES
     assert markdown_section(text, "Overview").startswith("- Scope: ")
@@ -168,6 +114,13 @@ HOSTILE_BODIES = [
     "123456789012345678901234567890. # thirty digits",
     "- item\n\n    # in the second block of a list item",
     "1. one\n\n\t# after a tab",
+    # the renderer takes U+0002 and U+0003 out before it reads a line
+    "\x02# behind a character that the renderer removes",
+    "\x03#Injected",
+    "\x02\x03\x02 # behind three of them",
+    "Title\n\x02=====",
+    "Title\n==\x03===",
+    "> \x02# in a quote",
 ]
 
 HOSTILE_LINKS = [
@@ -190,6 +143,17 @@ HOSTILE_LINKS = [
     "<https://attacker.example/x>",
     "<a href='https://attacker.example/x'>go</a>",
     "\\[a](https://attacker.example/x) and \\\\[b](https://attacker.example/y)",
+    # the renderer cuts a run of 17 backslashes to 16, which frees the bracket after it
+    guarded_link(15),
+    guarded_link(16),
+    guarded_link(17),
+    guarded_link(18),
+    guarded_link(33),
+    guarded_link(400),
+    "!" + guarded_link(16),
+    # the renderer takes U+0002 and U+0003 out, which joins what stands around them
+    "see \\\x02[the plan\\\x03](https://attacker.example/x) now",
+    "see \\\\\x02\\[the plan\\\\\x03\\](https://attacker.example/x) now",
 ]
 
 
@@ -198,7 +162,7 @@ def test_no_section_text_makes_a_heading_in_the_story(body: str) -> None:
     """The page cuts the story into chapters at its headings (readStory). A
     heading that the model or a message could add would move the chapters."""
     text = render_markdown(with_bodies(f"Before.\n\n{body}\n\nAfter."))
-    story = markdown_section(text, "Summary", stop_at_next_heading=False)
+    story = story_of(text)
     found = headings_of(story_html_steps(story)).found
     assert found == [(3, 0, title) for title in TITLES]
 
@@ -228,7 +192,7 @@ def test_no_section_text_makes_a_link_or_an_image(body: str) -> None:
 def test_the_real_story_renderer_shows_no_link(body: str) -> None:
     safe_html = pytest.importorskip("safe_html")
     text = render_markdown(with_bodies(f"Before.\n\n{body}\n\nAfter."))
-    story = markdown_section(text, "Summary", stop_at_next_heading=False)
+    story = story_of(text)
     tags = headings_of(safe_html.story_html(story)).tags
     assert "a" not in tags and "img" not in tags
 
@@ -281,7 +245,7 @@ def test_lists_quotes_tables_and_emphasis_survive_the_story_renderer() -> None:
         "| Month | Messages |\n|-------|----------|\n| June | 120 |"
     )
     text = render_markdown(with_bodies(body))
-    story = markdown_section(text, "Summary", stop_at_next_heading=False)
+    story = story_of(text)
     tags = headings_of(story_html_steps(story)).tags
     for tag in ("strong", "em", "ul", "ol", "blockquote", "table"):
         assert tags.count(tag) == len(SECTION_KEYS), tag
@@ -299,6 +263,6 @@ def test_a_hash_that_is_not_at_the_start_of_a_line_reads_as_it_was_written() -> 
 def test_the_real_story_renderer_agrees(body: str) -> None:
     safe_html = pytest.importorskip("safe_html")
     text = render_markdown(with_bodies(f"Before.\n\n{body}\n\nAfter."))
-    story = markdown_section(text, "Summary", stop_at_next_heading=False)
+    story = story_of(text)
     found = headings_of(safe_html.story_html(story)).found
     assert found == [(3, 0, title) for title in TITLES]
