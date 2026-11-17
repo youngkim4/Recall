@@ -31,8 +31,6 @@ and its prices come from `models.py`.
 
 from __future__ import annotations
 
-import csv
-import io
 import logging
 import os
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -43,13 +41,17 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import safe_html
 from archive import Archive
 from archive import ArchiveError as ArchiveFault
-from conversation import sanitize_filename
-from recall_services import inputs, models
+from recall_services import inputs, models, report_files
 from recall_services.names import Names, ReportLabeler
 from recall_services.report_failures import NO_KEY, ReportFailure, failure_of
+# part of this module for its callers
+from recall_services.report_files import EVENT_COLUMNS as EVENT_COLUMNS
+from recall_services.report_files import PAGE_KEPT as PAGE_KEPT
+from recall_services.report_files import PAGE_REMOVED as PAGE_REMOVED
+from recall_services.report_files import shown_plain as shown_plain
+from recall_services.report_files import story_of as story_of
 from recall_services.report_progress import Listener, Teller
 from report_engine import (
     LLM,
@@ -71,17 +73,12 @@ from report_engine import (
 from report_engine.archive_source import ArchiveSource
 from report_engine.estimate import planned_calls
 from report_engine.pricing import call_cost_usd
-from report_engine.store import write_text_atomic
 from report_engine.tokens import TokenCounter, load_counter
 
 logger = logging.getLogger(__name__)
 
 LLMFactory = Callable[[ModelInfo], LLM]
-EVENT_COLUMNS = ("date", "title", "detail", "category", "score", "quote")
-STORY_MARKER = "## Summary"
 SHOWN_PLAIN = "The story of this report is long and dense. The app shows it as plain paragraphs, with no chapters."
-PAGE_REMOVED = "The page of an older report was removed: this report has no page."
-PAGE_KEPT = "The page of an older report could not be removed. It is not the page of this report."
 NOT_SAVED = "The report was written but could not be saved. Run the report again."
 NOT_STARTED = "The model could not be started. No report was written."
 SAVED = "The report is saved."
@@ -341,18 +338,6 @@ def estimate(
     }
 
 
-def story_of(report_text: str) -> str:
-    """The story of a report file: what stands after `## Summary`, as `markdown_section` in the server reads it."""
-    start = report_text.find(STORY_MARKER)
-    start = report_text.find("\n", start) if start >= 0 else -1
-    return report_text[start:].strip() if start >= 0 else ""
-
-
-def shown_plain(report_text: str) -> bool:
-    """True when the server shows the story of this report file as plain paragraphs: `story_html` does not render it."""
-    return safe_html.story_work(safe_html.prepared(story_of(report_text))) > safe_html.STORY_WORK_LIMIT
-
-
 def saved_report(contact: str, report_text: str, places: ReportPlaces | None = None) -> Report | None:
     """The saved report that a report file shows, or None.
 
@@ -374,76 +359,13 @@ def saved_report(contact: str, report_text: str, places: ReportPlaces | None = N
     return None
 
 
-def _events_text(report: Report) -> str | None:
-    """The events file that the server reads, or None when the report has no moment."""
-    if not report.moments:
-        return None
-    lines = io.StringIO(newline="")
-    writer = csv.writer(lines, lineterminator="\n")
-    writer.writerow(EVENT_COLUMNS)
-    for moment in report.moments:
-        writer.writerow([moment.date, moment.title, moment.detail, moment.category, moment.score, moment.quote])
-    return lines.getvalue()
-
-
-def _read(path: Path) -> str | None:
-    try:
-        with path.open(encoding="utf-8", newline="") as handle:
-            return handle.read()
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as error:
-        raise StoreError(f"an older file can not be read: {path.name}") from error
-
-
-def _put(path: Path, text: str | None) -> Path | None:
-    """Make a file hold a text, or be gone for None. Raises StoreError when it can not."""
-    if text is not None:
-        return write_text_atomic(path, text)
-    try:
-        path.unlink(missing_ok=True)
-    except OSError as error:
-        raise StoreError(f"an older file can not be removed: {path.name}") from error
-    return None
-
-
-def _put_back(path: Path, text: str | None) -> None:
-    try:
-        _put(path, text)
-    except (StoreError, OSError) as error:
-        logger.warning("A file of the older report could not be put back (%s): %s", path.name, type(error).__name__)
-
-
-def _remove_page(path: Path) -> str | None:
-    """Remove the page of an older report. The sentence for the log, or None when there was no page."""
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        return None
-    except OSError as error:
-        logger.warning("The page of an older report could not be removed (%s): %s", path.name, type(error).__name__)
-        return PAGE_KEPT
-    return PAGE_REMOVED
-
-
 def _write(report: Report, places: ReportPlaces, teller: Teller) -> ReportRun:
-    """Save the report, then make the two files that the server reads hold it. They change together or not at all."""
-    name = sanitize_filename(report.conversation)
-    report_path = places.out_dir / f"analysis_{name}.md"
-    events_path = places.out_dir / f"events_timeline_{name}.csv"
-    text, events_text = render_markdown(report), _events_text(report)
-    older_events = _read(events_path)
+    """Save the report, then make the files that the server reads hold it."""
     json_path = ReportStore(places.store_dir).save(report)
-    try:
-        written_events = _put(events_path, events_text)
-        write_text_atomic(report_path, text)  # last: the server finds a report by this file
-    except (StoreError, OSError):
-        _put_back(events_path, older_events)
-        raise
-    said = _remove_page(places.out_dir / f"analysis_{name}.html")
+    report_path, events_path, text, said = report_files.write(report, places.out_dir)
     if said:
         teller.tell(log=said)
-    return ReportRun(report, report_path, written_events, json_path, shown_plain(text))
+    return ReportRun(report, report_path, events_path, json_path, shown_plain(text))
 
 
 def run(

@@ -17,7 +17,7 @@ import pytest
 
 import archive
 from archive import ImportBusyError
-from recall_services import archive_state, files
+from recall_services import archive_files, archive_state, files
 from recall_services.archive_state import ArchiveState, PullBusy, PullDone, PullFailed
 from tests.recall_services import state_data as data
 
@@ -48,7 +48,7 @@ def database(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def short_wait(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(archive_state, "SWAP_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr(archive_files, "SWAP_WAIT_SECONDS", 0.05)
 
 
 def fail_to_write(*_given: Any, **_named: Any) -> None:

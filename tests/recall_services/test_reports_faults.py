@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from conversation import sanitize_filename
-from recall_services import reports
+from recall_services import report_files, reports
 from report_engine import LLMError, StoreError, render_markdown
 from report_engine.fake_llm import FakeCall, FakeLLM, completed, default_reply
 from tests.recall_services.report_world import MODEL, Desk
@@ -22,14 +22,14 @@ def files_of(desk: Desk) -> dict[str, str]:
 
 
 def fail_on(monkeypatch: pytest.MonkeyPatch, ending: str) -> None:
-    real = reports.write_text_atomic
+    real = report_files.write_text_atomic
 
     def write(path: Any, text: str) -> Path:
         if str(path).endswith(ending):
             raise StoreError("the disk is full")
         return real(path, text)
 
-    monkeypatch.setattr(reports, "write_text_atomic", write)
+    monkeypatch.setattr(report_files, "write_text_atomic", write)
 
 
 def no_moments() -> FakeLLM:

@@ -12,7 +12,7 @@ import pytest
 
 from archive import Archive, ArchiveError, ArchiveNotFoundError, SourceError
 from message_text import ATTACHMENT_PLACEHOLDER
-from recall_services import archive_state, files, frame, models, names, outcomes, report_failures, reports
+from recall_services import archive_files, archive_state, files, frame, models, names, outcomes, report_failures, reports
 from recall_services.archive_state import ArchiveState, PullFailed
 from recall_services.names import Names
 from recall_services.report_progress import WAITING, Teller
@@ -116,7 +116,7 @@ def test_a_new_archive_that_is_not_in_one_file_is_not_moved_into_place(tmp_path:
     try:
         # the reader holds the side file: it can not be emptied into the database
         with pytest.raises(ArchiveError, match="not in one file"):
-            archive_state._settle(database)
+            archive_files.settle(database)
     finally:
         reader.close()
         writer.close()
@@ -131,7 +131,7 @@ def test_a_load_that_can_not_be_finished_leaves_the_archive_as_it_was(
     def not_ready(_database: Path) -> None:
         raise ArchiveError("the new archive is not in one file")
 
-    monkeypatch.setattr(archive_state, "_settle", not_ready)
+    monkeypatch.setattr(archive_files, "settle", not_ready)
     result = state.ensure_from_export(data.write_export(export, ["one", "two"]))
     assert (result.status, result.reason) == ("failed", "The export could not be loaded. The archive was not changed.")
     assert data.texts_of(state.archive()) == ["one"]

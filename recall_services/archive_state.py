@@ -41,7 +41,6 @@ handle waits for that query, and the move holds the lock of the state.
 
 from __future__ import annotations
 
-import itertools
 import json
 import logging
 import os
@@ -49,7 +48,7 @@ import shutil
 import sqlite3
 import threading
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -66,8 +65,8 @@ from archive import (
     import_chat_db,
     import_legacy_csv,
 )
-from recall_services import files, unreadable
-from recall_services.messages import LEGACY_PREFIX
+from recall_services import archive_files, files, unreadable
+from recall_services.archive_files import ExportSignature
 from recall_services.outcomes import (
     ARCHIVE_KEPT,
     BUSY,
@@ -87,41 +86,10 @@ NOTE_SUFFIX = ".source.json"
 BUILD_SUFFIX = ".building"
 WORK_SUFFIX = ".import-work"
 DEFAULT_MAX_REMOVED_SHARE = 0.2
-SWAP_WAIT_SECONDS = 2.0  # how long a load waits for a writer or a reader of another process
 KEPT_PULL = "The archive holds what Messages holds. An export does not replace it."
 IN_USE = f"Another program is using the archive. {ARCHIVE_KEPT}"
 NO_SUCH_PLACE = "There is no file at that place."
-_BUSY_CODES = (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
 Contacts = Sequence[Mapping[str, object]] | None
-
-
-@dataclass(frozen=True)
-class ExportSignature:
-    """What tells one state of an export file from another: its path, its write time and its size."""
-
-    path: str
-    mtime_ns: int
-    size: int
-
-    @classmethod
-    def of(cls, export: str | os.PathLike[str]) -> ExportSignature | None:
-        """The signature of the file, or None when there is no such file."""
-        try:
-            resolved = Path(export).expanduser().resolve()
-            found = resolved.stat()
-        except (OSError, ValueError, RuntimeError):  # also a text that is no path, and a home that is not there
-            return None
-        return cls(str(resolved), found.st_mtime_ns, found.st_size) if resolved.is_file() else None
-
-    @classmethod
-    def from_note(cls, note: object) -> ExportSignature | None:
-        held = note.get("export") if isinstance(note, dict) and note.get("source") == "export" else None
-        if not isinstance(held, dict):
-            return None
-        path, mtime_ns, size = held.get("path"), held.get("mtime_ns"), held.get("size")
-        if isinstance(path, str) and type(mtime_ns) is int and type(size) is int:
-            return cls(path, mtime_ns, size)
-        return None
 
 
 def _counts(result: ImportResult) -> dict[str, int]:
@@ -130,95 +98,6 @@ def _counts(result: ImportResult) -> dict[str, int]:
 
 def _detail(error: BaseException) -> str:
     return f"{type(error).__name__}: {error}"[:500]
-
-
-def _holds_pull(archive: Archive) -> bool:
-    """True when the archive holds a message that came from a Messages database, not from the legacy bridge."""
-    newest = archive.conversations(limit=1, order="recent")
-    if newest:
-        found = archive.messages(newest[0]["id"], limit=1)["messages"]
-    else:
-        found = list(itertools.islice(archive.iter_messages(None, no_conversation=True), 1))
-    return bool(found) and not str(found[0]["id"]).startswith(LEGACY_PREFIX)
-
-
-def _stat_of(path: Path) -> tuple[int, int] | None:
-    try:
-        found = path.stat()
-    except OSError:
-        return None
-    return (found.st_mtime_ns, found.st_size)
-
-
-def _place(named: object) -> Path | None:
-    """The path that a caller named, or None when the text is no path."""
-    try:
-        return Path(str(named)).expanduser()
-    except (ValueError, RuntimeError):
-        return None
-
-
-def _remove_database(database: Path) -> None:
-    files.remove_files([database, *files.sidecars(database)])
-
-
-def _remove_quietly(database: Path) -> None:
-    """Remove a work file after the answer is known. A file that stays is said in the log only."""
-    try:
-        _remove_database(database)
-    except OSError as exc:
-        logger.warning("a work file of the archive could not be removed: %s", type(exc).__name__)
-
-
-def _holds_nothing(database: Path) -> bool:
-    """True when the file is an archive with no row, or no archive that can be opened."""
-    try:
-        with Archive.open(database) as held:
-            summary = held.summary()
-    except ArchiveError:
-        return True
-    return not summary["messages"] and not summary["conversations"]
-
-
-def _gather(database: Path) -> None:
-    """Bring an old archive into its one file, and make sure that nobody is in a write or a read of it.
-
-    SQLite keeps the last writes in `-wal` and finds that file by name: one
-    left beside the new archive would be read into it. So the old one is
-    emptied into its database first. A move that fails after this leaves the
-    old archive whole. Raises ImportBusyError when another connection is in
-    the way.
-    """
-    if not database.exists():
-        files.remove_files(files.sidecars(database))
-        return
-    conn = sqlite3.connect(database, timeout=SWAP_WAIT_SECONDS, isolation_level=None)
-    try:
-        blocked = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute("ROLLBACK")
-    except sqlite3.OperationalError as exc:
-        if exc.sqlite_errorcode & 0xFF in _BUSY_CODES:
-            raise ImportBusyError("another connection writes the archive") from exc
-        raise
-    finally:
-        conn.close()
-    if blocked:
-        raise ImportBusyError("another connection reads the archive")
-    files.remove_files(files.sidecars(database))
-
-
-def _settle(database: Path) -> None:
-    """Bring every page of a new database into its one file, so that the file can be moved alone."""
-    conn = sqlite3.connect(database, isolation_level=None)
-    try:
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    finally:
-        conn.close()
-    for sidecar in files.sidecars(database):
-        if sidecar.exists() and sidecar.stat().st_size > 0 and not sidecar.name.endswith("-shm"):
-            raise ArchiveError(f"the new archive is not in one file: {sidecar.name} is not empty")
-    files.remove_files(files.sidecars(database))
 
 
 class ArchiveState:
@@ -258,7 +137,7 @@ class ArchiveState:
         in which SQLite keeps the newest writes. The mark can change while the
         content is the same; it does not stay the same when the content changed.
         """
-        return (str(self.path), _stat_of(self.path), _stat_of(self.path.with_name(self.path.name + "-wal")))
+        return (str(self.path), archive_files.stat_of(self.path), archive_files.stat_of(self.path.with_name(self.path.name + "-wal")))
 
     # -- the read handle -----------------------------------------------------
 
@@ -321,7 +200,7 @@ class ArchiveState:
 
         An archive that a pull from Messages filled is kept as it is.
         """
-        export = _place(messages_csv)
+        export = archive_files.place(messages_csv)
         signature = None if export is None else ExportSignature.of(export)
         if export is None or signature is None:
             return EnsureResult("no_export", reason=NO_SUCH_PLACE if export is None else f"There is no export at {export}.")
@@ -344,7 +223,7 @@ class ArchiveState:
                 "failed", reason=f"The file {self.path.name} is not an archive that Recall can open. It was not changed."
             )
         note = self._note()
-        if (isinstance(note, dict) and note.get("source") == "messages") or _holds_pull(archive):
+        if (isinstance(note, dict) and note.get("source") == "messages") or archive_files.holds_pull(archive):
             return EnsureResult("kept", reason=KEPT_PULL)
         return EnsureResult("current") if ExportSignature.from_note(note) == signature else None
 
@@ -353,11 +232,11 @@ class ArchiveState:
     ) -> EnsureResult:
         building = self.path.with_name(f".{self.path.name}{BUILD_SUFFIX}")
         try:
-            _remove_database(building)
+            archive_files.remove_database(building)
             result = import_legacy_csv(export, building, contacts=contacts, progress=progress, cancel=cancel)
             if result.status != "ok":
                 return EnsureResult("cancelled", reason=f"The load was stopped. {ARCHIVE_KEPT}")
-            _settle(building)
+            archive_files.settle(building)
             self._move_into_place(building)
         except SourceFormatError:
             return EnsureResult(
@@ -369,7 +248,7 @@ class ArchiveState:
         except (ArchiveError, OSError, sqlite3.Error):
             return EnsureResult("failed", reason=f"The export could not be loaded. {ARCHIVE_KEPT}")
         finally:
-            _remove_quietly(building)
+            archive_files.remove_quietly(building)
         self._write_note({"source": "export", "export": asdict(signature)})
         return EnsureResult("built", counts=_counts(result))
 
@@ -380,7 +259,7 @@ class ArchiveState:
         """
         with self._lock:
             self._drop()
-            _gather(self.path)
+            archive_files.gather(self.path)
             os.replace(building, self.path)
             self._generation += 1
         files.fsync_folder(self.path.parent)
@@ -409,7 +288,7 @@ class ArchiveState:
         named = "" if db_path is None else str(db_path).strip()
         if not named:
             raise ValueError("The caller must name the database to read.")
-        source = _place(named)
+        source = archive_files.place(named)
         try:
             stopped = NO_SUCH_PLACE if source is None else unreadable.why(probe_database(source))
         except ValueError:  # a text that is no path
@@ -473,9 +352,9 @@ class ArchiveState:
         """
         with self._lock:
             self._drop()
-            if not _holds_nothing(self.path):
+            if not archive_files.holds_nothing(self.path):
                 return
-            _remove_quietly(self.path)
+            archive_files.remove_quietly(self.path)
         shutil.rmtree(self.path.with_name(f".{self.path.name}{WORK_SUFFIX}"), ignore_errors=True)
 
 
