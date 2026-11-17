@@ -120,6 +120,13 @@ test('a list that does not say who wrote what gives no count for either voice', 
   assert.equal(receivedCount({ chat_id: 'a', message_count: 10, sent_count: 4 }), 0)
 })
 
+test('counts of nothing for both voices say nothing about who wrote the messages', () => {
+  // an export with no direction column counts every message for neither voice
+  assert.equal(voicesOf({ chat_id: 'a', message_count: 10, sent_count: 0, received_count: 0 }), null)
+  // a conversation with no messages at all has nothing to say either
+  assert.equal(voicesOf({ chat_id: 'a', message_count: 0, sent_count: 0, received_count: 0 }), null)
+})
+
 test('the two voices together are never more than the conversation holds', () => {
   const within = (sent: number, received: number) =>
     voicesOf({ chat_id: 'a', message_count: 12, sent_count: sent, received_count: received })

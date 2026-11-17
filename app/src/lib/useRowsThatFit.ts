@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from 'react'
+import { useLayoutEffect, useState } from 'react'
 import { rowsThatFit } from './fit'
 
 // How many rows a list shows. At rest it is `atRest`. Where the style sheet
@@ -6,27 +6,24 @@ import { rowsThatFit } from './fit'
 // the box does not grow with its rows), it is as many rows as that height
 // holds, and never fewer than `fewest`. rowHeight gives the height of one
 // row in pixels for the size of a rem; pass the same function each time.
-export function useRowsThatFit(
-  box: RefObject<HTMLElement | null>,
-  rowHeight: (rem: number) => number,
-  atRest: number,
-  fewest: number,
-) {
+// The first thing it returns is the ref for the box: a box that is put on
+// the page later than the list's first drawing is measured from then on.
+export function useRowsThatFit(rowHeight: (rem: number) => number, atRest: number, fewest: number) {
+  const [box, setBox] = useState<HTMLElement | null>(null)
   const [rows, setRows] = useState(atRest)
 
   useLayoutEffect(() => {
-    const element = box.current
-    if (!element) return
+    if (!box) return
     const measure = () => {
-      const fits = getComputedStyle(element).getPropertyValue('--fit').trim() === '1'
+      const fits = getComputedStyle(box).getPropertyValue('--fit').trim() === '1'
       const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16
-      setRows(fits ? rowsThatFit(element.clientHeight, rowHeight(rem), fewest) : atRest)
+      setRows(fits ? rowsThatFit(box.clientHeight, rowHeight(rem), fewest) : atRest)
     }
     measure()
     const observer = new ResizeObserver(measure)
-    observer.observe(element)
+    observer.observe(box)
     return () => observer.disconnect()
   }, [box, rowHeight, atRest, fewest])
 
-  return rows
+  return [setBox, rows] as const
 }

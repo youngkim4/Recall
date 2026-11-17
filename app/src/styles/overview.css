@@ -253,9 +253,19 @@
       overflow: hidden;
     }
 
+    /* as many equal rows as fit; a list with fewer leaves the rest of the card empty */
     .overview-side .ranked-card > .rows {
       height: 100%;
-      grid-auto-rows: minmax(0, 1fr);
+      grid-template-rows: repeat(var(--rows, 5), minmax(0, 1fr));
+    }
+
+    /* a column that holds one list alone gives it the whole height */
+    .overview-side > .section:only-child {
+      flex: 1;
+    }
+
+    .overview-side > .section:only-child > .card {
+      flex: 1;
     }
 
     .overview-side .ranked-card > .rows > li {

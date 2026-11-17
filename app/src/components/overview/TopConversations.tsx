@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import type { CSSProperties } from 'react'
 import { contactTitle, messageCount, voicesOf } from '../../lib/conversations'
 import { formatNumber, formatPercent } from '../../lib/format'
 import { useRowsThatFit } from '../../lib/useRowsThatFit'
@@ -27,8 +27,7 @@ const rowHeight = (rem: number) => 2.75 * rem + 1
 // eight; in a card stretched to the height of what stands beside it, it shows
 // as many as that height holds, so the card ends where its neighbor ends.
 export function TopConversations({ ranked, archive, onSelectContact, onViewAll }: TopConversationsProps) {
-  const card = useRef<HTMLDivElement>(null)
-  const shown = useRowsThatFit(card, rowHeight, SHOWN, FEWEST)
+  const [card, shown] = useRowsThatFit(rowHeight, SHOWN, FEWEST)
   const rows = ranked.slice(0, shown)
   if (!rows.length) return null
 
@@ -47,7 +46,8 @@ export function TopConversations({ ranked, archive, onSelectContact, onViewAll }
         </span>
       </div>
       <div ref={card} className="card ranked-card">
-        <ol className="rows" role="list">
+        {/* the list keeps room for the rows that fit, so a short list keeps its rows at their own height */}
+        <ol className="rows" role="list" style={{ '--rows': shown } as CSSProperties}>
           {rows.map((contact, index) => {
             const count = messageCount(contact)
             const voices = voicesOf(contact)
@@ -65,11 +65,13 @@ export function TopConversations({ ranked, archive, onSelectContact, onViewAll }
                   <span className="ranked-place">{index + 1}</span>
                   <Truncate className="row-title">{name}</Truncate>
                   <span className="ranked-bar">
-                    {voices ? (
-                      <VoiceBar sent={voices.sent} received={voices.received} scale={count / largest} />
-                    ) : (
-                      <VoiceBar sent={0} received={0} unsaid={count} scale={count / largest} />
-                    )}
+                    {/* what does not say who sent it is part of the length, in neither voice */}
+                    <VoiceBar
+                      sent={voices?.sent ?? 0}
+                      received={voices?.received ?? 0}
+                      unsaid={count - (voices?.sent ?? 0) - (voices?.received ?? 0)}
+                      scale={count / largest}
+                    />
                   </span>
                   <span className="ranked-count">{formatNumber(count)}</span>
                   <span className="ranked-share">{share}</span>

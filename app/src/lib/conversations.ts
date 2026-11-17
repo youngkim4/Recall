@@ -49,14 +49,16 @@ export function messageCount(contact: Contact) {
 }
 
 // What each side wrote, as the list says it. Null when the list does not
-// say: the Messages database is listed with totals only. A message that does
+// say: the Messages database is listed with totals only, and an export with
+// no direction counts every message for neither voice. A message that does
 // not say who sent it is in the total and in neither voice, so what was
 // received is never worked out as the total less what you sent.
 export function voicesOf(contact: Contact): { sent: number; received: number } | null {
   if (contact.sent_count === undefined || contact.received_count === undefined) return null
   const total = messageCount(contact)
   const sent = Math.min(total, Math.max(0, Number(contact.sent_count)))
-  return { sent, received: Math.min(total - sent, Math.max(0, Number(contact.received_count))) }
+  const received = Math.min(total - sent, Math.max(0, Number(contact.received_count)))
+  return sent + received > 0 ? { sent, received } : null
 }
 
 export function sentCount(contact: Contact) {
