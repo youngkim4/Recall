@@ -286,7 +286,6 @@ function App() {
         outDir: effectiveDefaults.outDir,
         contact: selectedContact.chat_id,
         model,
-        html: true,
         since: scope.since,
         until: scope.until,
       })
