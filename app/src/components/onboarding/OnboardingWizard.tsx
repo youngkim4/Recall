@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { recallApi } from '../../lib/api'
 import { recallBridge } from '../../lib/bridge'
+import { importRequest } from '../../lib/setupGuide'
 import type { Job, SetupImportResult, SetupStatus } from '../../types'
 import { ImportStep } from './ImportStep'
 import { SetupFrame } from './SetupFrame'
@@ -23,6 +24,8 @@ function markSetup(fields: Parameters<typeof recallApi.setupComplete>[0]) {
 
 type Props = {
   initialStatus: SetupStatus
+  // the archive file that the app reads: an import writes this one
+  messagesPath: string
   rerun?: boolean
   onFinished: (result: SetupImportResult | null) => void
   onSkip: () => void
@@ -66,7 +69,7 @@ function frameStep(phase: Phase): number {
   return 3
 }
 
-export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onSkip }: Props) {
+export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, onFinished, onSkip }: Props) {
   // an update has no welcome to read: it opens on what there is to do
   const [phase, setPhase] = useState<Phase>(() => (rerun ? phaseForDatabase(initialStatus) : 'welcome'))
   const [status, setStatus] = useState<SetupStatus>(initialStatus)
@@ -87,6 +90,7 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
       try {
         const next = await recallApi.setupStatus({
           dbPath: pickedDbPath || undefined,
+          messagesPath: messagesPath || undefined,
           deep,
         })
         setStatus(next)
@@ -96,7 +100,7 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
         return null
       }
     },
-    [pickedDbPath],
+    [messagesPath, pickedDbPath],
   )
 
   // permission phase: poll quietly; the shell pings recall:becameActive the
@@ -187,7 +191,7 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
     setPickError('')
     setPickBusy(true)
     try {
-      const next = await recallApi.setupStatus({ dbPath: path, deep: true })
+      const next = await recallApi.setupStatus({ dbPath: path, messagesPath: messagesPath || undefined, deep: true })
       if (next.db.status === 'readable') {
         setPickedDbPath(path)
         setStatus(next)
@@ -206,7 +210,7 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
     } finally {
       setPickBusy(false)
     }
-  }, [])
+  }, [messagesPath])
 
   const pickFile = useCallback(async () => {
     const path = await recallBridge.pickDatabaseFile()
@@ -216,10 +220,8 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
   const startImport = useCallback(async () => {
     setPickError('')
     try {
-      const { job: created } = await recallApi.createSetupImportJob({
-        dbPath: pickedDbPath || undefined,
-        includeContacts: true,
-      })
+      const request = importRequest({ archivePath: messagesPath, copyPath: pickedDbPath })
+      const { job: created } = await recallApi.createSetupImportJob(request)
       setJob(created)
     } catch (error) {
       setJob({
@@ -232,7 +234,7 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
         error: error instanceof Error ? error.message : 'The import could not be started.',
       })
     }
-  }, [pickedDbPath])
+  }, [messagesPath, pickedDbPath])
 
   const retryImport = useCallback(() => {
     setJob(null)

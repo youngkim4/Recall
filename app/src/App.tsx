@@ -525,6 +525,7 @@ function App() {
     return (
       <OnboardingWizard
         initialStatus={setupStatus}
+        messagesPath={effectiveDefaults?.messagesPath ?? ''}
         rerun={rerunSetup}
         onFinished={(result) => void finishOnboarding(result)}
         onSkip={skipOnboarding}
