@@ -19,6 +19,7 @@ from __future__ import annotations
 import pandas as pd
 
 from archive.queries import Archive
+from archive.rows import UNKNOWN_MIME_TYPE
 from archive.timeconv import LOCAL_TIMESTAMP_FORMAT, sql_local_timestamp
 
 EXPORT_COLUMNS: tuple[str, ...] = (
@@ -44,13 +45,13 @@ SELECT m.guid AS message_id,
        NULLIF(c.title, '') AS chat_display_name,
        m.is_from_me AS is_from_me,
        NULLIF(m.service, '') AS service,
-       (SELECT group_concat(a.mime_type, '|' ORDER BY a.position, a.id)
+       (SELECT group_concat(COALESCE(NULLIF(a.mime_type, ''), '{UNKNOWN_MIME_TYPE}'), '|' ORDER BY a.position, a.id)
           FROM attachments a WHERE a.message_id = m.id) AS attachment_types,
-       (SELECT group_concat(a.path, '|' ORDER BY a.position, a.id)
+       (SELECT group_concat(COALESCE(a.path, ''), '|' ORDER BY a.position, a.id)
           FROM attachments a WHERE a.message_id = m.id) AS attachment_files,
        m.kind AS kind
   FROM messages m
-  JOIN conversations c ON c.id = m.conversation_id
+  LEFT JOIN conversations c ON c.id = m.conversation_id
   LEFT JOIN handles h ON h.id = m.sender_handle_id
  WHERE m.kind != 'system'
  ORDER BY m.sent_ns, m.id
@@ -68,7 +69,8 @@ def _attachment_text(types: object, files: object) -> str:
 
 def messages_frame(archive: Archive) -> pd.DataFrame:
     """Every message of the archive, oldest first, with the columns of the CSV export."""
-    raw = pd.read_sql_query(_FRAME_SQL, archive._connection())
+    with archive._using() as conn:
+        raw = pd.read_sql_query(_FRAME_SQL, conn)
     only_files = raw["kind"] == "attachment"
     text = raw["text"].where(
         ~only_files,

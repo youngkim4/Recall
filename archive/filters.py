@@ -6,7 +6,7 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from archive.rows import VISIBLE
+from archive.rows import FILED, UNFILED, VISIBLE
 from archive.search_query import ParsedQuery
 from archive.timeconv import NS_PER_SECOND, day_end, day_start
 
@@ -29,10 +29,31 @@ class Scope:
 NOTHING = Scope(joins="", where="0", params=(), matches_nothing=True)
 
 
+MAX_INT = 2**63 - 1  # the largest whole number SQLite can hold
+ID_CHUNK = 500  # ids in one query
+
+
 def check_int(name: str, value: object, minimum: int) -> int:
-    if type(value) is not int or value < minimum:
-        raise ValueError(f"{name} must be a whole number of {minimum} or more, got {value!r}")
+    if type(value) is not int or not minimum <= value <= MAX_INT:
+        raise ValueError(f"{name} must be a whole number from {minimum} to {MAX_INT}, got {value!r}")
     return value
+
+
+def check_bool(name: str, value: object) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"{name} must be True or False, got {value!r}")
+    return value
+
+
+def bindable(text: str) -> str:
+    """Text that SQLite can take. A lone surrogate (JSON can carry one) becomes `?`: it is in no stored text."""
+    return text if text.isascii() else text.encode("utf-8", "replace").decode("utf-8")
+
+
+def check_id(name: str, value: object) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{name} must be text, got {type(value).__name__}")
+    return bindable(value)
 
 
 def check_choice(name: str, value: object, choices: Iterable[str]) -> str:
@@ -51,25 +72,24 @@ def check_flag(name: str, value: object) -> bool | None:
 def as_id_list(name: str, value: object) -> list[str]:
     """One id or several ids as a list without repeats."""
     if isinstance(value, str):
-        return [value]
+        return [bindable(value)]
     if isinstance(value, (bytes, dict)) or not isinstance(value, Iterable):
         raise TypeError(f"{name} must be an id or a list of ids")
     items = list(value)
     if not all(isinstance(item, str) for item in items):
         raise TypeError(f"{name} must be an id or a list of ids")
-    return list(dict.fromkeys(items))
+    return list(dict.fromkeys(bindable(item) for item in items))
 
 
 def conversation_keys(conn: sqlite3.Connection, value: object) -> tuple[int, ...]:
     """Row ids of the conversations named by `value`. Unknown ids are left out."""
     identifiers = as_id_list("conversation ids", value)
-    if not identifiers:
-        return ()
-    marks = ", ".join("?" for _ in identifiers)
-    rows = conn.execute(
-        f"SELECT chat_identifier, id FROM conversations WHERE chat_identifier IN ({marks})", identifiers
-    )
-    found = dict(rows.fetchall())
+    found: dict[str, int] = {}
+    for start in range(0, len(identifiers), ID_CHUNK):  # a list of any length: SQLite limits the values of one query
+        chunk = identifiers[start : start + ID_CHUNK]
+        marks = ", ".join("?" for _ in chunk)
+        rows = conn.execute(f"SELECT chat_identifier, id FROM conversations WHERE chat_identifier IN ({marks})", chunk)
+        found.update(rows.fetchall())
     return tuple(found[identifier] for identifier in identifiers if identifier in found)
 
 
@@ -104,7 +124,7 @@ def in_conversations(keys: tuple[int, ...]) -> str:
 
 def substring_clause(needle: str) -> str:
     """SQL that tests for a needle made by search_query. lower() is skipped when the needle has no letter a-z."""
-    haystack = "lower(m.text)" if any("a" <= char <= "z" for char in needle) else "m.text"
+    haystack = "lower(m.search_text)" if any("a" <= char <= "z" for char in needle) else "m.search_text"
     return f"instr({haystack}, ?) > 0"
 
 
@@ -117,10 +137,18 @@ def scope(
     from_me: bool | None = None,
     text: ParsedQuery | None = None,
     include_system: bool = False,
+    no_conversation: bool = False,
 ) -> Scope:
-    """Build the FROM and WHERE parts for a filtered query."""
+    """Build the FROM and WHERE parts for a filtered query.
+
+    A message with no conversation is outside every scope. `no_conversation=True`
+    is the one way to ask for those messages, and then for those only.
+    """
     lower, upper = day_bounds(since, until)
     direction = check_flag("from_me", from_me)
+    check_bool("include_system", include_system)
+    if check_bool("no_conversation", no_conversation) and conversations is not None:
+        raise ValueError("no_conversation=True cannot be given with conversations")
     if text is not None and text.is_empty:
         return NOTHING
     clauses: list[str] = []
@@ -135,6 +163,8 @@ def scope(
         if not keys:
             return NOTHING
         clauses.append(in_conversations(keys))
+    else:
+        clauses.append(UNFILED if no_conversation else FILED)
     time_sql, time_params = time_clauses(lower, upper)
     clauses.extend(time_sql)
     params.extend(time_params)
@@ -150,6 +180,6 @@ def scope(
         where=" AND ".join(clauses) or "1",
         params=tuple(params),
         searches_text=text is not None,
-        in_conversations=conversations is not None,
+        in_conversations=conversations is not None or no_conversation,  # both read the conversation index
         counts_system=include_system,
     )

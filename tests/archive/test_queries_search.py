@@ -93,7 +93,7 @@ class TestBadSyntaxNeverRaises:
             ('brunch"', ["a7"]),
             ('"unbalanced quote brunch', []),
             ("NEAR(brunch sleep)", []),
-            ("^brunch", ["a7"]),
+            ("^brunch", []),  # a symbol in a term must be in the text
             ("text:brunch", []),
             ("brunch -sleep", []),
             ("(brunch)", ["a7"]),
@@ -307,7 +307,7 @@ class TestParseQuery:
     def test_quote_inside_a_term_cannot_break_out(self) -> None:
         parsed = parse_query('say "hi" OR 1=1 --')
         assert parsed.match == '"say" "hi" "OR" "1=1"'
-        assert parsed.substrings == ("--",)
+        assert parsed.substrings == ("1=1", "--")  # a term with a symbol is also a substring
 
 
 class TestUtf16Ranges:

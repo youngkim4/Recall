@@ -26,6 +26,8 @@ from archive.timeconv import (
 )
 
 GROUPS = ("day", "month", "year", "weekday_hour", "conversation", "sender")
+OWNER_KEY = ""  # count(group_by="sender"): the owner's messages
+UNKNOWN_SENDER_KEY = "unknown"  # received messages that have no sender in the source
 DAY_KEY_LENGTH = {"day": 10, "month": 7, "year": 4}  # prefix of "YYYY-MM-DD"
 EPOCH_ORDINAL = date(1970, 1, 1).toordinal()
 EPOCH_WEEKDAY = 3  # 1970-01-01 was a Thursday. Monday is 0, like datetime.weekday().
@@ -79,6 +81,8 @@ def _summed(buckets: Iterable[Bucket]) -> list[Bucket]:
 def _time_buckets(
     conn: sqlite3.Connection, where: Scope, group_by: str, lower: int | None, upper: int | None
 ) -> list[Bucket]:
+    # With no day range the whole offset table is used: a group event or a message with no
+    # conversation can lie outside the time range that the totals of the conversations give.
     local = sql_local_seconds("m.sent_ns", _unix(lower), _unix(upper))
     if group_by == "weekday_hour":
         hours = _grouped(conn, where, f"({local} / {SECONDS_PER_HOUR}) % {HOURS_PER_WEEK}", _table(where))
@@ -90,15 +94,24 @@ def _time_buckets(
     return sorted(named)
 
 
+def _sender_key(key: int, handles: dict[int, str]) -> str:
+    """Name of a sender bucket. Handle ids start at 1: -1 and 0 are the rows with no sender handle."""
+    if key == -1:
+        return OWNER_KEY
+    return str(handles.get(key, UNKNOWN_SENDER_KEY)) if key else UNKNOWN_SENDER_KEY
+
+
 def _named_buckets(conn: sqlite3.Connection, where: Scope, group_by: str) -> list[Bucket]:
     """Buckets by conversation or by sender, largest first."""
     if group_by == "conversation":
         names = dict(conn.execute("SELECT id, chat_identifier FROM conversations").fetchall())
         found = _grouped(conn, where, "m.conversation_id", _table(where, by_conversation=True))
+        named = _summed((str(names.get(key, "")), total, sent) for key, total, sent in found)
     else:
         names = dict(conn.execute("SELECT id, handle FROM handles").fetchall())
-        found = _grouped(conn, where, "m.sender_handle_id", _table(where, reads_rows=True))
-    named = _summed((str(names.get(key, "")), total, sent) for key, total, sent in found)
+        # the owner's messages have no sender handle: split the rows without one by direction
+        found = _grouped(conn, where, "COALESCE(m.sender_handle_id, -m.is_from_me)", _table(where, reads_rows=True))
+        named = _summed((_sender_key(key, names), total, sent) for key, total, sent in found)
     return sorted(named, key=lambda bucket: (-bucket[1], bucket[0]))
 
 

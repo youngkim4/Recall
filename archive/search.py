@@ -13,6 +13,7 @@ from typing import Any
 
 from archive import rows
 from archive.filters import Scope, check_choice, check_int, scope
+from archive.schema import INDEXED_TEXT_CHARS
 from archive.search_query import ParsedQuery, ascii_lower, parse_query
 
 __all__ = ["parse_query", "search", "utf16_ranges"]
@@ -23,8 +24,8 @@ NEWEST = "m.sent_ns DESC, m.id DESC"
 # here: the query also has a window function, and FTS5 functions do not work across one.
 ORDER_SQL = {"newest": NEWEST, "oldest": "m.sent_ns ASC, m.id ASC", "relevance": f"messages_fts.rank, {NEWEST}"}
 # highlight() puts these around each match. A text that has one of them is read with the next pair.
-# U+FDD0 to U+FDD3 are Unicode noncharacters: no valid text has them.
-MARKERS = ((chr(0xFDD0), chr(0xFDD1)), (chr(0xFDD2), chr(0xFDD3)), ("\x01", "\x02"))
+# U+FDD0 to U+FDEF are Unicode noncharacters: no valid text has them.
+MARKERS = (*((chr(code), chr(code + 1)) for code in range(0xFDD0, 0xFDF0, 2)), ("\x01", "\x02"))
 
 
 def utf16_ranges(text: str, ranges: Sequence[Sequence[int]]) -> list[list[int]]:
@@ -71,7 +72,7 @@ def _index_ranges(conn: sqlite3.Connection, match: str, texts: Mapping[int, str]
 
 
 def _substring_ranges(text: str, needles: Sequence[str]) -> list[list[int]]:
-    folded = ascii_lower(text)
+    folded = ascii_lower(text[:INDEXED_TEXT_CHARS])  # search reads the same part of an oversize text
     ranges: list[list[int]] = []
     for needle in needles:
         position = folded.find(needle)
@@ -110,7 +111,7 @@ def _hits(conn: sqlite3.Connection, parsed: ParsedQuery, keys: Sequence[int]) ->
     found = conn.execute(f"{rows.MESSAGE_SELECT} WHERE m.id IN ({marks})", tuple(keys)).fetchall()
     by_key = {int(row[1]): row for row in found}
     texts = {key: str(row[8]) for key, row in by_key.items()}
-    indexed = _index_ranges(conn, parsed.match, texts) if parsed.match is not None else {}
+    indexed = _index_ranges(conn, parsed.marked, texts) if parsed.marked is not None else {}
     hits = []
     for key in keys:
         if key not in by_key:
@@ -132,6 +133,7 @@ def search(
     offset: int = 0,
     order: str = "newest",
     include_system: bool = False,
+    no_conversation: bool = False,
 ) -> dict[str, Any]:
     """Find messages. `conn` must be inside one read transaction so total and hits agree."""
     parsed = parse_query(query)
@@ -146,6 +148,7 @@ def search(
         from_me=from_me,
         text=parsed,
         include_system=include_system,
+        no_conversation=no_conversation,
     )
     if where.matches_nothing:
         return {"total": 0, "hits": []}
@@ -154,6 +157,6 @@ def search(
         total, keys = _page_keys(conn, where, order_sql, limit, offset)
         return {"total": total, "hits": _hits(conn, parsed, keys) if keys else []}
     except sqlite3.OperationalError as exc:
-        if "fts5" not in str(exc).lower():
-            raise
+        if "fts5: syntax error" not in str(exc).lower():
+            raise  # a damaged index must not look like "no results"
         return {"total": 0, "hits": []}  # text typed by a user never raises

@@ -105,7 +105,7 @@ class TestIterMessages:
         with_events = list(harbor.archive.iter_messages(A, include_system=True))
         assert harbor.labels(with_events) == [*A_ALL, "a_event"]
         assert with_events[-1]["kind"] == "system"
-        named = list(harbor.archive.iter_messages(G, include_system=True))[0]
+        named = next(iter(harbor.archive.iter_messages(G, include_system=True)))
         assert (named["kind"], named["text"]) == ("system", worlds.HARBOR_GROUP_TITLE)
 
     def test_unknown_conversation_is_empty(self, harbor: Harbor) -> None:

@@ -14,11 +14,12 @@ from operator import itemgetter
 from typing import Any
 
 from archive import rows
-from archive.filters import check_int, time_clauses
+from archive.filters import check_id, check_int, time_clauses
 
 STREAM_CHUNK = 2000
 Key = tuple[int, int]
 Row = tuple[Any, ...]
+Fetch = Callable[[str, Sequence[object]], list[Row]]  # runs one query to its end
 
 
 def _empty_page() -> dict[str, Any]:
@@ -34,7 +35,10 @@ def _side(
     limit: int,
     include_system: bool,
 ) -> list[Row]:
-    """Up to `limit` rows before (older) or after `key`, nearest first. `key` None means from the newest end."""
+    """Up to `limit` rows before (older) or after `key`, nearest first.
+
+    `key` None means from the end: the newest rows with `older`, else the oldest rows.
+    """
     if limit <= 0:
         return []
     compare, direction = ("<", "DESC") if older else (">", "ASC")
@@ -78,14 +82,15 @@ def page(
     around: str | None,
     before: str | None,
     after: str | None,
+    oldest: bool = False,
     limit: int,
     include_system: bool,
 ) -> dict[str, Any]:
     """One page of messages, oldest first, with has_older and has_newer."""
     check_int("limit", limit, 1)
-    anchors = [guid for guid in (around, before, after) if guid is not None]
-    if len(anchors) > 1:
-        raise ValueError("give at most one of around, before and after")
+    anchors = [check_id("message id", guid) for guid in (around, before, after) if guid is not None]
+    if len(anchors) + int(oldest) > 1:
+        raise ValueError("give at most one of around, before, after and oldest")
     if not conversation_keys:
         return _empty_page()
 
@@ -94,7 +99,9 @@ def page(
 
     anchor_visible = False
     anchor_key: Key | None = None
-    if not anchors:
+    if oldest:
+        found = side(None, limit, older=False)
+    elif not anchors:
         found = list(reversed(side(None, limit, older=True)))
     else:
         anchor = _anchor(conn, conversation_keys, anchors[0])
@@ -123,8 +130,13 @@ def context(conn: sqlite3.Connection, guid: str, *, radius: int, include_system:
     """The message with up to `radius` neighbours on each side, in its own conversation."""
     check_int("radius", radius, 0)
     home = conn.execute("SELECT conversation_id FROM messages WHERE guid = ?", (guid,)).fetchone()
-    anchor = None if home is None else _anchor(conn, (home[0],), guid)
-    if home is None or anchor is None:
+    if home is None:
+        return []
+    if home[0] is None:  # a message with no conversation has no neighbours
+        alone = conn.execute(f"{rows.MESSAGE_SELECT} WHERE m.guid = ?", (guid,)).fetchone()
+        return [rows.message(alone)] if alone is not None and _is_visible(alone, include_system) else []
+    anchor = _anchor(conn, (home[0],), guid)
+    if anchor is None:
         return []
     conversation = int(home[0])
     key = rows.sort_key(anchor)
@@ -135,24 +147,26 @@ def context(conn: sqlite3.Connection, guid: str, *, radius: int, include_system:
 
 
 def _stream_one(
-    connect: Callable[[], sqlite3.Connection],
-    conversation: int,
+    fetch: Fetch,
+    conversation: int | None,
     lower: int | None,
     upper: int | None,
     include_system: bool,
 ) -> Iterator[tuple[Key, rows.Message]]:
     """Every message of one conversation, oldest first, read in chunks.
 
+    `conversation` None reads the messages that have no conversation.
     No cursor stays open between chunks, so a slow consumer does not hold a
     read transaction, and the stream can move to another thread.
     """
     time_sql, time_params = time_clauses(lower, upper)
-    fixed = ["m.conversation_id = ?", *time_sql, *([] if include_system else [rows.VISIBLE])]
+    place = rows.UNFILED if conversation is None else f"m.conversation_id = {int(conversation)}"
+    fixed = [place, *time_sql, *([] if include_system else [rows.VISIBLE])]
     key: Key | None = None
     while True:
         clauses = fixed if key is None else [*fixed, "(m.sent_ns, m.id) > (?, ?)"]
         sql = f"{rows.PAGED_MESSAGE_SELECT} WHERE {' AND '.join(clauses)} ORDER BY m.sent_ns, m.id LIMIT ?"
-        chunk = connect().execute(sql, (conversation, *time_params, *(key or ()), STREAM_CHUNK)).fetchall()
+        chunk = fetch(sql, (*time_params, *(key or ()), STREAM_CHUNK))
         for row in chunk:
             yield rows.sort_key(row), rows.message(row)
         if len(chunk) < STREAM_CHUNK:
@@ -161,14 +175,14 @@ def _stream_one(
 
 
 def stream(
-    connect: Callable[[], sqlite3.Connection],
-    conversation_keys: Sequence[int],
+    fetch: Fetch,
+    conversation_keys: Sequence[int | None],
     lower: int | None,
     upper: int | None,
     include_system: bool,
 ) -> Iterator[rows.Message]:
     """Every message of the conversations, oldest first. Memory use does not grow with the count."""
-    parts = [_stream_one(connect, conversation, lower, upper, include_system) for conversation in conversation_keys]
+    parts = [_stream_one(fetch, conversation, lower, upper, include_system) for conversation in conversation_keys]
     merged = parts[0] if len(parts) == 1 else heapq.merge(*parts, key=itemgetter(0))
     for _, found in merged:
         yield found

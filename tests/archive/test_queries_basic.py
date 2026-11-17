@@ -36,6 +36,7 @@ class TestOpen:
                 "conversations": 0,
                 "first_timestamp": None,
                 "last_timestamp": None,
+                "messages_without_conversation": 0,
             }
             assert archive.conversations() == []
             assert archive.people() == []
@@ -63,7 +64,7 @@ class TestOpen:
         import sqlite3
 
         with pytest.raises(sqlite3.OperationalError):
-            harbor.archive._connection().execute("DELETE FROM messages")
+            harbor.archive._slot().conn.execute("DELETE FROM messages")
         assert harbor.archive.summary()["messages"] == 19
 
 
@@ -74,6 +75,7 @@ class TestSummary:
             "conversations": 3,
             "first_timestamp": "2023-12-31 23:59:59",
             "last_timestamp": "2024-03-25 08:00:00",
+            "messages_without_conversation": 0,
         }
 
 
@@ -239,14 +241,14 @@ class TestThreads:
 
         def work() -> None:
             harbor.archive.summary()
-            seen.append(id(harbor.archive._connection()))
+            seen.append(id(harbor.archive._slot().conn))
 
         for _ in range(12):
             thread = threading.Thread(target=work)
             thread.start()
             thread.join()
         gc.collect()
-        assert id(harbor.archive._connection()) not in seen
+        assert id(harbor.archive._slot().conn) not in seen
         assert harbor.archive.open_connections() == 1
 
     def test_close_from_another_thread(self, harbor_files: tuple[Path, dict[str, str]]) -> None:
