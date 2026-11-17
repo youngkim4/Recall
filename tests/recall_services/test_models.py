@@ -256,6 +256,16 @@ def test_a_file_whose_default_is_not_offered_is_refused(tmp_path: Path) -> None:
         {"provider": ""},
         {"reasoning_levels": "low"},
         {"surprise": 1},
+        # a number written as another type
+        {"context_window": True},
+        {"context_window": "1050000"},
+        {"max_output_tokens": 128000.5},
+        # limits that do not fit each other: the report engine would refuse them later, in the middle of a request
+        {"max_input_tokens": 2_000_000},
+        {"max_output_tokens": 1_050_000},
+        {"long_context": {"threshold_tokens": 2_000_000, "input_multiplier": 2, "output_multiplier": 1.5}},
+        # a provider that no model port is made for
+        {"provider": "openAI"},
     ],
 )
 def test_a_file_with_a_bad_value_is_refused(tmp_path: Path, change: dict[str, object]) -> None:

@@ -10,6 +10,9 @@ Rules:
 - A model that is in the file and not offered can not be run.
 - When the page of a model gives no largest input, the largest input is the
   context window less the largest output.
+- Limits that do not fit each other, a number written as text, and a provider
+  that no model port is made for are refused when the file is read.
+- The file is read once. A change of the file needs a new start of the server.
 - A tokenizer family that is an assumption goes to the report engine under a
   name that is no encoding. The engine then counts with its own encoding and
   adds its safety margin to every token budget.
@@ -24,7 +27,16 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StringConstraints,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from report_engine.model_info import LongContextRule, ModelInfo
 
@@ -36,7 +48,7 @@ SOME_PROVIDER = "The model provider"
 
 Level = Literal["low", "medium", "high", "top"]
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-Count = Annotated[int, Field(gt=0)]
+Count = Annotated[int, Field(gt=0, strict=True)]
 Price = Annotated[float, Field(ge=0)]
 
 
@@ -104,6 +116,20 @@ class ModelFacts(_Record):
     facts_read_on: str
 
     _days = field_validator("shutdown_date", "facts_read_on")(_is_day)
+
+    @model_validator(mode="after")
+    def _limits_fit(self) -> ModelFacts:
+        """Limits that do not fit each other are refused here, and not later in the middle of a request."""
+        window = self.context_window
+        if self.provider not in PROVIDER_NAMES:
+            raise ValueError(f"no model port is made for the provider {self.provider}")
+        if self.max_input_tokens is not None and self.max_input_tokens > window:
+            raise ValueError("max_input_tokens is above context_window")
+        if self.max_output_tokens is not None and self.max_output_tokens >= window:
+            raise ValueError("max_output_tokens leaves no room for input in context_window")
+        if self.long_context is not None and self.long_context.threshold_tokens > window:
+            raise ValueError("long_context.threshold_tokens is above context_window")
+        return self
 
 
 class ChatSettings(_Record):
