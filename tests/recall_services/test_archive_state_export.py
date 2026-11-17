@@ -168,6 +168,17 @@ def test_no_export_is_said_and_nothing_is_made(state: ArchiveState, tmp_path: Pa
     assert data.files_in(folder) == []
 
 
+def test_a_file_that_is_no_export_with_no_archive_yet_says_nothing_of_an_archive(
+    state: ArchiveState, tmp_path: Path, folder: Path
+) -> None:
+    wrong = tmp_path / "wrong.csv"
+    wrong.write_text("a,b\n1,2\n", encoding="utf-8")
+    result = state.ensure_from_export(wrong)
+    assert result.status == "failed"
+    assert result.reason == "The file wrong.csv is not an export of messages that Recall can read."
+    assert state.exists() is False and data.files_in(folder) == []
+
+
 def test_a_file_that_is_no_export_fails_and_leaves_the_archive_as_it_was(
     state: ArchiveState, export: Path, tmp_path: Path, folder: Path
 ) -> None:

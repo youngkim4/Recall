@@ -240,22 +240,24 @@ class ArchiveState:
         self, export: Path, signature: ExportSignature, contacts: Contacts, progress: Any, cancel: object
     ) -> EnsureResult:
         building = self.path.with_name(f".{self.path.name}{BUILD_SUFFIX}")
+        # what a failure says of the archive: nothing when there is none yet
+        note = unreadable.archive_note(self.exists())
         try:
             archive_files.remove_database(building)
             result = import_legacy_csv(export, building, contacts=contacts, progress=progress, cancel=cancel)
             if result.status != "ok":
-                return EnsureResult("cancelled", reason=f"The load was stopped. {ARCHIVE_KEPT}")
+                return EnsureResult("cancelled", reason=f"The load was stopped.{note}")
             archive_files.settle(building)
             self._move_into_place(building)
         except SourceFormatError:
             return EnsureResult(
                 "failed",
-                reason=f"The file {export.name} is not an export of messages that Recall can read. {ARCHIVE_KEPT}",
+                reason=f"The file {export.name} is not an export of messages that Recall can read.{note}",
             )
         except ImportBusyError:
             return EnsureResult("busy", reason=IN_USE)
         except (ArchiveError, OSError, sqlite3.Error):
-            return EnsureResult("failed", reason=f"The export could not be loaded. {ARCHIVE_KEPT}")
+            return EnsureResult("failed", reason=f"The export could not be loaded.{note}")
         finally:
             archive_files.remove_quietly(building)
         self._write_note({"source": "export", "export": asdict(signature)})
