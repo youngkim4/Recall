@@ -1,8 +1,10 @@
 """One import writes the archive at a time.
 
-The choice is made once, when the job is made: the first import runs, and a
-second one is refused with a plain sentence and makes no job. A request for an
-import that cannot be made is refused in the same way.
+An import is a first setup or an update (`setup_import`, `export`) or the load
+of an export of an earlier build (`bridge`). The choice is made once, when the
+job is made: the first import runs, and a second one is refused with a plain
+sentence and makes no job. A request for an import that cannot be made is
+refused in the same way. However a job ends, it ends in the list.
 """
 import json
 import threading
@@ -10,11 +12,13 @@ import threading
 import pytest
 
 import ui_server
+from tests.archive_kit import no_names, own_archives, run, write_database, write_export  # noqa: F401
 from tests.loopback import fetch, post, post_bytes
 
 pytestmark = pytest.mark.usefixtures("no_jobs")
 
 REFUSAL = "An import is already running. Wait until it ends."
+IMPORTS = ["setup_import", "export", "bridge"]
 
 
 @pytest.fixture
@@ -31,9 +35,12 @@ def listed():
         return [(job["action"], job["status"]) for job in ui_server.JOBS.values()]
 
 
-@pytest.mark.parametrize("first, second", [
-    ("export", "export"), ("export", "setup_import"), ("setup_import", "export"), ("setup_import", "setup_import"),
-])
+def test_the_imports_are_the_three_jobs_that_write_the_archive():
+    assert ui_server.IMPORT_ACTIONS == frozenset(IMPORTS)
+
+
+@pytest.mark.parametrize("second", IMPORTS)
+@pytest.mark.parametrize("first", IMPORTS)
 def test_a_second_import_is_refused_and_makes_no_job(held_jobs, first, second):
     made = ui_server.create_job(first, {})
 
@@ -45,40 +52,55 @@ def test_a_second_import_is_refused_and_makes_no_job(held_jobs, first, second):
     assert listed() == [(first, "queued")]
 
 
-def test_of_many_imports_asked_for_at_once_one_runs(held_jobs):
-    together = threading.Barrier(8)
+@pytest.mark.parametrize("second", IMPORTS)
+@pytest.mark.parametrize("first", IMPORTS)
+def test_a_second_import_is_refused_beside_one_that_is_at_work(held_jobs, first, second):
+    made = ui_server.create_job(first, {})
+    ui_server.update_job(made["id"], status="running")
+
+    with pytest.raises(ui_server.JobRefused, match=REFUSAL) as refused:
+        ui_server.create_job(second, {})
+
+    assert refused.value.status == 409
+    assert listed() == [(first, "running")]
+
+
+@pytest.mark.parametrize("asked", [["setup_import"] * 8, ["export"] * 8, ["bridge"] * 8, [*IMPORTS, *IMPORTS, "export", "bridge"]])
+def test_of_many_imports_asked_for_at_once_one_runs(held_jobs, asked):
+    together = threading.Barrier(len(asked))
     outcomes = []
 
-    def ask():
+    def ask(action):
         together.wait(timeout=5)
         try:
-            outcomes.append(ui_server.create_job("setup_import", {})["id"])
+            outcomes.append(ui_server.create_job(action, {})["id"])
         except ui_server.JobRefused as refused:
             outcomes.append(str(refused))
 
-    askers = [threading.Thread(target=ask) for _ in range(8)]
+    askers = [threading.Thread(target=ask, args=(action,)) for action in asked]
     for asker in askers:
         asker.start()
     for asker in askers:
         asker.join(timeout=5)
 
-    assert sorted(outcome == REFUSAL for outcome in outcomes) == [False] + [True] * 7
-    assert listed() == [("setup_import", "queued")]
+    assert sorted(outcome == REFUSAL for outcome in outcomes) == [False] + [True] * (len(asked) - 1)
+    assert [status for _action, status in listed()] == ["queued"]
 
 
 @pytest.mark.parametrize("ended", ["completed", "failed"])
-def test_an_import_can_start_when_the_one_before_it_has_ended(held_jobs, ended):
-    first = ui_server.create_job("export", {})
-    ui_server.update_job(first["id"], status=ended)
+@pytest.mark.parametrize("first, second", [("export", "setup_import"), ("setup_import", "bridge"), ("bridge", "export")])
+def test_an_import_can_start_when_the_one_before_it_has_ended(held_jobs, first, second, ended):
+    made = ui_server.create_job(first, {})
+    ui_server.update_job(made["id"], status=ended)
 
-    second = ui_server.create_job("setup_import", {})
+    after = ui_server.create_job(second, {})
 
-    assert listed() == [("export", ended), ("setup_import", "queued")]
-    assert second["id"] != first["id"]
+    assert listed() == [(first, ended), (second, "queued")]
+    assert after["id"] != made["id"]
 
 
-@pytest.mark.parametrize("other", ["export", "semantic"])
-def test_a_report_runs_beside_an_import_or_a_build_of_the_index(held_jobs, other):
+@pytest.mark.parametrize("other", IMPORTS)
+def test_a_report_runs_beside_an_import(held_jobs, other):
     ui_server.create_job("analyze", {"contact": "+15550100"})
     ui_server.create_job(other, {})
     ui_server.create_job("analyze", {"contact": "+15550100"})
@@ -86,41 +108,30 @@ def test_a_report_runs_beside_an_import_or_a_build_of_the_index(held_jobs, other
     assert listed() == [("analyze", "queued"), (other, "queued"), ("analyze", "queued")]
 
 
-@pytest.mark.parametrize("first, second, sentence", [
-    # the index is of one archive: an import during the build would make it out of date at once
-    ("semantic", "export", "The meaning index is being built. Wait until it ends, then import."),
-    ("semantic", "setup_import", "The meaning index is being built. Wait until it ends, then import."),
-    ("export", "semantic", "An import is running. Wait until it ends, then build the index."),
-    ("setup_import", "semantic", "An import is running. Wait until it ends, then build the index."),
-])
-def test_an_import_and_a_build_of_the_index_do_not_run_together(held_jobs, first, second, sentence):
-    ui_server.create_job(first, {})
-
-    with pytest.raises(ui_server.JobRefused) as refused:
-        ui_server.create_job(second, {})
-
-    assert (str(refused.value), refused.value.status) == (sentence, 409)
-    assert listed() == [(first, "queued")]
-
-
-def test_a_second_build_of_the_index_is_refused_in_the_same_way(held_jobs):
-    ui_server.create_job("semantic", {})
-
-    with pytest.raises(ui_server.JobRefused, match="A semantic index build is already running.") as refused:
+def test_the_job_to_build_an_index_of_meaning_is_gone(held_jobs):
+    with pytest.raises(ui_server.JobRefused, match="Unknown job action: semantic") as refused:
         ui_server.create_job("semantic", {})
 
-    assert refused.value.status == 409
-    assert listed() == [("semantic", "queued")]
+    assert refused.value.status == 400
+    assert listed() == []
 
 
-def test_the_job_that_runs_does_not_stop_itself(messages_home, archive, tmp_path):
+@pytest.mark.usefixtures("fresh_bundle_cache", "no_names", "own_archives")
+@pytest.mark.parametrize("action", ["export", "setup_import"])
+def test_the_import_that_runs_does_not_stop_itself(messages_home, tmp_path, action):
     # the import that was made first must not find itself in the list and stop
-    from tests.archive_kit import messages_csv, run
-    from tests.invented_db import messages_db
+    write_database(messages_home / "chat.db", ["one"])
 
-    messages_db(messages_home / "chat.db", ["one"])
+    job = run(action, {"messagesPath": str(tmp_path / "saves" / "archive.sqlite3"), "includeContacts": False})
 
-    job = run("export", {"messagesPath": str(messages_csv(archive))})
+    assert job["status"] == "completed", job["error"]
+
+
+@pytest.mark.usefixtures("fresh_bundle_cache", "no_names", "own_archives")
+def test_the_load_that_runs_does_not_stop_itself(tmp_path):
+    export = write_export(tmp_path / "messages.csv", ["one"])
+
+    job = run("bridge", {"messagesPath": str(export)})
 
     assert job["status"] == "completed", job["error"]
 
@@ -173,9 +184,10 @@ def test_an_update_takes_no_path_to_a_database_so_any_value_is_passed_over(held_
 # ---- the route ----
 
 
-def test_the_route_makes_the_first_import_and_refuses_the_second(server, held_jobs):
+@pytest.mark.parametrize("asked", IMPORTS)
+def test_the_route_makes_the_first_import_and_refuses_the_second(server, held_jobs, asked):
     first_status, first = post(server, "/api/jobs", {"action": "setup_import"})
-    second_status, second = post(server, "/api/jobs", {"action": "export"})
+    second_status, second = post(server, "/api/jobs", {"action": asked})
 
     assert (first_status, first["job"]["action"], first["job"]["status"]) == (202, "setup_import", "queued")
     assert (second_status, second) == (409, {"error": REFUSAL})
@@ -287,23 +299,49 @@ def state_of(job_id):
         return ui_server.JOBS[job_id]["status"], ui_server.JOBS[job_id]["error"]
 
 
-def test_a_job_that_ends_in_a_way_nothing_catches_is_failed_and_holds_up_no_import(monkeypatch, held_jobs):
+WORK = {"export": "pull_into_archive", "setup_import": "pull_into_archive", "bridge": "load_export"}
+
+
+@pytest.mark.parametrize("action", IMPORTS)
+def test_a_job_that_ends_in_a_way_nothing_catches_is_failed_and_holds_up_no_import(monkeypatch, held_jobs, action):
     def leave(*_args):
         raise SystemExit("a library ended the thread")
 
     monkeypatch.undo()
-    monkeypatch.setattr(ui_server, "export_when_free", leave)
-    job_id = register("export")
+    monkeypatch.setattr(ui_server, WORK[action], leave)
+    job_id = register(action)
 
     with pytest.raises(SystemExit):
-        ui_server.run_job(job_id, "export", {})
+        ui_server.run_job(job_id, action, {"includeContacts": False})
 
     assert state_of(job_id) == ("failed", "The job stopped before it ended.")
     monkeypatch.setattr(ui_server, "run_job", lambda *_args: held_jobs.wait(timeout=5))
     assert ui_server.create_job("setup_import", {})["status"] == "queued"
 
 
-def test_an_import_whose_trace_cannot_be_written_is_still_failed_with_its_sentence(monkeypatch, tmp_path):
+@pytest.mark.parametrize("action", IMPORTS)
+def test_a_job_whose_work_returns_without_a_word_is_failed(monkeypatch, action):
+    # the work is over and the list still says that the job runs
+    monkeypatch.setattr(ui_server, "work_job", lambda job_id, action, payload: ui_server.update_job(job_id, status="running"))
+    job_id = register(action)
+
+    ui_server.run_job(job_id, action, {})
+
+    assert state_of(job_id) == ("failed", "The job stopped before it ended.")
+
+
+@pytest.mark.parametrize("ending", ["completed", "failed"])
+def test_a_job_that_ended_keeps_how_it_ended(monkeypatch, ending):
+    monkeypatch.setattr(ui_server, "work_job", lambda job_id, action, payload: ui_server.update_job(job_id, status=ending, error=None))
+    job_id = register("export")
+
+    ui_server.run_job(job_id, "export", {})
+
+    assert state_of(job_id) == (ending, None)
+
+
+@pytest.mark.parametrize("action", IMPORTS)
+def test_an_import_whose_trace_cannot_be_written_is_still_failed_with_its_sentence(monkeypatch, tmp_path, action):
     def closed(*_args, **_more):
         raise ValueError("I/O operation on closed file")
 
@@ -311,10 +349,10 @@ def test_an_import_whose_trace_cannot_be_written_is_still_failed_with_its_senten
         raise ui_server.ImportStopped("The copy could not be read.") from RuntimeError("what led to it")
 
     monkeypatch.setattr(ui_server.traceback, "print_exception", closed)
-    monkeypatch.setattr(ui_server, "export_when_free", stop)
-    job_id = register("export")
+    monkeypatch.setattr(ui_server, WORK[action], stop)
+    job_id = register(action)
 
-    ui_server.run_job(job_id, "export", {"messagesPath": str(tmp_path / "messages.csv")})
+    ui_server.run_job(job_id, action, {"messagesPath": str(tmp_path / "archive.sqlite3"), "includeContacts": False})
 
     assert state_of(job_id) == ("failed", "The copy could not be read.")
 
