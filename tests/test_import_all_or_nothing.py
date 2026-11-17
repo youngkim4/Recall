@@ -95,6 +95,26 @@ def test_an_update_from_the_same_database_changes_no_message(filled, tmp_path):
     assert held(filled) == FIRST_HELD
 
 
+def test_a_request_during_an_update_reads_the_archive_as_it_was(filled, tmp_path, monkeypatch):
+    # until the pull ends, a reader has every message of the earlier archive and none of the new one
+    monkeypatch.setattr(importer, "BATCH_ROWS", 1)
+    real = source.SourceReader.messages_after
+    seen = []
+
+    def look_after_each_batch(reader, rowid, size):
+        for batch in real(reader, rowid, size):
+            yield batch
+            seen.append((held(filled), ui_server.what_the_archive_holds(filled)["messages"]))
+
+    monkeypatch.setattr(source.SourceReader, "messages_after", look_after_each_batch)
+
+    job = import_from(later_database(tmp_path), filled)
+
+    assert job["status"] == "completed", job["error"]
+    assert seen == [(FIRST_HELD, len(FIRST))] * len(LATER)
+    assert held(filled) == dict(LATER)
+
+
 def test_nothing_of_an_export_is_merged_into_the_archive_that_a_pull_fills(tmp_path):
     export = bridged(tmp_path / "messages.csv", ["one", "only in the export"])
 

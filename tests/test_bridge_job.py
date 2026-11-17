@@ -461,6 +461,41 @@ def test_with_no_export_a_request_beside_a_first_import_is_told_to_wait(tmp_path
     assert listed() == [(running, "queued")]
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=(
+        "product fault: a first pull writes into the archive file itself, so a request during it reads an archive "
+        "with no message (archive_for gives it, /api/contacts answers 200 with an empty list) and is not told to "
+        "wait with 503 archive_building; only the moment before the file is made is covered (why_no_archive)"
+    ),
+)
+def test_a_request_during_a_first_import_is_told_to_wait_for_it(messages_home, tmp_path, monkeypatch):
+    from archive import importer, source
+    from tests.archive_kit import write_database
+
+    target = tmp_path / "saves" / "archive.sqlite3"
+    write_database(messages_home / "chat.db", ["one", "two", "three"])
+    monkeypatch.setattr(importer, "BATCH_ROWS", 1)
+    real = source.SourceReader.messages_after
+    told = []
+
+    def ask_after_each_batch(reader, rowid, size):
+        for batch in real(reader, rowid, size):
+            yield batch
+            try:
+                told.append(("read", ui_server.archive_for(target)[1].summary()["messages"]))
+            except ui_server.ArchiveNotReady as waiting:
+                told.append((waiting.status, waiting.code))
+
+    monkeypatch.setattr(source.SourceReader, "messages_after", ask_after_each_batch)
+
+    job = run("setup_import", {"messagesPath": str(target), "includeContacts": False})
+
+    assert job["status"] == "completed", job["error"]
+    assert told == [(503, "archive_building")] * 3
+
+
 def test_the_route_refuses_an_import_while_the_load_runs(server, export, held_load):
     _, told = conversations(server, export)
 
