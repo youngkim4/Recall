@@ -12,7 +12,15 @@ import pytest
 
 from report_engine.errors import ReduceError
 from report_engine.fake_llm import FakeCall, FakeLLM, default_reply
-from report_engine.markdown import SECTION_CUT_MARK, clean_section, fit_section, render_markdown
+from report_engine.markdown import (
+    LONGEST_WORD_CHARS,
+    MAX_TITLE_CHARS,
+    SECTION_CUT_MARK,
+    _cut_at_word,
+    clean_section,
+    fit_section,
+    render_markdown,
+)
 from report_engine.models import SECTION_KEYS, SECTION_TITLES, Section
 from report_engine.reduce_step import MAX_SECTION_CHARS
 from report_engine.transcript import ELISION_MARK
@@ -22,8 +30,10 @@ from .support import SMALL, run
 from .test_models import report as make_report
 
 TITLES = [SECTION_TITLES[key] for key in SECTION_KEYS]
-TITLE_ROOM = 100
-STORY_BOUND = len(SECTION_KEYS) * MAX_SECTION_CHARS + TITLE_ROOM
+# a section in a story: `### `, a title that the guards can make twice as
+# long, a line break, the text, an empty line
+SECTION_ROOM = MAX_SECTION_CHARS + 2 * MAX_TITLE_CHARS + 8
+STORY_BOUND = len(SECTION_KEYS) * SECTION_ROOM
 INJECT = "Injected heading\n====="
 
 
@@ -91,9 +101,7 @@ def test_a_section_over_the_cap_keeps_its_start_and_the_report_says_so() -> None
     assert report.sections[1].markdown == "Fake dynamics text."
     assert report.status == "complete"
     limit = f"{MAX_SECTION_CHARS:,} characters"
-    assert cap_warnings(report) == [
-        f"1 section was longer than {limit}. The report has only its start."
-    ]
+    assert cap_warnings(report) == [f"1 section was cut to {limit}. The report has only its start."]
 
 
 def test_the_report_counts_the_sections_that_were_cut() -> None:
@@ -107,9 +115,9 @@ def test_the_report_counts_the_sections_that_were_cut() -> None:
     ]
     limit = f"{MAX_SECTION_CHARS:,} characters"
     assert cap_warnings(report) == [
-        f"2 sections were longer than {limit}. The report has only the start of each."
+        f"2 sections were cut to {limit} each. The report has only the start of each."
     ]
-    assert "- Warning: 2 sections were longer than" in render_markdown(report)
+    assert "- Warning: 2 sections were cut to" in render_markdown(report)
 
 
 def test_the_cap_counts_the_text_as_the_report_holds_it() -> None:
@@ -121,7 +129,10 @@ def test_the_cap_counts_the_text_as_the_report_holds_it() -> None:
     assert len(text) < MAX_SECTION_CHARS < len(clean_section(text))
     assert len(arc) <= MAX_SECTION_CHARS
     assert arc.endswith(SECTION_CUT_MARK)
-    assert len(cap_warnings(report)) == 1
+    # the warning is true for this text too: it does not say how long the reply was
+    assert cap_warnings(report) == [
+        f"1 section was cut to {MAX_SECTION_CHARS:,} characters. The report has only its start."
+    ]
 
 
 def test_a_long_text_that_is_short_after_the_cleaning_is_kept_whole() -> None:
@@ -148,6 +159,21 @@ def test_a_word_longer_than_any_real_word_is_cut_inside() -> None:
     room = MAX_SECTION_CHARS - len(SECTION_CUT_MARK) - 1
     assert cut
     assert kept == f"{'a' * room} {SECTION_CUT_MARK}"
+
+
+def test_a_cut_goes_back_to_the_start_of_a_word_of_usual_length_only() -> None:
+    """The cut falls 63 characters into a word: the word goes. One character
+    more, and the word is longer than any real one: it is cut inside."""
+    text = "aa " + "w" * 100
+    near = len("aa ") + LONGEST_WORD_CHARS
+    assert _cut_at_word(text, near - 1) == "aa"
+    assert _cut_at_word(text, near) == "aa " + "w" * LONGEST_WORD_CHARS
+
+
+def test_a_cut_takes_backslashes_and_white_space_off_the_end() -> None:
+    assert _cut_at_word("word \\ \\ tail", 8) == "word"
+    assert _cut_at_word("word\n\\\n\\\ttail", 8) == "word"
+    assert _cut_at_word("word  \t tail", 8) == "word"
 
 
 def test_the_cut_of_a_section_does_not_fall_inside_a_word() -> None:
@@ -233,6 +259,51 @@ def test_no_heading_can_be_put_where_the_server_cuts_a_story(form: str) -> None:
         assert story[:STORY_LIMIT] == story
         found = headings_of(story_html_steps(story)).found
         assert found == [(3, 0, title) for title in TITLES]
+
+
+def test_a_long_section_of_backslashes_keeps_its_start() -> None:
+    """A cut takes the backslashes off the end of the text. When that leaves
+    nothing, the text stays as it is: the report has the start of the section,
+    as its warning says."""
+    for unit in ("\\ ", "\\\t", "\\\n"):
+        kept, cut = fit_section(unit * 5_000)
+        assert cut
+        assert MAX_SECTION_CHARS // 2 < len(kept) <= MAX_SECTION_CHARS
+        assert kept.startswith("\\") and kept.endswith(f" {SECTION_CUT_MARK}")
+        assert clean_section(kept) == kept
+        assert fit_section(kept) == (kept, False)
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "T" * 100_000,
+        "word " * 20_000,
+        "[x](https://attacker.example) " * 5_000,
+        "\\" * 50_000,
+        "# " * 50_000,
+        "title\n\n# Injected\n=====\n" * 5_000,
+    ],
+)
+def test_a_long_title_made_by_hand_is_cut_when_it_is_written(title: str) -> None:
+    """`Section.title` has no limit. A long one pushed the story past the limit
+    of the server, where a cut after the `-` of a list line made a heading."""
+    body = "ab word\n- item\n\n" * 470
+    sections = tuple(Section(key=key, title=title, markdown=body) for key in SECTION_KEYS)
+    story = story_of(render_markdown(make_report(sections=sections)))
+    assert len(story) <= STORY_BOUND
+    assert tame(story) == story
+    found = headings_of(story_html_steps(story))
+    assert [level for level, _depth, _words in found.found] == [3] * len(SECTION_KEYS)
+    assert "a" not in found.tags
+
+
+def test_a_title_of_the_engine_is_written_whole() -> None:
+    story = story_of(render_markdown(make_report()))
+    assert [line for line in story.splitlines() if line.startswith("### ")] == [
+        f"### {title}" for title in TITLES
+    ]
+    assert all(len(title) <= MAX_TITLE_CHARS for title in TITLES)
 
 
 def test_a_report_made_by_hand_is_cut_when_it_is_written() -> None:

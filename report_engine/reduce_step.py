@@ -77,8 +77,8 @@ def _length_warnings(cut: int) -> tuple[str, ...]:
         return ()
     limit = f"{MAX_SECTION_CHARS:,} characters"
     if cut == 1:
-        return (f"1 section was longer than {limit}. The report has only its start.",)
-    return (f"{cut} sections were longer than {limit}. The report has only the start of each.",)
+        return (f"1 section was cut to {limit}. The report has only its start.",)
+    return (f"{cut} sections were cut to {limit} each. The report has only the start of each.",)
 
 
 def _fit_warnings(fitted: Fitted) -> tuple[str, ...]:

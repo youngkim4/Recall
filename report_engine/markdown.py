@@ -64,6 +64,9 @@ _CONTROLS: dict[int, str | None] = {
 # characters. The server reads 60,000 characters of a story (commit 3563549):
 # four sections at the cap are about half of that.
 MAX_SECTION_CHARS = 8_000
+# The titles of the engine are 20 characters at most. A report that was made
+# by hand can hold any title.
+MAX_TITLE_CHARS = 80
 # the mark of a cut as section text holds it: each bracket has its backslash
 SECTION_CUT_MARK = "\\[...\\]"
 # a cut goes back to the start of a word, but not farther than this
@@ -204,14 +207,15 @@ def clean_section(markdown: str) -> str:
     return _clean_once(markdown.translate(_NO_BRACKETS))
 
 
-def _cut_at_word(cleaned: str, room: int) -> str:
-    """The start of cleaned text, `room` characters at most. The cut goes back
-    to the start of a word. A word longer than any real one is cut inside.
-    No backslash stays at the end: the mark that it stood before is gone."""
-    start = word_cut(cleaned, room)
+def _cut_at_word(text: str, room: int) -> str:
+    """The start of a text, `room` characters at most. The cut goes back to
+    the start of a word. A word longer than any real one is cut inside. No
+    backslash stays at the end, because the mark that it stood before is
+    gone. A start of backslashes only stays as it is."""
+    start = word_cut(text, room)
     if room - len(start) > LONGEST_WORD_CHARS:
-        start = cleaned[:room]
-    return start.rstrip(_CUT_TAIL)
+        start = text[:room]
+    return start.rstrip(_CUT_TAIL) or start.rstrip()
 
 
 def fit_section(markdown: str) -> tuple[str, bool]:
@@ -255,10 +259,17 @@ def _event(moment: Moment) -> list[str]:
     return rows + [""]
 
 
+def _title(title: str) -> str:
+    """A title on one line, cut to MAX_TITLE_CHARS before the guards are added."""
+    flat = _one_line(title.translate(_CONTROLS))
+    return _inline(flat if len(flat) <= MAX_TITLE_CHARS else _cut_at_word(flat, MAX_TITLE_CHARS))
+
+
 def _section(section: Section) -> list[str]:
     """A section from `run_report` is written as it is. One that was made by
-    hand is cleaned and cut here, so the story of any report fits the server."""
-    return [f"### {_inline(section.title)}", fit_section(section.markdown)[0], ""]
+    hand is cleaned and cut here, title and text, so the story of any report
+    fits the server."""
+    return [f"### {_title(section.title)}", fit_section(section.markdown)[0], ""]
 
 
 def _first_line(conversation: str) -> str:
