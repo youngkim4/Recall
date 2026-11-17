@@ -351,3 +351,30 @@ def test_no_tool_result_ever_shows_a_raw_handle_of_an_unsaved_person() -> None:
 
 def test_repeated_saved_names_stay_saved() -> None:
     assert MaskingLabeler(SAVED_NAMES).sender(MAYA_PHONE) == "Maya Okafor"
+
+
+def test_each_hit_gets_its_own_exchange_and_far_neighbours_are_left_out() -> None:
+    rows = [
+        make_message("t1", "+15550000009", "2024-01-01 10:00:00", "intro hello"),
+        make_message("t2", "+15550000009", "2024-01-01 10:05:00", "alpha keyword"),
+        make_message("t3", "+15550000009", "2024-03-10 09:00:00", "beta keyword"),
+        make_message("t4", "+15550000009", "2024-03-10 09:01:00", "right after beta"),
+        make_message("t5", "+15550000009", "2024-06-01 09:00:00", "much later"),
+    ]
+    outcome = Bench(archive=FakeArchive(rows)).run("search_messages", query="keyword")
+    assert outcome.text.count("== c1") == 2
+    assert "intro hello" in outcome.text
+    assert "right after beta" in outcome.text
+    assert "much later" not in outcome.text
+    newest, oldest = outcome.text.split("== c1", 2)[1:]
+    assert "beta keyword  <<< match" in newest and "alpha keyword" not in newest
+    assert "alpha keyword  <<< match" in oldest and "intro hello" in oldest
+
+
+def test_hits_of_one_exchange_share_one_block() -> None:
+    outcome = Bench().run("search_messages", query="sourdough name", match="any")
+    blocks = outcome.text.split("== c1")[1:]
+    assert len(blocks) == 2
+    assert "sourdough starter is alive  <<< match" in blocks[0]
+    assert "its name is Clint Yeastwood  <<< match" in blocks[0]
+    assert "sourdough again this weekend?  <<< match" in blocks[1]

@@ -45,7 +45,7 @@ def question_units(question: str, redact: Callable[[str], str]) -> list[str]:
         span = question[start:end]
         if redact(span) != span:
             kept = kept[:start] + " " + kept[end:]
-    tokens = [t for t in dict.fromkeys(words(kept)) if len(t) >= 2 and not _is_year(t)]
+    tokens = [t for t in dict.fromkeys(words(kept)) if _worth_a_search(t)]
     if len(tokens) > _MAX_UNITS:
         longest = set(sorted(tokens, key=len, reverse=True)[:_MAX_UNITS])
         tokens = [token for token in tokens if token in longest]
@@ -54,6 +54,15 @@ def question_units(question: str, redact: Callable[[str], str]) -> list[str]:
 
 def _is_year(token: str) -> bool:
     return len(token) == 4 and token.isdigit() and 1990 <= int(token) <= 2099
+
+
+def _worth_a_search(token: str) -> bool:
+    """Drop years and very short words. A short word with a digit or in another script stays."""
+    if _is_year(token):
+        return False
+    if len(token) >= 3:
+        return True
+    return len(token) == 2 and (not token.isascii() or any(ch.isdigit() for ch in token))
 
 
 def named_entries(directory: Directory, names: Sequence[str]) -> list[Entry]:

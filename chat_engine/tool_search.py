@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any, Mapping, Optional, Sequence
 
 from .browse import browse
@@ -21,6 +22,8 @@ READ_RADIUS_MAX = 15
 _ORDERS = ("newest", "oldest", "relevance")
 _ORDER_WORDS = {"newest": "newest first", "oldest": "oldest first", "relevance": "best match first"}
 _NARROW_HINT = "Narrow the search with dates, conversations or more words, or raise limit."
+_EXCHANGE = timedelta(hours=36)
+_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 @dataclass(frozen=True)
@@ -86,40 +89,51 @@ def run_search_tool(
 
 
 def build_windows(ctx: ToolContext, hits: Sequence[Found], radius: int) -> list[Window]:
-    """The exchange around each hit. Hits of one exchange share one window."""
+    """The exchange around each hit. Windows that share a message become one."""
     windows: list[Window] = []
     for found in hits:
         message_id = str(found.message["id"])
         focus = {} if found.focus is None else {message_id: found.focus}
-        holder = _holding(windows, found.message)
-        if holder is None:
-            holder = _around(ctx, found.message, radius)
-            overlap = next(
-                (w for w in windows if w.conversation == holder.conversation and w.ids & holder.ids), None
+        near = _around(ctx, found.message, radius, within=_EXCHANGE)
+        merged = Window(near.messages, frozenset({message_id}), focus)
+        touching = [w for w in windows if w.conversation == merged.conversation and w.ids & merged.ids]
+        for window in touching:
+            merged = Window(
+                _merged(window.messages, merged.messages),
+                window.hits | merged.hits,
+                {**window.focus, **merged.focus},
             )
-            if overlap is None:
-                windows = [*windows, Window(holder.messages, frozenset({message_id}), focus)]
-                continue
-            holder = Window(_merged(overlap.messages, holder.messages), overlap.hits, overlap.focus)
-            windows = [holder if w is overlap else w for w in windows]
-        updated = Window(holder.messages, holder.hits | {message_id}, {**holder.focus, **focus})
-        windows = [updated if w is holder else w for w in windows]
+        if not touching:
+            windows = [*windows, merged]
+            continue
+        rest = [w for w in windows if all(w is not t for t in touching[1:])]
+        windows = [merged if w is touching[0] else w for w in rest]
     return windows
 
 
-def _holding(windows: Sequence[Window], message: Message) -> Optional[Window]:
-    for window in windows:
-        if window.conversation == str(message["conversation"]) and str(message["id"]) in window.ids:
-            return window
-    return None
+def _around(
+    ctx: ToolContext, anchor: Message, radius: int, within: Optional[timedelta] = None
+) -> Window:
+    """Up to `radius` messages on each side of the anchor, inside the scope.
 
-
-def _around(ctx: ToolContext, anchor: Message, radius: int) -> Window:
+    `within` drops neighbours that are far away in time: they are another exchange.
+    """
     near = ctx.archive.context(str(anchor["id"]), radius=radius) if radius > 0 else []
     kept = [m for m in near if m["conversation"] == anchor["conversation"] and ctx.allows(m)]
+    if within is not None:
+        kept = [m for m in kept if _close(m, anchor, within)]
     if str(anchor["id"]) not in {str(m["id"]) for m in kept}:
         kept = [anchor]
     return Window(tuple(kept), frozenset(), {})
+
+
+def _close(message: Message, anchor: Message, within: timedelta) -> bool:
+    try:
+        one = datetime.strptime(str(message.get("timestamp"))[:19], _TIME_FORMAT)
+        other = datetime.strptime(str(anchor.get("timestamp"))[:19], _TIME_FORMAT)
+    except ValueError:
+        return True
+    return abs(one - other) <= within
 
 
 def _merged(first: Sequence[Message], second: Sequence[Message]) -> tuple[Message, ...]:
