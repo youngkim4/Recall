@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "rm -rf node_modules/.tmp/test && tsc -p tsconfig.test.json && node --test node_modules/.tmp/test",
+    "test": "rm -rf node_modules/.tmp/test && tsc -p tsconfig.test.json && node --test $(find node_modules/.tmp/test -name '*.test.js')",
     "preview": "vite preview"
   },
   "dependencies": {
