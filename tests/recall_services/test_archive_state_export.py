@@ -322,3 +322,20 @@ def test_readers_in_other_threads_never_see_a_broken_archive(state: ArchiveState
     assert problems == []
     assert set(seen) <= {3, 4, 5, 6}
     assert state.archive().summary()["messages"] == 6
+
+
+def test_an_export_waits_only_while_the_archive_does_not_hold_it(
+    state: ArchiveState, export: Path, tmp_path: Path
+) -> None:
+    assert state.export_waits(tmp_path / "no-such-export.csv") is False
+    assert state.export_waits(export) is True
+    assert state.exists() is False  # asking changes nothing
+    state.ensure_from_export(export)
+    assert state.export_waits(export) is False
+    data.write_export(export, ["one", "two", "a third message"])
+    assert state.export_waits(export) is True
+
+
+def test_no_export_waits_for_an_archive_that_a_pull_filled(state: ArchiveState, export: Path, tmp_path: Path) -> None:
+    state.pull_from_messages(data.write_database(tmp_path / "chat.db", ["from Messages"]), None)
+    assert state.export_waits(export) is False
