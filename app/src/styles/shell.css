@@ -321,19 +321,15 @@
     color: var(--text-3);
   }
 
-  /* ---- ruled section: the open way to set a section apart. A hairline
-     stands over it, and its heading takes one band under that: 12px, a line
-     of 20px, 12px. A row of a ruled list is the same band (lists.css), so a
-     heading, the rows under it and the lines between them keep one rhythm.
-     A card under the heading starts where a first row's line would. ---- */
-  .section.ruled {
-    border-top: 1px solid var(--line);
-  }
-
+  /* ---- open section: space sets it apart from the block before it, and
+     no line does. Its heading is one line of 20px, 12px over what it heads.
+     Under a heading a ruled list starts with its first row's hairline
+     (lists.css), and a card starts where that hairline would be. So the
+     lines on a page are the ones between the rows of a list, between
+     figures, and around a card. ---- */
   .section.ruled > .section-head {
-    min-height: 2.75rem;
     margin-bottom: 0;
-    padding-block: var(--s-3);
+    padding-bottom: var(--s-3);
   }
 
   /* one line where a list would be: it stands in the band of a first row */

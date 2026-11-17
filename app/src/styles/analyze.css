@@ -81,19 +81,14 @@
   }
 
   /* ---- people: everyone who wrote in a group, busiest first. Opened, the
-     rest of the list fills in around your own row. It is an open list: a
-     hairline over the section, its heading in one band, and a hairline over
+     rest of the list fills in around your own row. It is an open list: its
+     heading 12px over it, as an open section has, and a hairline over
      every row, each row in the same band (12px, a line of words, 12px). A row
      keeps its 8px inset, so its words stand under the heading and its
      hairline starts and ends where they do. ---- */
-  .people {
-    border-top: 1px solid var(--line);
-  }
-
   .people > .section-head {
-    min-height: 2.75rem;
     margin-bottom: 0;
-    padding-block: var(--s-3);
+    padding-bottom: var(--s-3);
   }
 
   .people .rows {

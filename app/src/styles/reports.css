@@ -149,18 +149,12 @@
     padding-inline: var(--s-3);
   }
 
-  /* ---- the chart and the smaller figures are open blocks: a hairline over
-     each and its name in one band under that (12px, a line, 12px), as a
-     ruled section has. ---- */
-  .report-voices,
-  .report-number {
-    border-top: 1px solid var(--line);
-  }
-
+  /* ---- the chart and the smaller figures are open blocks: space sets
+     each apart, and its name stands 12px over what it names, as the heading
+     of an open section does. ---- */
   :is(.report-voices, .report-number) > .section-head {
-    min-height: 2.75rem;
     margin-bottom: 0;
-    padding-block: var(--s-3);
+    padding-bottom: var(--s-3);
   }
 
   /* ---- the smaller figures: each has its name at the top and a picture of

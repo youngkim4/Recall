@@ -1,6 +1,6 @@
 /* Settings: groups of rows. A label, what it is set to, and one way to
-   change it. The page is open: a hairline over each group and over each of
-   its rows, and no card. */
+   change it. The page is open: space between the groups, a hairline over
+   each row, and no card. */
 
 @layer views {
   /* ---- the page: the groups in one column; with room, two columns side by
@@ -100,9 +100,11 @@
     margin-left: auto;
   }
 
-  /* a group that opens: its name is the heading, and stands in the heading's band */
+  /* A group that opens: its name is the heading. The button is 32px and a
+     heading is a line of 20px, so the button reaches 6px over the heading's
+     place: its words stand on the line a heading's words would. */
   .setting-more > .disclosure-toggle {
-    margin-block: 0.375rem;
+    margin-block: -0.375rem 0.375rem;
   }
 
   /* a message about a group stands under its heading, as far from the first

@@ -125,8 +125,6 @@
   /* ---- the way in without granting access ---- */
   .setup-other {
     margin-top: var(--s-8);
-    padding-top: var(--s-4);
-    border-top: 1px solid var(--line);
   }
 
   .setup-other .disclosure-body > div {
