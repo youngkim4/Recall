@@ -44,9 +44,10 @@ function MonthsWaiting() {
 // The archive at a glance, in rows. How much it holds. Then what is worth
 // opening: today's moments, with the busiest conversations and the recent
 // reports beside them. Then when the messages happen: by month, and under
-// that by day and by hour. The page is open: a hairline over each section and
-// no card but the moments. In a wide window the things of a row stand side by
-// side and end on one line; in a narrow one they follow each other.
+// that by day and by hour. The page is open: space between the sections,
+// hairlines between the rows of a list, and no card but the moments. In a
+// wide window the things of a row stand side by side and end on one line; in
+// a narrow one they follow each other.
 export function OverviewView({
   defaults,
   archive,
@@ -85,7 +86,7 @@ export function OverviewView({
           <ArchiveTilesSkeleton />
           <div className="overview-row">
             <MomentsSkeleton />
-            <div className="overview-side">
+            <div className="overview-col">
               <TopConversationsSkeleton />
             </div>
           </div>
@@ -134,7 +135,7 @@ export function OverviewView({
               onMakeCard={() => setShowCardStudio(true)}
             />
           )}
-          <div className="overview-side">
+          <div className="overview-col">
             <TopConversations
               ranked={ranked}
               archive={archive}

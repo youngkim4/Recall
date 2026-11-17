@@ -238,10 +238,11 @@
      the same room above them as below. In a narrow workspace the parts of a
      row follow each other. With room they stand side by side, 40px apart,
      and are each as tall as the row. The row under the figures splits in the
-     middle, on the hairline between the second figure and the third. ---- */
+     middle, on the hairline between the second figure and the third. A part
+     that holds more than one section is a column of them (.overview-col). ---- */
   .overview > * + .overview-row,
   .overview-row > * + *,
-  .overview-side > * + .section {
+  .overview-col > * + .section {
     margin-top: var(--s-8);
   }
 
@@ -264,14 +265,10 @@
 
     /* a part is a heading over what it holds, which takes the height that is left */
     .overview-row > .section,
-    .overview-side,
-    .overview-side > .section {
+    .overview-col,
+    .overview-col > .section {
       display: flex;
       flex-direction: column;
-    }
-
-    .overview-row > .section > .card {
-      flex: 1;
     }
 
     /* The ranked list is as long as the room beside the moments. Its box
@@ -280,12 +277,12 @@
        then takes an equal share, so the last one ends where the box does.
        The box cuts what is under it and not what is beside it: a row's fill
        reaches past the words. */
-    .overview-side > .section:has(> .ranked-list) {
+    .overview-col > .section:has(> .ranked-list) {
       flex: 1 1 auto;
       min-height: 0;
     }
 
-    .overview-side .ranked-list {
+    .overview-col .ranked-list {
       --fit: 1;
       flex: 1 1 0;
       min-height: calc(5 * 2.75rem + 5px);
@@ -293,33 +290,34 @@
     }
 
     /* as many equal rows as fit; a list with fewer leaves the rest of the box empty */
-    .overview-side .ranked-list > .rows {
+    .overview-col .ranked-list > .rows {
       height: 100%;
       grid-template-rows: repeat(var(--rows, 5), minmax(0, 1fr));
     }
 
     /* a column that holds one list alone gives it the whole height */
-    .overview-side > .section:only-child {
+    .overview-col > .section:only-child {
       flex: 1;
     }
 
-    .overview-side .ranked-list > .rows > li {
+    .overview-col .ranked-list > .rows > li {
       display: flex;
       flex-direction: column;
     }
 
     /* a row takes its share of the box, a little more or less than its own
        height, and its line stands in the middle of it */
-    .overview-side .ranked-list .row {
+    .overview-col .ranked-list .row {
       flex: 1;
       align-content: center;
       min-height: 0;
       padding-block: 0;
     }
 
-    /* The column ends on a line, as the card beside it does: the last list
-       in it is closed with a hairline. */
-    .overview-side > .section:last-child .rows.ruled > li:last-child {
+    /* A column that ends with an open list ends on a line: the list is
+       closed with a hairline. So two columns that end at one height both
+       show where they end, as a card does. */
+    .overview-col > .section:last-child .rows.ruled > li:last-child {
       border-bottom: 1px solid var(--line);
     }
 
@@ -349,13 +347,42 @@
     }
   }
 
-  /* ---- moments: who on the left and when at the end of the same line, the
-     way a list of messages is read; under them what was said. In a card, with
-     a hairline between one moment and the next. A moment takes the card's own
-     row: 12px over and under its lines and 16px beside them, which look the
-     same distance from the card's edge, since a line of words keeps 5px
-     clear over its capitals. The lines of a moment follow each other with no
-     gap, so a quoted message has the same room above it as below. ---- */
+  /* ---- moments: each one is a card of its own, 12px from the next. In a
+     card: who on the left and when at the end of the same line, the way a
+     list of messages is read; under them what was said. A card keeps 12px
+     over and under its lines and 16px beside them, which look the same
+     distance from its edge, since a line of words keeps 5px clear over its
+     capitals. The lines of a moment follow each other with no gap, so a
+     quoted message has the same room above it as below. ---- */
+  .moment-cards {
+    display: grid;
+    gap: var(--s-3);
+  }
+
+  /* a card fills its place: what stands in for one is as tall as its share of the list */
+  .moment-cards > li {
+    display: grid;
+  }
+
+  /* The card's fill is taken off here: the page shows through it, which is
+     the fill a card has. A row's fill fades when it changes, and a fill that
+     changed with the theme would fade a beat behind the page. */
+  .moment-cards .row {
+    padding: var(--s-3) var(--s-4);
+    background: none;
+    outline-offset: -2px;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .moment-cards button.row:hover {
+      background: var(--fill-hover);
+    }
+  }
+
+  .moment-cards button.row:active {
+    background: var(--fill-active);
+  }
+
   .moment {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

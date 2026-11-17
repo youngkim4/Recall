@@ -1,7 +1,7 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { contactTitle } from '../../lib/conversations'
-import { formatDate, plural } from '../../lib/format'
 import { readShape, storeShape } from '../../lib/keptShape'
+import { momentsOf, type Moment } from '../../lib/moments'
 import type { Contact, MemoriesPayload } from '../../types'
 import { Truncate } from '../ui/Truncate'
 
@@ -29,74 +29,13 @@ export type MomentOfDay = {
   quotedId?: string
 }
 
-type Moment = {
-  key: string
-  chatId: string
-  // the saved name as the server sent it, or ''
-  savedName: string
-  // how this moment relates to today: "2 years ago today", "In 6 days"
-  when: string
-  // fromMe is null when the export does not say who sent the message
-  quote?: { text: string; fromMe: boolean | null }
-  // in a group, who wrote the quoted message
-  quotedFrom?: string
-  line: string
-  // the day the moment is of, when its quoted message was sent, and that message's id
-  day?: string
-  at?: string | null
-  quotedId?: string
-}
-
 // the name the list's shape is remembered under, from one drawing to the next
 const SHAPE = 'moments'
-// with no shape remembered, what stands in for the list has this many rows
-const ROWS_AT_FIRST = 3
+// with no shape remembered, what stands in for the list has this many cards
+const CARDS_AT_FIRST = 3
 
-function yearsAgoToday(years: number) {
-  return years === 1 ? 'A year ago today' : `${years} years ago today`
-}
-
-function daysAway(days: number) {
-  if (days === 0) return 'Today'
-  return days === 1 ? 'Tomorrow' : `In ${days} days`
-}
-
-function buildMoments(memories: MemoriesPayload): Moment[] {
-  const onThisDay = memories.onThisDay.slice(0, 3).map((item) => ({
-    key: `day-${item.chatId}-${item.year}`,
-    chatId: item.chatId,
-    savedName: item.name,
-    when: yearsAgoToday(item.yearsAgo),
-    quote: item.preview ? { text: item.preview, fromMe: item.previewFromMe } : undefined,
-    quotedFrom: item.previewSender || undefined,
-    line: `${plural(item.count, 'message')} that day`,
-    day: item.day,
-    at: item.previewAt,
-    quotedId: item.previewId || undefined,
-  }))
-  const anniversaries = memories.anniversaries.slice(0, 2).map((item) => ({
-    key: `anniversary-${item.chatId}`,
-    chatId: item.chatId,
-    savedName: item.name,
-    when: daysAway(item.inDays),
-    line: `${plural(item.years, 'year')} since the first message`,
-    // the day it began
-    day: item.date.slice(0, 10),
-  }))
-  // "quiet" is measured to the end of the archive, so the date is given rather
-  // than a length of time counted to today
-  const quiet = memories.reconnect.slice(0, 2).map((item) => ({
-    key: `quiet-${item.chatId}`,
-    chatId: item.chatId,
-    savedName: item.name,
-    when: `Quiet since ${formatDate(item.lastDate)}`,
-    line: plural(item.count, 'message'),
-    // the last day anything was said
-    day: item.lastDate.slice(0, 10),
-  }))
-  return [...onThisDay, ...anniversaries, ...quiet]
-}
-
+// What is worth opening today. Each moment is a thing of its own, so each
+// is its own card: who, when, and what was said or what it is.
 export function Moments({
   memories,
   onRetry,
@@ -106,7 +45,7 @@ export function Moments({
   onReplayFirstWords,
   onMakeCard,
 }: MomentsProps) {
-  const moments = useMemo(() => (memories ? buildMoments(memories) : []), [memories])
+  const moments = useMemo(() => (memories ? momentsOf(memories) : []), [memories])
   const loaded = useMemo(() => new Map(contacts.map((contact) => [contact.chat_id, contact])), [contacts])
   const list = useRef<HTMLUListElement>(null)
   const answered = memories !== null
@@ -149,6 +88,20 @@ export function Moments({
     return moment.quotedFrom ? `${moment.quotedFrom} in ${conversation}` : conversation
   }
 
+  // a moment is a place in time: it opens on its day. One from a build that
+  // did not say the day opens its conversation.
+  function open(moment: Moment) {
+    const contact = contactFor(moment)
+    if (!moment.day) return onSelectContact(contact)
+    onOpenDay({
+      contact,
+      title: contactTitle(contact),
+      day: moment.day,
+      at: moment.at ?? null,
+      quotedId: moment.quotedId,
+    })
+  }
+
   return (
     <section className="section ruled" aria-labelledby="moments-title">
       <div className="section-head">
@@ -163,30 +116,11 @@ export function Moments({
         </span>
       </div>
       {moments.length ? (
-        <div className="card">
-          <ul ref={list} className="rows moments" role="list">
-            {moments.map((moment) => (
-              <MomentRow
-                key={moment.key}
-                moment={moment}
-                title={titleFor(moment)}
-                // a moment is a place in time: it opens on its day. One from a
-                // build that did not say the day opens its conversation.
-                onOpen={() =>
-                  moment.day
-                    ? onOpenDay({
-                        contact: contactFor(moment),
-                        title: contactTitle(contactFor(moment)),
-                        day: moment.day,
-                        at: moment.at ?? null,
-                        quotedId: moment.quotedId,
-                      })
-                    : onSelectContact(contactFor(moment))
-                }
-              />
-            ))}
-          </ul>
-        </div>
+        <ul ref={list} className="moment-cards" role="list">
+          {moments.map((moment) => (
+            <MomentCard key={moment.key} moment={moment} title={titleFor(moment)} onOpen={() => open(moment)} />
+          ))}
+        </ul>
       ) : memories ? (
         <p className="section-note">Nothing from this day in earlier years</p>
       ) : (
@@ -201,7 +135,7 @@ export function Moments({
   )
 }
 
-function MomentRow({ moment, title, onOpen }: { moment: Moment; title: string; onOpen: () => void }) {
+function MomentCard({ moment, title, onOpen }: { moment: Moment; title: string; onOpen: () => void }) {
   const titleId = useId()
   const whenId = useId()
   const detailId = useId()
@@ -210,7 +144,7 @@ function MomentRow({ moment, title, onOpen }: { moment: Moment; title: string; o
       {/* the title is who it is with; when and what are read as its description */}
       <button
         type="button"
-        className="row moment"
+        className="row moment card"
         aria-labelledby={titleId}
         aria-describedby={`${whenId} ${detailId}`}
         onClick={onOpen}
@@ -244,15 +178,16 @@ function MomentQuote({ text, fromMe }: { text: string; fromMe: boolean | null })
   )
 }
 
-// Stands in for the list while it loads. It takes the room the list took
-// the last time it was drawn: as many rows, spread over the same height. So
-// nothing on the page moves when the moments arrive: not the sections under
-// it, and not the lists beside it, which are as long as it is tall. A day
-// that had no moments is stood in for by the one line it had.
+// Stands in for the moments while they load. It takes the room the list
+// took the last time it was drawn: as many cards, spread over the same
+// height. So nothing on the page moves when the moments arrive: not the
+// sections under them, and not the lists beside them, which are as long as
+// these are tall. A day that had no moments is stood in for by the one line
+// it had.
 export function MomentsSkeleton() {
   // read once, when it is put on the page
   const [shape] = useState(() => readShape(SHAPE))
-  const rows = shape ? shape.rows : ROWS_AT_FIRST
+  const cards = shape ? shape.rows : CARDS_AT_FIRST
 
   return (
     <section className="section ruled" aria-hidden="true">
@@ -263,28 +198,26 @@ export function MomentsSkeleton() {
           <span className="skeleton">Make a card</span>
         </span>
       </div>
-      {rows ? (
-        <div className="card">
-          <ul className="rows moments" role="list" style={shape ? { minHeight: shape.height } : undefined}>
-            {Array.from({ length: rows }, (_, row) => (
-              <li key={row}>
-                <div className="row moment">
-                  <span className="moment-when">
-                    <span className="skeleton">2 years ago today</span>
+      {cards ? (
+        <ul className="moment-cards" role="list" style={shape ? { minHeight: shape.height } : undefined}>
+          {Array.from({ length: cards }, (_, card) => (
+            <li key={card}>
+              <div className="row moment card">
+                <span className="moment-when">
+                  <span className="skeleton">2 years ago today</span>
+                </span>
+                <span className="moment-main">
+                  <span className="moment-name">
+                    <span className="skeleton">Conversation name</span>
                   </span>
-                  <span className="moment-main">
-                    <span className="moment-name">
-                      <span className="skeleton">Conversation name</span>
-                    </span>
-                    <span className="moment-detail">
-                      <span className="skeleton">000 messages that day</span>
-                    </span>
+                  <span className="moment-detail">
+                    <span className="skeleton">000 messages that day</span>
                   </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
       ) : (
         <p className="section-note">
           <span className="skeleton">Nothing from this day in earlier years</span>
