@@ -22,11 +22,15 @@ MAX_LABEL_CHARS = 40
 MIN_PHONE_DIGITS = 7
 ELISION = " [...] "
 COUNT_REF = "m000"
+TRANSCRIPT_OPEN = "<transcript>"
+TRANSCRIPT_CLOSE = "</transcript>"
+ZERO_WIDTH_SPACE = chr(0x200B)
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 _STAMP_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2} ([01]\d|2[0-3]):[0-5]\d:[0-5]\d")
 _EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 _REF = re.compile(r"[\[(\s]*[mM](\d{1,9})[\])\s.,;]*")
+_FRAME = re.compile(r"<(/?transcript)", re.IGNORECASE)
 # zero-width space, zero-width non-joiner, word joiner, byte-order mark, object replacement
 _INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u2060\ufeff\ufffc"))
 
@@ -139,8 +143,12 @@ def day_header(day: str) -> str:
 
 
 def render_text(text: str, max_chars: int) -> str:
-    """Message text on one line. A very long message keeps its start and its end."""
-    flat = squash(text)
+    """Message text on one line. A very long message keeps its start and its end.
+
+    Text that imitates the transcript frame gets an invisible break, so a
+    message can not end the transcript early. Quote checks ignore the break.
+    """
+    flat = _FRAME.sub(lambda match: f"<{ZERO_WIDTH_SPACE}{match.group(1)}", squash(text))
     if len(flat) <= max_chars:
         return flat
     head = max_chars * 3 // 4
