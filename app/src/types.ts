@@ -49,7 +49,8 @@ export type SetupStatus = {
     firstYear?: number | null
     lastYear?: number | null
   }
-  export: { exists: boolean; path: string }
+  // holdsMessages: the archive file has a message in it, so the guide is an update
+  export: { exists: boolean; path: string; holdsMessages?: boolean }
   setup: SetupMarker
 }
 

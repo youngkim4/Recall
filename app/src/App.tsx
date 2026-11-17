@@ -26,7 +26,7 @@ import {
 import { NARROW_WINDOW } from './lib/layout'
 import { useLayout } from './lib/useLayout'
 import { nameReports } from './lib/reports'
-import { revealsFirstWords } from './lib/setupGuide'
+import { isUpdate, revealsFirstWords } from './lib/setupGuide'
 import { useMediaQuery } from './lib/useMediaQuery'
 import { clearPreviewCache, previewCacheStats } from './lib/cache'
 import { useConversationPreview } from './lib/useConversationPreview'
@@ -182,7 +182,7 @@ function App() {
         // first run: no archive and no completed marker -> the wizard decides
         if (!data.setupCompleted && !data.hasMessages) {
           try {
-            const status = await recallApi.setupStatus({})
+            const status = await recallApi.setupStatus({ messagesPath: nextPaths.messagesPath })
             if (!cancelled) {
               if (status.state === 'ready') {
                 markSetup({ completed: true })
@@ -465,8 +465,9 @@ function App() {
     async (result: SetupImportResult | null) => {
       // the first words follow the first setup, not each update
       const reveal = revealsFirstWords(rerunSetup, result)
-      // no preview of the archive before the import is shown again
+      // no preview of the archive before the import is shown again, and no error from before it
       clearPreviewCache()
+      setError(null)
       setShowOnboarding(false)
       setRerunSetup(false)
       setActiveView('home')
@@ -517,14 +518,14 @@ function App() {
   // guide is told to start.
   const openSetup = useCallback(async () => {
     try {
-      const status = await recallApi.setupStatus({ deep: true })
+      const status = await recallApi.setupStatus({ deep: true, messagesPath: effectiveDefaults?.messagesPath })
       setSetupStatus(status)
-      setRerunSetup(Boolean(archive?.conversations))
+      setRerunSetup(isUpdate(status))
       setShowOnboarding(true)
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Unable to start setup.')
     }
-  }, [archive])
+  }, [effectiveDefaults])
 
   if (showOnboarding && setupStatus) {
     return (

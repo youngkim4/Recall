@@ -10,6 +10,7 @@ import {
   importRequest,
   importView,
   interruptedReason,
+  isUpdate,
   noNotes,
   noted,
   notStartedJob,
@@ -52,6 +53,19 @@ function checked(db: SetupDbStatus, archive: boolean): SetupStatus {
     setup: {},
   }
 }
+
+test('the guide is an update when the server says that the archive holds messages', () => {
+  const holding = (holdsMessages?: boolean): SetupStatus => ({
+    ...checked('readable', true),
+    export: { exists: true, path: '/data/messages.csv', holdsMessages },
+  })
+
+  assert.equal(isUpdate(holding(true)), true)
+  // a file with no message in it is a first setup: a copy can be named for it
+  assert.equal(isUpdate(holding(false)), false)
+  assert.equal(isUpdate(holding(undefined)), false)
+  assert.equal(isUpdate(checked('readable', false)), false)
+})
 
 function copyAt(path: string, db: SetupDbStatus = 'readable'): SetupStatus {
   return { ...checked(db, true), db: { status: db, kind: 'copy', path } }

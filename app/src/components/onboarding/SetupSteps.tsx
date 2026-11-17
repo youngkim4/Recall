@@ -1,6 +1,6 @@
 import { recallBridge } from '../../lib/bridge'
 import { plural } from '../../lib/format'
-import { offersCopy } from '../../lib/setupGuide'
+import { offersCopy, revealsFirstWords } from '../../lib/setupGuide'
 import type { SetupImportResult } from '../../types'
 import { OtherSource } from './OtherSource'
 
@@ -243,7 +243,7 @@ export function DoneStep({ result, rerun, onFinish }: DoneStepProps) {
       ) : null}
       <div className="setup-actions">
         <button type="button" className="btn primary lg" onClick={onFinish}>
-          {rerun ? 'Done' : 'Show my first words'}
+          {revealsFirstWords(rerun, result) ? 'Show my first words' : 'Done'}
         </button>
       </div>
     </>

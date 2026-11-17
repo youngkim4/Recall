@@ -96,6 +96,14 @@ export function foundTheSame(before: SetupDbStatus, next: SetupStatus | null) {
   return next !== null && next.db.status === before
 }
 
+// Whether the guide is an update: the archive that the app reads holds
+// messages. The server says so, and it uses the same test to decide whether
+// a copy can be named (holds_messages), so the guide never offers what the
+// server then refuses.
+export function isUpdate(status: SetupStatus) {
+  return status.export.holdsMessages === true
+}
+
 // A copy can be named in a first setup only. An update reads Messages on
 // this Mac and nothing else, so its guide offers no other source. The server
 // holds the same rule (database_for).

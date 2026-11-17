@@ -178,7 +178,7 @@ export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, o
         // there says nothing about this run; only a first import can be read that way.
         const next = rerun ? null : await check()
         if (stopped) return
-        if (next?.export.exists) {
+        if (next?.export.holdsMessages) {
           ended()
         } else {
           setJob((current) => (current ? { ...current, status: 'failed', error: interruptedReason(rerun) } : current))
@@ -269,12 +269,16 @@ export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, o
     if (picked) {
       setPicked(null)
       void checkThenSize()
-    } else if (rerun) {
-      onSkip()
-    } else {
+    } else if (!rerun) {
       setStage('welcome')
+    } else if (job) {
+      // An update was started, and how it ended is not known for sure. The
+      // app reads the archive again, with no first words to show.
+      onFinished(null)
+    } else {
+      onSkip()
     }
-  }, [checkThenSize, onSkip, picked, rerun])
+  }, [checkThenSize, job, onFinished, onSkip, picked, rerun])
 
   const finish = useCallback(() => {
     onFinished(result)
