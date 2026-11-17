@@ -106,6 +106,41 @@ def test_the_row_counts_are_right(tmp_path: Path) -> None:
     assert (check.with_quote, check.found_earlier) == (2, 1)
 
 
+def test_the_tapback_check_says_why_a_quoted_text_was_not_found(tmp_path: Path) -> None:
+    """A tapback can quote a text that is not the whole text of an earlier row.
+    The counts say which kind it is, so the share of true tapbacks can be judged."""
+    long_text = (
+        "the harbor office called this morning and they want me to start on the first of June"
+    )
+    rows = [
+        odd_row(1, "see you at eight"),
+        odd_row(2, long_text),
+        odd_row(3, f"Loved {OPEN}see you at eight{CLOSE}"),
+        odd_row(4, f"Liked {OPEN}the harbor office called this morning{chr(0x2026)}{CLOSE}"),
+        odd_row(5, f"Emphasized {OPEN}only the other thread holds this{CLOSE}"),
+        odd_row(6, f"Loved {OPEN}{PLACEHOLDER}{CLOSE}"),
+        odd_row(7, f"Questioned {OPEN}nobody ever wrote this{CLOSE}"),
+        odd_row(8, f"Laughed at {OPEN}a later line{CLOSE}"),
+        odd_row(9, "a later line"),
+        odd_row(10, "only the other thread holds this", chat_id=THEO),
+    ]
+    path = tmp_path / "messages.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    frame = measure.load_frame(str(path))
+    texts = texts_of(frame)
+    check = check_tapbacks(frame, texts, tapback_flags(texts))
+    assert check.with_quote == 6
+    assert check.found_earlier == 1
+    assert check.found_as_start == 1
+    assert check.found_elsewhere == 2
+    assert check.placeholder == 1
+    assert check.not_found == 1
+    code, lines = run_tool(path, "--top", "0")
+    assert code == 0
+    line = next(item for item in lines if item.startswith("tapbacks with quoted text"))
+    assert numbers(line) == [6, 1, 1, 2, 1, 1]
+
+
 def test_the_length_table_says_what_a_cap_keeps() -> None:
     lengths = measure_lengths(["a" * 100, "b" * 300, "c" * 5_000, ""])
     assert lengths.characters == 5_400
@@ -128,7 +163,8 @@ def test_the_tool_reports_the_file_and_the_largest_conversations(tmp_path: Path)
     assert "rows 470; conversations 2 (groups 1); rows with no conversation 0" in text
     assert "no timestamp 1; no direction 1; no text 1" in text
     assert "only the attachment placeholder 1; tapbacks 2 (0.43%)" in text
-    assert "rows that start like one and are kept 1; with quoted text 2, of which" in text
+    assert "tapbacks: rows that start like one and are kept 1" in text
+    assert "tapbacks with quoted text 2:" in text
     assert "tokens counted with heuristic" in text
     first = next(line for line in lines if line.startswith("conversation 1:"))
     # 450 messages, the kept look-alike and the long row; the long row is cut

@@ -212,10 +212,13 @@ def _report_file(frame: pd.DataFrame, emit: Emit) -> None:
     )
     emit(f"direction: sent {rows.sent:,}; received {rows.received:,}")
     emit(f"ids: missing {rows.no_id:,}; repeated {rows.repeated_ids:,}")
+    emit(f"tapbacks: rows that start like one and are kept {rows.tapback_lookalikes:,}")
     emit(
-        f"tapbacks: rows that start like one and are kept {rows.tapback_lookalikes:,}; "
-        f"with quoted text {check.with_quote:,}, of which the text is in an earlier row of the "
-        f"same conversation {check.found_earlier:,}"
+        f"tapbacks with quoted text {check.with_quote:,}: the text is an earlier row of the "
+        f"same conversation {check.found_earlier:,}; an earlier row starts with it "
+        f"{check.found_as_start:,}; only a row after it or another conversation holds it "
+        f"{check.found_elsewhere:,}; it is the attachment placeholder {check.placeholder:,}; "
+        f"not found {check.not_found:,}"
     )
     emit(f"characters {lengths.characters:,}; longest text {lengths.longest:,}")
     emit(

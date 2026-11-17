@@ -265,3 +265,38 @@ def test_reading_timestamps_shows_no_warning_of_the_library() -> None:
         warnings.simplefilter("always")
         list(FrameSource(table).messages(CONVERSATION, None, None))
     assert caught == []
+
+
+def test_a_transcript_with_a_third_of_its_rows_left_out_reads_in_order_with_no_gap() -> None:
+    """In a group chat a third of the rows can be tapbacks and bare attachments.
+    The lines that stay keep their order, their references have no hole, and
+    no request says that rows were left out."""
+    said = [f"line number {number} of the talk" for number in range(1, 21)]
+    texts: list[Any] = []
+    for number, text in enumerate(said, start=1):
+        texts.append(text)
+        if number % 2 == 0:
+            texts.append(quoted("Loved", text))
+        if number % 4 == 0:
+            texts.append(PLACEHOLDER)
+    own = [position % 3 == 0 for position in range(len(texts))]
+    llm = FakeLLM()
+    report = run([], llm=llm, source=FrameSource(frame(texts, own=own)), labeler=labeler)
+
+    assert len(texts) == 35
+    (call,) = llm.map_calls
+    assert [line.text for line in call.lines] == said
+    assert [line.ref for line in call.lines] == [f"m{number}" for number in range(1, 21)]
+    assert [line.clock for line in call.lines] == sorted(line.clock for line in call.lines)
+    (reduce_call,) = llm.reduce_calls
+    for request in (call.text, reduce_call.text):
+        lowered = request.lower()
+        assert "loved" not in lowered and "tapback" not in lowered
+        assert "left out" not in lowered and "35 messages" not in lowered
+        assert PLACEHOLDER not in request
+    assert "Messages with text: 20 " in reduce_call.text
+    (period,) = report.periods
+    assert period.message_count == 20
+    assert not any("left out" in warning for warning in report.warnings)
+    known = {str(number) for number in range(1, 36) if texts[number - 1] in said}
+    assert all(set(moment.message_ids) <= known for moment in report.moments)

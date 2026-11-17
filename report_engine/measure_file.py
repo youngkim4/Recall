@@ -18,6 +18,7 @@ from report_engine.transcript import squash
 LENGTH_STEPS = (250, 500, 1_000, 2_000, 4_000, 6_000, 10_000, 100_000)
 QUANTILES = (0.5, 0.9, 0.99, 0.999, 0.9999)
 PLACEHOLDER = chr(0xFFFC)
+START_CHARS = 8
 _GROUP_ID = r"chat\d+"
 _TAPBACK_STARTS = tuple(f"{phrase} " for phrase in (*ADDED, *REMOVED, "Reacted"))
 
@@ -44,11 +45,26 @@ class RowCounts:
 
 @dataclass(frozen=True)
 class TapbackCheck:
-    """How many tapback rows quote a text that an earlier row of the same
-    conversation holds. A high share says that the phrases mark real tapbacks."""
+    """Where the quoted text of the tapback rows is found. A high share that is
+    found says that the phrases mark real tapbacks. Each row is counted one
+    time, in the first of these that holds:
+
+    - `found_earlier`: it is the whole text of an earlier row of the conversation;
+    - `found_as_start`: an earlier row of the conversation starts with it (a
+      long text that was quoted in part);
+    - `found_elsewhere`: a row after it, or a row of another conversation, holds it;
+    - `placeholder`: the quote holds only the attachment placeholder."""
 
     with_quote: int
     found_earlier: int
+    found_as_start: int = 0
+    found_elsewhere: int = 0
+    placeholder: int = 0
+
+    @property
+    def not_found(self) -> int:
+        found = self.found_earlier + self.found_as_start + self.found_elsewhere + self.placeholder
+        return self.with_quote - found
 
 
 @dataclass(frozen=True)
@@ -110,31 +126,79 @@ def count_rows(frame: pd.DataFrame, texts: Sequence[str], tapbacks: Sequence[boo
     )
 
 
+def _without_dots(text: str) -> str:
+    """A quoted text with the dots taken off its end: a long text can be quoted
+    in part, with dots where it was cut."""
+    for dots in (chr(0x2026), "..."):
+        if text.endswith(dots):
+            return text[: -len(dots)].rstrip()
+    return text
+
+
+class _Seen:
+    """The texts of one conversation so far, to look a quoted text up in."""
+
+    def __init__(self) -> None:
+        self._whole: set[str] = set()
+        self._by_start: dict[str, list[str]] = {}
+
+    def add(self, text: str) -> None:
+        self._whole.add(text)
+        if len(text) >= START_CHARS:
+            self._by_start.setdefault(text[:START_CHARS], []).append(text)
+
+    def has(self, text: str) -> bool:
+        return text in self._whole
+
+    def has_start(self, text: str) -> bool:
+        start = _without_dots(text)
+        if len(start) < START_CHARS:
+            return False
+        return any(known.startswith(start) for known in self._by_start.get(start[:START_CHARS], ()))
+
+
 def check_tapbacks(
     frame: pd.DataFrame, texts: Sequence[str], tapbacks: Sequence[bool]
 ) -> TapbackCheck:
     """Walk each conversation in time order and look for the quoted text of
-    every tapback among the rows before it."""
+    every tapback: among the rows before it, as the start of one of them, and
+    then anywhere in the file."""
+    flat = [squash(text) for text in texts]
+    anywhere = {shown for shown, tapback in zip(flat, tapbacks, strict=True) if not tapback}
     order = (
         pd.DataFrame({"chat": frame["chat_id"].astype("string"), "when": frame["timestamp"]})
         .reset_index(drop=True)
         .dropna(subset=["chat"])
         .sort_values(["chat", "when"], kind="stable")
     )
-    with_quote = found = 0
+    counts = dict.fromkeys(("quote", "earlier", "start", "elsewhere", "placeholder"), 0)
     current: object = None
-    seen: set[str] = set()
+    seen = _Seen()
     for position, chat in zip(order.index.tolist(), order["chat"].tolist(), strict=True):
         if chat != current:
-            current, seen = chat, set()
-        text = texts[position]
-        quoted = _quoted(text) if tapbacks[position] else None
-        if quoted is not None:
-            with_quote += 1
-            found += squash(quoted) in seen
-        elif not tapbacks[position]:
-            seen.add(squash(text))
-    return TapbackCheck(with_quote=with_quote, found_earlier=found)
+            current, seen = chat, _Seen()
+        quoted = _quoted(texts[position]) if tapbacks[position] else None
+        if quoted is None:
+            if not tapbacks[position]:
+                seen.add(flat[position])
+            continue
+        counts["quote"] += 1
+        shown = squash(quoted)
+        if not shown:
+            counts["placeholder"] += 1
+        elif seen.has(shown):
+            counts["earlier"] += 1
+        elif seen.has_start(shown):
+            counts["start"] += 1
+        elif shown in anywhere:
+            counts["elsewhere"] += 1
+    return TapbackCheck(
+        with_quote=counts["quote"],
+        found_earlier=counts["earlier"],
+        found_as_start=counts["start"],
+        found_elsewhere=counts["elsewhere"],
+        placeholder=counts["placeholder"],
+    )
 
 
 def measure_lengths(texts: Sequence[str]) -> Lengths:
