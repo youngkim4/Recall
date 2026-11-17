@@ -1,7 +1,6 @@
 """Tests for the allowlist that rendered report text passes through."""
-import time
-
 import re
+import time
 
 import pytest
 

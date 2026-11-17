@@ -26,15 +26,6 @@ def tmp_dir(tmp_path):
 
 
 @pytest.fixture
-def no_saved_names(tmp_path, monkeypatch):
-    """No name comes from the Contacts cache of this Mac."""
-    import ui_server
-
-    monkeypatch.setattr(ui_server, "CONTACTS_CACHE_PATH", tmp_path / "contact_names.json")
-    monkeypatch.setattr(ui_server, "resolve_contact_names", lambda handles, **_: {})
-
-
-@pytest.fixture
 def messages_home(tmp_path, monkeypatch):
     """A folder that stands in for ~/Library/Messages. The database in it is `chat.db`."""
     import setup_status
@@ -47,24 +38,6 @@ def messages_home(tmp_path, monkeypatch):
     monkeypatch.setattr(setup_status, "LIVE_CHAT_DB", home / "chat.db")
     monkeypatch.setattr(ui_server, "LIVE_CHAT_DB", home / "chat.db")
     return home
-
-
-@pytest.fixture
-def archive(tmp_path):
-    """An archive that is already there: its three files and what is in them."""
-    folder = tmp_path / "archive"
-    folder.mkdir()
-    files = {
-        folder / "messages.csv": (
-            "message_id,timestamp,sender,text,chat_id,is_from_me,service\n"
-            "1,2020-01-01 00:00:00,me,kept,+15550100,1,iMessage\n"
-        ),
-        folder / "messages_attachments.csv": "message_id,filename\n1,kept.jpg\n",
-        folder / "messages_reactions.csv": "reaction_id,reaction_type\n1,kept\n",
-    }
-    for path, text in files.items():
-        path.write_text(text, encoding="utf-8")
-    return files
 
 
 @pytest.fixture
@@ -94,10 +67,10 @@ def no_jobs():
 
 @pytest.fixture
 def fresh_bundle_cache():
-    """Empty the parsed-export cache around a test, so each one reads its own CSV."""
+    """Empty the frame of the archive that the server keeps around a test, so each one reads its own archive."""
     import ui_server
 
-    blank = {"sig": None, "df": None, "catalog": None, "names": None}
+    blank = {"sig": None, "df": None, "catalog": None, "names": None, "loading": None}
     with ui_server._ASK_CACHE_LOCK:
         ui_server._ASK_CACHE.update(blank)
     yield

@@ -130,3 +130,38 @@ def test_the_data_folder_and_the_home_are_temp_folders_from_the_first_import() -
     assert folder.is_relative_to(Path(tempfile.gettempdir()).resolve())
     assert recall_paths.DATA_DIR == folder
     assert list((folder / guards.HOME_LEAF).iterdir()) == []
+
+
+# ---- no test starts a helper of the app ----
+
+
+@pytest.mark.parametrize("program", ["open", "/usr/bin/open", "osascript", "swiftc", "xcrun", "codesign"])
+def test_a_helper_that_acts_outside_the_test_process_is_not_started(program):
+    import subprocess
+
+    assert guards.blocks_helpers()
+    with pytest.raises(guards.HelperBlocked, match="tests start no helper"):
+        subprocess.run([program, "--version"], capture_output=True, check=False)
+    with pytest.raises(guards.HelperBlocked):
+        subprocess.Popen(program)
+
+
+def test_the_contacts_helper_of_the_app_is_not_started(tmp_path, monkeypatch):
+    """export_contact_names builds a helper app and starts it with `open`. In a test it must stop before either."""
+    import contact_names
+
+    monkeypatch.delenv("RECALL_CONTACTS_EXPORTER_APP", raising=False)
+    monkeypatch.setattr(contact_names, "CONTACTS_EXPORTER_APP", tmp_path / "Exporter.app")
+    monkeypatch.setattr(contact_names, "CONTACTS_EXPORTER_PATH", tmp_path / "Exporter.app" / "Contents" / "MacOS" / "exporter")
+    with pytest.raises(OSError):
+        contact_names.export_contact_names(tmp_path / "contact_names.json")
+    assert not (tmp_path / "contact_names.json").exists()
+    assert not (tmp_path / "Exporter.app" / "Contents" / "MacOS" / "exporter").exists()
+
+
+def test_a_child_process_of_python_can_still_be_started():
+    import subprocess
+    import sys
+
+    done = subprocess.run([sys.executable, "-c", "print('here')"], capture_output=True, text=True, check=True)
+    assert done.stdout.strip() == "here"

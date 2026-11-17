@@ -9,6 +9,9 @@
 - makes load_dotenv do nothing: openai_client.py calls it with no path when the
   data folder has no .env, and it then walks up to a real .env above a worktree
 - blocks every socket that leaves this machine. Loopback and unix sockets stay open.
+- refuses to start a program that leaves the test process behind and acts for the
+  person: `open` (it starts the Contacts helper of the app, which reads the real
+  Contacts), `osascript`, and the compilers that build that helper
 
 `hold()` runs at the start of each test: the guards are in force again, whatever
 an earlier test left behind.
@@ -26,6 +29,7 @@ import ipaddress
 import os
 import shutil
 import socket
+import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Iterator
@@ -198,10 +202,45 @@ def blocks_outbound() -> bool:
     return _every_way_is_guarded() and _probe_is_refused()
 
 
+class HelperBlocked(OSError):
+    """A test tried to start a program that acts outside the test process."""
+
+
+# `open` starts an app through the system, outside every guard of this process
+HELPERS = frozenset({"open", "osascript", "swiftc", "xcrun", "codesign"})
+
+
+def _program_of(args: object) -> str:
+    first = args if isinstance(args, (str, bytes, os.PathLike)) else next(iter(args or [""]), "")  # type: ignore[call-overload]
+    return os.path.basename(os.fsdecode(first))
+
+
+def _guard_helpers() -> None:
+    """After this call no code of this process starts one of HELPERS."""
+    real = subprocess.Popen
+    if getattr(real, _MARK, False):
+        return
+
+    class GuardedPopen(real):  # type: ignore[type-arg,misc,valid-type]
+        def __init__(self, args: Any, *more: Any, **named: Any) -> None:
+            program = _program_of(args)
+            if program in HELPERS:
+                raise HelperBlocked(f"a test tried to start `{program}`; tests start no helper of the app")
+            super().__init__(args, *more, **named)
+
+    setattr(GuardedPopen, _MARK, True)
+    subprocess.Popen = GuardedPopen  # type: ignore[misc]
+
+
+def blocks_helpers() -> bool:
+    return bool(getattr(subprocess.Popen, _MARK, False))
+
+
 def ensure() -> None:
-    """Make sure that outbound sockets are blocked now."""
+    """Make sure that outbound sockets are blocked now, and that no helper can be started."""
     if not blocks_outbound():
         _guard_sockets()
+    _guard_helpers()
 
 
 def block_loopback_too(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -249,6 +288,7 @@ def install() -> Path:
         os.environ.pop(name, None)
     _silence_dotenv()
     _guard_sockets()
+    _guard_helpers()
     return data_folder()
 
 
