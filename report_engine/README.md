@@ -482,5 +482,5 @@ venv/bin/python -m pytest tests/report_engine --cov=report_engine --cov-report=t
 `test_contract_markdown.py`, `test_story_seam.py`, `test_section_cap.py` and `test_story_reader.py` use the copies.
 The tests that use the real `safe_html` are skipped until that module can be imported. `test_story_reader.py` then compares each copied step with the real one. `story_reader.py` reads `STORY_LIMIT` and `STORY_WORK_LIMIT` from the real module, so a change of one of them there shows in the tests.
 
-`tests/report_engine/conftest.py` sets a dummy `OPENAI_API_KEY` before any import, removes proxy and address settings from the environment, and blocks all sockets that do not go to the local machine.
+`tests/guards.py` sets a dummy `OPENAI_API_KEY` before any import, removes proxy and address settings from the environment, and blocks all sockets that do not go to the local machine.
 The tests use invented conversations and `FakeLLM` only.

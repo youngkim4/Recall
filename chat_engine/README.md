@@ -336,7 +336,7 @@ What a score checks:
 venv/bin/python -m pytest tests/chat_engine --cov=chat_engine --cov-report=term-missing
 ```
 
-`tests/chat_engine/conftest.py` sets a dummy API key and blocks outbound sockets.
+`tests/guards.py` sets a dummy API key and blocks outbound sockets. `tests/chat_engine/conftest.py` also blocks loopback.
 No linter and no type checker is configured in this repository.
 
 ## What the wiring step must do

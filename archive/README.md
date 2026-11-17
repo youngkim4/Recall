@@ -422,4 +422,4 @@ The test fixtures come from Apple's encoder. `scripts/make_typedstream_fixtures.
 ./venv/bin/python -m pytest tests/archive --cov=archive --cov-report=term-missing
 ```
 
-The tests use synthetic data only. `tests/archive/conftest.py` sets a dummy API key, a temp data folder and a fixed time zone. It blocks every socket that leaves the machine.
+The tests use synthetic data only. `tests/guards.py` sets a dummy API key and a temp data folder, and it blocks every socket that leaves the machine. `tests/archive/conftest.py` adds a fixed time zone.

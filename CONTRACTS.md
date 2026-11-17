@@ -231,9 +231,13 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 
 ## Tests
 
-- No test reads the Messages database or the Contacts of this Mac, and no test connects to another host. `tests/conftest.py` holds this for each test file:
-  - Before the project is imported, it sets a key that is not a key and an empty home folder.
-  - It refuses a connection to a host that is not this machine.
+- No test reads the Messages database or the Contacts of this Mac, and no test connects to another host. `tests/guards.py` is the one guard of every suite. `tests/conftest.py` sets it for each test file:
+  - Before the project is imported, it sets a key that is not a key, an empty home folder and a temp data folder. It removes the proxy and address settings. `load_dotenv` reads no file.
+  - It refuses a connection, a send and a name lookup to a host that is not this machine. The error is `NetworkBlocked`, an `OSError`. Loopback and socket files stay open.
+  - Each test starts with a check that the guard holds.
+- A conftest of a package does not make a guard of its own. It adds only what its suite needs from `tests/guards.py`: the fixed time zone, the pinned data folder, the block of loopback.
+- A child process has no socket guard. A test that starts one opens no socket there.
+- Code that blocks the network for a run gives it back when the run ends (`network_blocked` in `chat_engine/eval/volume.py`).
 - A test that needs a Messages database makes one with `messages_db` in `tests/invented_db.py`.
 
 ## Caches
