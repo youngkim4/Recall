@@ -116,6 +116,9 @@ def _input_items(messages: tuple[ChatMessage, ...]) -> list[dict[str, Any]]:
     return items
 
 
+OFFICIAL_BASE_URL = "https://api.openai.com/v1"
+
+
 class OpenAIResponsesLLM:
     def __init__(
         self,
@@ -257,7 +260,15 @@ class OpenAIResponsesLLM:
             key = self._secret()
             if not key:
                 raise NoApiKeyError()
-            self._client = openai.OpenAI(api_key=key, max_retries=0, timeout=self._timeout)
+            # The address is always given here, and no proxy is taken from the
+            # environment: neither can send message text to another place.
+            self._client = openai.OpenAI(
+                api_key=key,
+                base_url=OFFICIAL_BASE_URL,
+                max_retries=0,
+                timeout=self._timeout,
+                http_client=openai.DefaultHttpxClient(trust_env=False),
+            )
         return self._client
 
     # --- retries ---

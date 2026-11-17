@@ -12,6 +12,8 @@ Differences from the CSV export, all on purpose:
 - Tapbacks and group events are not rows.
 - `sender` is the writer's handle. It is missing for own messages. The export
   had the other person's handle on own one-to-one messages.
+- A message that was unsent is a row with no text, and the column `unsent`
+  says so. The export had no such row.
 """
 
 from __future__ import annotations
@@ -34,6 +36,8 @@ EXPORT_COLUMNS: tuple[str, ...] = (
     "attachment_types",
     "attachment_files",
 )
+# beside the columns of the export: true for a message that its writer took back
+UNSENT_COLUMN = "unsent"
 ATTACHMENT_LABEL = "[Attachment]"
 
 _FRAME_SQL = f"""
@@ -49,7 +53,8 @@ SELECT m.guid AS message_id,
           FROM attachments a WHERE a.message_id = m.id) AS attachment_types,
        (SELECT group_concat(COALESCE(a.path, ''), '|' ORDER BY a.position, a.id)
           FROM attachments a WHERE a.message_id = m.id) AS attachment_files,
-       m.kind AS kind
+       m.kind AS kind,
+       m.unsent AS unsent
   FROM messages m
   LEFT JOIN conversations c ON c.id = m.conversation_id
   LEFT JOIN handles h ON h.id = m.sender_handle_id
@@ -86,5 +91,8 @@ def messages_frame(archive: Archive) -> pd.DataFrame:
         is_from_me=raw["is_from_me"].astype("int64"),
         text=text,
     )
-    has_text = frame["text"].fillna("").astype(str) != ""  # the export had no row for a message with nothing to show
-    return frame.loc[has_text, list(EXPORT_COLUMNS)].reset_index(drop=True)
+    frame = frame.assign(unsent=raw[UNSENT_COLUMN].astype(bool))
+    # The export had no row for a message with nothing to show. A message
+    # that was unsent is kept: every list and every day of the archive counts it.
+    shown = (frame["text"].fillna("").astype(str) != "") | frame[UNSENT_COLUMN]
+    return frame.loc[shown, [*EXPORT_COLUMNS, UNSENT_COLUMN]].reset_index(drop=True)

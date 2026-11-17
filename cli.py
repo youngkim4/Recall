@@ -63,7 +63,8 @@ def get_model_pricing(model: str) -> tuple:
     for family in sorted(MODEL_PRICING, key=len, reverse=True):
         if model_name.startswith(family + "-20"):
             return MODEL_PRICING[family]
-    return MODEL_PRICING[DEFAULT_MODEL]
+    # an unknown model is never priced as another one
+    raise ValueError(f"No price is on file for the model {model}. Known models: {', '.join(sorted(MODEL_PRICING))}.")
 
 
 def estimate_cost(messages_csv: str, contact: str, model: str = DEFAULT_MODEL, since=None, until=None, frame=None) -> dict:

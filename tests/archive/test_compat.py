@@ -9,7 +9,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from archive.compat import EXPORT_COLUMNS, messages_frame
+from archive import Archive, import_chat_db
+from archive.compat import EXPORT_COLUMNS, UNSENT_COLUMN, messages_frame
+from tests.archive.builders import ChatDbBuilder
 from tests.archive import worlds
 from tests.archive.conftest import Harbor
 from tests.archive.legacy import REPO_ROOT, load_legacy_conversation
@@ -30,9 +32,22 @@ class TestShape:
     def test_columns_are_those_of_the_export(self, frame: pd.DataFrame) -> None:
         assert list(frame.columns) == [
             "message_id", "timestamp", "sender", "text", "chat_id", "chat_display_name",
-            "is_from_me", "service", "attachment_types", "attachment_files",
+            "is_from_me", "service", "attachment_types", "attachment_files", "unsent",
         ]  # fmt: skip
-        assert list(frame.columns) == list(EXPORT_COLUMNS)
+        assert list(frame.columns) == [*EXPORT_COLUMNS, UNSENT_COLUMN]
+
+    def test_a_message_that_was_unsent_is_a_row_with_no_text(
+        self, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
+        """The lists and the days of the archive count such a message, so the frame holds it too."""
+        lake = worlds.build_lake(builder)
+        builder.close()
+        import_chat_db(source_path, archive_path)
+        with Archive.open(archive_path) as archive:
+            made = messages_frame(archive)
+        taken_back = made[made[UNSENT_COLUMN]]
+        assert list(taken_back["message_id"]) == [lake.guids["unsent"]]
+        assert not taken_back.iloc[0]["text"]
 
     def test_one_row_per_message_and_none_for_events_or_tapbacks(self, frame: pd.DataFrame, harbor: Harbor) -> None:
         assert len(frame) == 19

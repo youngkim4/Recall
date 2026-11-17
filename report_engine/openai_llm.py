@@ -57,8 +57,16 @@ def build_client(
 ) -> openai.OpenAI:
     """An SDK client with its own retries off, so the adapter's are the only ones.
     With no key given the SDK reads OPENAI_API_KEY. The address is always given
-    here: an OPENAI_BASE_URL in the environment can not send transcripts elsewhere."""
-    return openai.OpenAI(api_key=api_key, base_url=base_url, max_retries=0, timeout=timeout_s)
+    here: an OPENAI_BASE_URL in the environment can not send transcripts elsewhere.
+    No proxy is taken from the environment either: a proxy would see where every
+    report goes."""
+    return openai.OpenAI(
+        api_key=api_key,
+        base_url=base_url,
+        max_retries=0,
+        timeout=timeout_s,
+        http_client=openai.DefaultHttpxClient(trust_env=False),
+    )
 
 
 def _scrub(text: str) -> str:

@@ -381,7 +381,12 @@ def test_client_is_built_once_with_the_key_no_sdk_retries_and_the_timeout(monkey
     llm = OpenAIResponsesLLM(api_key="test-key-not-real", timeout_seconds=30.0)
     list(llm.stream(_request()))
     list(llm.stream(_request()))
-    assert built == [{"api_key": "test-key-not-real", "max_retries": 0, "timeout": 30.0}]
+    assert len(built) == 1
+    transport = built[0].pop("http_client")
+    assert transport.trust_env is False
+    assert built == [
+        {"api_key": "test-key-not-real", "base_url": "https://api.openai.com/v1", "max_retries": 0, "timeout": 30.0}
+    ]
 
 
 def test_cancel_closes_the_stream_and_ends_quietly() -> None:

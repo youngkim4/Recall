@@ -180,7 +180,8 @@ def test_a_database_that_is_not_there(state: ArchiveState, tmp_path: Path, folde
     result = state.pull_from_messages(missing, None)
     assert isinstance(result, PullFailed)
     assert (result.status, result.changed) == ("failed", False)
-    assert result.reason == f"There is no file at {missing.resolve()}. {KEPT}"
+    # there was no archive, so the sentence says nothing of one
+    assert result.reason == f"There is no file at {missing.resolve()}."
     # a first pull that fails leaves no archive behind
     assert data.files_in(folder) == []
     assert state.exists() is False
@@ -191,14 +192,14 @@ def test_a_file_that_is_no_database(state: ArchiveState, tmp_path: Path) -> None
     wrong.write_text("not a database", encoding="utf-8")
     result = state.pull_from_messages(wrong, None)
     assert isinstance(result, PullFailed)
-    assert result.reason == f"The copy at {wrong.resolve()} is not a Messages database (not a SQLite database). {KEPT}"
+    assert result.reason == f"The copy at {wrong.resolve()} is not a Messages database (not a SQLite database)."
 
 
 def test_a_database_with_no_message(state: ArchiveState, tmp_path: Path) -> None:
     empty = data.write_database(tmp_path / "empty.db", [])
     result = state.pull_from_messages(empty, None)
     assert isinstance(result, PullFailed)
-    assert result.reason == f"The copy at {empty.resolve()} holds no messages. {KEPT}"
+    assert result.reason == f"The copy at {empty.resolve()} holds no messages."
 
 
 def test_a_database_that_the_importer_can_not_read(state: ArchiveState, tmp_path: Path, folder: Path) -> None:
@@ -211,7 +212,7 @@ def test_a_database_that_the_importer_can_not_read(state: ArchiveState, tmp_path
     made.close()
     result = state.pull_from_messages(odd, None)
     assert isinstance(result, PullFailed)
-    assert result.reason == f"This is not a Messages database that Recall can read. {KEPT}"
+    assert result.reason == f"The copy at {odd.resolve()} is not a Messages database."
     assert result.detail  # for the log of the job; it is not shown
     assert state.exists() is False
     assert data.files_in(folder) == []
@@ -222,7 +223,10 @@ def test_a_pull_that_fails_leaves_an_archive_as_it_was(state: ArchiveState, data
     inode = state.path.stat().st_ino
     wrong = tmp_path / "notes.db"
     wrong.write_text("not a database", encoding="utf-8")
-    assert isinstance(state.pull_from_messages(wrong, None), PullFailed)
+    failed = state.pull_from_messages(wrong, None)
+    assert isinstance(failed, PullFailed)
+    # there is an archive, and the sentence says what is true of it
+    assert failed.reason.endswith(f"(not a SQLite database). {KEPT}")
     assert state.path.stat().st_ino == inode
     assert data.texts_of(state.archive()) == ["one", "two", "three"]
     assert json.loads(state.source_path.read_text(encoding="utf-8")) == {"source": "messages"}

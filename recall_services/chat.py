@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -54,7 +53,7 @@ from chat_engine.local_answer import local_answer
 from chat_engine.ports import LLM
 from chat_engine.scope import EVERYTHING, Scope
 from chat_engine.session import ChatSession
-from recall_services import inputs, messages, models
+from recall_services import inputs, keys, messages, models
 from recall_services.models import ChatModelConfig, ModelChoiceError
 from recall_services.names import Names
 
@@ -104,7 +103,7 @@ def default_llm(config: ChatModelConfig) -> LLM:
     from chat_engine.openai_llm import OpenAIResponsesLLM
     from report_engine.openai_llm import build_client
 
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    key = keys.api_key()
     if not key:
         raise engine_errors.NoApiKeyError()
     return OpenAIResponsesLLM(
@@ -129,8 +128,8 @@ def _sentence(code: str, said: str, config: ChatModelConfig | None, retry_after:
     provider = models.provider_name(config.provider) if config else models.SOME_PROVIDER
     model = config.model if config else "that was asked for"
     sentences = {
-        "no_key": f"No API key is set. Add your {provider} API key in Settings, {ASK_AGAIN}",
-        "key_rejected": f"{provider} rejected the API key. Check the key in Settings, {ASK_AGAIN}",
+        "no_key": f"No API key is set. Add {keys.KEY_NAME} to {keys.KEY_PLACE}, {ASK_AGAIN}",
+        "key_rejected": f"{provider} rejected the API key. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {ASK_AGAIN}",
         "unknown_model": f"{provider} does not know the model {model}. Choose another level in Settings.",
         "rate_limit": f"{provider} is limiting requests. {_wait(retry_after)}, {ASK_AGAIN}",
         "offline": f"{provider} could not be reached. Check the internet connection, {ASK_AGAIN}",

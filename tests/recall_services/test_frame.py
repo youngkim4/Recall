@@ -40,7 +40,7 @@ def messages(state: ArchiveState) -> pd.DataFrame:
 
 
 def test_the_frame_has_the_columns_of_an_export(messages: pd.DataFrame) -> None:
-    assert tuple(messages.columns) == compat.EXPORT_COLUMNS
+    assert tuple(messages.columns) == (*compat.EXPORT_COLUMNS, compat.UNSENT_COLUMN)
     assert pd.api.types.is_datetime64_any_dtype(messages["timestamp"])
     assert str(messages["chat_id"].dtype) == str(messages["sender"].dtype) == "string"
     assert set(messages["is_from_me"].unique()) == {0, 1}

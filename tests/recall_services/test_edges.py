@@ -141,7 +141,7 @@ def test_a_load_that_can_not_be_finished_leaves_the_archive_as_it_was(
 @pytest.mark.parametrize(
     ("error", "reason"),
     [
-        (SourceError("the copy changed three times"), "The Messages database could not be read. The archive was not changed."),
+        (SourceError("the copy changed three times"), "The copy at {database} could not be read. The archive was not changed."),
         (ArchiveError("the archive is newer than this build"), "The update failed. The archive was not changed."),
     ],
 )
@@ -157,7 +157,7 @@ def test_a_pull_that_the_importer_can_not_finish(
     monkeypatch.setattr(archive_state, "import_chat_db", fails)
     result = state.pull_from_messages(database, None)
     assert isinstance(result, PullFailed)
-    assert result.reason == reason and type(error).__name__ in result.detail
+    assert result.reason == reason.format(database=database.resolve()) and type(error).__name__ in result.detail
     assert data.texts_of(state.archive()) == ["one"]
 
 

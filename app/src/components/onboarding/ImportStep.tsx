@@ -2,7 +2,7 @@ import { formatNumber, plural } from '../../lib/format'
 import { lastLog } from '../../lib/jobs'
 import { failedHeading, type ImportView } from '../../lib/setupGuide'
 import type { Job, SetupStatus } from '../../types'
-import { CheckIcon } from '../Icons'
+import { ImportProgress } from './ImportProgress'
 
 type ImportStepProps = {
   // before the import is started, while it runs, or after it stopped
@@ -67,29 +67,10 @@ export function ImportStep({ view, status, job, rerun, starting, onStart, onRetr
   }
 
   if (view === 'running') {
-    const current = job?.progress?.step || 1
-    const said = lastLog(job?.logs)
     return (
       <>
         <h1>{rerun ? 'Updating your archive' : 'Building your archive'}</h1>
-        <ol className="setup-phases" role="list" aria-label="Progress">
-          {PHASES.map((phase, index) => {
-            const place = index + 1
-            const state = place < current ? 'done' : place === current ? 'now' : undefined
-            return (
-              <li key={phase} data-state={state} aria-current={state === 'now' ? 'step' : undefined}>
-                <span className="setup-phase-mark" aria-hidden="true">
-                  {state === 'done' ? <CheckIcon /> : state === 'now' ? <span className="spinner" /> : place}
-                </span>
-                {phase}
-              </li>
-            )
-          })}
-        </ol>
-        {/* the line the import last wrote, so a long step is seen to be moving */}
-        <p className="setup-note setup-said" role="status">
-          {said}
-        </p>
+        <ImportProgress phases={PHASES} current={job?.progress?.step || 1} said={lastLog(job?.logs)} />
       </>
     )
   }

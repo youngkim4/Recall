@@ -11,7 +11,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal
 
-ARCHIVE_KEPT = "The archive was not changed."
+from recall_services.unreadable import ARCHIVE_KEPT
+
 BUSY = "An import is already running."
 EnsureStatus = Literal["current", "built", "kept", "no_export", "busy", "cancelled", "failed"]
 

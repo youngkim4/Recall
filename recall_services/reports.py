@@ -32,7 +32,6 @@ and its prices come from `models.py`.
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -43,7 +42,7 @@ from typing import Any
 
 from archive import Archive
 from archive import ArchiveError as ArchiveFault
-from recall_services import inputs, models, report_files
+from recall_services import inputs, keys, models, report_files
 from recall_services.names import Names, ReportLabeler
 from recall_services.report_failures import NO_KEY, ReportFailure, failure_of
 # part of this module for its callers
@@ -191,7 +190,7 @@ def default_llm(info: ModelInfo) -> LLM:
     """The model port of the app. It goes to the address of the provider only."""
     from report_engine.openai_llm import OpenAIResponsesLLM, build_client
 
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    key = keys.api_key()
     if not key:
         raise ReportFailure("no_key", NO_KEY)
     return OpenAIResponsesLLM(build_client(key), info.id)

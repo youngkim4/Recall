@@ -23,7 +23,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from archive import Archive
-from message_text import attachment_label, clip_text, display_text
+from message_text import UNSENT_LABEL, attachment_label, clip_text, display_text
 from recall_services.names import Names
 
 # the same number as MESSAGE_TEXT_LIMIT in ui_server.py
@@ -45,9 +45,15 @@ def payload(message: Mapping[str, Any], display_name: str, sender_name: str) -> 
         "timestamp": message.get("timestamp") or None,
         "sender": str(message.get("sender") or ""),
         "text": clip_text(display_text(message.get("text")), MESSAGE_TEXT_LIMIT),
-        "attachment": attachment_label("|".join(message.get("attachments") or [])),
+        "attachment": _carried(message),
         "isFromMe": bool(message["is_from_me"]),
     }
+
+
+def _carried(message: Mapping[str, Any]) -> str:
+    """What a message carried beside its words: "Photo", "3 photos", or the label of a message that was unsent."""
+    label = attachment_label("|".join(message.get("attachments") or []))
+    return label or (UNSENT_LABEL if message.get("unsent") else "")
 
 
 def _conversations(archive: Archive, ids: Iterable[str]) -> dict[str, Mapping[str, Any]]:

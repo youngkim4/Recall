@@ -34,8 +34,8 @@ def story_of(report_text: str) -> str:
 
 
 def shown_plain(report_text: str) -> bool:
-    """True when the server shows the story of this report file as plain paragraphs: `story_html` does not render it."""
-    return safe_html.story_work(safe_html.prepared(story_of(report_text))) > safe_html.STORY_WORK_LIMIT
+    """True when the server shows a chapter of this report file as plain paragraphs: `story_page` does not render it."""
+    return safe_html.story_page(story_of(report_text))[1]
 
 
 def _events_text(report: Report) -> str | None:

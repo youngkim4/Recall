@@ -1,15 +1,11 @@
-"""Shared OpenAI model and token-budget configuration."""
+"""Model and token-budget configuration of the hand tools (cli.py, analysis.py).
+
+The app does not read this file: the models that the app offers, with their
+limits and prices, are in recall_services/models.json."""
 
 DEFAULT_MODEL = "gpt-5.5"
-# routing/planning is a small structured decision -- the mini model is faster and ~10x cheaper
-PLANNER_MODEL = "gpt-5.4-mini"
 DEFAULT_REASONING_EFFORT = "medium"
 DEFAULT_VERBOSITY = "medium"
-UI_MODEL_CHOICES = (
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-)
 MAX_CONTEXT_TOKENS_EVENTS = 12000
 MAX_CONTEXT_TOKENS_SUMMARY = 20000
 LEGACY_TOKEN_BUDGET = 170_000

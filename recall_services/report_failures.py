@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from recall_services import keys
+
 from report_engine import (
     AllPeriodsFailed,
     ConfigError,
@@ -23,7 +25,7 @@ from report_engine import (
 )
 
 AGAIN = "then run the report again."
-NO_KEY = f"No API key is set. Add your OpenAI API key in Settings, {AGAIN}"
+NO_KEY = f"No API key is set. Add {keys.KEY_NAME} to {keys.KEY_PLACE}, {AGAIN}"
 _UNAUTHORIZED, _FORBIDDEN, _NOT_FOUND, _TOO_MANY = 401, 403, 404, 429
 
 
@@ -46,11 +48,11 @@ def _of_the_model(last: LLMError | None, provider: str, model: str) -> tuple[str
         return None
     status, said = last.status_code, str(last)
     if status == _UNAUTHORIZED:
-        return "key_rejected", f"{provider} rejected the API key. Check the key in Settings, {AGAIN}"
+        return "key_rejected", f"{provider} rejected the API key. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {AGAIN}"
     if status == _FORBIDDEN:
         return (
             "key_rejected",
-            f"{provider} does not allow this API key to use the model. Check the key in Settings, {AGAIN}",
+            f"{provider} does not allow this API key to use the model. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {AGAIN}",
         )
     if status == _NOT_FOUND:
         return "unknown_model", f"{provider} does not know the model {model}. Choose another level in Settings."

@@ -32,12 +32,25 @@ from typing import Any
 from archive.handles import email_key, handle_match_key, phone_key
 from chat_engine.labeler import MaskingLabeler
 
-# the naming rule of the conversation list. It is private there; this is its only other user.
-from group_names import _group_name
+from group_names import group_name
 
 ReportLabeler = Callable[[str], str]
 _RECORD_FIELDS = (("phones", phone_key), ("emails", email_key))
 _NO_NAMES: Mapping[str, str] = MappingProxyType({})
+
+
+def records(cache_path: str | Path) -> list[Any] | None:
+    """The records of a Contacts cache file, or None when the file is missing or holds no list of records.
+
+    An import takes these records for the people of the archive. None keeps
+    the people that the archive has.
+    """
+    try:
+        payload = json.loads(Path(cache_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    found = payload.get("contacts") if isinstance(payload, dict) else None
+    return found if isinstance(found, list) else None
 
 
 def _name_of(record: Mapping[str, object]) -> str:
@@ -88,12 +101,7 @@ class Names:
     @classmethod
     def load(cls, cache_path: str | Path) -> Names:
         """Names from a Contacts cache file. A file that is missing or can not be read gives no names."""
-        try:
-            payload = json.loads(Path(cache_path).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return cls()
-        records = payload.get("contacts") if isinstance(payload, dict) else None
-        return cls.from_records(records) if isinstance(records, list) else cls()
+        return cls.from_records(records(cache_path))
 
     def __len__(self) -> int:
         return len(self._by_key)
@@ -127,7 +135,7 @@ class Names:
                 continue
             name = self.saved(handle)
             people.setdefault(name.casefold() if name else f"\x00{handle}", name or None)
-        return _group_name(list(people.values())) if people else ""
+        return group_name(list(people.values())) if people else ""
 
     def conversation(self, conversation: Mapping[str, Any]) -> str:
         """The name a conversation goes by on a screen, or "" when it has none."""

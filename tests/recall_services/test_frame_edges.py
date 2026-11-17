@@ -10,8 +10,10 @@ from pathlib import Path
 import pytest
 
 from conversation import compute_reaction_stats
-from recall_services import frame
+from message_text import display_text
+from recall_services import frame, messages
 from recall_services.archive_state import ArchiveState
+from recall_services.names import Names
 from tests.archive.builders import ChatDbBuilder
 from tests.recall_services import state_data as data
 
@@ -68,16 +70,22 @@ def test_only_the_six_kinds_that_the_figures_know_are_tapbacks_of_the_frame(stat
     assert figures.total == figures.loves == 1
 
 
-def test_an_unsent_message_is_a_row_of_the_archive_and_no_row_of_the_frame(state: ArchiveState) -> None:
-    """A seam that is open: the archive counts a message that was unsent, and the export frame has no row for it.
+def test_an_unsent_message_is_a_row_of_the_archive_and_of_the_frame(state: ArchiveState) -> None:
+    """One count on every screen: the list, a day and the figures on pandas all hold a message that was unsent.
 
-    After the hook-up the list of conversations says 4 and the figures on
-    pandas say 3. The archive or `archive.compat` must change to close it.
+    It has no words. The frame says so in `unsent`, and a payload gives it a label.
     """
     archive = state.archive()
     assert archive.conversation(PERSON)["message_count"] == 4
-    assert archive.day(PERSON, START.strftime("%Y-%m-%d"))["total"] == 4
-    assert len(frame.messages_frame(state)) == 3
+    day = archive.day(PERSON, START.strftime("%Y-%m-%d"))
+    assert day["total"] == 4
+    made = frame.messages_frame(state)
+    assert len(made) == 4
+    taken_back = made[made["unsent"]]
+    assert list(taken_back["message_id"]) == ["unsent"]
+    assert display_text(taken_back.iloc[0]["text"]) == ""
+    shown = messages.payloads(archive, Names(), [message for message in day["messages"] if message["unsent"]])
+    assert [(row["text"], row["attachment"]) for row in shown] == [("", "Unsent message")]
 
 
 def test_a_write_that_is_not_in_the_one_file_yet_makes_a_new_frame(state: ArchiveState) -> None:

@@ -207,7 +207,8 @@ def test_a_story_of_ordinary_length_is_rendered(desk: Desk) -> None:
     assert safe_html.story_html(story) != safe_html._plain(story)
 
 
-def test_a_story_that_the_server_shows_as_plain_paragraphs_is_said(desk: Desk) -> None:
+def test_a_long_dense_story_is_read_chapter_by_chapter(desk: Desk) -> None:
+    """Four dense chapters are too much work as one piece. Each one alone is read, so the story keeps its chapters."""
     dense = story_cases.dialogue(MAX_SECTION_CHARS)
 
     def responder(call: FakeCall) -> Any:
@@ -218,9 +219,27 @@ def test_a_story_that_the_server_shows_as_plain_paragraphs_is_said(desk: Desk) -
         MINA, MODEL, on_progress=lambda update: logs.append(update.get("log", "")), **desk.more(FakeLLM(responder))
     )
     story = story_of(done.report_path.read_text(encoding="utf-8"))
-    assert done.shown_plain is True and done.as_dict()["shownPlain"] is True
-    # the server decides the same
+    # as one piece the server would show it as plain paragraphs
     assert safe_html.story_html(story) == safe_html._plain(story)
+    page, plain = safe_html.story_page(story)
+    assert plain is False and page.count("<h3>") == len(SECTION_KEYS)
+    assert done.shown_plain is False and done.as_dict()["shownPlain"] is False
+    assert [line for line in logs if "plain paragraphs" in line] == []
+
+
+def test_a_story_that_the_server_shows_as_plain_paragraphs_is_said(desk: Desk, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A chapter that alone is too much work is shown plain, and the run says so."""
+    dense = story_cases.dialogue(MAX_SECTION_CHARS)
+    monkeypatch.setattr(safe_html, "STORY_WORK_LIMIT", safe_html.story_work(safe_html.prepared(dense)) - 1)
+
+    def responder(call: FakeCall) -> Any:
+        return dict.fromkeys(SECTION_KEYS, dense) if call.kind == "reduce" else None
+
+    logs: list[str] = []
+    done = reports.run(
+        MINA, MODEL, on_progress=lambda update: logs.append(update.get("log", "")), **desk.more(FakeLLM(responder))
+    )
+    assert done.shown_plain is True and done.as_dict()["shownPlain"] is True
     said = [line for line in logs if "plain paragraphs" in line]
     assert said == [
         "The story of this report is long and dense. The app shows it as plain paragraphs, with no chapters."
@@ -246,8 +265,8 @@ def test_days_with_no_message_write_no_report(desk: Desk) -> None:
 @pytest.mark.parametrize(
     ("error", "code", "sentence"),
     [
-        (LLMError("x (HTTP 401)", status_code=401), "key_rejected", "OpenAI rejected the API key. Check the key in Settings, then run the report again."),
-        (LLMError("x (HTTP 403)", status_code=403), "key_rejected", "OpenAI does not allow this API key to use the model. Check the key in Settings, then run the report again."),
+        (LLMError("x (HTTP 401)", status_code=401), "key_rejected", "OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, then run the report again."),
+        (LLMError("x (HTTP 403)", status_code=403), "key_rejected", "OpenAI does not allow this API key to use the model. Check OPENAI_API_KEY in the file .env in Recall's data folder, then run the report again."),
         (LLMError("x (HTTP 404)", status_code=404), "unknown_model", "OpenAI does not know the model gpt-6.1-sol. Choose another level in Settings."),
         (LLMError("x (HTTP 429)", status_code=429), "rate_limit", "OpenAI is limiting requests, or the account has no credit left. Wait a moment, then run the report again."),
         (LLMError("the model service failed (APIConnectionError)"), "offline", "OpenAI could not be reached. Check the internet connection, then run the report again."),
@@ -284,7 +303,7 @@ def test_with_no_key_no_request_is_made_and_no_file_is_written(desk: Desk, monke
     with pytest.raises(reports.ReportFailure) as caught:
         reports.run(MINA, MODEL, **more)
     assert caught.value.code == "no_key"
-    assert str(caught.value) == "No API key is set. Add your OpenAI API key in Settings, then run the report again."
+    assert str(caught.value) == "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then run the report again."
     assert not desk.places.out_dir.exists()
 
 

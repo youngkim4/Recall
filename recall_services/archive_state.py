@@ -78,7 +78,7 @@ from recall_services.outcomes import (
     PullRefused,
     PullResult,
 )
-from setup_status import probe_database
+from setup_status import DbProbe, probe_database
 
 logger = logging.getLogger(__name__)
 
@@ -212,6 +212,15 @@ class ArchiveState:
         finally:
             self._importing.release()
 
+    def export_waits(self, messages_csv: str | os.PathLike[str]) -> bool:
+        """True when `ensure_from_export` would load this export now: it is there, and the archive does not hold it.
+
+        Nothing is changed. An archive that a pull filled holds no export, so nothing waits for it.
+        """
+        export = archive_files.place(messages_csv)
+        signature = None if export is None else ExportSignature.of(export)
+        return signature is not None and self._standing(signature) is None
+
     def _standing(self, signature: ExportSignature) -> EnsureResult | None:
         """The answer when nothing is to be loaded, or None when the export must be loaded."""
         try:
@@ -289,18 +298,22 @@ class ArchiveState:
         if not named:
             raise ValueError("The caller must name the database to read.")
         source = archive_files.place(named)
+        note = unreadable.archive_note(self.exists())
         try:
-            stopped = NO_SUCH_PLACE if source is None else unreadable.why(probe_database(source))
+            probe = None if source is None else probe_database(source)
         except ValueError:  # a text that is no path
-            stopped = NO_SUCH_PLACE
-        if source is None or stopped is not None:
-            return PullFailed(reason=stopped or NO_SUCH_PLACE)
+            probe = None
+        if source is None or probe is None:
+            return PullFailed(reason=f"{NO_SUCH_PLACE}{note}")
+        stopped = unreadable.why_unreadable(probe, note)
+        if stopped is not None:
+            return PullFailed(reason=str(stopped))
         if not self._importing.acquire(blocking=False):
             return PullBusy()
         try:
             was_there = self.exists()
             try:
-                outcome = self._pull(source, contacts, max_removed_share, progress, cancel)
+                outcome = self._pull(source, probe, contacts, max_removed_share, progress, cancel)
             except BaseException:
                 if not was_there:
                     self._forget_empty_archive()
@@ -313,8 +326,10 @@ class ArchiveState:
             self._importing.release()
 
     def _pull(
-        self, source: Path, contacts: Contacts, max_removed_share: float, progress: Any, cancel: object
+        self, source: Path, probe: DbProbe, contacts: Contacts, max_removed_share: float, progress: Any, cancel: object
     ) -> PullResult:
+        # what a failure says of the archive: nothing when this is the first pull
+        note = unreadable.archive_note(self.exists())
         try:
             result = import_chat_db(
                 source,
@@ -330,13 +345,11 @@ class ArchiveState:
         except ImportBusyError:
             return PullBusy()
         except SourceFormatError as exc:
-            return PullFailed(
-                reason=f"This is not a Messages database that Recall can read. {ARCHIVE_KEPT}", detail=_detail(exc)
-            )
+            return PullFailed(reason=f"{unreadable.not_messages(probe)}{note}", detail=_detail(exc))
         except SourceError as exc:
-            return PullFailed(reason=f"The Messages database could not be read. {ARCHIVE_KEPT}", detail=_detail(exc))
+            return PullFailed(reason=str(unreadable.reading_stopped(exc, probe, note)), detail=_detail(exc))
         except ArchiveError as exc:
-            return PullFailed(reason=f"The update failed. {ARCHIVE_KEPT}", detail=_detail(exc))
+            return PullFailed(reason=f"The update failed.{note}", detail=_detail(exc))
         if result.status != "ok":
             return PullCancelled()
         with self._lock:
