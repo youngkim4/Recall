@@ -122,18 +122,6 @@
     max-width: var(--page-max);
   }
 
-  /* In a pane too narrow for a bar beside each name, the columns that are
-     left would not fit either: the bar's place goes to the name. */
-  @container detail (max-width: 20rem) {
-    .analyze-detail .ranked-row {
-      grid-template-columns: 1.25rem minmax(0, 1fr) 4.5rem 2.5rem;
-    }
-
-    .analyze-detail .ranked-bar {
-      display: none;
-    }
-  }
-
   /* 52rem is a main column of 480px beside the side column: a 1440 window
      with the list at its usual width */
   @container detail (min-width: 52rem) {

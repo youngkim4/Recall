@@ -156,6 +156,18 @@
     font-size: var(--t-small);
   }
 
+  /* In a pane too narrow for a bar beside each name, the columns that are
+     left would not fit either: the bar's place goes to the name. */
+  @container detail (max-width: 20rem) {
+    .ranked-row {
+      grid-template-columns: 1.25rem minmax(0, 1fr) 4.5rem 2.5rem;
+    }
+
+    .ranked-bar {
+      display: none;
+    }
+  }
+
   /* ---- facts: a label and what it comes to. The label column is the width
      of the Overview's, so second columns start on the same line across views. ---- */
   .facts > div {
