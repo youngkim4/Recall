@@ -10,8 +10,9 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Iterable, Mapping, Optional, Sequence, Union
 
+from .fake_index import TokenIndex
 from .ports import ArchiveSummary, Conversation, CountRow, Message, MessagePage, SearchResult
-from .textnorm import find_unit, query_units, token_spans
+from .textnorm import query_units
 
 _TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 _GROUP_KEY_LENGTH = {"day": 10, "month": 7, "year": 4}
@@ -74,6 +75,7 @@ class FakeArchive:
         for message in self._messages:
             self._by_conversation[message["conversation"]].append(message)
         self._conversations = self._build_conversations(conversations)
+        self._index = TokenIndex([m["text"] for m in self._messages])
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     # --- contract ---
@@ -154,17 +156,11 @@ class FakeArchive:
         units = query_units(query)
         if not units:
             return {"total": 0, "hits": []}
-        found = []
-        for message in self._filtered(conversations, since, until, from_me, include_system):
-            ranges = _match(units, message["text"])
-            if ranges:
-                found.append((message, ranges))
-        if order == "oldest":
-            pass
-        elif order == "relevance":
-            found.sort(key=lambda pair: (-len(pair[1]), _reverse_time(pair[0])))
-        else:
+        found = self._matching(units, conversations, since, until, from_me, include_system)
+        if order != "oldest":
             found.reverse()
+        if order == "relevance":
+            found.sort(key=lambda pair: -len(pair[1]))
         page = found[offset:offset + max(0, limit)]
         return {
             "total": len(found),
@@ -186,10 +182,11 @@ class FakeArchive:
             "count", conversations=_listed(conversations), since=since, until=until,
             from_me=from_me, text=text, group_by=group_by,
         )
-        rows = self._filtered(conversations, since, until, from_me, include_system)
-        if text is not None:
-            units = query_units(text)
-            rows = [m for m in rows if units and _match(units, m["text"])]
+        if text is None:
+            rows = self._filtered(conversations, since, until, from_me, include_system)
+        else:
+            matched = self._matching(query_units(text), conversations, since, until, from_me, include_system)
+            rows = [message for message, _ in matched]
         if group_by is None:
             return len(rows)
         return _grouped(rows, group_by)
@@ -218,11 +215,16 @@ class FakeArchive:
         until: Optional[str],
         from_me: Optional[bool],
         include_system: bool = False,
+        positions: Optional[Sequence[int]] = None,
     ) -> list[Message]:
+        """Messages that pass the filters, oldest first. `positions` narrows the scan."""
         wanted = None if conversations is None else {str(c) for c in conversations}
+        candidates = self._messages if positions is None else [self._messages[p] for p in positions]
         rows = []
-        for message in _visible(self._messages, include_system):
+        for message in candidates:
             day = message["timestamp"][:10]
+            if message["kind"] == "system" and not include_system:
+                continue
             if wanted is not None and message["conversation"] not in wanted:
                 continue
             if (since and day < since) or (until and day > until):
@@ -231,6 +233,27 @@ class FakeArchive:
                 continue
             rows.append(message)
         return rows
+
+    def _matching(
+        self,
+        units: list[str],
+        conversations: Optional[Sequence[str]],
+        since: Optional[str],
+        until: Optional[str],
+        from_me: Optional[bool],
+        include_system: bool,
+    ) -> list[tuple[Message, list[tuple[int, int]]]]:
+        """Messages that match every unit (AND) with their ranges, oldest first."""
+        if not units:
+            return []
+        positions = self._index.candidates(units)
+        position_of = {id(self._messages[p]): p for p in positions}
+        found = []
+        for message in self._filtered(conversations, since, until, from_me, include_system, positions):
+            ranges = self._index.ranges(position_of[id(message)], units)
+            if ranges:
+                found.append((message, ranges))
+        return found
 
     def _build_conversations(
         self, given: Optional[Iterable[Mapping[str, Any]]]
@@ -269,22 +292,6 @@ def _copy_conversation(conversation: Conversation) -> Conversation:
     copied = dict(conversation)
     copied["members"] = list(conversation["members"])
     return copied  # type: ignore[return-value]
-
-
-def _reverse_time(message: Message) -> tuple[float, int]:
-    return (-_moment(message).timestamp(), -message["sent_at"])
-
-
-def _match(units: list[str], text: str) -> list[tuple[int, int]]:
-    """Ranges of all units, or [] unless every unit matches (AND)."""
-    spans = token_spans(text)
-    ranges: list[tuple[int, int]] = []
-    for unit in units:
-        found = find_unit(unit, spans)
-        if not found:
-            return []
-        ranges.extend(found)
-    return sorted(set(ranges))
 
 
 def _page_bounds(
