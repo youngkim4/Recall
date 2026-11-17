@@ -66,7 +66,8 @@ def saved() -> Names:
 
 
 @pytest.fixture
-def archive(export: Path) -> Archive:
+def bridged(export: Path) -> Archive:
+    """The archive that the server reads for this export, as the service gets it."""
     return places.state_for(export).archive()
 
 
@@ -94,19 +95,19 @@ def as_json(value: Any) -> Any:
     ],
 )
 def test_the_search_route_answers_with_the_payload_of_the_service(
-    server: Any, export: Path, archive: Archive, saved: Names, asked: dict[str, str]
+    server: Any, export: Path, bridged: Archive, saved: Names, asked: dict[str, str]
 ) -> None:
     status, answer = get(server, "/api/search", messagesPath=export, **asked)
     expected = search.payload(
-        archive, saved, asked.get("query", ""), asked.get("contact", ""), asked.get("limit", ""), asked.get("offset", ""), as_you_type=True
+        bridged, saved, asked.get("query", ""), asked.get("contact", ""), asked.get("limit", ""), asked.get("offset", ""), as_you_type=True
     )
     assert status == 200
     assert answer == as_json(expected)
 
 
-def test_the_search_route_reads_the_last_word_as_a_prefix(server: Any, export: Path, archive: Archive, saved: Names) -> None:
+def test_the_search_route_reads_the_last_word_as_a_prefix(server: Any, export: Path, bridged: Archive, saved: Names) -> None:
     # the reader may still be typing: the service matches whole words unless the route says so
-    assert search.payload(archive, saved, "piz")["total"] == 0
+    assert search.payload(bridged, saved, "piz")["total"] == 0
     status, answer = get(server, "/api/search", messagesPath=export, query="piz")
     assert (status, answer["total"], answer["query"]) == (200, 8, "piz")
 
@@ -125,22 +126,22 @@ def test_the_search_route_reads_the_last_word_as_a_prefix(server: Any, export: P
     ],
 )
 def test_the_day_route_answers_with_the_payload_of_the_service(
-    server: Any, export: Path, archive: Archive, saved: Names, contact: str, when: str, more: dict[str, str]
+    server: Any, export: Path, bridged: Archive, saved: Names, contact: str, when: str, more: dict[str, str]
 ) -> None:
     status, answer = get(server, "/api/day", messagesPath=export, contact=contact, day=when, **more)
     expected = day.payload(
-        archive, saved, contact, when, around=more.get("around"), offset=more.get("offset", ""), limit=more.get("limit", "")
+        bridged, saved, contact, when, around=more.get("around"), offset=more.get("offset", ""), limit=more.get("limit", "")
     )
     assert status == 200
     assert answer == as_json(expected)
 
 
 def test_the_conversation_list_route_answers_with_the_payload_of_the_service(
-    server: Any, export: Path, archive: Archive, saved: Names
+    server: Any, export: Path, bridged: Archive, saved: Names
 ) -> None:
     status, answer = get(server, "/api/contacts", messagesPath=export, limit="3")
     # the answer names the archive file itself, as /api/defaults does
-    expected = conversations.payload(archive, saved, "3", str(places.archive_path_for(export)))
+    expected = conversations.payload(bridged, saved, "3", str(places.archive_path_for(export)))
     assert status == 200
     assert answer == as_json(expected)
     assert answer["messagesPath"] == str(export.with_suffix(".sqlite3"))
@@ -156,13 +157,13 @@ def test_a_text_is_cut_at_the_limit_of_the_service_on_every_route(server: Any, e
         assert len(shown) > messages.MESSAGE_TEXT_LIMIT - len("oven ")
 
 
-def test_the_totals_of_the_server_are_those_of_the_service(export: Path, archive: Archive) -> None:
-    assert as_json(ui_server.archive_summary(export)) == conversations.summary(archive)
+def test_the_totals_of_the_server_are_those_of_the_service(export: Path, bridged: Archive) -> None:
+    assert as_json(ui_server.archive_summary(export)) == conversations.summary(bridged)
 
 
-def test_the_name_of_each_conversation_is_the_one_of_the_service(export: Path, archive: Archive, saved: Names) -> None:
+def test_the_name_of_each_conversation_is_the_one_of_the_service(export: Path, bridged: Archive, saved: Names) -> None:
     _frame, _catalog, held = ui_server.cached_messages_bundle(export)
-    assert held == saved.conversations(archive.conversations())
+    assert held == saved.conversations(bridged.conversations())
     assert held[GROUP] == "Avery Stone, Blake Reyes and 1 other"
     assert held[TITLED] == "Allotment Board"
     assert (held[AVERY], held[UNSAVED]) == ("Avery Stone", "")
