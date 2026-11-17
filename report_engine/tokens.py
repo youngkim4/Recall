@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, Sequence
+from typing import Any, Protocol
 
 from report_engine.model_info import ModelInfo
 
@@ -88,7 +89,11 @@ class TokenMeter:
             raise ValueError("token margin must be 1.0 or more")
 
     def count_many(self, texts: Sequence[str]) -> list[int]:
-        counts = self.counter.count_many(texts)
+        counts = list(self.counter.count_many(texts))
+        if len(counts) != len(texts):
+            raise ValueError(
+                f"token counter {self.counter.family} gave {len(counts)} counts for {len(texts)} texts"
+            )
         if self.margin == 1.0:
             return counts
         return [math.ceil(count * self.margin) for count in counts]

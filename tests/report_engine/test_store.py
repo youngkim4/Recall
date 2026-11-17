@@ -53,12 +53,19 @@ def test_the_file_is_plain_json_with_the_schema_version(reports_dir: Path) -> No
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["schema_version"] == SCHEMA_VERSION
     assert data["conversation"] == "+12025550143"
-    assert [section["key"] for section in data["sections"]] == ["arc", "dynamics", "defining_moments", "big_picture"]
+    assert [section["key"] for section in data["sections"]] == [
+        "arc",
+        "dynamics",
+        "defining_moments",
+        "big_picture",
+    ]
     assert data["stats"] == {"n": 1}
     assert path.read_text(encoding="utf-8").endswith("\n")
 
 
-def test_a_failed_write_leaves_no_file_behind(reports_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_failed_write_leaves_no_file_behind(
+    reports_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = ReportStore(reports_dir)
 
     def no_link(source: Any, target: Any) -> None:
@@ -72,7 +79,9 @@ def test_a_failed_write_leaves_no_file_behind(reports_dir: Path, monkeypatch: py
     assert list(folder.iterdir()) == []
 
 
-def test_save_works_where_hard_links_do_not(reports_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_save_works_where_hard_links_do_not(
+    reports_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     def no_link(source: Any, target: Any) -> None:
         raise OSError(1, "Operation not permitted")
 
@@ -88,14 +97,22 @@ def test_save_works_where_hard_links_do_not(reports_dir: Path, monkeypatch: pyte
 
 def test_reports_are_listed_newest_first(reports_dir: Path) -> None:
     store = ReportStore(reports_dir)
-    for number, stamp in enumerate(["2024-07-01T10:00:00+00:00", "2024-07-03T10:00:00+00:00", "2024-07-02T10:00:00+00:00"]):
+    for number, stamp in enumerate(
+        ["2024-07-01T10:00:00+00:00", "2024-07-03T10:00:00+00:00", "2024-07-02T10:00:00+00:00"]
+    ):
         store.save(make_report(id=f"run-{number}", created_at=stamp))
-    store.save(make_report(id="other-1", conversation=GROUP, created_at="2024-07-04T10:00:00+00:00"))
+    store.save(
+        make_report(id="other-1", conversation=GROUP, created_at="2024-07-04T10:00:00+00:00")
+    )
     mine = store.list_reports("+12025550143")
     assert [entry.id for entry in mine] == ["run-1", "run-2", "run-0"]
     assert [entry.id for entry in store.list_reports()] == ["other-1", "run-1", "run-2", "run-0"]
     first = mine[0]
-    assert (first.conversation, first.model, first.status) == ("+12025550143", "test-model-1", "complete")
+    assert (first.conversation, first.model, first.status) == (
+        "+12025550143",
+        "test-model-1",
+        "complete",
+    )
     assert first.scope == Scope()
     assert first.path.name == "run-1.json"
 
@@ -130,7 +147,9 @@ def test_a_report_id_can_not_leave_the_folder(reports_dir: Path, bad_id: str) ->
     with pytest.raises(StoreError):
         store.load_report("+12025550143", bad_id)
     with pytest.raises(StoreError):
-        store.save(make_report(id=bad_id) if bad_id else make_report().model_copy(update={"id": ""}))
+        store.save(
+            make_report(id=bad_id) if bad_id else make_report().model_copy(update={"id": ""})
+        )
 
 
 def test_a_damaged_file_is_skipped_in_lists_and_is_an_error_on_load(
@@ -159,7 +178,10 @@ def test_a_report_from_a_newer_schema_is_refused(reports_dir: Path) -> None:
 
 
 def test_folder_names_are_safe_and_do_not_collide() -> None:
-    names = {conversation_folder(value) for value in ("a@b.com", "ab.com", "a/b.com", "../../etc", THEO, GROUP, "")}
+    names = {
+        conversation_folder(value)
+        for value in ("a@b.com", "ab.com", "a/b.com", "../../etc", THEO, GROUP, "")
+    }
     assert len(names) == 7
     for name in names:
         assert name not in {".", ".."}

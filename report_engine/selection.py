@@ -8,8 +8,8 @@ period gives no moment.
 from __future__ import annotations
 
 import difflib
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 from report_engine.dates import parse_day
 from report_engine.models import Moment
@@ -46,7 +46,12 @@ def _without_duplicates(candidates: Sequence[_Candidate]) -> list[_Candidate]:
     dates are within a week and their titles read the same. The stronger stays."""
     ranked = sorted(
         candidates,
-        key=lambda item: (-item.moment.score, not item.moment.quote_verified, item.moment.date, item.period),
+        key=lambda item: (
+            -item.moment.score,
+            not item.moment.quote_verified,
+            item.moment.date,
+            item.period,
+        ),
     )
     kept: list[_Candidate] = []
     titles_by_day: dict[int, list[str]] = {}
@@ -72,7 +77,9 @@ def _spread(candidates: Sequence[_Candidate], max_moments: int) -> list[Moment]:
     queues: dict[int, list[Moment]] = {}
     for item in candidates:
         queues.setdefault(item.period, []).append(item.moment)
-    ordered = [sorted(queue, key=lambda moment: (-moment.score, moment.date)) for queue in queues.values()]
+    ordered = [
+        sorted(queue, key=lambda moment: (-moment.score, moment.date)) for queue in queues.values()
+    ]
     picked: list[Moment] = []
     depth = 0
     while len(picked) < max_moments:

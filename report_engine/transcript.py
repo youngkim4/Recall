@@ -9,8 +9,9 @@ e-mail address is replaced before it can reach a prompt.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any
 
 from report_engine.dates import DAY_LENGTH, parse_day
 from report_engine.errors import SourceError
@@ -123,7 +124,7 @@ def build_lines(messages: Iterable[Mapping[str, Any]], labeler: Labeler) -> tupl
     """Check, order and name the messages. Messages with no text are left out."""
     known_days: set[str] = set()
     rows = [row for row in (_read_row(message, known_days) for message in messages) if row]
-    if any(later.stamp < earlier.stamp for earlier, later in zip(rows, rows[1:])):
+    if any(later.stamp < earlier.stamp for earlier, later in zip(rows, rows[1:], strict=False)):
         rows = sorted(rows, key=lambda row: row.stamp)
     names = resolve_labels((row.sender for row in rows if not row.own), labeler)
     return tuple(
@@ -179,7 +180,7 @@ def render_period(lines: Sequence[Line], max_chars: int) -> Rendered:
 
 def render_for_count(lines: Sequence[Line], max_chars: int) -> str:
     """Same text with one fixed reference, so a size does not depend on numbering."""
-    return _render(lines, max_chars, lambda number: COUNT_REF)
+    return _render(lines, max_chars, lambda _number: COUNT_REF)
 
 
 def resolve_ref(ref: object, lines: Sequence[Line]) -> Line | None:

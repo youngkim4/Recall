@@ -11,12 +11,16 @@ from report_engine.verify import MessageIndex, check_moments, normalise
 from .synth import labeler, message
 
 # special characters by code point, so no editor can change them
-LDQUO, RDQUO, RSQUO, NBSP, DOTS, DASH = (chr(code) for code in (0x201C, 0x201D, 0x2019, 0xA0, 0x2026, 0x2014))
+LDQUO, RDQUO, RSQUO, NBSP, DOTS, DASH = (
+    chr(code) for code in (0x201C, 0x201D, 0x2019, 0xA0, 0x2026, 0x2014)
+)
 ACUTE, HEART, VARIATION = chr(0x301), chr(0x2764), chr(0xFE0F)
 
 MESSAGES = [
     message("id-1", "2024-06-01 09:00:00", "Morning. Did you sleep at all?"),
-    message("id-2", "2024-06-01 09:05:00", "Barely. I got the job at the observatory!", is_from_me=True),
+    message(
+        "id-2", "2024-06-01 09:05:00", "Barely. I got the job at the observatory!", is_from_me=True
+    ),
     message(
         "id-3",
         "2024-06-01 09:06:00",
@@ -53,7 +57,7 @@ def check(*moments: RawMoment, period: tuple[Line, ...] | None = None):
 
 
 def test_normalise_evens_out_space_and_quote_marks() -> None:
-    assert normalise(f"  {LDQUO}I{RSQUO}m{NBSP}here{RDQUO}{DOTS}  ") == "\"I'm here\"..."
+    assert normalise(f"  {LDQUO}I{RSQUO}m{NBSP}here{RDQUO}{DOTS}  ") == '"I\'m here"...'
     assert normalise("a\n\tb") == "a b"
 
 
@@ -166,7 +170,9 @@ def test_a_bad_date_without_references_drops_the_moment(date: str) -> None:
 def test_a_date_from_another_period_is_not_trusted() -> None:
     every = lines()
     june_first = tuple(line for line in every if line.day == "2024-06-01")
-    result = check_moments([raw(date="2024-06-03", quote="", refs=())], june_first, MessageIndex(every))
+    result = check_moments(
+        [raw(date="2024-06-03", quote="", refs=())], june_first, MessageIndex(every)
+    )
     assert result.moments == ()
     assert result.dropped == 1
 
@@ -177,7 +183,9 @@ def test_a_good_date_without_references_keeps_the_moment() -> None:
     assert moment.message_ids == ()
 
 
-@pytest.mark.parametrize("field, value", [("category", "gossip"), ("title", "   "), ("category", "")])
+@pytest.mark.parametrize(
+    "field, value", [("category", "gossip"), ("title", "   "), ("category", "")]
+)
 def test_a_moment_that_is_not_usable_is_dropped(field: str, value: str) -> None:
     result = check(raw(**{field: value}))
     assert result.moments == ()

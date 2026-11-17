@@ -12,9 +12,10 @@ period.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from itertools import groupby
-from typing import Callable, Sequence, TypeVar
+from typing import TypeVar
 
 from report_engine.tokens import TokenMeter
 from report_engine.transcript import COUNT_REF, Line, render_for_count, render_line
@@ -62,7 +63,7 @@ def measure_days(lines: Sequence[Line], meter: TokenMeter, max_chars: int) -> tu
     sizes = meter.count_many(texts)
     return tuple(
         DaySpan(day=day, start=start, stop=stop, tokens=size)
-        for (day, start, stop), size in zip(bounds, sizes)
+        for (day, start, stop), size in zip(bounds, sizes, strict=True)
     )
 
 
@@ -70,12 +71,16 @@ def line_sizer(lines: Sequence[Line], meter: TokenMeter, max_chars: int) -> Line
     """Per-line weights, counted only for the days that need them."""
 
     def sizes(start: int, stop: int) -> Sequence[int]:
-        return meter.count_many([render_line(COUNT_REF, line, max_chars) for line in lines[start:stop]])
+        return meter.count_many(
+            [render_line(COUNT_REF, line, max_chars) for line in lines[start:stop]]
+        )
 
     return sizes
 
 
-def _pack(units: Sequence[Unit], budget: int, size: Callable[[Unit], int]) -> list[tuple[Unit, ...]]:
+def _pack(
+    units: Sequence[Unit], budget: int, size: Callable[[Unit], int]
+) -> list[tuple[Unit, ...]]:
     """Greedy, oldest first. A unit larger than the budget ends up alone."""
     groups: list[tuple[Unit, ...]] = []
     current: list[Unit] = []
@@ -149,7 +154,9 @@ def _split_month(spans: Sequence[DaySpan], budget: int, line_tokens: LineSizer) 
     return periods
 
 
-def plan_periods(days: Sequence[DaySpan], budget: int, line_tokens: LineSizer) -> tuple[Period, ...]:
+def plan_periods(
+    days: Sequence[DaySpan], budget: int, line_tokens: LineSizer
+) -> tuple[Period, ...]:
     """Periods for ordered day spans. Every line lands in exactly one period."""
     if budget <= 0:
         raise ValueError("period token budget must be positive")

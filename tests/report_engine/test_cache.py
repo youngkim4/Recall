@@ -2,7 +2,8 @@
 
 import sqlite3
 import threading
-from datetime import datetime, timedelta, timezone
+from contextlib import closing
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,12 @@ def entry(key: str = "k1", **overrides: object) -> CacheEntry:
     }
     values.update(overrides)
     return CacheEntry(**values)  # type: ignore[arg-type]
+
+
+def execute(path: Path, statement: str) -> None:
+    """Change the file behind the cache's back, and close the connection after."""
+    with closing(sqlite3.connect(path)) as conn, conn:
+        conn.execute(statement)
 
 
 def put(cache: PeriodCache, item: CacheEntry, label: str = "Jun 2024") -> None:
@@ -113,11 +120,12 @@ def test_the_cache_does_not_keep_a_reference_to_the_payload(cache_path: Path) ->
     assert found is not None and len(found.payload["moments"]) == 1
 
 
-def test_a_broken_payload_is_a_miss_and_is_removed(cache_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_a_broken_payload_is_a_miss_and_is_removed(
+    cache_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     cache = PeriodCache(cache_path)
     put(cache, entry())
-    with sqlite3.connect(cache_path) as conn:
-        conn.execute("UPDATE period_results SET payload = '{not json'")
+    execute(cache_path, "UPDATE period_results SET payload = '{not json'")
     with caplog.at_level("WARNING"):
         assert cache.get("k1") is None
     assert cache.count() == 0
@@ -125,7 +133,7 @@ def test_a_broken_payload_is_a_miss_and_is_removed(cache_path: Path, caplog: pyt
 
 
 def test_prune_removes_entries_that_were_not_used_lately(cache_path: Path) -> None:
-    now = [datetime(2024, 1, 1, tzinfo=timezone.utc)]
+    now = [datetime(2024, 1, 1, tzinfo=UTC)]
     cache = PeriodCache(cache_path, now=lambda: now[0])
     put(cache, entry("old"))
     put(cache, entry("used"))
@@ -137,7 +145,7 @@ def test_prune_removes_entries_that_were_not_used_lately(cache_path: Path) -> No
 
 
 def test_reading_without_touch_does_not_reset_the_age(cache_path: Path) -> None:
-    now = [datetime(2024, 1, 1, tzinfo=timezone.utc)]
+    now = [datetime(2024, 1, 1, tzinfo=UTC)]
     cache = PeriodCache(cache_path, now=lambda: now[0])
     put(cache, entry("old"))
     now[0] += timedelta(days=100)
@@ -162,8 +170,7 @@ def test_the_cache_makes_its_folder(tmp_path: Path) -> None:
 
 def test_a_file_from_a_newer_version_is_refused(cache_path: Path) -> None:
     PeriodCache(cache_path)
-    with sqlite3.connect(cache_path) as conn:
-        conn.execute(f"PRAGMA user_version = {CACHE_SCHEMA_VERSION + 1}")
+    execute(cache_path, f"PRAGMA user_version = {CACHE_SCHEMA_VERSION + 1}")
     with pytest.raises(StoreError):
         PeriodCache(cache_path)
 

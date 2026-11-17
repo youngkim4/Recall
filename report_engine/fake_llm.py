@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Mapping, Sequence
+from typing import Any, Literal
 
 from report_engine.models import SECTION_KEYS
 from report_engine.ports import ChatMessage, LLMResult, LLMStatus, LLMUsage
@@ -74,7 +75,9 @@ class FakeCall:
                 continue
             line = _LINE.match(row)
             if line:
-                found.append(FakeLine(line.group(1), day, line.group(2), line.group(3), line.group(4)))
+                found.append(
+                    FakeLine(line.group(1), day, line.group(2), line.group(3), line.group(4))
+                )
         return tuple(found)
 
     @property
@@ -107,7 +110,9 @@ def words(text: str) -> int:
 
 def fake_usage(call: FakeCall, reply_text: str) -> LLMUsage:
     """One token per word, in and out. Matches a word counter exactly."""
-    return LLMUsage(input_tokens=words(call.text), cached_input_tokens=0, output_tokens=words(reply_text))
+    return LLMUsage(
+        input_tokens=words(call.text), cached_input_tokens=0, output_tokens=words(reply_text)
+    )
 
 
 def completed(
@@ -151,7 +156,7 @@ def default_map_reply(call: FakeCall) -> dict[str, Any]:
     }
 
 
-def default_reduce_reply(call: FakeCall) -> dict[str, Any]:
+def default_reduce_reply() -> dict[str, Any]:
     return {key: f"Fake {key.replace('_', ' ')} text." for key in SECTION_KEYS}
 
 
@@ -159,7 +164,7 @@ def default_reply(call: FakeCall) -> dict[str, Any]:
     if call.kind == "map":
         return default_map_reply(call)
     if call.kind == "reduce":
-        return default_reduce_reply(call)
+        return default_reduce_reply()
     return {}
 
 

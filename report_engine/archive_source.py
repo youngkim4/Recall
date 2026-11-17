@@ -15,8 +15,10 @@ exact bounds itself.
 
 from __future__ import annotations
 
+import importlib
 import os
-from typing import Any, Iterator, Mapping
+from collections.abc import Iterator, Mapping
+from typing import Any
 
 from report_engine.dates import DAY_LENGTH, shift_day
 from report_engine.errors import SourceError
@@ -24,18 +26,24 @@ from report_engine.ports import SourceMessage
 from report_engine.scope import in_bounds, lower_bound, upper_bound
 
 SYSTEM_KIND = "system"
+ARCHIVE_MODULES = ("archive.queries", "archive")
 
 
 def _archive_class() -> Any:
     """Import the archive package on first use, not when this module loads."""
-    try:
-        from archive.queries import Archive  # type: ignore[import-not-found]
-    except ImportError:
+    failure: ImportError | None = None
+    for name in ARCHIVE_MODULES:
         try:
-            from archive import Archive  # type: ignore[import-not-found]
+            module = importlib.import_module(name)
         except ImportError as exc:
-            raise SourceError(f"the archive package can not be imported: {exc}") from exc
-    return Archive
+            failure = failure or exc
+            continue
+        found = getattr(module, "Archive", None)
+        if found is not None:
+            return found
+    raise SourceError(
+        f"the archive package can not be imported: {failure or 'it has no Archive class'}"
+    )
 
 
 def _message(row: Mapping[str, Any]) -> SourceMessage:
@@ -56,7 +64,7 @@ class ArchiveSource:
         self._archive = archive
 
     @classmethod
-    def open(cls, path: str | os.PathLike[str] | None = None) -> "ArchiveSource":
+    def open(cls, path: str | os.PathLike[str] | None = None) -> ArchiveSource:
         """Open the archive file read-only. `None` means the archive's default path."""
         return cls(_archive_class().open(path, readonly=True))
 
@@ -69,7 +77,7 @@ class ArchiveSource:
         if callable(close):
             close()
 
-    def __enter__(self) -> "ArchiveSource":
+    def __enter__(self) -> ArchiveSource:
         return self
 
     def __exit__(self, *exc_info: object) -> None:

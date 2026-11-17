@@ -56,12 +56,16 @@ def test_between_equal_scores_the_one_with_a_verified_quote_stays() -> None:
 
 
 def test_like_titles_far_apart_are_two_events() -> None:
-    chosen = pick([moment("2024-01-10", "Big argument", 0.7)], [moment("2024-03-10", "Big argument", 0.7)])
+    chosen = pick(
+        [moment("2024-01-10", "Big argument", 0.7)], [moment("2024-03-10", "Big argument", 0.7)]
+    )
     assert len(chosen) == 2
 
 
 def test_unlike_titles_on_the_same_day_are_two_events() -> None:
-    chosen = pick([moment("2024-01-10", "Big argument", 0.7), moment("2024-01-10", "New puppy", 0.7)])
+    chosen = pick(
+        [moment("2024-01-10", "Big argument", 0.7), moment("2024-01-10", "New puppy", 0.7)]
+    )
     assert len(chosen) == 2
 
 
@@ -121,7 +125,13 @@ def test_inputs_are_not_changed() -> None:
 
 def test_many_candidates_are_handled_quickly() -> None:
     periods = [
-        [moment(f"20{10 + index // 300:02d}-{1 + (index // 25) % 12:02d}-{1 + index % 25:02d}", f"Event number {index}", 0.5)]
+        [
+            moment(
+                f"20{10 + index // 300:02d}-{1 + (index // 25) % 12:02d}-{1 + index % 25:02d}",
+                f"Event number {index}",
+                0.5,
+            )
+        ]
         for index in range(3000)
     ]
     chosen = pick(*periods, cap=50)

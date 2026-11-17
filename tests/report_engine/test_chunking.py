@@ -1,8 +1,8 @@
 """Periods: calendar boundaries, a token budget, and boundaries that hold still."""
 
 import random
+from collections.abc import Sequence
 from datetime import date, timedelta
-from typing import Sequence
 
 import pytest
 
@@ -31,7 +31,9 @@ def days(*specs: tuple[str, int]) -> tuple[DaySpan, ...]:
     out: list[DaySpan] = []
     cursor = 0
     for day, count in specs:
-        out.append(DaySpan(day=day, start=cursor, stop=cursor + count, tokens=count * LINE + HEADER_TOKENS))
+        out.append(
+            DaySpan(day=day, start=cursor, stop=cursor + count, tokens=count * LINE + HEADER_TOKENS)
+        )
         cursor += count
     return tuple(out)
 
@@ -107,7 +109,7 @@ def test_periods_cover_every_line_once_and_in_order() -> None:
     periods = plan_periods(spans, 400, flat_lines)
     assert periods[0].start == 0
     assert periods[-1].stop == spans[-1].stop
-    for earlier, later in zip(periods, periods[1:]):
+    for earlier, later in zip(periods, periods[1:], strict=False):
         assert earlier.stop == later.start
         assert earlier.last_day <= later.first_day
     assert len(set(labels(periods))) == len(periods)

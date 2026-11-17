@@ -8,8 +8,9 @@ meaning; only their type changes.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from datetime import date, datetime
-from typing import Any, Mapping
+from typing import Any
 
 
 def jsonable(value: Any) -> Any:

@@ -8,8 +8,9 @@ date, a quote or a reference is true is the job of `verify`.
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 from report_engine.errors import ReportEngineError
 

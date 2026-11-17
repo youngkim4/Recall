@@ -8,12 +8,13 @@ fails is reported and skipped; it leaves no notes and no cache entry.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Protocol, Sequence
+from typing import Protocol
 
 from report_engine.cache import CacheEntry
 from report_engine.calls import Caller, Emit, usage_of
-from report_engine.control import ProgressEvent
+from report_engine.control import ProgressEvent, ProgressState
 from report_engine.digest import DigestError, PeriodDigest, digest_payload, parse_digest
 from report_engine.errors import LLMError, StoreError
 from report_engine.model_info import ModelInfo
@@ -21,10 +22,10 @@ from report_engine.models import Usage
 from report_engine.plan import Plan, PlannedPeriod
 from report_engine.ports import LLMResult, LLMUsage
 from report_engine.prompts import MAP_PROMPT_VERSION, MAP_SCHEMA, Note, map_messages, notes_block
-from report_engine.tokens import TokenMeter
 
 logger = logging.getLogger(__name__)
 
+MAP_STATES: tuple[ProgressState, ...] = ("start", "cached", "waiting", "done", "failed")
 STATUS_REASONS = {
     "incomplete": "the reply was cut off at the output limit",
     "refused": "the model refused to answer",
@@ -77,7 +78,9 @@ def _fitting_notes(notes: Sequence[_SizedNote], budget: int) -> tuple[Note, ...]
     return tuple(reversed(kept))
 
 
-def _read_cache(cache: PeriodStore | None, keys: Sequence[str], warnings: list[str]) -> Mapping[str, CacheEntry]:
+def _read_cache(
+    cache: PeriodStore | None, keys: Sequence[str], warnings: list[str]
+) -> Mapping[str, CacheEntry]:
     if cache is None:
         return {}
     try:
@@ -93,9 +96,13 @@ def _from_cache(planned: PlannedPeriod, entry: CacheEntry | None) -> PeriodOutco
     try:
         digest = parse_digest(entry.payload)
     except DigestError:
-        logger.warning("cache entry for period %s does not parse; it is run again", planned.period.label)
+        logger.warning(
+            "cache entry for period %s does not parse; it is run again", planned.period.label
+        )
         return None
-    return PeriodOutcome(planned=planned, digest=digest, usage=_recorded_usage(entry), from_cache=True)
+    return PeriodOutcome(
+        planned=planned, digest=digest, usage=_recorded_usage(entry), from_cache=True
+    )
 
 
 def _recorded_usage(entry: CacheEntry) -> Usage:
@@ -112,7 +119,9 @@ def _recorded_usage(entry: CacheEntry) -> Usage:
 
 def _digest_of(result: LLMResult) -> PeriodDigest:
     if result.status != "completed":
-        raise DigestError(STATUS_REASONS.get(result.status, f"the reply has status {result.status}"))
+        raise DigestError(
+            STATUS_REASONS.get(result.status, f"the reply has status {result.status}")
+        )
     return parse_digest(result.parsed)
 
 
@@ -122,7 +131,7 @@ def _run_period(
     plan: Plan,
     caller: Caller,
     model_info: ModelInfo,
-    events: Mapping[str, ProgressEvent],
+    events: Mapping[ProgressState, ProgressEvent],
 ) -> PeriodOutcome:
     """Call the model for one period. A failure comes back as an outcome, not an error."""
     limits = plan.limits
@@ -182,11 +191,13 @@ def _llm_usage(usage: Usage) -> LLMUsage:
     )
 
 
-def _events(planned: PlannedPeriod, index: int, total: int) -> dict[str, ProgressEvent]:
-    def event(state: str) -> ProgressEvent:
-        return ProgressEvent(step="map", state=state, period=planned.period.label, index=index, total=total)  # type: ignore[arg-type]
-
-    return {state: event(state) for state in ("start", "cached", "waiting", "done", "failed")}
+def _events(planned: PlannedPeriod, index: int, total: int) -> dict[ProgressState, ProgressEvent]:
+    return {
+        state: ProgressEvent(
+            step="map", state=state, period=planned.period.label, index=index, total=total
+        )
+        for state in MAP_STATES
+    }
 
 
 def map_periods(

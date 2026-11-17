@@ -1,7 +1,7 @@
 """The estimate counts only what a run would send, and never calls a model."""
 
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -71,7 +71,9 @@ def test_after_new_messages_only_the_changed_period_is_counted(cache_path: Path)
     result = guess(grown, cache)
     assert (result["periods"], result["periods_cached"]) == (4, 3)
     assert result["output_tokens"] == 500 + 800
-    fresh = [call for call in planned_calls_for(grown, cache) if call.kind == "map" and not call.cached]
+    fresh = [
+        call for call in planned_calls_for(grown, cache) if call.kind == "map" and not call.cached
+    ]
     assert [call.label for call in fresh] == ["Apr 2023 – May 2023"]
 
 
@@ -92,7 +94,9 @@ def test_the_cost_is_the_sum_of_the_calls_at_model_prices(cache_path: Path) -> N
     info = model_info()
     calls = [call for call in planned_calls_for(LARGE, None) if not call.cached]
     expected = sum(
-        call_cost_usd(info, LLMUsage(input_tokens=call.input_tokens, output_tokens=call.output_tokens))
+        call_cost_usd(
+            info, LLMUsage(input_tokens=call.input_tokens, output_tokens=call.output_tokens)
+        )
         for call in calls
     )
     assert [call.kind for call in calls] == ["map", "map", "map", "map", "reduce"]
@@ -110,7 +114,9 @@ def test_the_long_context_rule_is_judged_per_call() -> None:
     over = [call for call in calls if call.input_tokens > 2_450]
     assert 0 < len(over) < len(calls)
     expected = sum(
-        call_cost_usd(info, LLMUsage(input_tokens=call.input_tokens, output_tokens=call.output_tokens))
+        call_cost_usd(
+            info, LLMUsage(input_tokens=call.input_tokens, output_tokens=call.output_tokens)
+        )
         for call in calls
     )
     assert ruled == pytest.approx(expected)
@@ -150,7 +156,7 @@ def test_the_scope_limits_what_is_counted() -> None:
 
 
 def test_an_estimate_does_not_mark_cache_entries_as_used(cache_path: Path) -> None:
-    now = [datetime(2024, 1, 1, tzinfo=timezone.utc)]
+    now = [datetime(2024, 1, 1, tzinfo=UTC)]
     cache = PeriodCache(cache_path, now=lambda: now[0])
     run(LARGE, cache=cache)
     now[0] += timedelta(days=100)

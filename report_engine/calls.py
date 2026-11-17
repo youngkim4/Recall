@@ -6,7 +6,8 @@ budget is honoured, and the real usage of the reply is counted.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 from report_engine.control import CancelToken, ProgressEvent, Runtime
 from report_engine.errors import LLMError, ReportCancelled

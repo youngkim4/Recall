@@ -6,8 +6,8 @@ end and on every cache key.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Sequence
 
 from report_engine.cache import period_key
 from report_engine.chunking import Period, line_sizer, measure_days, plan_periods
@@ -107,7 +107,7 @@ def _planned_periods(
             key=period_key(MAP_PROMPT_VERSION, model_id, item.labels, item.text),
             request_tokens=period.tokens + overhead + names,
         )
-        for period, own, item, names in zip(periods, sliced, rendered, name_tokens)
+        for period, own, item, names in zip(periods, sliced, rendered, name_tokens, strict=True)
     )
 
 

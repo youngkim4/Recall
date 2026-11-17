@@ -2,7 +2,8 @@
 
 import sys
 import types
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -38,23 +39,56 @@ def frame(**overrides: Any) -> pd.DataFrame:
     return pd.DataFrame(columns)
 
 
-def rows(source: Any, since: str | None = None, until: str | None = None, conversation: str = CONVERSATION) -> list:
+def rows(
+    source: Any,
+    since: str | None = None,
+    until: str | None = None,
+    conversation: str = CONVERSATION,
+) -> list:
     return list(source.messages(conversation, since, until))
 
 
 def test_frame_source_yields_one_conversation_oldest_first() -> None:
     assert rows(FrameSource(frame())) == [
-        {"id": "12", "timestamp": "2024-06-01 09:00:00", "is_from_me": False, "sender": MINA, "text": "first"},
-        {"id": "13", "timestamp": "2024-06-01 09:05:30", "is_from_me": True, "sender": "", "text": "mine"},
-        {"id": "11", "timestamp": "2024-06-02 10:00:00", "is_from_me": False, "sender": MINA, "text": "later"},
-        {"id": "14", "timestamp": "2024-06-03 23:59:59", "is_from_me": False, "sender": MINA, "text": ""},
+        {
+            "id": "12",
+            "timestamp": "2024-06-01 09:00:00",
+            "is_from_me": False,
+            "sender": MINA,
+            "text": "first",
+        },
+        {
+            "id": "13",
+            "timestamp": "2024-06-01 09:05:30",
+            "is_from_me": True,
+            "sender": "",
+            "text": "mine",
+        },
+        {
+            "id": "11",
+            "timestamp": "2024-06-02 10:00:00",
+            "is_from_me": False,
+            "sender": MINA,
+            "text": "later",
+        },
+        {
+            "id": "14",
+            "timestamp": "2024-06-03 23:59:59",
+            "is_from_me": False,
+            "sender": MINA,
+            "text": "",
+        },
     ]
 
 
 def test_frame_source_values_are_plain_python() -> None:
     first = rows(FrameSource(frame()))[0]
     assert [type(first[key]) for key in ("id", "timestamp", "is_from_me", "sender", "text")] == [
-        str, str, bool, str, str,
+        str,
+        str,
+        bool,
+        str,
+        str,
     ]
 
 
@@ -85,18 +119,30 @@ def test_frame_source_dates_are_whole_days_and_both_ends_count(
 def test_frame_source_reads_text_timestamps_and_loose_flags() -> None:
     source = FrameSource(
         frame(
-            timestamp=["2024-06-02 10:00:00", "2024-06-01 09:00:00", "2024-06-01 09:05:30", "bad", None],
+            timestamp=[
+                "2024-06-02 10:00:00",
+                "2024-06-01 09:00:00",
+                "2024-06-01 09:05:30",
+                "bad",
+                None,
+            ],
             is_from_me=["1", "true", "0", None, 1.0],
             message_id=[11.0, 12.0, 13.0, 14.0, 15.0],
             chat_id=[CONVERSATION] * 5,
         )
     )
     found = rows(source)
-    assert [(row["id"], row["is_from_me"]) for row in found] == [("12", True), ("13", False), ("11", True)]
+    assert [(row["id"], row["is_from_me"]) for row in found] == [
+        ("12", True),
+        ("13", False),
+        ("11", True),
+    ]
 
 
 def test_frame_source_says_how_many_rows_had_no_time(caplog: pytest.LogCaptureFixture) -> None:
-    source = FrameSource(frame(timestamp=["2024-06-02 10:00:00", None, None, "2024-06-03 10:00:00", None]))
+    source = FrameSource(
+        frame(timestamp=["2024-06-02 10:00:00", None, None, "2024-06-03 10:00:00", None])
+    )
     with caplog.at_level("WARNING"):
         assert len(rows(source)) == 2
     assert "2 message" in caplog.text
@@ -162,26 +208,87 @@ class StubArchive:
 
 
 ARCHIVE_ROWS = [
-    {"id": 7, "timestamp": "2024-06-01 09:00:00", "is_from_me": 0, "sender": MINA, "text": "hi", "kind": "message"},
-    {"id": 8, "timestamp": "2024-06-01 09:01:00", "is_from_me": 1, "sender": "", "text": "hello", "kind": "message"},
-    {"id": 9, "timestamp": "2024-06-02 10:00:00", "is_from_me": 0, "sender": MINA, "text": "named the chat", "kind": "system"},
-    {"id": 10, "timestamp": "2024-06-03 11:00:00", "is_from_me": 0, "sender": MINA, "text": "", "kind": "message"},
-    {"id": 11, "timestamp": "2024-06-04 12:00:00", "is_from_me": 0, "sender": MINA, "text": "bye", "kind": "message"},
+    {
+        "id": 7,
+        "timestamp": "2024-06-01 09:00:00",
+        "is_from_me": 0,
+        "sender": MINA,
+        "text": "hi",
+        "kind": "message",
+    },
+    {
+        "id": 8,
+        "timestamp": "2024-06-01 09:01:00",
+        "is_from_me": 1,
+        "sender": "",
+        "text": "hello",
+        "kind": "message",
+    },
+    {
+        "id": 9,
+        "timestamp": "2024-06-02 10:00:00",
+        "is_from_me": 0,
+        "sender": MINA,
+        "text": "named the chat",
+        "kind": "system",
+    },
+    {
+        "id": 10,
+        "timestamp": "2024-06-03 11:00:00",
+        "is_from_me": 0,
+        "sender": MINA,
+        "text": "",
+        "kind": "message",
+    },
+    {
+        "id": 11,
+        "timestamp": "2024-06-04 12:00:00",
+        "is_from_me": 0,
+        "sender": MINA,
+        "text": "bye",
+        "kind": "message",
+    },
 ]
 
 
 def test_archive_source_maps_rows_and_skips_system_rows() -> None:
     source = ArchiveSource(StubArchive(ARCHIVE_ROWS))
     assert rows(source) == [
-        {"id": "7", "timestamp": "2024-06-01 09:00:00", "is_from_me": False, "sender": MINA, "text": "hi"},
-        {"id": "8", "timestamp": "2024-06-01 09:01:00", "is_from_me": True, "sender": "", "text": "hello"},
-        {"id": "10", "timestamp": "2024-06-03 11:00:00", "is_from_me": False, "sender": MINA, "text": ""},
-        {"id": "11", "timestamp": "2024-06-04 12:00:00", "is_from_me": False, "sender": MINA, "text": "bye"},
+        {
+            "id": "7",
+            "timestamp": "2024-06-01 09:00:00",
+            "is_from_me": False,
+            "sender": MINA,
+            "text": "hi",
+        },
+        {
+            "id": "8",
+            "timestamp": "2024-06-01 09:01:00",
+            "is_from_me": True,
+            "sender": "",
+            "text": "hello",
+        },
+        {
+            "id": "10",
+            "timestamp": "2024-06-03 11:00:00",
+            "is_from_me": False,
+            "sender": MINA,
+            "text": "",
+        },
+        {
+            "id": "11",
+            "timestamp": "2024-06-04 12:00:00",
+            "is_from_me": False,
+            "sender": MINA,
+            "text": "bye",
+        },
     ]
 
 
 @pytest.mark.parametrize("inclusive_until", [True, False])
-def test_archive_source_covers_whole_days_whatever_the_archive_does_with_until(inclusive_until: bool) -> None:
+def test_archive_source_covers_whole_days_whatever_the_archive_does_with_until(
+    inclusive_until: bool,
+) -> None:
     archive = StubArchive(ARCHIVE_ROWS, inclusive_until=inclusive_until)
     found = rows(ArchiveSource(archive), "2024-06-01", "2024-06-03")
     assert [row["id"] for row in found] == ["7", "8", "10"]
@@ -211,7 +318,9 @@ def test_archive_source_reports_a_row_it_can_not_use() -> None:
     assert "timestamp" in str(caught.value)
 
 
-def test_archive_source_opens_the_archive_package_only_when_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_archive_source_opens_the_archive_package_only_when_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     opened: list[tuple[Any, bool]] = []
 
     class Archive:

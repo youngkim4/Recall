@@ -7,8 +7,8 @@ reserved for fiction.
 from __future__ import annotations
 
 import random
+from collections.abc import Iterator, Sequence
 from datetime import datetime, timedelta
-from typing import Iterator, Sequence
 
 from report_engine.model_info import LongContextRule, ModelInfo
 from report_engine.ports import SourceMessage
@@ -22,9 +22,30 @@ CONVERSATION = MINA
 GROUP = "chat000000000000000042"
 
 WORDS = (
-    "harbor", "lantern", "maple", "ticket", "window", "garden", "signal", "paper",
-    "river", "kettle", "ladder", "orchard", "pencil", "station", "blanket", "compass",
-    "tonight", "maybe", "later", "really", "sorry", "thanks", "okay", "again",
+    "harbor",
+    "lantern",
+    "maple",
+    "ticket",
+    "window",
+    "garden",
+    "signal",
+    "paper",
+    "river",
+    "kettle",
+    "ladder",
+    "orchard",
+    "pencil",
+    "station",
+    "blanket",
+    "compass",
+    "tonight",
+    "maybe",
+    "later",
+    "really",
+    "sorry",
+    "thanks",
+    "okay",
+    "again",
 )
 
 
@@ -128,7 +149,9 @@ def bounds(since: str | None, until: str | None) -> tuple[str, str]:
 class ListSource:
     """In-memory ReportSource. Dates are whole days, both ends included."""
 
-    def __init__(self, messages: Sequence[SourceMessage], conversation_id: str = CONVERSATION) -> None:
+    def __init__(
+        self, messages: Sequence[SourceMessage], conversation_id: str = CONVERSATION
+    ) -> None:
         self._messages = tuple(messages)
         self._conversation = conversation_id
         self.calls: list[tuple[str, str | None, str | None]] = []

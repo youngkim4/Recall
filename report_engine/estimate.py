@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Mapping, Protocol, Sequence
+from typing import Literal, Protocol
 
 from report_engine.errors import EmptyConversationError, StoreError
 from report_engine.model_info import ModelInfo
@@ -142,7 +143,14 @@ def estimate(
 ) -> dict[str, int | float]:
     """Tokens and cost of a run that starts now. Makes no model call."""
     calls = planned_calls(
-        source, conversation, scope, model_info, cache, labeler=labeler, options=options, counter=counter
+        source,
+        conversation,
+        scope,
+        model_info,
+        cache,
+        labeler=labeler,
+        options=options,
+        counter=counter,
     )
     to_send = [call for call in calls if not call.cached]
     maps = [call for call in calls if call.kind == "map"]
@@ -153,7 +161,8 @@ def estimate(
         "cost_usd": float(
             sum(
                 call_cost_usd(
-                    model_info, LLMUsage(input_tokens=call.input_tokens, output_tokens=call.output_tokens)
+                    model_info,
+                    LLMUsage(input_tokens=call.input_tokens, output_tokens=call.output_tokens),
                 )
                 for call in to_send
             )

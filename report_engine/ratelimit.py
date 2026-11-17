@@ -7,7 +7,7 @@ arrives. One run owns one budget; it is not shared between threads.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from report_engine.errors import ConfigError
 

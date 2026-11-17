@@ -33,7 +33,9 @@ def fail_month(month: str, error: Exception | None = None) -> Any:
     return responder
 
 
-def test_a_failing_period_gives_a_partial_report_with_a_warning_that_names_it(cache_path: Path) -> None:
+def test_a_failing_period_gives_a_partial_report_with_a_warning_that_names_it(
+    cache_path: Path,
+) -> None:
     cache = PeriodCache(cache_path)
     llm = FakeLLM(fail_month("2023-02"))
     report = run(LARGE, llm=llm, cache=cache)
@@ -304,7 +306,9 @@ def test_progress_says_when_a_period_is_cached_failed_or_waiting(cache_path: Pat
     assert states[-1] == ("Apr 2023", "done")
 
 
-def test_a_progress_callback_that_raises_does_not_stop_the_run(caplog: pytest.LogCaptureFixture) -> None:
+def test_a_progress_callback_that_raises_does_not_stop_the_run(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     def broken(event: ProgressEvent) -> None:
         raise RuntimeError("ui went away")
 

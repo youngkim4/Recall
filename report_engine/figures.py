@@ -7,7 +7,7 @@ the dynamics section that no summary can carry. They use speaker names only.
 from __future__ import annotations
 
 from collections import Counter
-from typing import Sequence
+from collections.abc import Sequence
 
 from report_engine.dates import days_between, parse_day
 from report_engine.transcript import OWN_LABEL, Line
@@ -39,7 +39,7 @@ def _starts(lines: Sequence[Line]) -> Counter[str]:
 
 def _longest_silence(days: Sequence[str]) -> tuple[int, str, str]:
     best = (0, "", "")
-    for earlier, later in zip(days, days[1:]):
+    for earlier, later in zip(days, days[1:], strict=False):
         gap = days_between(earlier, later)
         if gap > best[0]:
             best = (gap, earlier, later)

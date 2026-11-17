@@ -45,7 +45,13 @@ def reply(
         "tool_choice": "auto",
         "tools": [],
         "output": [
-            {"id": "msg_test", "type": "message", "role": "assistant", "status": "completed", "content": content}
+            {
+                "id": "msg_test",
+                "type": "message",
+                "role": "assistant",
+                "status": "completed",
+                "content": content,
+            }
         ],
         "usage": usage
         if usage is not None
@@ -62,7 +68,9 @@ def reply(
     return Response.model_validate(payload)
 
 
-def status_error(kind: type, code: int, *, headers: dict[str, str] | None = None, body: Any = None) -> Exception:
+def status_error(
+    kind: type, code: int, *, headers: dict[str, str] | None = None, body: Any = None
+) -> Exception:
     response = httpx.Response(code, headers=headers or {}, request=REQUEST)
     return kind("the service said no", response=response, body=body)
 
@@ -130,7 +138,11 @@ def test_without_a_schema_or_reasoning_those_fields_are_not_sent() -> None:
 def test_usage_is_read_from_the_reply() -> None:
     llm, _ = adapter(Client(reply()))
     result = ask(llm)
-    assert (result.usage.input_tokens, result.usage.cached_input_tokens, result.usage.output_tokens) == (1200, 200, 90)
+    assert (
+        result.usage.input_tokens,
+        result.usage.cached_input_tokens,
+        result.usage.output_tokens,
+    ) == (1200, 200, 90)
     assert result.parsed == {"summary": "ok"}
     assert result.attempts == 1
 
@@ -145,7 +157,9 @@ def test_a_reply_without_usage_counts_zero_and_says_so(caplog: pytest.LogCapture
 
 
 def test_an_incomplete_reply_is_returned_once_and_never_sent_again() -> None:
-    client = Client(reply('{"summary": "cut', status="incomplete", reason="max_output_tokens"), reply())
+    client = Client(
+        reply('{"summary": "cut', status="incomplete", reason="max_output_tokens"), reply()
+    )
     llm, slept = adapter(client)
     result = ask(llm)
     assert result.status == "incomplete"
@@ -196,7 +210,9 @@ def test_a_rate_limit_is_retried_after_the_time_the_service_names() -> None:
 
 
 def test_the_millisecond_header_wins_over_the_second_header() -> None:
-    limited = status_error(openai.RateLimitError, 429, headers={"retry-after-ms": "1500", "retry-after": "9"})
+    limited = status_error(
+        openai.RateLimitError, 429, headers={"retry-after-ms": "1500", "retry-after": "9"}
+    )
     llm, slept = adapter(Client(limited, reply()))
     ask(llm)
     assert slept == [1.5]
@@ -228,7 +244,9 @@ def test_retries_are_bounded() -> None:
 
 def test_backoff_has_jitter_and_a_cap() -> None:
     errors = [openai.APITimeoutError(REQUEST) for _ in range(4)]
-    llm, slept = adapter(Client(*errors, reply()), max_retries=4, max_retry_wait_s=5.0, jitter=lambda: 0.0)
+    llm, slept = adapter(
+        Client(*errors, reply()), max_retries=4, max_retry_wait_s=5.0, jitter=lambda: 0.0
+    )
     result = ask(llm)
     assert slept == [1.0, 2.0, 2.5, 2.5]
     assert result.attempts == 5
@@ -274,7 +292,10 @@ def test_lasting_failures_are_not_retried(error: Exception, code: int) -> None:
 
 def test_an_empty_account_is_not_retried() -> None:
     broke = status_error(
-        openai.RateLimitError, 429, headers={"retry-after": "1"}, body={"code": "insufficient_quota"}
+        openai.RateLimitError,
+        429,
+        headers={"retry-after": "1"},
+        body={"code": "insufficient_quota"},
     )
     client = Client(broke, reply())
     llm, slept = adapter(client)
@@ -331,18 +352,24 @@ def test_a_schema_name_is_made_safe() -> None:
     assert client.responses.calls[0]["text"]["format"]["name"] == "reply"
 
 
-def test_build_client_turns_off_the_sdk_retries_and_sets_the_timeout(blocked_attempts: list[str]) -> None:
+def test_build_client_turns_off_the_sdk_retries_and_sets_the_timeout(
+    blocked_attempts: list[str],
+) -> None:
     client = build_client("sk-test-dummy-not-a-real-key", timeout_s=45.0)
     assert client.max_retries == 0
     assert client.timeout == 45.0
     assert blocked_attempts == []
 
 
-def test_a_request_to_a_host_that_does_not_exist_is_blocked_and_wrapped(blocked_attempts: list[str]) -> None:
+def test_a_request_to_a_host_that_does_not_exist_is_blocked_and_wrapped(
+    blocked_attempts: list[str],
+) -> None:
     """The SDK's own HTTP stack runs here. The host is under .invalid, which never
     resolves, and the socket guard stops the lookup before it starts."""
     before = len(blocked_attempts)
-    client = build_client("sk-test-dummy-not-a-real-key", timeout_s=5.0, base_url="https://api.invalid/v1")
+    client = build_client(
+        "sk-test-dummy-not-a-real-key", timeout_s=5.0, base_url="https://api.invalid/v1"
+    )
     llm = OpenAIResponsesLLM(client, "test-model-1", timeout_s=5.0, max_retries=0)
     with pytest.raises(LLMError) as caught:
         llm.generate(MESSAGES, max_output_tokens=16)

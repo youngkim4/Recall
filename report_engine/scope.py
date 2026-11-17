@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 
 from report_engine.dates import DAY_LENGTH
 from report_engine.models import Scope
@@ -40,6 +40,4 @@ def inclusive_bounds(scope: Scope) -> tuple[str | None, str | None]:
 def in_bounds(timestamp: str, low: str | None, high: str | None) -> bool:
     if low is not None and timestamp < low:
         return False
-    if high is not None and timestamp > high:
-        return False
-    return True
+    return high is None or timestamp <= high

@@ -15,11 +15,12 @@ import json
 import logging
 import os
 import sqlite3
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping, Sequence
+from typing import Any
 
 from report_engine.errors import StoreError
 from report_engine.ports import LLMUsage
@@ -71,7 +72,7 @@ class CacheEntry:
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _chunks(keys: Sequence[str]) -> Iterator[Sequence[str]]:
@@ -82,7 +83,9 @@ def _chunks(keys: Sequence[str]) -> Iterator[Sequence[str]]:
 class PeriodCache:
     """Opens the file per operation, so threads and processes can share it."""
 
-    def __init__(self, path: str | os.PathLike[str], now: Callable[[], datetime] = _utc_now) -> None:
+    def __init__(
+        self, path: str | os.PathLike[str], now: Callable[[], datetime] = _utc_now
+    ) -> None:
         self._path = Path(path)
         self._now = now
         try:
@@ -114,7 +117,7 @@ class PeriodCache:
             conn.close()
 
     def _stamp(self) -> str:
-        return self._now().astimezone(timezone.utc).isoformat(timespec="seconds")
+        return self._now().astimezone(UTC).isoformat(timespec="seconds")
 
     def known(self, keys: Sequence[str]) -> frozenset[str]:
         """Which of these keys have an entry. Reads no payload."""
@@ -133,7 +136,9 @@ class PeriodCache:
             for chunk in _chunks(list(keys)):
                 marks = ",".join("?" * len(chunk))
                 rows.extend(
-                    conn.execute(f"SELECT {_COLUMNS} FROM period_results WHERE key IN ({marks})", chunk)
+                    conn.execute(
+                        f"SELECT {_COLUMNS} FROM period_results WHERE key IN ({marks})", chunk
+                    )
                 )
         entries: dict[str, CacheEntry] = {}
         broken: list[str] = []
@@ -188,11 +193,13 @@ class PeriodCache:
 
     def prune(self, unused_for_days: int) -> int:
         """Delete entries no run has read for this many days. Returns how many."""
-        cutoff = (self._now().astimezone(timezone.utc) - timedelta(days=unused_for_days)).isoformat(
+        cutoff = (self._now().astimezone(UTC) - timedelta(days=unused_for_days)).isoformat(
             timespec="seconds"
         )
         with self._open() as conn:
-            return conn.execute("DELETE FROM period_results WHERE last_used_at < ?", (cutoff,)).rowcount
+            return conn.execute(
+                "DELETE FROM period_results WHERE last_used_at < ?", (cutoff,)
+            ).rowcount
 
     def clear(self) -> int:
         with self._open() as conn:

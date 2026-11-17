@@ -52,7 +52,14 @@ def test_the_labeler_is_never_asked_about_own_messages() -> None:
 
 @pytest.mark.parametrize(
     "bad",
-    ["+12025550143", "(202) 555-0143", "202.555.0143", "theo@example.com", "Theo <theo@example.com>", ""],
+    [
+        "+12025550143",
+        "(202) 555-0143",
+        "202.555.0143",
+        "theo@example.com",
+        "Theo <theo@example.com>",
+        "",
+    ],
 )
 def test_a_label_that_is_a_handle_or_empty_becomes_unsaved(bad: str) -> None:
     lines = build_lines([message(1, "2024-06-01 09:00:00", "hi")], lambda sender: bad)
@@ -72,7 +79,10 @@ def test_unsaved_senders_keep_their_number_when_more_arrive() -> None:
     later = [*first, message(2, "2024-06-02 09:00:00", "b", sender=RAVI)]
     nameless = lambda sender: ""  # noqa: E731
     assert [line.label for line in build_lines(first, nameless)] == [UNSAVED_LABEL]
-    assert [line.label for line in build_lines(later, nameless)] == [UNSAVED_LABEL, f"{UNSAVED_LABEL} 2"]
+    assert [line.label for line in build_lines(later, nameless)] == [
+        UNSAVED_LABEL,
+        f"{UNSAVED_LABEL} 2",
+    ]
 
 
 def test_a_contact_named_like_the_owner_does_not_pass_as_the_owner() -> None:
@@ -81,7 +91,9 @@ def test_a_contact_named_like_the_owner_does_not_pass_as_the_owner() -> None:
 
 
 def test_labels_are_cleaned_for_the_line_format() -> None:
-    lines = build_lines([message(1, "2024-06-01 09:00:00", "a")], lambda sender: " Dr.\nMina:  Office ")
+    lines = build_lines(
+        [message(1, "2024-06-01 09:00:00", "a")], lambda sender: " Dr.\nMina:  Office "
+    )
     assert lines[0].label == "Dr. Mina Office"
 
 
@@ -110,7 +122,9 @@ def test_lines_are_sorted_when_the_source_is_not() -> None:
     assert [line.id for line in lines] == ["1", "2", "3"]
 
 
-@pytest.mark.parametrize("stamp", ["2024-06-01", "2024-06-01T09:00:00", "not a time", "2024-13-01 09:00:00"])
+@pytest.mark.parametrize(
+    "stamp", ["2024-06-01", "2024-06-01T09:00:00", "not a time", "2024-13-01 09:00:00"]
+)
 def test_a_bad_timestamp_is_a_source_error(stamp: str) -> None:
     with pytest.raises(SourceError) as caught:
         build_lines([message("m-77", stamp, "hi")], labeler)
@@ -167,11 +181,15 @@ def test_render_period_shortens_a_very_long_message_but_keeps_both_ends() -> Non
 
 @pytest.mark.parametrize("ref, index", [("m1", 0), ("M2", 1), (" [m3] ", 2), ("m3.", 2)])
 def test_resolve_ref_maps_back_to_the_line(ref: str, index: int) -> None:
-    lines = tuple(Line(id=str(n), day="2024-06-01", clock="09:00", label="Mina", text="t") for n in range(3))
+    lines = tuple(
+        Line(id=str(n), day="2024-06-01", clock="09:00", label="Mina", text="t") for n in range(3)
+    )
     assert resolve_ref(ref, lines) is lines[index]
 
 
 @pytest.mark.parametrize("ref", ["m0", "m4", "m", "12", "msg1", "", "m1x", "m-1"])
 def test_resolve_ref_rejects_what_is_not_a_line_of_the_period(ref: str) -> None:
-    lines = tuple(Line(id=str(n), day="2024-06-01", clock="09:00", label="Mina", text="t") for n in range(3))
+    lines = tuple(
+        Line(id=str(n), day="2024-06-01", clock="09:00", label="Mina", text="t") for n in range(3)
+    )
     assert resolve_ref(ref, lines) is None

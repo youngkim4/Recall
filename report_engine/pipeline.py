@@ -11,8 +11,9 @@ step (`ReportStore.save`).
 from __future__ import annotations
 
 import logging
-from datetime import timezone
-from typing import Any, Mapping
+from collections.abc import Mapping
+from datetime import UTC
+from typing import Any
 
 from report_engine.calls import Caller, Emit
 from report_engine.control import CancelToken, ProgressCallback, ProgressEvent, Runtime
@@ -102,10 +103,14 @@ def _summaries(plan: Plan, mapped: MapResult) -> tuple[tuple[PeriodSummary, ...]
     """Verify each period's moments against the whole conversation."""
     index = MessageIndex(plan.lines)
     checks = [
-        check_moments(outcome.digest.moments, outcome.planned.lines, index) if outcome.digest else None
+        check_moments(outcome.digest.moments, outcome.planned.lines, index)
+        if outcome.digest
+        else None
         for outcome in mapped.outcomes
     ]
-    summaries = tuple(_summary(outcome, check) for outcome, check in zip(mapped.outcomes, checks))
+    summaries = tuple(
+        _summary(outcome, check) for outcome, check in zip(mapped.outcomes, checks, strict=True)
+    )
     return summaries, _check_warnings([check for check in checks if check is not None])
 
 
@@ -132,7 +137,12 @@ def run_report(
     clock = runtime or Runtime()
     emit = _emitter(on_progress)
     caller = Caller(
-        llm=llm, model_info=model_info, runtime=clock, cancel=cancel, emit=emit, reasoning=chosen.reasoning
+        llm=llm,
+        model_info=model_info,
+        runtime=clock,
+        cancel=cancel,
+        emit=emit,
+        reasoning=chosen.reasoning,
     )
     caller.check_cancel()
 
@@ -160,7 +170,9 @@ def run_report(
     )
     failures = [_failure_warning(outcome) for outcome in mapped.outcomes if outcome.digest is None]
     if len(failures) == total:
-        raise AllPeriodsFailed(f"no period could be analysed; the first failure: {failures[0]}", usage=caller.usage)
+        raise AllPeriodsFailed(
+            f"no period could be analysed; the first failure: {failures[0]}", usage=caller.usage
+        )
 
     periods, check_warnings = _summaries(plan, mapped)
     moments = select_moments(
@@ -188,7 +200,7 @@ def run_report(
         conversation=conversation,
         scope=plan.scope,
         model=model_info.id,
-        created_at=created.astimezone(timezone.utc).isoformat(timespec="seconds"),
+        created_at=created.astimezone(UTC).isoformat(timespec="seconds"),
         status="partial" if failures else "complete",
         warnings=(*failures, *mapped.warnings, *check_warnings),
         sections=sections,

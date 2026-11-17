@@ -12,8 +12,8 @@ composition are evened out. Letter case must match.
 from __future__ import annotations
 
 import unicodedata
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import Iterator, Sequence
 
 from report_engine.dates import is_day, shift_day
 from report_engine.digest import MAX_DETAIL_CHARS, MAX_QUOTE_CHARS, MAX_TITLE_CHARS, RawMoment
@@ -153,7 +153,7 @@ def _check_one(
         date=date,
         title=title,
         detail=squash(raw.detail)[:MAX_DETAIL_CHARS],
-        category=raw.category,  # type: ignore[arg-type]
+        category=raw.category,
         score=min(1.0, max(0.0, raw.score)),
         quote=quote if source is not None else "",
         message_ids=tuple(ids),

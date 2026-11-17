@@ -44,7 +44,7 @@ class LLMError(ReportEngineError):
 class RunError(ReportEngineError):
     """A run ended without a report. `usage` holds what the run spent."""
 
-    def __init__(self, message: str, usage: "Usage | None" = None) -> None:
+    def __init__(self, message: str, usage: Usage | None = None) -> None:
         super().__init__(message)
         self.usage = usage
 

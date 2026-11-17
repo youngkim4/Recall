@@ -61,7 +61,7 @@ class Scope(_Record):
     _until_ok = field_validator("until")(_check_bound)
 
     @model_validator(mode="after")
-    def _ordered(self) -> "Scope":
+    def _ordered(self) -> Scope:
         if self.since and self.until and self.since[:DAY_LENGTH] > self.until[:DAY_LENGTH]:
             raise ValueError("scope: since is after until")
         return self
@@ -76,7 +76,7 @@ class Usage(_Record):
     cost_usd: float = Field(default=0.0, ge=0)
     calls: int = Field(default=0, ge=0)
 
-    def plus(self, other: "Usage") -> "Usage":
+    def plus(self, other: Usage) -> Usage:
         return Usage(
             input_tokens=self.input_tokens + other.input_tokens,
             cached_input_tokens=self.cached_input_tokens + other.cached_input_tokens,
@@ -149,7 +149,7 @@ class Report(_Record):
         return value
 
     @model_validator(mode="after")
-    def _fixed_sections(self) -> "Report":
+    def _fixed_sections(self) -> Report:
         keys = tuple(section.key for section in self.sections)
         if keys != SECTION_KEYS:
             raise ValueError(f"sections must be {SECTION_KEYS} in this order, got {keys}")

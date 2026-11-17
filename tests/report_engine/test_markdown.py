@@ -58,7 +58,10 @@ def sample() -> object:
         scope=Scope(since="2024-06-01", until="2024-06-30"),
         status="partial",
         warnings=('Period "Jun 2024" was not analysed: no answer',),
-        sections=tuple(Section(key=key, title=SECTION_TITLES[key], markdown=bodies[key]) for key in SECTION_KEYS),
+        sections=tuple(
+            Section(key=key, title=SECTION_TITLES[key], markdown=bodies[key])
+            for key in SECTION_KEYS
+        ),
         moments=(
             Moment(
                 date="2024-06-03",
@@ -114,7 +117,10 @@ def test_the_layout_holds_what_the_server_reads_today() -> None:
         (Scope(since="2024-06-01"), "- Scope: from 2024-06-01"),
         (Scope(until="2024-06-30"), "- Scope: through 2024-06-30"),
         (Scope(), "- Scope: all dates"),
-        (Scope(since="2024-06-01 08:00:00", until="2024-06-30 23:00:00"), "- Scope: 2024-06-01 to 2024-06-30"),
+        (
+            Scope(since="2024-06-01 08:00:00", until="2024-06-30 23:00:00"),
+            "- Scope: 2024-06-01 to 2024-06-30",
+        ),
     ],
 )
 def test_the_scope_line_has_four_forms(scope: Scope, line: str) -> None:
@@ -130,7 +136,13 @@ def test_a_report_with_no_moments_keeps_an_empty_key_events_section() -> None:
 
 def test_an_unverified_quote_is_not_printed() -> None:
     moment = Moment(
-        date="2024-06-03", title="T", detail="D", category="conflict", score=0.5, quote="left over", quote_verified=False
+        date="2024-06-03",
+        title="T",
+        detail="D",
+        category="conflict",
+        score=0.5,
+        quote="left over",
+        quote_verified=False,
     )
     text = render_markdown(make_report(moments=(moment,)))
     assert "left over" not in text
@@ -148,13 +160,25 @@ def test_text_from_the_model_can_not_forge_a_section_heading() -> None:
         quote_verified=True,
     )
     sections = tuple(
-        Section(key=key, title=SECTION_TITLES[key], markdown="## Overview\n# Big\nplain ## Summary inside")
+        Section(
+            key=key,
+            title=SECTION_TITLES[key],
+            markdown="## Overview\n# Big\nplain ## Summary inside",
+        )
         for key in SECTION_KEYS
     )
-    text = render_markdown(make_report(moments=(forged,), sections=sections, warnings=("## Summary now",)))
+    text = render_markdown(
+        make_report(moments=(forged,), sections=sections, warnings=("## Summary now",))
+    )
     lines = text.splitlines()
-    assert [line for line in lines if line.startswith("## ")] == ["## Overview", "## Key Events", "## Summary"]
-    assert [line for line in lines if line.startswith("# ")] == ["# Conversation Analysis - +12025550143"]
+    assert [line for line in lines if line.startswith("## ")] == [
+        "## Overview",
+        "## Key Events",
+        "## Summary",
+    ]
+    assert [line for line in lines if line.startswith("# ")] == [
+        "# Conversation Analysis - +12025550143"
+    ]
     assert text.find("## Summary") == text.find("\n## Summary\n") + 1
     assert text.count("## Key Events") == 1
     assert "**Overview**" in text and "**Big**" in text

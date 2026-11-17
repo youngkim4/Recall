@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import itertools
-from datetime import datetime, timezone
-from typing import Any, Sequence
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from typing import Any
 
 from report_engine.control import Runtime
 from report_engine.fake_llm import FakeLLM
@@ -16,7 +17,7 @@ from report_engine.ports import SourceMessage
 
 from .synth import CONVERSATION, ListSource, WordCounter, conversation, labeler, model_info
 
-CREATED = datetime(2024, 7, 1, 10, 15, 0, tzinfo=timezone.utc)
+CREATED = datetime(2024, 7, 1, 10, 15, 0, tzinfo=UTC)
 
 SMALL_OPTIONS = ReportOptions(
     period_token_budget=2_500,

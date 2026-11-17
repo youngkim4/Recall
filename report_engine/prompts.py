@@ -9,7 +9,8 @@ No prompt holds a conversation id or a raw sender. Names come from the labeler.
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from report_engine.digest import MAX_MOMENTS_PER_PERIOD
 from report_engine.models import CATEGORIES, SECTION_KEYS, Moment, PeriodSummary
@@ -144,7 +145,9 @@ def map_user_text(transcript: str, labels: Sequence[str], notes: Sequence[Note])
     )
 
 
-def map_messages(transcript: str, labels: Sequence[str], notes: Sequence[Note]) -> list[ChatMessage]:
+def map_messages(
+    transcript: str, labels: Sequence[str], notes: Sequence[Note]
+) -> list[ChatMessage]:
     return [
         {"role": "system", "content": MAP_SYSTEM},
         {"role": "user", "content": map_user_text(transcript, labels, notes)},
@@ -159,7 +162,8 @@ def map_overhead_text() -> str:
 def reduce_overhead_text() -> str:
     """Everything in a reduce request but the figures, summaries and moments, for sizing."""
     return "\n".join(
-        message["content"] for message in reduce_messages(labels=(), figures="", periods=(), moments=())
+        message["content"]
+        for message in reduce_messages(labels=(), figures="", periods=(), moments=())
     )
 
 
@@ -171,7 +175,9 @@ def _period_block(period: PeriodSummary) -> str:
 
 
 def _moment_block(number: int, moment: Moment) -> str:
-    head = f"{number}. {moment.date} | {moment.category} | score {moment.score:.2f} | {moment.title}"
+    head = (
+        f"{number}. {moment.date} | {moment.category} | score {moment.score:.2f} | {moment.title}"
+    )
     body = f"   {moment.detail}" if moment.detail else ""
     quote = f'   Quote: "{moment.quote}"' if moment.quote_verified and moment.quote else ""
     return "\n".join(part for part in (head, body, quote) if part)

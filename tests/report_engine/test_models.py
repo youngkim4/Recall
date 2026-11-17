@@ -19,7 +19,8 @@ from report_engine.scope import inclusive_bounds
 
 def sections() -> tuple[Section, ...]:
     return tuple(
-        Section(key=key, title=SECTION_TITLES[key], markdown=f"text for {key}") for key in SECTION_KEYS
+        Section(key=key, title=SECTION_TITLES[key], markdown=f"text for {key}")
+        for key in SECTION_KEYS
     )
 
 
@@ -119,7 +120,9 @@ def test_usage_adds_up() -> None:
     first = Usage(input_tokens=5, cached_input_tokens=1, output_tokens=2, cost_usd=0.5, calls=1)
     second = Usage(input_tokens=7, cached_input_tokens=0, output_tokens=3, cost_usd=0.25, calls=2)
     total = first.plus(second)
-    assert total == Usage(input_tokens=12, cached_input_tokens=1, output_tokens=5, cost_usd=0.75, calls=3)
+    assert total == Usage(
+        input_tokens=12, cached_input_tokens=1, output_tokens=5, cost_usd=0.75, calls=3
+    )
     assert first.input_tokens == 5
 
 

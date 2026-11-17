@@ -21,7 +21,8 @@ import logging
 import random
 import re
 import time
-from typing import Any, Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 import openai
 
@@ -63,7 +64,12 @@ def _scrub(text: str) -> str:
 def _schema_format(schema: Mapping[str, Any]) -> dict[str, Any]:
     name = _UNSAFE_NAME.sub("_", str(schema.get("title") or "")).strip("_")[:MAX_SCHEMA_NAME_CHARS]
     body = {key: value for key, value in schema.items() if key != "title"}
-    return {"type": "json_schema", "name": name or DEFAULT_SCHEMA_NAME, "schema": body, "strict": True}
+    return {
+        "type": "json_schema",
+        "name": name or DEFAULT_SCHEMA_NAME,
+        "schema": body,
+        "strict": True,
+    }
 
 
 def _request(
@@ -90,7 +96,9 @@ def _request(
         "max_output_tokens": max_output_tokens,
         "timeout": timeout_s,
     }
-    instructions = "\n\n".join(message["content"] for message in messages if message["role"] == "system")
+    instructions = "\n\n".join(
+        message["content"] for message in messages if message["role"] == "system"
+    )
     if instructions:
         request["instructions"] = instructions
     if reasoning:
@@ -144,7 +152,9 @@ def _result(response: Any, wants_json: bool, attempts: int) -> LLMResult:
     else:
         status = "completed"
     parsed = _parsed(text) if wants_json and status == "completed" and text else None
-    return LLMResult(text=text, parsed=parsed, usage=_usage(response), status=status, attempts=attempts)
+    return LLMResult(
+        text=text, parsed=parsed, usage=_usage(response), status=status, attempts=attempts
+    )
 
 
 def _retry_after(error: Exception) -> float | None:
@@ -192,7 +202,11 @@ def _describe(error: Exception) -> str:
     api_code = getattr(error, "code", None)
     where = ", ".join(str(part) for part in (f"HTTP {code}" if code else None, api_code) if part)
     message = _scrub(getattr(error, "message", "") or str(error))
-    head = f"the model service failed ({where})" if where else f"the model service failed ({type(error).__name__})"
+    head = (
+        f"the model service failed ({where})"
+        if where
+        else f"the model service failed ({type(error).__name__})"
+    )
     return f"{head}: {message}" if message else head
 
 
@@ -225,7 +239,7 @@ class OpenAIResponsesLLM:
         named = _retry_after(error)
         if named is not None:
             return named if named <= self._max_retry_wait_s else None
-        backoff = min(self._max_retry_wait_s, BACKOFF_BASE_SECONDS * 2 ** (attempt - 1))
+        backoff = min(self._max_retry_wait_s, BACKOFF_BASE_SECONDS * 2.0 ** (attempt - 1))
         return backoff * (0.5 + 0.5 * self._jitter())
 
     def generate(
@@ -236,7 +250,9 @@ class OpenAIResponsesLLM:
         max_output_tokens: int,
         reasoning: str | None = None,
     ) -> LLMResult:
-        request = _request(self._model, messages, schema, max_output_tokens, reasoning, self._timeout_s)
+        request = _request(
+            self._model, messages, schema, max_output_tokens, reasoning, self._timeout_s
+        )
         attempts = self._max_retries + 1
         for attempt in range(1, attempts + 1):
             try:

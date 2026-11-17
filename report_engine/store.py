@@ -24,7 +24,13 @@ from report_engine.errors import ReportNotFound, StoreError
 from report_engine.markdown import render_markdown
 from report_engine.models import SCHEMA_VERSION, Report, ReportStatus, Scope
 
-__all__ = ["ReportEntry", "ReportStore", "conversation_folder", "render_markdown", "write_text_atomic"]
+__all__ = [
+    "ReportEntry",
+    "ReportStore",
+    "conversation_folder",
+    "render_markdown",
+    "write_text_atomic",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +108,9 @@ def _publish_new(temp: Path, target: Path) -> None:
         os.link(temp, target)
         return
     except FileExistsError as exc:
-        raise StoreError(f"report {target.stem} already exists; a run never overwrites one") from exc
+        raise StoreError(
+            f"report {target.stem} already exists; a run never overwrites one"
+        ) from exc
     except OSError:
         pass  # no hard links on this file system
     if target.exists():

@@ -42,7 +42,9 @@ def test_a_small_and_a_large_conversation_give_the_same_four_sections() -> None:
     assert [period.label for period in large.periods] == LARGE_LABELS
     for report in (small, large):
         assert [section.key for section in report.sections] == list(SECTION_KEYS)
-        assert [section.title for section in report.sections] == [SECTION_TITLES[key] for key in SECTION_KEYS]
+        assert [section.title for section in report.sections] == [
+            SECTION_TITLES[key] for key in SECTION_KEYS
+        ]
         assert all(section.markdown.strip() for section in report.sections)
         assert report.status == "complete"
         assert report.warnings == ()
@@ -52,7 +54,12 @@ def test_the_model_is_called_once_per_period_oldest_first_and_then_once_to_reduc
     llm = FakeLLM()
     run(LARGE, llm=llm)
     assert [call.kind for call in llm.calls] == ["map", "map", "map", "map", "reduce"]
-    assert [call.first_day[:7] for call in llm.map_calls] == ["2023-01", "2023-02", "2023-03", "2023-04"]
+    assert [call.first_day[:7] for call in llm.map_calls] == [
+        "2023-01",
+        "2023-02",
+        "2023-03",
+        "2023-04",
+    ]
 
 
 def test_a_second_run_with_no_new_messages_makes_no_period_call(cache_path: Path) -> None:
@@ -64,11 +71,15 @@ def test_a_second_run_with_no_new_messages_makes_no_period_call(cache_path: Path
     assert len(llm.reduce_calls) == 1
     assert [period.from_cache for period in first.periods] == [False] * 4
     assert [period.from_cache for period in second.periods] == [True] * 4
-    assert [period.summary for period in second.periods] == [period.summary for period in first.periods]
+    assert [period.summary for period in second.periods] == [
+        period.summary for period in first.periods
+    ]
     assert second.moments == first.moments
 
 
-def test_a_run_after_new_messages_makes_one_period_call_and_the_reduce_call(cache_path: Path) -> None:
+def test_a_run_after_new_messages_makes_one_period_call_and_the_reduce_call(
+    cache_path: Path,
+) -> None:
     cache = PeriodCache(cache_path)
     run(LARGE, llm=FakeLLM(), cache=cache)
     grown = [*LARGE, *conversation("2023-05-01", days=2, per_day=3, first_id=50_000)]
@@ -82,7 +93,9 @@ def test_a_run_after_new_messages_makes_one_period_call_and_the_reduce_call(cach
     assert report.periods[-1].label == "Apr 2023 – May 2023"
 
 
-def test_new_messages_that_start_a_new_period_leave_the_old_ones_in_the_cache(cache_path: Path) -> None:
+def test_new_messages_that_start_a_new_period_leave_the_old_ones_in_the_cache(
+    cache_path: Path,
+) -> None:
     cache = PeriodCache(cache_path)
     run(LARGE, llm=FakeLLM(), cache=cache)
     grown = [*LARGE, *conversation("2023-05-01", days=31, per_day=6, words=8, first_id=50_000)]
@@ -223,7 +236,9 @@ def test_usage_and_cost_add_up() -> None:
     results = []
 
     def responder(call: FakeCall) -> Any:
-        usage = LLMUsage(input_tokens=1_000 * (len(results) + 1), cached_input_tokens=100, output_tokens=50)
+        usage = LLMUsage(
+            input_tokens=1_000 * (len(results) + 1), cached_input_tokens=100, output_tokens=50
+        )
         results.append(completed(call, default_reply(call), usage=usage))
         return results[-1]
 
@@ -259,7 +274,11 @@ def test_the_report_records_who_what_and_when() -> None:
     assert report.scope == Scope()
     assert report.stats == {"totalMessages": 40, "nested": {"ratio": 0.5}}
     (period,) = report.periods
-    assert (period.label, period.first_day, period.last_day) == ("Jun 2024", "2024-06-01", "2024-06-10")
+    assert (period.label, period.first_day, period.last_day) == (
+        "Jun 2024",
+        "2024-06-01",
+        "2024-06-10",
+    )
     assert period.message_count == 40
     assert len(period.cache_key) == 64
     assert period.carry_over == "Fake notes: the talk ran until 2024-06-10."
@@ -268,7 +287,9 @@ def test_the_report_records_who_what_and_when() -> None:
 def test_the_scope_goes_to_the_source_and_into_the_report() -> None:
     source = ListSource(SMALL)
     llm = FakeLLM()
-    report = run(SMALL, llm=llm, source=source, scope={"since": "2024-06-03", "until": "2024-06-05"})
+    report = run(
+        SMALL, llm=llm, source=source, scope={"since": "2024-06-03", "until": "2024-06-05"}
+    )
     assert source.calls == [(CONVERSATION, "2024-06-03", "2024-06-05")]
     assert report.scope == Scope(since="2024-06-03", until="2024-06-05")
     assert (llm.map_calls[0].first_day, llm.map_calls[0].last_day) == ("2024-06-03", "2024-06-05")
@@ -285,7 +306,10 @@ def test_no_messages_in_scope_is_an_error_before_any_call() -> None:
 def test_output_limits_and_reasoning_reach_the_model() -> None:
     llm = FakeLLM()
     run(SMALL, llm=llm, options=replace(SMALL_OPTIONS, reasoning="low"))
-    assert [(call.max_output_tokens, call.reasoning) for call in llm.calls] == [(500, "low"), (800, "low")]
+    assert [(call.max_output_tokens, call.reasoning) for call in llm.calls] == [
+        (500, "low"),
+        (800, "low"),
+    ]
     capped = FakeLLM()
     run(SMALL, llm=capped, info=model_info(max_output_tokens=300))
     assert [call.max_output_tokens for call in capped.calls] == [300, 300]

@@ -37,7 +37,10 @@ def test_long_context_rule_scales_cached_input_too() -> None:
 
 def test_cached_multiplier_can_differ_from_input_multiplier() -> None:
     rule = LongContextRule(
-        threshold_tokens=10, input_multiplier=2.0, output_multiplier=1.0, cached_input_multiplier=1.0
+        threshold_tokens=10,
+        input_multiplier=2.0,
+        output_multiplier=1.0,
+        cached_input_multiplier=1.0,
     )
     info = model_info(long_context=rule)
     usage = LLMUsage(input_tokens=1_000_000, cached_input_tokens=1_000_000)
@@ -94,7 +97,11 @@ def test_model_info_accepts_a_plain_mapping() -> None:
             "input_usd_per_mtok": 1,
             "cached_input_usd_per_mtok": 0.1,
             "output_usd_per_mtok": 4,
-            "long_context": {"threshold_tokens": 50, "input_multiplier": 2, "output_multiplier": 1.5},
+            "long_context": {
+                "threshold_tokens": 50,
+                "input_multiplier": 2,
+                "output_multiplier": 1.5,
+            },
             "tokens_per_minute": 1000,
             "tokenizer_family": "words",
         }

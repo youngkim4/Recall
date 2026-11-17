@@ -6,8 +6,9 @@ A caller gives it a message source, a labeler and a model.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Iterator, Literal, Mapping, Protocol, Sequence, TypedDict
+from typing import Any, Literal, Protocol, TypedDict
 
 
 class SourceMessage(TypedDict):

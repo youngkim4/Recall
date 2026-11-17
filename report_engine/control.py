@@ -5,9 +5,10 @@ from __future__ import annotations
 import secrets
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Callable, Literal
+from datetime import UTC, datetime
+from typing import Literal
 
 ProgressStep = Literal["prepare", "map", "reduce", "done"]
 ProgressState = Literal["start", "cached", "waiting", "done", "failed"]
@@ -42,12 +43,12 @@ class CancelToken:
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def new_report_id(created: datetime) -> str:
     """Sorts by time; the random tail keeps two runs in one second apart."""
-    return f"{created.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}-{secrets.token_hex(3)}"
+    return f"{created.astimezone(UTC):%Y%m%dT%H%M%SZ}-{secrets.token_hex(3)}"
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,7 @@ error: the run ends with no report.
 
 from __future__ import annotations
 
-from typing import Mapping, Sequence
+from collections.abc import Mapping, Sequence
 
 from report_engine.calls import Caller
 from report_engine.control import ProgressEvent

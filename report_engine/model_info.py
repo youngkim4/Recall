@@ -33,7 +33,7 @@ class ModelInfo(BaseModel):
     tokenizer_family: str = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _input_fits_window(self) -> "ModelInfo":
+    def _input_fits_window(self) -> ModelInfo:
         if self.max_input_tokens > self.context_window:
             raise ValueError("max_input_tokens is larger than context_window")
         return self

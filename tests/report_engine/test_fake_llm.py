@@ -41,7 +41,10 @@ def test_a_map_call_is_read_back_from_the_prompt() -> None:
         ("m3", "2024-06-02", "21:30", "Theo", "night"),
     ]
     assert (call.first_day, call.last_day) == ("2024-06-01", "2024-06-02")
-    assert call.notes == (("May 2024", "A trip is planned: by train."), ("Late May", "Nothing new."))
+    assert call.notes == (
+        ("May 2024", "A trip is planned: by train."),
+        ("Late May", "Nothing new."),
+    )
     assert (call.max_output_tokens, call.reasoning) == (100, "low")
     assert llm.map_calls == [call] and llm.reduce_calls == []
 
@@ -60,7 +63,9 @@ def test_the_default_map_reply_quotes_the_longest_line_of_the_transcript() -> No
 
 def test_the_default_reduce_reply_has_the_four_sections() -> None:
     llm = FakeLLM()
-    request = reduce_messages(labels=("Mina", "You"), figures="Messages with text: 3.", periods=(), moments=())
+    request = reduce_messages(
+        labels=("Mina", "You"), figures="Messages with text: 3.", periods=(), moments=()
+    )
     result = llm.generate(request, schema=REDUCE_SCHEMA, max_output_tokens=100)
     assert result.parsed is not None
     assert list(result.parsed) == list(SECTION_KEYS)
@@ -119,8 +124,19 @@ def test_completed_can_shape_a_reply() -> None:
     llm = FakeLLM()
     llm.generate(map_request(), schema=MAP_SCHEMA, max_output_tokens=10)
     call = llm.calls[0]
-    cut = completed(call, None, text="half", status="incomplete", usage=LLMUsage(input_tokens=5, output_tokens=1))
-    assert (cut.text, cut.parsed, cut.status, cut.usage.input_tokens) == ("half", None, "incomplete", 5)
+    cut = completed(
+        call,
+        None,
+        text="half",
+        status="incomplete",
+        usage=LLMUsage(input_tokens=5, output_tokens=1),
+    )
+    assert (cut.text, cut.parsed, cut.status, cut.usage.input_tokens) == (
+        "half",
+        None,
+        "incomplete",
+        5,
+    )
 
 
 def test_the_fake_keeps_its_own_copy_of_the_messages() -> None:
@@ -146,6 +162,11 @@ def test_importing_the_package_loads_no_heavy_or_private_module() -> None:
         "print(','.join(name for name in names if name in sys.modules))"
     )
     done = subprocess.run(
-        [sys.executable, "-c", code], cwd=root, capture_output=True, text=True, check=True, timeout=60
+        [sys.executable, "-c", code],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
     )
     assert done.stdout.strip() == ""

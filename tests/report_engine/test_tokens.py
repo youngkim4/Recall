@@ -2,7 +2,7 @@
 
 import sys
 import types
-from typing import Sequence
+from collections.abc import Sequence
 
 import pytest
 
@@ -30,7 +30,9 @@ class StubEncoding:
         return [list(range(len(text))) for text in texts]
 
 
-def install_tiktoken(monkeypatch: pytest.MonkeyPatch, names: Sequence[str], fail: bool = False) -> list[str]:
+def install_tiktoken(
+    monkeypatch: pytest.MonkeyPatch, names: Sequence[str], fail: bool = False
+) -> list[str]:
     asked: list[str] = []
 
     def get_encoding(name: str) -> StubEncoding:

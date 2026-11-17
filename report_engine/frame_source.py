@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Iterator
+from collections.abc import Iterator
+from typing import Any
 
 import pandas as pd
 
@@ -24,7 +25,12 @@ _TRUE_WORDS = frozenset({"1", "true", "t", "yes", "y"})
 
 
 def _missing(value: Any) -> bool:
-    return value is None or value is pd.NA or value is pd.NaT or (isinstance(value, float) and math.isnan(value))
+    return (
+        value is None
+        or value is pd.NA
+        or value is pd.NaT
+        or (isinstance(value, float) and math.isnan(value))
+    )
 
 
 def _text(value: Any) -> str:
@@ -68,7 +74,9 @@ class FrameSource:
         self, conversation: str, since: str | None, until: str | None
     ) -> Iterator[SourceMessage]:
         frame = self._frame
-        match = (frame["chat_id"].astype("string") == conversation).fillna(False).to_numpy(dtype=bool)
+        match = (
+            (frame["chat_id"].astype("string") == conversation).fillna(False).to_numpy(dtype=bool)
+        )
         rows = frame.loc[match, list(EXPORT_COLUMNS)]
         stamps = self._stamps(rows)
         timeless = int(stamps.isna().sum())
@@ -93,6 +101,7 @@ class FrameSource:
             chosen["is_from_me"].tolist(),
             chosen["sender"].tolist(),
             chosen["text"].tolist(),
+            strict=True,
         )
         for position, (mid, stamp, own, sender, text) in enumerate(columns):
             yield {
