@@ -264,3 +264,23 @@ def test_the_module_has_one_shared_state_at_the_default_place(tmp_path: Path) ->
     assert archive_state.archive().summary()["messages"] == 2
     archive_state.reopen()
     shared.close()
+
+
+def test_a_first_pull_of_a_database_with_no_message_to_keep_leaves_no_archive(
+    state: ArchiveState, tmp_path: Path, folder: Path
+) -> None:
+    """The database has a row, so the check lets it through. The row is an event of a group, and no message."""
+    events = data.write_database_of_events(tmp_path / "events.db")
+    result = state.pull_from_messages(events, None)
+    assert isinstance(result, PullFailed)
+    assert result.reason == f"The copy at {events.resolve()} holds no messages."
+    assert state.exists() is False and data.files_in(folder) == []
+
+
+def test_an_update_from_a_database_with_no_message_to_keep_is_refused_by_the_limit(
+    state: ArchiveState, database: Path, tmp_path: Path
+) -> None:
+    state.pull_from_messages(database, None)
+    before = data.texts_of(state.archive())
+    result = state.pull_from_messages(data.write_database_of_events(tmp_path / "events.db"), None)
+    assert result.status == "removal_limit" and data.texts_of(state.archive()) == before

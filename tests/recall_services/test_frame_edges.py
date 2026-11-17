@@ -107,3 +107,20 @@ def test_a_write_that_is_not_in_the_one_file_yet_makes_a_new_frame(state: Archiv
 def test_the_mark_of_the_file_is_the_same_for_the_same_content(state: ArchiveState) -> None:
     assert state.file_mark() == state.file_mark()
     assert state.file_mark()[0] == str(state.path)
+
+
+def test_a_read_does_not_change_the_mark_of_the_archive(tmp_path: Path) -> None:
+    """SQLite makes an empty file beside the archive at the first read. A cache that was keyed before it is still found."""
+    first = ArchiveState(tmp_path / "saves" / "archive.sqlite3")
+    first.pull_from_messages(build(tmp_path / "copy" / "chat.db"), None)
+    first.close()
+    for beside in ("-wal", "-shm"):
+        first.path.with_name(first.path.name + beside).unlink(missing_ok=True)
+    made = ArchiveState(first.path)  # as after a new start of the server: nothing has read the file yet
+    try:
+        before = made.file_mark()
+        frame.messages_frame(made)
+        assert made.file_mark() == before
+        assert frame.messages_frame(made) is frame.messages_frame(made)
+    finally:
+        made.close()

@@ -92,3 +92,27 @@ def test_forget_closes_every_state_but_the_default_one(tmp_path: Path) -> None:
     held = places.state_for(tmp_path / "kept.sqlite3")
     places.forget()
     assert places.state_for(tmp_path / "kept.sqlite3") is not held
+
+
+def test_the_ending_of_an_archive_is_read_as_a_mac_reads_a_name(tmp_path: Path) -> None:
+    shouted = tmp_path / "KEPT.SQLITE3"
+    assert places.archive_path_for(shouted) == shouted.resolve()
+    assert places.export_for(shouted) is None
+
+
+def test_a_name_that_is_no_file_is_refused() -> None:
+    with pytest.raises(ValueError, match="is no file"):
+        places.archive_path_for("/")
+
+
+def test_a_state_that_an_import_is_filling_is_not_let_go(tmp_path: Path) -> None:
+    busy = places.state_for(tmp_path / "busy.sqlite3")
+    assert busy.importing is False
+    assert busy._importing.acquire(blocking=False)
+    try:
+        assert busy.importing is True
+        for number in range(places.KEPT_STATES + 2):
+            places.state_for(tmp_path / f"{number}.sqlite3")
+        assert places.state_for(tmp_path / "busy.sqlite3") is busy
+    finally:
+        busy._importing.release()

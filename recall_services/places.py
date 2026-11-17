@@ -9,7 +9,8 @@ is a SQLite file:
 - A file whose name ends in `.sqlite3`: that file is the archive. It has no
   export.
 - Any other file is an export of an earlier build. Its archive stands beside
-  it, with the same name and the ending `.sqlite3`.
+  it, with the same name and the ending `.sqlite3`. Two exports of one folder
+  whose names differ only in their ending share one archive.
 
 No code here lists a folder, and no file is taken for an archive because it
 is found: a place is worked out from the name that the app gave.
@@ -61,12 +62,19 @@ def _named(messages_path: str | os.PathLike[str] | None) -> Path | None:
     return named
 
 
+def _is_archive_name(named: Path) -> bool:
+    # as the file system of a Mac reads a name: `X.SQLITE3` is the same file as `x.sqlite3`
+    return named.suffix.lower() == ARCHIVE_SUFFIX
+
+
 def archive_path_for(messages_path: str | os.PathLike[str] | None) -> Path:
     """The archive file that stands for the file that the app named."""
     named = _named(messages_path)
     if named is None:
         return default_archive_path()
-    return named if named.suffix == ARCHIVE_SUFFIX else named.with_suffix(ARCHIVE_SUFFIX)
+    if not named.name:
+        raise ValueError("The archive file that was named is no file.")
+    return named if _is_archive_name(named) else named.with_suffix(ARCHIVE_SUFFIX)
 
 
 def export_for(messages_path: str | os.PathLike[str] | None) -> Path | None:
@@ -74,7 +82,7 @@ def export_for(messages_path: str | os.PathLike[str] | None) -> Path | None:
     named = _named(messages_path)
     if named is None:
         return _default_export()
-    return None if named.suffix == ARCHIVE_SUFFIX else named
+    return None if _is_archive_name(named) else named
 
 
 def state_for(messages_path: str | os.PathLike[str] | None) -> ArchiveState:
@@ -88,10 +96,17 @@ def state_for(messages_path: str | os.PathLike[str] | None) -> ArchiveState:
         if held is None:
             held = _states[place] = ArchiveState(place)
         _states.move_to_end(place)
-        dropped = [_states.popitem(last=False)[1] for _ in range(max(0, len(_states) - KEPT_STATES))]
+        dropped = _let_go()
     for old in dropped:
         old.close()
     return held
+
+
+def _let_go() -> list[ArchiveState]:
+    """The oldest states past the number that is kept. A state that an import is filling stays. The caller holds the lock."""
+    extra = len(_states) - KEPT_STATES
+    idle = [place for place, state in _states.items() if not state.importing][: max(0, extra)]
+    return [_states.pop(place) for place in idle]
 
 
 def forget() -> None:

@@ -130,14 +130,23 @@ class ArchiveState:
     def exists(self) -> bool:
         return self.path.is_file()
 
+    @property
+    def importing(self) -> bool:
+        """True while an import or a load of an export fills this archive."""
+        return self._importing.locked()
+
     def file_mark(self) -> tuple[Any, ...]:
         """What tells one content of the archive file from another, also after a start of the server.
 
         The place, and the write time and size of the database and of the file
         in which SQLite keeps the newest writes. The mark can change while the
         content is the same; it does not stay the same when the content changed.
+        A read does not change it.
         """
-        return (str(self.path), archive_files.stat_of(self.path), archive_files.stat_of(self.path.with_name(self.path.name + "-wal")))
+        newest = archive_files.stat_of(self.path.with_name(self.path.name + "-wal"))
+        # SQLite makes that file, empty, at the first read. An empty one holds no write: it counts as none.
+        waiting = newest if newest is not None and newest[1] > 0 else None
+        return (str(self.path), archive_files.stat_of(self.path), waiting)
 
     # -- the read handle -----------------------------------------------------
 
@@ -323,6 +332,10 @@ class ArchiveState:
             # PullBusy removes nothing: another writer has the file
             if not was_there and isinstance(outcome, (PullFailed, PullRefused, PullCancelled)):
                 self._forget_empty_archive()
+            if not was_there and isinstance(outcome, PullDone) and self._holds_no_message():
+                # the rows of the database held no message to keep: there was no archive, and there is none
+                self._forget_first_archive()
+                return PullFailed(reason=unreadable.no_messages(probe))
             return outcome
         finally:
             self._importing.release()
@@ -359,6 +372,22 @@ class ArchiveState:
         self._write_note({"source": "messages"})
         summary = self.archive().summary()
         return PullDone(counts=_counts(result), messages=summary["messages"], conversations=summary["conversations"])
+
+    def _holds_no_message(self) -> bool:
+        try:
+            summary = self.archive().summary()
+        except ArchiveError:
+            return False
+        return not summary["messages"] and not summary["messages_without_conversation"]
+
+    def _forget_first_archive(self) -> None:
+        """Remove the archive that a first pull made when the database gave it no message."""
+        with self._lock:
+            self._drop()
+            archive_files.remove_quietly(self.path)
+            self._generation += 1
+        self.source_path.unlink(missing_ok=True)
+        shutil.rmtree(self.path.with_name(f".{self.path.name}{WORK_SUFFIX}"), ignore_errors=True)
 
     def _forget_empty_archive(self) -> None:
         """Remove the file that a first pull made and did not fill: there was no archive, and there is none.
