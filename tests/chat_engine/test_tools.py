@@ -246,10 +246,29 @@ def test_list_conversations_without_a_name_lists_the_biggest() -> None:
 def test_conversation_stats_renders_figures() -> None:
     bench = Bench()
     outcome = bench.run("conversation_stats", conversation=bench.alias(MAYA_PHONE))
-    assert "total: 9" in outcome.text
-    assert "busiest_day: day 2021-03-04, total 4" in outcome.text
-    assert "longest_gap: days 897" in outcome.text
+    assert "messages: 9 (you 4, others 5)" in outcome.text
+    assert "first message: 2021-03-04 18:20:00" in outcome.text
+    assert "active days: 3 (3.0 messages on an active day)" in outcome.text
+    assert "busiest day: 2021-03-04 (4 messages)" in outcome.text
+    assert "longest gap: 897.5 days, from 2023-07-11 09:05:00 to 2025-12-24 20:00:00" in outcome.text
+    assert MAYA_PHONE not in outcome.text and "conversation:" not in outcome.text
     assert not bench.run("conversation_stats", conversation="c99").ok
+
+
+def test_conversation_stats_shows_unknown_numbers_but_never_unknown_text() -> None:
+    from chat_engine.tool_figures import stats_lines
+
+    lines = stats_lines({"total_messages": 2, "sent_count": 1, "streak_days": 4, "top_sender": "+17205550199"})
+    assert lines == ["messages: 2 (you 1, others 1)", "streak_days: 4"]
+
+
+def test_count_by_weekday_and_hour_reads_as_words() -> None:
+    bench = Bench()
+    outcome = bench.run(
+        "count_messages", conversations=[bench.alias(GROUP)], since="2019-06-01", until="2019-06-01",
+        group_by="weekday_hour",
+    )
+    assert "Saturday 09:00: 4 (you 1, others 3)" in outcome.text
 
 
 def test_scope_limits_every_tool() -> None:

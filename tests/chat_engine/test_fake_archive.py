@@ -1,5 +1,7 @@
 """The fake must follow the archive contract, or the engine tests prove nothing."""
 
+import pytest
+
 from chat_engine.fake_archive import FakeArchive, make_message
 from tests.chat_engine.tiny import (
     GROUP,
@@ -118,7 +120,7 @@ def test_count_groups() -> None:
         UNSAVED_PHONE: 1,
     }
     by_hour = archive.count(conversations=[GROUP], since="2019-06-01", until="2019-06-01", group_by="weekday_hour")
-    assert by_hour == [{"key": "6-09", "total": 4, "sent": 1, "received": 3}]
+    assert by_hour == [{"key": "5-09", "total": 4, "sent": 1, "received": 3}]
 
 
 def test_context_stays_in_one_conversation() -> None:
@@ -139,20 +141,44 @@ def test_messages_pages_by_id_cursor() -> None:
     newer = archive.messages(MAYA_PHONE, after="a1", limit=2)
     assert [m["id"] for m in newer["messages"]] == ["a2", "a3"]
     assert newer["has_older"] and newer["has_newer"]
-    around = archive.messages(MAYA_PHONE, around="a5", limit=3)
-    assert [m["id"] for m in around["messages"]] == ["a4", "a5", "a6"]
 
 
-def test_stats_for_one_conversation() -> None:
+def test_messages_around_keeps_the_anchor_and_fills_the_page() -> None:
+    archive = tiny_archive()
+    middle = archive.messages(MAYA_PHONE, around="a5", limit=4)
+    assert [m["id"] for m in middle["messages"]] == ["a4", "a5", "a6", "a7"]
+    at_start = archive.messages(MAYA_PHONE, around="a1", limit=4)
+    assert [m["id"] for m in at_start["messages"]] == ["a1", "a2", "a3", "a4"]
+    assert not at_start["has_older"] and at_start["has_newer"]
+    at_end = archive.messages(MAYA_PHONE, around="a9", limit=4)
+    assert [m["id"] for m in at_end["messages"]] == ["a6", "a7", "a8", "a9"]
+
+
+def test_messages_with_unknown_anchor_or_two_cursors() -> None:
+    archive = tiny_archive()
+    empty = {"messages": [], "has_older": False, "has_newer": False}
+    assert archive.messages(MAYA_PHONE, around="nope") == empty
+    assert archive.messages("no-such-conversation") == empty
+    with pytest.raises(ValueError):
+        archive.messages(MAYA_PHONE, before="a2", after="a1")
+
+
+def test_stats_use_the_field_names_of_the_archive() -> None:
     stats = tiny_archive().stats(MAYA_PHONE)
-    assert stats["total"] == 9 and stats["sent"] == 4 and stats["received"] == 5
+    assert stats["conversation"] == MAYA_PHONE
+    assert stats["total_messages"] == 9 and stats["sent_count"] == 4 and stats["received_count"] == 5
     assert stats["first_timestamp"] == "2021-03-04 18:20:00"
     assert stats["last_timestamp"] == "2025-12-24 20:01:00"
     assert stats["active_days"] == 3
-    assert stats["busiest_day"] == {"day": "2021-03-04", "total": 4}
-    assert stats["longest_gap"]["days"] == 897
+    assert stats["avg_messages_per_day"] == 3.0
+    assert stats["busiest_day"] == "2021-03-04" and stats["busiest_day_count"] == 4
+    assert 897.4 < stats["longest_gap_days"] < 897.5
+    assert stats["longest_gap_start"] == "2023-07-11 09:05:00"
+    assert stats["longest_gap_end"] == "2025-12-24 20:00:00"
     ranged = tiny_archive().stats(MAYA_PHONE, since="2023-01-01", until="2023-12-31")
-    assert ranged["total"] == 3
+    assert ranged["total_messages"] == 3
+    empty = tiny_archive().stats("nobody")
+    assert empty["total_messages"] == 0 and empty["busiest_day"] is None and empty["longest_gap_days"] == 0.0
 
 
 def test_every_call_is_recorded_and_inputs_are_not_shared() -> None:
@@ -164,3 +190,20 @@ def test_every_call_is_recorded_and_inputs_are_not_shared() -> None:
     hit = archive.search("lease")["hits"][0]["message"]
     hit["text"] = "tampered"
     assert archive.search("tampered")["total"] == 0
+
+
+def test_system_messages_are_left_out_unless_asked_for() -> None:
+    messages = [
+        make_message("s1", "chat9", "2024-01-01 10:00:00", "hello all", sender="+15550000001"),
+        make_message("s2", "chat9", "2024-01-01 10:01:00", "Maya named the group hello", kind="system"),
+        make_message("s3", "chat9", "2024-01-01 10:02:00", "hello again", sender="+15550000001"),
+    ]
+    archive = FakeArchive(messages, [{"id": "chat9", "is_group": True}, {"id": "empty", "is_group": False}])
+    assert archive.count() == 2 and archive.count(include_system=True) == 3
+    assert archive.search("hello")["total"] == 2
+    assert [m["id"] for m in archive.context("s1", radius=3)] == ["s1", "s3"]
+    assert archive.context("s2", radius=3) == []
+    assert [m["id"] for m in archive.messages("chat9")["messages"]] == ["s1", "s3"]
+    assert archive.stats("chat9")["total_messages"] == 2
+    assert [c["id"] for c in archive.conversations()] == ["chat9"]
+    assert archive.summary()["conversations"] == 1

@@ -57,6 +57,10 @@ def test_message_body_for_attachments_system_and_unsent() -> None:
     assert message_body(edited, limits).endswith("(edited)")
     both = {**_by_id("g1"), "attachments": ["a.mov", "b.jpg", "c.png", "notes.xyz"]}
     assert message_body(both, limits).endswith("[attachments: video, image x2, file]")
+    mimes = {**_by_id("g1"), "attachments": ["video/quicktime", "text/vcard", "application/pdf", "audio/amr"]}
+    assert message_body(mimes, limits).endswith("[attachments: video, contact card, pdf, audio]")
+    unknown = {**_by_id("g1"), "attachments": ["application/octet-stream", "+17205550199.vcf"]}
+    assert message_body(unknown, limits).endswith("[attachments: file, contact card]")
 
 
 def test_book_gives_alias_label_and_title() -> None:

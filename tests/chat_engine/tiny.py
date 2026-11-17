@@ -84,7 +84,7 @@ def tiny_messages() -> list[dict]:
     messages = []
     for message_id, conversation, timestamp, text, from_me, sender in _ROWS:
         kind = "attachment" if message_id == "g5" else "text"
-        attachments = ["IMG_0042.HEIC"] if message_id == "g5" else []
+        attachments = ["image/heic"] if message_id == "g5" else []
         messages.append(
             make_message(
                 message_id,

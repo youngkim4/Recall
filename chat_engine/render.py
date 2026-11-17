@@ -53,10 +53,18 @@ def clip_text(text: str, max_chars: int, focus: Optional[int] = None) -> str:
 
 
 def _attachment_kind(name: str) -> str:
-    lowered = str(name or "").lower()
+    """ "image", "video", ... from a mime type or a file name. Never the name itself."""
+    lowered = str(name or "").lower().strip()
+    if "/" in lowered and " " not in lowered:
+        major, _, minor = lowered.partition("/")
+        if major in ("image", "video", "audio"):
+            return major
+        if "vcard" in minor:
+            return "contact card"
+        return "pdf" if minor == "pdf" else "file"
     extension = lowered.rsplit(".", 1)[-1] if "." in lowered else ""
     for kind, extensions in _MEDIA.items():
-        if extension in extensions or lowered.startswith(f"{kind}/"):
+        if extension in extensions:
             return kind
     return "file"
 

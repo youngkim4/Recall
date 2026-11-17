@@ -82,7 +82,7 @@ class FakeArchive:
         self._record("summary")
         return {
             "messages": len(self._messages),
-            "conversations": len(self._conversations),
+            "conversations": sum(1 for c in self._conversations.values() if c["message_count"]),
             "first_timestamp": self._messages[0]["timestamp"] if self._messages else None,
             "last_timestamp": self._messages[-1]["timestamp"] if self._messages else None,
         }
@@ -91,7 +91,7 @@ class FakeArchive:
         self, *, limit: Optional[int] = None, offset: int = 0, order: str = "count"
     ) -> list[Conversation]:
         self._record("conversations", limit=limit, offset=offset, order=order)
-        rows = list(self._conversations.values())
+        rows = [c for c in self._conversations.values() if c["message_count"]]
         if order == "recent":
             rows.sort(key=lambda c: c["last_timestamp"] or "", reverse=True)
         else:
@@ -112,24 +112,25 @@ class FakeArchive:
         before: Optional[str] = None,
         after: Optional[str] = None,
         limit: int = 50,
+        include_system: bool = False,
     ) -> MessagePage:
         self._record(
             "messages", conversation_id=conversation_id, around=around, before=before, after=after, limit=limit
         )
-        rows = self._by_conversation.get(str(conversation_id), [])
+        rows = _visible(self._by_conversation.get(str(conversation_id), []), include_system)
         start, end = _page_bounds(rows, around, before, after, max(1, limit))
         return {
             "messages": [_copy(m) for m in rows[start:end]],
-            "has_older": start > 0,
-            "has_newer": end < len(rows),
+            "has_older": 0 < start < end,
+            "has_newer": start < end < len(rows),
         }
 
-    def context(self, message_id: str, *, radius: int = 6) -> list[Message]:
+    def context(self, message_id: str, *, radius: int = 6, include_system: bool = False) -> list[Message]:
         self._record("context", message_id=message_id, radius=radius)
         anchor = self._by_id.get(str(message_id))
-        if anchor is None:
+        rows = _visible(self._by_conversation[anchor["conversation"]], include_system) if anchor else []
+        if anchor is None or anchor not in rows:
             return []
-        rows = self._by_conversation[anchor["conversation"]]
         index = rows.index(anchor)
         return [_copy(m) for m in rows[max(0, index - radius):index + radius + 1]]
 
@@ -144,6 +145,7 @@ class FakeArchive:
         limit: int = 50,
         offset: int = 0,
         order: str = "newest",
+        include_system: bool = False,
     ) -> SearchResult:
         self._record(
             "search", query=query, conversations=_listed(conversations), since=since, until=until,
@@ -153,7 +155,7 @@ class FakeArchive:
         if not units:
             return {"total": 0, "hits": []}
         found = []
-        for message in self._filtered(conversations, since, until, from_me):
+        for message in self._filtered(conversations, since, until, from_me, include_system):
             ranges = _match(units, message["text"])
             if ranges:
                 found.append((message, ranges))
@@ -178,12 +180,13 @@ class FakeArchive:
         from_me: Optional[bool] = None,
         text: Optional[str] = None,
         group_by: Optional[str] = None,
+        include_system: bool = False,
     ) -> Union[int, list[CountRow]]:
         self._record(
             "count", conversations=_listed(conversations), since=since, until=until,
             from_me=from_me, text=text, group_by=group_by,
         )
-        rows = self._filtered(conversations, since, until, from_me)
+        rows = self._filtered(conversations, since, until, from_me, include_system)
         if text is not None:
             units = query_units(text)
             rows = [m for m in rows if units and _match(units, m["text"])]
@@ -192,11 +195,16 @@ class FakeArchive:
         return _grouped(rows, group_by)
 
     def stats(
-        self, conversation_id: str, *, since: Optional[str] = None, until: Optional[str] = None
+        self,
+        conversation_id: str,
+        *,
+        since: Optional[str] = None,
+        until: Optional[str] = None,
+        include_system: bool = False,
     ) -> dict[str, Any]:
         self._record("stats", conversation_id=conversation_id, since=since, until=until)
-        rows = self._filtered([str(conversation_id)], since, until, None)
-        return _stats(rows)
+        rows = self._filtered([str(conversation_id)], since, until, None, include_system)
+        return _stats(str(conversation_id), rows)
 
     # --- helpers ---
 
@@ -209,10 +217,11 @@ class FakeArchive:
         since: Optional[str],
         until: Optional[str],
         from_me: Optional[bool],
+        include_system: bool = False,
     ) -> list[Message]:
         wanted = None if conversations is None else {str(c) for c in conversations}
         rows = []
-        for message in self._messages:
+        for message in _visible(self._messages, include_system):
             day = message["timestamp"][:10]
             if wanted is not None and message["conversation"] not in wanted:
                 continue
@@ -248,6 +257,10 @@ class FakeArchive:
         }
 
 
+def _visible(rows: list[Message], include_system: bool) -> list[Message]:
+    return rows if include_system else [m for m in rows if m["kind"] != "system"]
+
+
 def _listed(values: Optional[Sequence[str]]) -> Optional[list[str]]:
     return None if values is None else list(values)
 
@@ -281,17 +294,23 @@ def _page_bounds(
     after: Optional[str],
     limit: int,
 ) -> tuple[int, int]:
+    """Slice of `rows` for one page. An unknown anchor gives an empty page."""
+    given = [cursor for cursor in (around, before, after) if cursor is not None]
+    if len(given) > 1:
+        raise ValueError("give at most one of around, before, after")
     ids = [m["id"] for m in rows]
-    if around is not None and around in ids:
-        start = max(0, ids.index(around) - limit // 2)
-        return start, min(len(rows), start + limit)
-    if before is not None and before in ids:
-        end = ids.index(before)
-        return max(0, end - limit), end
-    if after is not None and after in ids:
-        start = ids.index(after) + 1
-        return start, min(len(rows), start + limit)
-    return max(0, len(rows) - limit), len(rows)
+    if not given:
+        return max(0, len(rows) - limit), len(rows)
+    if given[0] not in ids:
+        return 0, 0
+    index = ids.index(given[0])
+    if before is not None:
+        return max(0, index - limit), index
+    if after is not None:
+        return index + 1, min(len(rows), index + 1 + limit)
+    start = max(0, index - (limit - 1) // 2)
+    end = min(len(rows), start + limit)
+    return max(0, end - limit), end
 
 
 def _group_key(message: Message, group_by: str) -> str:
@@ -299,7 +318,7 @@ def _group_key(message: Message, group_by: str) -> str:
         return message["timestamp"][:_GROUP_KEY_LENGTH[group_by]]
     if group_by == "weekday_hour":
         moment = _moment(message)
-        return f"{(moment.weekday() + 1) % 7}-{moment.hour:02d}"
+        return f"{moment.weekday()}-{moment.hour:02d}"
     if group_by == "conversation":
         return message["conversation"]
     if group_by == "sender":
@@ -319,24 +338,34 @@ def _grouped(rows: list[Message], group_by: str) -> list[CountRow]:
     return sorted(totals.values(), key=lambda row: row["key"])
 
 
-def _stats(rows: list[Message]) -> dict[str, Any]:
+def _stats(conversation_id: str, rows: list[Message]) -> dict[str, Any]:
     sent = sum(1 for m in rows if m["is_from_me"])
     per_day: dict[str, int] = defaultdict(int)
     for message in rows:
         per_day[message["timestamp"][:10]] += 1
-    busiest = max(per_day.items(), key=lambda item: (item[1], item[0]), default=None)
-    gap = None
+    busiest = max(per_day.items(), key=lambda item: (item[1], _negative(item[0])), default=None)
+    gap_days, gap_start, gap_end = 0.0, None, None
     for earlier, later in zip(rows, rows[1:]):
-        days = (_moment(later) - _moment(earlier)).days
-        if gap is None or days > gap["days"]:
-            gap = {"days": days, "from": earlier["timestamp"], "to": later["timestamp"]}
+        days = (_moment(later) - _moment(earlier)).total_seconds() / 86400.0
+        if days > gap_days:
+            gap_days, gap_start, gap_end = days, earlier["timestamp"], later["timestamp"]
     return {
-        "total": len(rows),
-        "sent": sent,
-        "received": len(rows) - sent,
+        "conversation": conversation_id,
+        "total_messages": len(rows),
+        "sent_count": sent,
+        "received_count": len(rows) - sent,
         "first_timestamp": rows[0]["timestamp"] if rows else None,
         "last_timestamp": rows[-1]["timestamp"] if rows else None,
         "active_days": len(per_day),
-        "busiest_day": {"day": busiest[0], "total": busiest[1]} if busiest else None,
-        "longest_gap": gap,
+        "avg_messages_per_day": len(rows) / len(per_day) if per_day else 0.0,
+        "busiest_day": busiest[0] if busiest else None,
+        "busiest_day_count": busiest[1] if busiest else 0,
+        "longest_gap_days": gap_days,
+        "longest_gap_start": gap_start,
+        "longest_gap_end": gap_end,
     }
+
+
+def _negative(day: str) -> tuple[int, ...]:
+    """Sort key that prefers the earliest day on a tie."""
+    return tuple(-int(part) for part in day.split("-"))

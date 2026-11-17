@@ -25,6 +25,14 @@ LIST_LIMIT_DEFAULT = 10
 LIST_LIMIT_MAX = 30
 _MEMBERS_SHOWN = 4
 _OWN_KEYS = ("", "me", "You")
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_KNOWN_FIGURES = frozenset(
+    {
+        "conversation", "total_messages", "sent_count", "received_count", "first_timestamp",
+        "last_timestamp", "active_days", "avg_messages_per_day", "busiest_day", "busiest_day_count",
+        "longest_gap_days", "longest_gap_start", "longest_gap_end",
+    }
+)
 
 
 # --- count_messages ---------------------------------------------------------
@@ -109,8 +117,21 @@ def _count_line(ctx: ToolContext, group_by: str, row: CountRow) -> str:
     if group_by == "sender":
         label = OWNER if key in _OWN_KEYS else ctx.labeler.sender(key)
         return f"{label}: {total:,}"
-    label = ctx.book.title(key) if group_by == "conversation" else key
+    if group_by == "conversation":
+        label = ctx.book.title(key)
+    elif group_by == "weekday_hour":
+        label = weekday_hour(key)
+    else:
+        label = key
     return f"{label}: {total:,} (you {sent:,}, others {total - sent:,})"
+
+
+def weekday_hour(key: str) -> str:
+    """ "0-09" is Monday 09:00. A key in another form is shown as it is."""
+    day, _, hour = key.partition("-")
+    if day.isdigit() and hour.isdigit() and int(day) < len(_WEEKDAYS) and int(hour) < 24:
+        return f"{_WEEKDAYS[int(day)]} {int(hour):02d}:00"
+    return key
 
 
 # --- list_conversations -----------------------------------------------------
@@ -236,21 +257,38 @@ def run_stats(
     figures = ctx.archive.stats(conversation_id, since=since, until=until)
     span = ctx.when(since, until) or ", all time"
     writer = ResultWriter(budget, ctx.limits.count_tokens)
-    writer.add(
-        f"Figures for {ctx.book.title(conversation_id)}{span} (sent = by you, received = by others):",
-        force=True,
-    )
-    for key, value in (figures or {}).items():
-        if not writer.add(f"{key}: {_plain(value)}"):
+    writer.add(f"Figures for {ctx.book.title(conversation_id)}{span}:", force=True)
+    for line in stats_lines(figures or {}):
+        if not writer.add(line):
             break
     return ToolOutcome(writer.text(), f"Read the figures for {ctx.book.label(conversation_id)}")
 
 
-def _plain(value: Any) -> str:
-    if value is None:
-        return "none"
-    if isinstance(value, dict):
-        return ", ".join(f"{key} {_plain(item)}" for key, item in value.items())
-    if isinstance(value, (list, tuple)):
-        return ", ".join(_plain(item) for item in value[:10])
-    return str(value)
+def stats_lines(figures: Mapping[str, Any]) -> list[str]:
+    """The figures in plain words. A value that could name a person is left out."""
+    total = int(figures.get("total_messages") or 0)
+    sent = int(figures.get("sent_count") or 0)
+    lines = [f"messages: {total:,} (you {sent:,}, others {total - sent:,})"]
+    if figures.get("first_timestamp"):
+        lines.append(f"first message: {figures['first_timestamp']}")
+    if figures.get("last_timestamp"):
+        lines.append(f"last message: {figures['last_timestamp']}")
+    active = int(figures.get("active_days") or 0)
+    if active:
+        average = float(figures.get("avg_messages_per_day") or 0.0)
+        lines.append(f"active days: {active:,} ({average:.1f} messages on an active day)")
+    if figures.get("busiest_day"):
+        count = int(figures.get("busiest_day_count") or 0)
+        lines.append(f"busiest day: {str(figures['busiest_day'])[:10]} ({plural(count, 'message')})")
+    if figures.get("longest_gap_start") and figures.get("longest_gap_end"):
+        days = float(figures.get("longest_gap_days") or 0.0)
+        lines.append(
+            f"longest gap: {days:.1f} days, from {figures['longest_gap_start']} to {figures['longest_gap_end']}"
+        )
+    lines.extend(f"{key}: {value}" for key, value in figures.items() if _extra(key, value))
+    return lines
+
+
+def _extra(key: str, value: Any) -> bool:
+    """A field this module does not know: show it only when it is a plain number."""
+    return key not in _KNOWN_FIGURES and isinstance(value, (int, float)) and not isinstance(value, bool)
