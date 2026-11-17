@@ -22,3 +22,10 @@ def post(server, path: str, payload) -> tuple[int, dict]:
     """Send `payload` as JSON. Gives the status and the answer, read as JSON."""
     status, _, body = _ask(server, "POST", path, json.dumps(payload).encode("utf-8"))
     return status, json.loads(body)
+
+
+def post_bytes(server, path: str, body: bytes) -> tuple[int, dict]:
+    """Send `body` as it is, for a request that is not well made. Gives the status and the answer, read as JSON."""
+    status, _, answer = _ask(server, "POST", path, body)
+    return status, json.loads(answer)
+

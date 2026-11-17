@@ -10,7 +10,7 @@ import threading
 import pytest
 
 import ui_server
-from tests.loopback import fetch, post
+from tests.loopback import fetch, post, post_bytes
 
 pytestmark = pytest.mark.usefixtures("no_jobs")
 
@@ -179,6 +179,72 @@ def test_the_route_refuses_a_body_that_is_not_a_record(server, held_jobs, body):
 
     assert (status, answer) == (400, {"error": "The request must be a JSON object."})
     assert listed() == []
+
+
+@pytest.mark.parametrize("action", [["setup_import"], {"is": "export"}, 7, True, None])
+def test_the_route_refuses_an_action_that_is_not_text(server, held_jobs, action):
+    status, answer = post(server, "/api/jobs", {"action": action})
+
+    assert (status, answer) == (400, {"error": "The action must be text."})
+    assert listed() == []
+
+
+def test_the_route_refuses_an_action_it_does_not_know_and_makes_no_job(server, held_jobs):
+    status, answer = post(server, "/api/jobs", {"action": "erase"})
+
+    assert (status, answer) == (400, {"error": "Unknown job action: erase"})
+    assert listed() == []
+
+
+@pytest.mark.parametrize("payload, sentence", [
+    ({"action": "setup_import", "dbPath": "bad\u0000name.db"}, "The path of the copy cannot be used."),
+    ({"action": "export", "messagesPath": "bad\u0000name.csv"}, "The path of the archive cannot be used."),
+    ({"action": "analyze", "messagesPath": 7}, "The path of the archive must be text."),
+    ({"action": "analyze", "outDir": ["out"]}, "The path of the reports folder must be text."),
+    ({"action": "setup_import", "includeContacts": "false"}, "includeContacts must be true or false."),
+])
+def test_the_route_refuses_what_a_job_could_not_use(server, held_jobs, payload, sentence):
+    status, answer = post(server, "/api/jobs", payload)
+
+    assert (status, answer) == (400, {"error": sentence})
+    assert listed() == []
+
+
+@pytest.mark.parametrize("path", ["/api/jobs", "/api/setup/complete"])
+@pytest.mark.parametrize("body", [b"{not json", b"\xff\xfe", b'{"action": '])
+def test_a_body_that_is_not_json_is_refused(server, held_jobs, marker, path, body):
+    status, answer = post_bytes(server, path, body)
+
+    assert (status, answer) == (400, {"error": "The request body must be JSON."})
+    assert listed() == [] and not marker.exists()
+
+
+def test_the_answer_to_a_new_job_is_the_job_as_it_was_made(monkeypatch):
+    # the job ends before the answer is written: the answer still says "queued", and it is not the job itself
+    class RunsAtOnce:
+        def __init__(self, target, args, daemon):
+            self.run = lambda: target(*args)
+
+        def start(self):
+            self.run()
+
+    monkeypatch.setattr(ui_server, "run_job", lambda job_id, action, payload: ui_server.update_job(job_id, status="completed"))
+    monkeypatch.setattr(ui_server.threading, "Thread", RunsAtOnce)
+
+    made = ui_server.create_job("export", {})
+
+    with ui_server.JOBS_LOCK:
+        kept = ui_server.JOBS[made["id"]]
+    assert (made["status"], kept["status"]) == ("queued", "completed")
+    assert made is not kept
+
+
+def test_the_answer_about_a_job_is_a_copy_of_it(server, held_jobs):
+    made = ui_server.create_job("export", {})
+
+    _, _, body = fetch(server, f"/api/jobs/{made['id']}")
+
+    assert json.loads(body)["job"]["status"] == "queued"
 
 
 # ---- a job always ends ----

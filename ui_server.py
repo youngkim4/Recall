@@ -195,12 +195,19 @@ def is_local_api_request(handler) -> bool:
         return False
 
 
+class BadRequest(ValueError):
+    """A request that cannot be read. The route answers 400 with the sentence."""
+
+
 def parse_body(handler) -> dict:
-    length = int(handler.headers.get("Content-Length", "0") or 0)
-    if length <= 0:
-        return {}
-    raw = handler.rfile.read(length)
-    return json.loads(raw.decode("utf-8"))
+    try:
+        length = int(handler.headers.get("Content-Length", "0") or 0)
+        if length <= 0:
+            return {}
+        return json.loads(handler.rfile.read(length).decode("utf-8"))
+    except ValueError as exc:
+        # a length that is no number, bytes that are not UTF-8, text that is not JSON
+        raise BadRequest("The request body must be JSON.") from exc
 
 
 def safe_path(value: str, default: Path = None) -> Path:
@@ -688,6 +695,7 @@ def export_when_free(job_id: str, db_path: Path, messages_path: Path) -> dict:
         return export_database(db_path, messages_path)
 
 
+JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "semantic"})
 IMPORT_ACTIONS = frozenset({"setup_import", "export"})
 UNFINISHED = frozenset({"queued", "running"})
 # Jobs of one group do not run together: each import writes the archive, and
@@ -706,17 +714,31 @@ class JobRefused(Exception):
         self.status = status
 
 
-def check_import(action: str, payload: dict) -> None:
-    """Refuse an import whose request cannot be one. A job of another kind is not looked at."""
-    if action not in IMPORT_ACTIONS:
+def usable_path(value, what: str) -> None:
+    """Refuse a path that is not text, or that no system can hold. A path that is not given is the default."""
+    if not value:
         return
-    named = payload.get("messagesPath")
-    if named and not isinstance(named, str):
-        raise JobRefused("The path of the archive must be text.", 400)
+    if not isinstance(value, str):
+        raise JobRefused(f"The path of {what} must be text.", 400)
     try:
-        database_for(action, payload)
-    except ValueError as exc:
-        raise JobRefused(str(exc), 400) from exc
+        safe_path(value)
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise JobRefused(f"The path of {what} cannot be used.", 400) from exc
+
+
+def check_request(action, payload: dict) -> None:
+    """Refuse a request that cannot be a job. Raises JobRefused, and no job is made."""
+    if not isinstance(action, str):
+        raise JobRefused("The action must be text.", 400)
+    if action not in JOB_ACTIONS:
+        raise JobRefused(f"Unknown job action: {action}", 400)
+    usable_path(payload.get("messagesPath"), "the archive")
+    usable_path(payload.get("outDir"), "the reports folder")
+    if action == "setup_import":
+        # only the setup guide can name a copy (database_for)
+        usable_path(payload.get("dbPath"), "the copy")
+        if not isinstance(payload.get("includeContacts", True), bool):
+            raise JobRefused("includeContacts must be true or false.", 400)
 
 
 def refuse_a_second(action: str) -> None:
@@ -752,12 +774,15 @@ def create_job(action: str, payload: dict) -> dict:
     jobs held. A job is in the list as queued from this moment, so two
     imports asked for together cannot each find the other and both stop.
     """
-    check_import(action, payload)
+    check_request(action, payload)
     job = job_record(action, payload)
     job_id = job["id"]
     with JOBS_LOCK:
         refuse_a_second(action)
         JOBS[job_id] = job
+        # The answer is the job as it was made. The job itself changes in its
+        # own thread, and it can end before the answer is written.
+        made = dict(job)
         # prune finished jobs so a long session doesn't grow memory unbounded
         if len(JOBS) > 60:
             for old_id in [
@@ -774,7 +799,7 @@ def create_job(action: str, payload: dict) -> dict:
         # a job that never starts would stay queued and hold up every later job of its group
         update_job(job_id, status="failed", error="The job could not be started.")
         raise JobRefused("The job could not be started. Try again.", 500) from exc
-    return job
+    return made
 
 
 class _JobStreamRouter(io.TextIOBase):
@@ -3179,6 +3204,8 @@ class RecallHandler(BaseHTTPRequestHandler):
                 self.handle_ask_stream(payload)
             else:
                 send_json(self, 404, {"error": "Not found"})
+        except BadRequest as exc:
+            send_json(self, 400, {"error": str(exc)})
         except Exception as exc:
             send_json(self, 500, {"error": str(exc)})
 
@@ -3324,7 +3351,8 @@ class RecallHandler(BaseHTTPRequestHandler):
         elif parsed.path.startswith("/api/jobs/"):
             job_id = parsed.path.rsplit("/", 1)[-1]
             with JOBS_LOCK:
-                job = JOBS.get(job_id)
+                # a copy: the job changes in its own thread while the answer is written
+                job = dict(JOBS[job_id]) if job_id in JOBS else None
             if not job:
                 send_json(self, 404, {"error": "Job not found"})
                 return
