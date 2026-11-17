@@ -212,3 +212,83 @@ def test_a_load_that_met_a_busy_archive_is_tried_again_after_a_moment(data_folde
     assert ui_server.bridge_failure(state, export) == "Not an export."
     export.write_text("message_id,timestamp\n1,2024-01-01 09:00:00\n2,2024-01-01 09:01:00\n", encoding="utf-8")
     assert ui_server.bridge_failure(state, export) == ""
+
+
+# ---- a report of a conversation that the archive no longer holds ----
+
+
+def test_a_report_can_still_be_read_when_its_conversation_left_the_archive(data_folder, server):
+    """A chat was deleted in Messages, and an update followed. The story is on disk and needs no archive."""
+    loaded(ui_server.DEFAULT_MESSAGES_CSV, ROWS)
+    report = ui_server.OUT_DIR / "analysis_+15550009999.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("# Conversation Analysis - +15550009999\n\n## Summary\nThe story of a summer.\n", encoding="utf-8")
+    status, answer = get(server, "/api/analysis", reportPath=str(report))
+    assert status == 200
+    opened = answer["analysis"]
+    assert "The story of a summer." in opened["summaryHtml"] and opened["contact"] == "+15550009999"
+    assert opened["stats"]["totalMessages"] == 0 and opened["monthly"] == [] and opened["recentMessages"] == []
+    assert opened["estimate"] is None and opened["estimateError"] == ui_server.NO_FIGURES
+
+
+def test_setup_is_not_taken_for_done_while_a_first_import_fills_the_archive(data_folder, server):
+    """The archive file is there as soon as a first import starts. It holds nothing until the import ends."""
+    from recall_services import places
+    from tests.archive_kit import emptied
+
+    emptied(places.archive_path_for(None))
+    assert places.state_for(None).exists()
+    status, answer = get(server, "/api/defaults")
+    assert status == 200 and answer["hasMessages"] is False
+
+
+def test_what_the_code_logs_is_no_line_of_a_job(data_folder, monkeypatch):
+    import logging
+
+    behind = io.StringIO()
+    root = logging.getLogger()
+    before = (list(root.handlers), root.level)
+    monkeypatch.setattr(ui_server.sys, "__stderr__", behind)
+    ui_server.log_to_the_server_log()
+
+    def logs_and_ends(*_args, **_more):
+        logging.getLogger("recall.test").error("a line with %s", SECRET)
+        return {}
+
+    monkeypatch.setattr(ui_server, "do_job", logs_and_ends)
+    try:
+        job = run("export", {})
+    finally:
+        root.handlers, root.level = before[0], before[1]
+    assert job["status"] == "completed" and "SELECT" not in said(job)
+    assert "a line with SELECT" in behind.getvalue()
+
+
+# ---- the steps of an import, as the server names them and as the guide lists them ----
+
+
+def test_the_guide_lists_the_steps_of_an_import_in_the_order_of_the_server(data_folder, monkeypatch, tmp_path):
+    """The guide marks the step whose number the job gives. The two lists must have one order."""
+    import re
+    from pathlib import Path
+
+    from recall_services.outcomes import PullDone
+
+    labels = []
+    monkeypatch.setattr(ui_server, "names_from_contacts", lambda _job_id: True)
+    monkeypatch.setattr(ui_server, "pull_into_archive", lambda *_args: PullDone(counts={}, messages=1, conversations=1))
+    monkeypatch.setattr(ui_server, "counted", lambda *_args: {"messages": 1, "conversations": 1})
+    real = ui_server.update_job
+
+    def noted(job_id, **fields):
+        if "progress" in fields:
+            labels.append((fields["progress"]["step"], fields["progress"]["label"]))
+        real(job_id, **fields)
+
+    monkeypatch.setattr(ui_server, "update_job", noted)
+    assert run("setup_import", {"messagesPath": str(tmp_path / "new.sqlite3")})["status"] == "completed"
+    guide = (Path(ui_server.__file__).parent / "app/src/components/onboarding/ImportStep.tsx").read_text(encoding="utf-8")
+    phases = re.findall(r"'([^']+)'", re.search(r"const PHASES = \[(.*?)\]", guide, re.S).group(1))
+    plain = [label.replace(" your ", " the ") for _step, label in labels]
+    assert [step for step, _label in labels] == [1, 2, 3]
+    assert plain == phases

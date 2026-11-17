@@ -439,7 +439,7 @@ def test_a_file_that_is_no_archive_is_told_as_one_that_failed_and_starts_no_load
     waiting = not_ready(export)
 
     assert (waiting.status, waiting.code) == (500, "archive_failed")
-    assert waiting.body() == {"error": "The archive file could not be opened. Open the setup guide and update the archive.", "code": "archive_failed"}
+    assert waiting.body() == {"error": ui_server.NOT_AN_ARCHIVE, "code": "archive_failed"}
     assert listed() == []
     assert wrong.read_bytes() == kept
 

@@ -5,6 +5,7 @@ import contextlib
 import csv
 import io
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -335,7 +336,7 @@ def companion_report_paths(report_path: Path, contact: str) -> tuple[Path | None
 
 BUILDING = "Recall is getting your archive ready. This takes a moment."
 NO_ARCHIVE = "There is no archive yet. Open the setup guide to read your messages."
-NOT_AN_ARCHIVE = "The archive file could not be opened. Open the setup guide and update the archive."
+NOT_AN_ARCHIVE = "The archive file could not be opened. Move that file away, then set up Recall again."
 ALREADY_RUNNING = "An import is already running. Wait until it ends."
 NO_EXPORT_TO_LOAD = "This archive has no earlier export to load."
 # A load of an export that did not end well, by archive file: the state of
@@ -1150,6 +1151,47 @@ def report_estimate(archive: Archive, contact: str, model: str, since, until) ->
         return None, str(exc)
 
 
+def stats_payload(stats) -> dict:
+    """The figures of a conversation under the names that the app reads."""
+    return {
+        "chatId": stats.chat_id,
+        "totalMessages": stats.total_messages,
+        "sentCount": stats.sent_count,
+        "receivedCount": stats.received_count,
+        "unknownDirectionCount": stats.unknown_direction_count,
+        "firstTimestamp": stats.first_timestamp,
+        "lastTimestamp": stats.last_timestamp,
+        "activeDays": stats.active_days,
+        "avgMessagesPerDay": stats.avg_messages_per_day,
+        "busiestDay": stats.busiest_day,
+        "busiestDayCount": stats.busiest_day_count,
+        "longestGapDays": stats.longest_gap_days,
+        "attachments": stats.attachments.__dict__,
+        "reactions": stats.reactions.__dict__,
+    }
+
+
+NO_FIGURES = "This conversation is no longer in the archive. Its figures cannot be shown."
+
+
+def empty_preview() -> dict:
+    """The preview of a conversation that the archive no longer holds: no figure, and no report can be run.
+
+    A report that was written about it can still be read.
+    """
+    nothing = pd.DataFrame({"timestamp": pd.to_datetime([])})
+    return {
+        "stats": stats_payload(compute_stats(nothing)),
+        "estimate": None,
+        "estimateError": NO_FIGURES,
+        "dynamics": {},
+        "monthly": [],
+        "activity": activity_series(nothing),
+        "daily": day_totals(nothing),
+        "recentMessages": [],
+    }
+
+
 def preview_payload(messages_path: Path, contact: str, model: str, since=None, until=None):
     state, archive = archive_for(messages_path)
     full_df, _, _ = cached_messages_bundle(messages_path)
@@ -1174,22 +1216,7 @@ def preview_payload(messages_path: Path, contact: str, model: str, since=None, u
     sender_names = saved_by_handle(recent_senders)
 
     return {
-        "stats": {
-            "chatId": stats.chat_id,
-            "totalMessages": stats.total_messages,
-            "sentCount": stats.sent_count,
-            "receivedCount": stats.received_count,
-            "unknownDirectionCount": stats.unknown_direction_count,
-            "firstTimestamp": stats.first_timestamp,
-            "lastTimestamp": stats.last_timestamp,
-            "activeDays": stats.active_days,
-            "avgMessagesPerDay": stats.avg_messages_per_day,
-            "busiestDay": stats.busiest_day,
-            "busiestDayCount": stats.busiest_day_count,
-            "longestGapDays": stats.longest_gap_days,
-            "attachments": stats.attachments.__dict__,
-            "reactions": stats.reactions.__dict__,
-        },
+        "stats": stats_payload(stats),
         "estimate": estimate,
         **({"estimateError": no_estimate} if no_estimate else {}),
         "dynamics": compute_dynamics(conv),
@@ -1579,8 +1606,12 @@ def build_analysis_payload(
     try:
         preview, _ = cached_preview_payload(messages_path, contact, model, since=since, until=until)
     except ValueError:
-        # the archive no longer holds those days; the whole conversation is the closest truth
-        preview, _ = cached_preview_payload(messages_path, contact, model)
+        try:
+            # the archive no longer holds those days; the whole conversation is the closest truth
+            preview, _ = cached_preview_payload(messages_path, contact, model)
+        except ValueError:
+            # the archive no longer holds the conversation: its story is on disk and can still be read
+            preview = empty_preview()
     stats = preview["stats"]
 
     events = report_moments(contact, report_text, events_path, archive)
@@ -2405,7 +2436,8 @@ class RecallHandler(BaseHTTPRequestHandler):
                 **models.defaults_payload(),
                 "messagesPath": str(places.archive_path_for(None)),
                 "outDir": str(OUT_DIR),
-                "hasMessages": archive_there(None),
+                # an archive that a first import is still filling holds nothing yet: setup is not done
+                "hasMessages": holds_messages(None),
                 "reports": list_report_files(),
                 "contactNames": contacts_cache_summary(),
                 "setupCompleted": bool(read_setup_marker().get("completed")),
@@ -2583,6 +2615,19 @@ def _retarget_streams_to_logfile() -> None:
     _JOB_STDERR._fallback = stream
 
 
+def log_to_the_server_log() -> None:
+    """Send what the code logs to the log of the server.
+
+    With no handler, the logging module writes to the stream that a job has
+    redirected, and a traceback then becomes a line of that job on the page.
+    """
+    handler = logging.StreamHandler(sys.__stderr__)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root = logging.getLogger()
+    root.handlers = [handler]
+    root.setLevel(logging.WARNING)
+
+
 def main():
     import signal
 
@@ -2590,6 +2635,7 @@ def main():
 
     if BUNDLED:
         _retarget_streams_to_logfile()
+    log_to_the_server_log()
     ensure_data_dirs()
     host = os.environ.get("RECALL_UI_HOST", "127.0.0.1")
     port = int(os.environ.get("RECALL_UI_PORT", "8765"))

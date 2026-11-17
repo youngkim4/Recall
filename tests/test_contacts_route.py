@@ -117,7 +117,7 @@ def test_a_file_that_is_no_archive_is_told_so_and_messages_is_not_read_in_its_pl
     status, answer = conversations(server, wrong)
 
     assert status == 500
-    assert answer == {"error": "The archive file could not be opened. Open the setup guide and update the archive.", "code": "archive_failed"}
+    assert answer == {"error": ui_server.NOT_AN_ARCHIVE, "code": "archive_failed"}
     assert listed() == []
 
 
