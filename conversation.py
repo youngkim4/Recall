@@ -315,6 +315,15 @@ def load_reactions(csv_path: str, since=None, until=None) -> pd.DataFrame:
     return _load_companion(csv_path, "_reactions.csv", since, until)
 
 
+def in_conversation(df: pd.DataFrame, contact: str) -> pd.Series:
+    """True for each message of the conversation whose id is `contact`. The
+    id is matched whole. A message that no conversation holds has no id: it
+    matches nothing, not even text that stands for "no value"."""
+    wanted = str(contact or "")
+    ids = df["chat_id"]
+    return ids.notna() & (ids.astype(str) == wanted) & bool(wanted.strip())
+
+
 def filter_conversation(df: pd.DataFrame, contact: str) -> pd.DataFrame:
     """The messages of the conversation whose id is `contact`, oldest first.
     Messages sent at the same time keep their order. The id is matched whole:
@@ -322,7 +331,7 @@ def filter_conversation(df: pd.DataFrame, contact: str) -> pd.DataFrame:
     never shown as another. find_conversation is for text typed by hand."""
     if "chat_id" not in df.columns:
         raise ValueError("messages CSV must contain a 'chat_id' column")
-    return df[df["chat_id"].astype(str) == str(contact)].sort_values("timestamp", kind="stable")
+    return df[in_conversation(df, contact)].sort_values("timestamp", kind="stable")
 
 
 def find_conversation(chat_ids: pd.Series, wanted: str) -> str:

@@ -340,3 +340,19 @@ def test_a_moment_says_which_day_it_is_and_when_its_message_was_sent(tmp_path, s
 
     assert moment["day"] == "2024-11-16"
     assert moment["previewAt"] == "2024-11-16 21:15:00"
+
+
+@pytest.mark.parametrize("contact", ["<NA>", "nan", "None", ""])
+def test_messages_that_no_conversation_holds_are_not_served_as_one(tmp_path, saved_names, contact):
+    """Rows with no conversation id come from different threads. No id, and no
+    text that stands for "no value", opens them as one conversation."""
+    csv = write_export(tmp_path / "messages.csv", [
+        row("", "2024-11-16 09:00:00", "from one thread", sender=AVERY),
+        row("", "2024-11-16 09:01:00", "from another", sender=BLAKE),
+        row(AVERY, "2024-11-16 09:02:00", "a real conversation"),
+    ])
+
+    payload = ui_server.day_payload(csv, contact, "2024-11-16")
+
+    assert payload["total"] == 0
+    assert payload["messages"] == []

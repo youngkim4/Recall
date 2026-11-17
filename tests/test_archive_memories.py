@@ -395,3 +395,19 @@ def test_a_conversation_with_no_readable_times_does_not_stop_the_moments(tmp_pat
 
     assert [item["chatId"] for item in memories["anniversaries"]] == [AVERY]
     assert memories["reconnect"] == []
+
+
+def test_messages_that_no_conversation_holds_are_not_a_conversation(tmp_path, saved_names):
+    """A row of the export with no conversation id belongs to no conversation.
+    Such rows were read as one conversation whose id was the text of "no value"."""
+    csv = write_export(tmp_path / "messages.csv", [
+        row("", "2024-11-16 09:00:00", "a line long enough to be worth quoting back"),
+        row("", "2024-11-16 09:01:00", "another line long enough to be quoted back"),
+        *thread("", "2020-01-01 10:00:00", 1200),
+        row(AVERY, "2026-11-10 09:00:00", "hello"),
+    ])
+
+    memories = ui_server.memories_payload(csv, now=NOW)
+
+    ids = [moment["chatId"] for moments in memories.values() for moment in moments]
+    assert all(cid == AVERY for cid in ids), ids

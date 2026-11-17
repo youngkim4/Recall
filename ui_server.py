@@ -53,6 +53,7 @@ from conversation import (
     direction_word,
     fill_months,
     filter_conversation,
+    in_conversation,
     group_chat_mask,
     hour_by_weekday,
     is_group_chat,
@@ -1427,7 +1428,7 @@ def day_payload(
         raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
     df, _, names = cached_messages_bundle(messages_path)
     # this conversation and no other: an id is never matched in part here
-    conv = df[df["chat_id"].astype(str) == str(contact)]
+    conv = df[in_conversation(df, contact)]
     window = day_window(conv, day, around=around, limit=limit, offset=offset)
     rows = window.rows
     # in a group, who wrote each message
@@ -2019,6 +2020,9 @@ def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> di
     now = now if now is not None else pd.Timestamp.now()
     # An archive that has not been updated is not a conversation gone quiet:
     # silence is measured up to the last message the archive holds.
+    # a message that no conversation holds is in no moment: such rows come
+    # from different threads and have no conversation to open
+    df = df[df["chat_id"].notna()]
     archive_end = df["timestamp"].max()
     if pd.isna(archive_end):
         # no time in the export could be read, so nothing can be placed on a day
