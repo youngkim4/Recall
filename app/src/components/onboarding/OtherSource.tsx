@@ -19,7 +19,8 @@ export function OtherSource({ busy, error, onPick, onPath }: OtherSourceProps) {
     <Disclosure className="setup-other" summary="Use a copy of the database instead">
       <p>
         The database is at ~/Library/Messages/chat.db. In Finder, choose Go, then Go to Folder, copy chat.db
-        somewhere else, and choose the copy here.
+        somewhere else, and choose the copy here. Copy chat.db-wal and chat.db-shm with it, so that the newest
+        messages come too.
       </p>
       {recallBridge.available ? (
         <button type="button" className="btn" disabled={busy} onClick={onPick}>

@@ -1,9 +1,11 @@
 import { formatNumber, plural } from '../../lib/format'
 import { isActiveJob, lastLog } from '../../lib/jobs'
+import { failedHeading } from '../../lib/setupGuide'
 import type { Job, SetupStatus } from '../../types'
 import { CheckIcon } from '../Icons'
 
 type ImportStepProps = {
+  // the check of what will be read: Messages itself, or the copy that was chosen
   status: SetupStatus
   // the import, once it has been started
   job: Job | null
@@ -32,10 +34,16 @@ function sizeOf(db: SetupStatus['db']) {
 // Before, during and after the import: what will be read, how far it has got,
 // or why it stopped.
 export function ImportStep({ status, job, rerun, onStart, onRetry, onBack }: ImportStepProps) {
+  // a copy is read only because it was chosen in this guide, and the reader is told what that does
+  const fromCopy = status.db.kind === 'copy'
+  // Back gives a copy up. An update that reads Messages itself has only the app to go back to.
+  const wayBack = rerun && !fromCopy ? 'Not now' : 'Back'
+
   if (job?.status === 'failed') {
     return (
       <>
-        <h1>{rerun ? 'The update did not finish' : 'The import did not finish'}</h1>
+        <h1>{failedHeading(job, rerun)}</h1>
+        {/* the reason says whether the archive was changed, where the server knows */}
         {job.error ? (
           <p className="notice bad" role="alert">
             {job.error}
@@ -47,7 +55,7 @@ export function ImportStep({ status, job, rerun, onStart, onRetry, onBack }: Imp
             Try again
           </button>
           <button type="button" className="btn quiet lg" onClick={onBack}>
-            {rerun ? 'Not now' : 'Back'}
+            {wayBack}
           </button>
         </div>
       </>
@@ -83,8 +91,6 @@ export function ImportStep({ status, job, rerun, onStart, onRetry, onBack }: Imp
   }
 
   const size = sizeOf(status.db)
-  // a copy is read only because it was chosen in this guide, and the reader is told what that does
-  const fromCopy = status.db.kind === 'copy'
   return (
     <>
       <h1>{rerun ? 'Update your archive' : 'Build your archive'}</h1>
@@ -96,12 +102,19 @@ export function ImportStep({ status, job, rerun, onStart, onRetry, onBack }: Imp
             ? 'Recall reads Messages again. The archive then holds what Messages holds now, so a message deleted there leaves the archive too. Messages and its database are not changed.'
             : 'Recall copies your message history into its own file on this Mac. Messages and its database are not changed.'}
       </p>
+      {status.db.status === 'locked' ? (
+        // a busy database can be imported: the server tries it, and tries once more
+        <p className="setup-note">
+          {fromCopy ? 'Another app has the copy open now.' : 'Messages is writing to its database now.'} Recall waits a
+          moment and tries once more if it is still busy.
+        </p>
+      ) : null}
       <div className="setup-actions">
         <button type="button" className="btn primary lg" onClick={onStart}>
           {rerun ? 'Update archive' : 'Import messages'}
         </button>
         <button type="button" className="btn quiet lg" onClick={onBack}>
-          {rerun ? 'Not now' : 'Back'}
+          {wayBack}
         </button>
       </div>
     </>

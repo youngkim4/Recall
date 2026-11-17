@@ -145,14 +145,16 @@ export function NoMessagesStep({
 }
 
 type DbProblemStepProps = SourceProps & {
-  // locked: Messages is writing to it; invalid: the file is not a Messages database
-  variant: 'invalid' | 'locked'
+  // invalid: the file that Messages keeps is not a database of Messages; unread: it could not be looked at
+  variant: 'invalid' | 'unread'
   // what the check said, in its own words
   detail: string
   onRetry: () => void
   onBack: () => void
 }
 
+// Messages itself cannot be read as a database. A copy that cannot be read
+// never comes here: it is refused where it is chosen.
 export function DbProblemStep({
   variant,
   detail,
@@ -165,11 +167,11 @@ export function DbProblemStep({
 }: DbProblemStepProps) {
   return (
     <>
-      <h1>{variant === 'locked' ? 'The Messages database is busy' : 'That file is not a Messages database'}</h1>
+      <h1>Recall cannot read the Messages database</h1>
       <p className="setup-lead">
-        {variant === 'locked'
-          ? 'Messages is writing to it. Quit Messages or wait a moment, then try again.'
-          : 'Choose the file named chat.db, not chat.db-wal or chat.db-shm. When you copy it, bring all three files so the newest messages come too.'}
+        {variant === 'invalid'
+          ? 'The file that Messages keeps on this Mac, ~/Library/Messages/chat.db, is not a Messages database.'
+          : 'The file that Messages keeps on this Mac, ~/Library/Messages/chat.db, could not be read.'}
       </p>
       {detail ? <p className="setup-note">{detail}</p> : null}
       <div className="setup-actions">
@@ -180,9 +182,7 @@ export function DbProblemStep({
           Back
         </button>
       </div>
-      {variant === 'invalid' ? (
-        <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} />
-      ) : null}
+      <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} />
     </>
   )
 }
