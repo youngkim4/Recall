@@ -8,6 +8,7 @@ Purpose:
 """
 
 import argparse
+import logging
 import os
 from datetime import datetime
 from typing import Optional, Tuple
@@ -44,11 +45,14 @@ from conversation import (
     compute_attachment_stats,
     compute_reaction_stats,
     compute_stats,
+    contact_label,
+    conversation_label,
     count_sent,
     direction_label,
     estimate_tokens,
     filter_conversation,
     format_all_messages,
+    given_name,
     load_attachments,
     load_messages,
     load_reactions,
@@ -64,6 +68,8 @@ from openai_client import (
     supports_reasoning_controls,
 )
 from reports import write_markdown_report
+
+logger = logging.getLogger(__name__)
 
 
 def write_events_timeline(out_dir: str, contact: str, events_df) -> Optional[str]:
@@ -118,9 +124,13 @@ def run_cli(
             else []
         )
         sender_names = dict(resolve_contact_names(sorted(set(senders + [contact]))))
-        contact_display = sender_names.get(contact, "") or contact
-    except Exception:
-        contact_display = contact
+    except Exception as exc:
+        logger.warning("Contact names could not be read: %s", exc)
+    # the name the conversation goes by: saved in Contacts, or given to a group
+    known_name = sender_names.get(contact, "") or given_name(conv)
+    # The model is told that name. With no name it is told a label that holds
+    # no whole phone number and no address.
+    contact_display = contact_label({"displayName": known_name, "chatId": contact})
 
     all_messages = format_all_messages(conv, sender_names)
     total_tokens = estimate_tokens(all_messages)
@@ -159,7 +169,10 @@ def run_cli(
     html_path = None
     if html:
         from html_report import write_html_report
-        html_path = write_html_report(out_dir, contact, stats, monthly, summary_text, None, events_df)
+        html_path = write_html_report(
+            out_dir, contact, stats, monthly, summary_text, None, events_df,
+            title=conversation_label(known_name, contact),
+        )
 
     return None, report_path, events_path, html_path
 

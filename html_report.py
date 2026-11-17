@@ -8,7 +8,7 @@ Purpose:
 import html as html_lib
 import os
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
 
@@ -55,13 +55,18 @@ def write_html_report(
     monthly: pd.DataFrame,
     summary_text: str,
     sentiment: List = None,
-    events_df: pd.DataFrame = None
+    events_df: pd.DataFrame = None,
+    title: Optional[str] = None,
 ) -> str:
-    """Generate an HTML report with charts."""
-    from conversation import sanitize_filename
+    """Generate an HTML report with charts. The page is headed by `title`, the
+    name the conversation goes by. With none it is headed the way the
+    interface names a conversation that has no name, so a phone number is
+    never written out. The file is named after the conversation id."""
+    from conversation import conversation_label, sanitize_filename
 
     os.makedirs(out_dir, exist_ok=True)
     fname = os.path.join(out_dir, f"analysis_{sanitize_filename(contact)}.html")
+    heading = html_lib.escape(str(title or "").strip() or conversation_label("", contact))
 
     # Prepare chart data
     months_labels = [str(row["month"].date()) for _, row in monthly.iterrows()]
@@ -190,7 +195,7 @@ def write_html_report(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Conversation Analysis — {html_lib.escape(str(contact))}</title>
+    <title>Conversation Analysis — {heading}</title>
     <style>
         :root {{
             --bg-base: #0a0a0a;
@@ -530,7 +535,7 @@ def write_html_report(
 <body>
     <header>
         <div class="container">
-            <h1>{html_lib.escape(str(contact))}</h1>
+            <h1>{heading}</h1>
             <p class="subtitle">Conversation analysis from {html_lib.escape(str(stats.first_timestamp))} to {html_lib.escape(str(stats.last_timestamp))}</p>
         </div>
     </header>

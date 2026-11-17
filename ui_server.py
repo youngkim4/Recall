@@ -47,6 +47,8 @@ from local_store import clear_cache_namespace, get_cache_entry, set_cache_entry,
 from conversation import (
     activity_series,
     compute_stats,
+    contact_label,
+    conversation_label,
     day_totals,
     direction_word,
     fill_months,
@@ -1599,58 +1601,6 @@ def _burst_scores(df: pd.DataFrame, terms: list[str], window: int = 5) -> pd.Ser
     scores = pd.Series(0.0, index=ordered.index)
     scores.iloc[idx] = score_sub
     return scores.reindex(df.index)
-
-
-# a phone number is recognised by its last digits; fewer than this is a short code
-PHONE_DIGITS_MIN = 7
-_NOT_A_DIGIT = re.compile(r"[^0-9]")
-_ONLY_NUMBER_MARKS = re.compile(r"[0-9+() .-]+")
-
-
-def conversation_label(saved_name, chat_id) -> str:
-    """The name a conversation goes by in text the user reads. The same rules
-    in the same order as conversationName in the interface
-    (app/src/lib/conversations.ts): change the two together. A phone number
-    is never written out; its last four digits are enough to know the thread."""
-    name = str(saved_name or "").strip()
-    if name:
-        return name
-    handle = str(chat_id or "").strip()
-    if not handle:
-        return "Unknown conversation"
-    if is_group_chat(handle):
-        return "Unnamed group"
-    if "@" in handle:
-        return handle
-    digits = _NOT_A_DIGIT.sub("", handle)
-    # a short code is already its own name
-    if len(digits) < PHONE_DIGITS_MIN:
-        return handle
-    return f"Number ending in {digits[-4:]}"
-
-
-def contact_label(citation: dict) -> str:
-    """The label for a conversation or a person in text the model reads, and so
-    in what it writes back. A saved name is used as it is. A handle with no
-    name is never sent whole: a phone number goes by its last four digits and
-    an email address only by what it is."""
-    name = str(citation.get("displayName") or "").strip()
-    if name:
-        return name
-    handle = str(citation.get("chatId") or "").strip()
-    if not handle:
-        return "an unsaved contact"
-    if is_group_chat(handle):
-        return "a group chat"
-    if "@" in handle:
-        return "an unsaved email contact"
-    digits = _NOT_A_DIGIT.sub("", handle)
-    if len(digits) >= PHONE_DIGITS_MIN:
-        return f"a number ending in {digits[-4:]}"
-    # a short code is a sender's public number, not somebody's own
-    if digits and _ONLY_NUMBER_MARKS.fullmatch(handle):
-        return f"the short code {digits}"
-    return "an unsaved contact"
 
 
 def citation_context(citations: list[dict]) -> str:

@@ -7,7 +7,7 @@ import pytest
 import sys
 sys.path.insert(0, ".")
 
-from analysis import compute_stats, progression_series, AttachmentStats, ReactionStats
+from analysis import compute_stats, progression_series
 from html_report import write_html_report
 from tests.html_shape import assert_only_allowed
 
@@ -35,6 +35,19 @@ class TestWriteHtmlReport:
         path = write_html_report(**basic_report_args)
         content = Path(path).read_text()
         assert "+1234" in content
+
+    def test_a_phone_number_is_not_written_out_in_the_page(self, basic_report_args):
+        path = write_html_report(**{**basic_report_args, "contact": "+15550000009"})
+        content = Path(path).read_text()
+        assert "<h1>Number ending in 0009</h1>" in content
+        assert "<title>Conversation Analysis — Number ending in 0009</title>" in content
+        assert "5550000009" not in content
+
+    def test_the_page_is_titled_with_the_name_it_is_given(self, basic_report_args):
+        path = write_html_report(**{**basic_report_args, "contact": "+15550000009", "title": "Avery <Stone>"})
+        content = Path(path).read_text()
+        assert "<h1>Avery &lt;Stone&gt;</h1>" in content
+        assert "0009" not in content
 
     def test_the_page_runs_no_script_and_loads_nothing(self, basic_report_args):
         # the report is someone's private messages: opening it must not run

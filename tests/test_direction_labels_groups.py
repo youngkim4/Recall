@@ -181,6 +181,23 @@ def test_a_phone_number_is_never_written_out(label):
         assert text.endswith(digits[-4:])
 
 
+@pytest.mark.parametrize("missing", [None, float("nan"), pd.NA, "", "  "])
+def test_a_name_or_an_id_that_is_missing_is_none_at_all(missing):
+    assert ui_server.conversation_label(missing, AVERY) == "Number ending in 0001"
+    assert ui_server.contact_label({"displayName": missing, "chatId": AVERY}) == "a number ending in 0001"
+    assert ui_server.conversation_label("Avery Stone", missing) == "Avery Stone"
+    assert ui_server.conversation_label(missing, missing) == "Unknown conversation"
+    assert ui_server.contact_label({"displayName": missing, "chatId": missing}) == "an unsaved contact"
+
+
+def test_the_server_and_a_report_run_label_with_the_same_two_functions():
+    import analysis
+    import conversation
+
+    assert ui_server.contact_label is conversation.contact_label is analysis.contact_label
+    assert ui_server.conversation_label is conversation.conversation_label is analysis.conversation_label
+
+
 # ---- what a group is ----
 
 

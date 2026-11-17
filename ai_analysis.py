@@ -155,7 +155,9 @@ def ai_extract_events(
     all_messages: Optional[str] = None,
     model: str = DEFAULT_MODEL,
 ) -> pd.DataFrame:
-    """Extract key events, using time-based chunking for large conversations."""
+    """Extract key events, using time-based chunking for large conversations.
+    `contact` is put in the prompt: a name, or a label from contact_label,
+    never a handle as it is."""
     client = OpenAI()
 
     if total_tokens is None or all_messages is None:
@@ -368,7 +370,9 @@ def ai_summary(
     all_messages: Optional[str] = None,
     model: str = DEFAULT_MODEL,
 ) -> str:
-    """Generate narrative summary, using time-based chunking for large conversations."""
+    """Generate narrative summary, using time-based chunking for large conversations.
+    `contact` is put in the prompt: a name, or a label from contact_label,
+    never a handle as it is."""
     client = OpenAI()
 
     if total_tokens is None or all_messages is None:

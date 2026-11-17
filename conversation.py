@@ -79,6 +79,81 @@ def group_chat_mask(chat_ids: pd.Series) -> pd.Series:
     return chat_ids.astype("string").str.fullmatch(_GROUP_CHAT_ID).fillna(False).astype(bool)
 
 
+# a phone number is recognised by its last digits; fewer than this is a short code
+PHONE_DIGITS_MIN = 7
+_NOT_A_DIGIT = re.compile(r"[^0-9]")
+_ONLY_NUMBER_MARKS = re.compile(r"[0-9+() .-]+")
+
+
+def _text_of(value) -> str:
+    """A name or an id as text. A value that is missing is no text at all."""
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
+def conversation_label(saved_name, chat_id) -> str:
+    """The name a conversation goes by in text the user reads. The same rules
+    in the same order as conversationName in the interface
+    (app/src/lib/conversations.ts): change the two together. A phone number
+    is never written out; its last four digits are enough to know the thread."""
+    name = _text_of(saved_name)
+    if name:
+        return name
+    handle = _text_of(chat_id)
+    if not handle:
+        return "Unknown conversation"
+    if is_group_chat(handle):
+        return "Unnamed group"
+    if "@" in handle:
+        return handle
+    digits = _NOT_A_DIGIT.sub("", handle)
+    # a short code is already its own name
+    if len(digits) < PHONE_DIGITS_MIN:
+        return handle
+    return f"Number ending in {digits[-4:]}"
+
+
+def contact_label(citation: dict) -> str:
+    """The label for a conversation or a person in text the model reads, and so
+    in what it writes back. A saved name is used as it is. A handle with no
+    name is never sent whole: a phone number goes by its last four digits and
+    an email address only by what it is. The chat and a report run both name
+    people with this."""
+    name = _text_of(citation.get("displayName"))
+    if name:
+        return name
+    handle = _text_of(citation.get("chatId"))
+    if not handle:
+        return "an unsaved contact"
+    if is_group_chat(handle):
+        return "a group chat"
+    if "@" in handle:
+        return "an unsaved email contact"
+    digits = _NOT_A_DIGIT.sub("", handle)
+    if len(digits) >= PHONE_DIGITS_MIN:
+        return f"a number ending in {digits[-4:]}"
+    # a short code is a sender's public number, not somebody's own
+    if digits and _ONLY_NUMBER_MARKS.fullmatch(handle):
+        return f"the short code {digits}"
+    return "an unsaved contact"
+
+
+def given_name(conv: pd.DataFrame) -> str:
+    """The name a group conversation was given in Messages, or "" when the
+    export holds none for it."""
+    if "chat_display_name" not in conv.columns:
+        return ""
+    names = conv["chat_display_name"].dropna().astype(str).str.strip()
+    named = names[names.ne("")]
+    return str(named.iloc[0]) if len(named) else ""
+
+
 _SENT_VALUES = frozenset({"1", "1.0", "true", "t", "yes", "y"})
 _RECEIVED_VALUES = frozenset({"0", "0.0", "false", "f", "no", "n"})
 
