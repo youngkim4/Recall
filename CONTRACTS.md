@@ -11,7 +11,7 @@ Add a rule here when a review finds a new one.
   - Server: `within_dates` in `conversation.py`.
   - Client: `countBetween` in `app/src/lib/days.ts`.
 - A range that covers the whole conversation is sent as no dates. `tidyRange` in `app/src/lib/days.ts` does this.
-- A timestamp is local time with no zone, from the export to the screen.
+- A timestamp is local time with no zone, from the export to the screen. `read_times` in `conversation.py` reads the times of a file. A time that cannot be read is no time: the server sends null for it, and `dayOfMessage` in `app/src/lib/dayParts.ts` gives no day for it.
 - Calendar arithmetic on the client uses UTC. `app/src/lib/days.ts`, `months.ts`, `activity.ts` and `heat.ts` obey this. `timezones.test.ts` checks it in nine zones.
 - The chosen dates belong to one conversation in one archive. `App.tsx` stores the dates with the archive path and the chat id. Dates stored for a different conversation are no dates.
 
@@ -37,10 +37,11 @@ Add a rule here when a review finds a new one.
 - The server sends a saved name, a group name made from saved names, or an empty string.
 - Only one function on each side labels a conversation that has no name.
   - Client: `conversationName` in `app/src/lib/conversations.ts`.
-  - Server, for text that the user reads: `conversation_label` in `ui_server.py`.
+  - Server, for text that the user reads: `conversation_label` in `conversation.py`.
   - The two functions must use the same words.
 - No screen shows a full telephone number.
-- Text that goes to the AI model uses `contact_label` in `ui_server.py`. It never sends a handle that is not saved.
+- Text that goes to the AI model uses `contact_label` in `conversation.py`. It never sends a handle that is not saved. A report run tells the model a saved name, or the given name of a group, or this label. `tests/test_prompt_privacy.py` checks each prompt.
+- The title of a saved HTML report is `conversation_label`. The file name and the heading of the Markdown report keep the conversation id.
 - A group id is `chat` followed by digits only. Three places hold this rule and must change together:
   - `is_group_chat` and `group_chat_mask` in `conversation.py`.
   - `isGroupChat` in `app/src/lib/conversations.ts`.
@@ -50,10 +51,14 @@ Add a rule here when a review finds a new one.
 ## A day of a conversation
 
 - `/api/day` gives one day of one conversation. `day_window` in `day_view.py` decides which messages; `day_payload` in `ui_server.py` gives each message the shape that search results have.
-- The conversation id must match exactly. This route never matches part of an id.
+- The conversation id must match exactly. This route never matches part of an id. `in_conversation` in `conversation.py` holds the rule, and `filter_conversation` uses it too.
+- A message with no conversation id belongs to no conversation. It is in no day and in no moment.
+- A place given as `offset` is used as it is, from 0 to the total. The answer can hold fewer rows than `limit`. A `limit` below 1 is refused; a `limit` above 400 is 400.
+- The command line can name a conversation by a part of its id. `find_conversation` in `conversation.py` does this, and it refuses a part that several ids hold.
 - A day longer than the limit is given in part. `total` is the number of messages in the day and `offset` is the place of the first message given.
 - `previousDay` and `nextDay` are the nearest days that hold messages, or null.
-- A moment in `/api/memories` carries `day`, and `previewAt` when it quotes a message. `previewAt` is written in the same form as `timestamp` in a message of `/api/day`.
+- A moment in `/api/memories` carries `day`, and `previewAt` and `previewId` when it quotes a message. `previewAt` is written in the same form as `timestamp` in a message of `/api/day`. `previewId` is written by `message_id_text`, the same code that writes `messageId`.
+- The `count` of an on-this-day moment is every message of that day in that conversation. It is the same number as `total` in `/api/day`.
 - The client finds the quoted message with `quotedIndex` in `app/src/lib/dayParts.ts`: first by `previewId` equal to `messageId`, then by `previewAt` equal to `timestamp`.
 - The client reads a long day in parts with `partToAsk`: it asks for the rows that are there and no more. `joinPart` adds a part only when it meets what is shown.
 - `DayReader.tsx` in `app/src/components/ui` shows a day: the arrows, the messages, the parts, the place that the reader left each day at. `DaySheet.tsx` is the dialog around it. Search shows the same reader in a pane.
@@ -82,7 +87,8 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - The result holds only the tags in `ALLOWED_TAGS`.
 - The result holds only three attributes: `href` and `rel` on a link, and `start` on a numbered list.
 - A link address starts with `http://`, `https://` or `mailto:`. Each link has `rel="noopener noreferrer"`.
-- `story_html` limits its input: the length of the text, a run of one mark, and a run of empty lines. Text nested too deep for the renderer is shown as plain paragraphs.
+- `story_html` limits its input: the length of the text (`STORY_LIMIT`), a run of one mark, and a run of empty lines.
+- `story_html` limits its work: an estimate of the work before the renderer starts (`STORY_WORK_LIMIT`) and the processor time of the renderer (`STORY_SECONDS`). A story past a limit, or nested too deep, is shown as plain paragraphs.
 - A picture becomes its caption.
 - The client puts this HTML into the page in one place: `ReportStory.tsx` in `app/src/components/reports`.
 - `readStory` in `app/src/lib/story.ts` cuts the story into an opening and chapters. It moves whole elements and changes heading levels only. It never makes markup from text.
@@ -106,7 +112,8 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 ## Caches
 
 - `PREVIEW_PAYLOAD_VERSION` in `ui_server.py` is 7. The browser key in `app/src/lib/cache.ts` is `recall.previewCache.v7`. Change the two together when the shape of a preview changes.
-- `ANALYSIS_PAYLOAD_VERSION` in `ui_server.py` is 4. Increase it when a stored analysis can differ for the same key. A change to `story_html` is such a change.
+- `ANALYSIS_PAYLOAD_VERSION` in `ui_server.py` is 5. Increase it when a stored analysis can differ for the same key. A change to `story_html` is such a change.
+- `analysis_cache_key` holds `preview_cache_key`, so a stored analysis is not used after its figures change.
 - A stale browser entry is safe. `useConversationPreview` always asks the server again.
 
 ## Interface
