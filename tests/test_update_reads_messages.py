@@ -8,6 +8,7 @@ the archive that was there stays as it was.
 """
 import json
 import os
+import sqlite3
 from urllib.parse import quote
 
 import pandas as pd
@@ -81,17 +82,35 @@ def test_a_report_does_not_read_a_database_first(messages_home, archive, tmp_pat
 # ---- what is written ----
 
 
-def test_no_second_source_is_merged_into_an_update(messages_home, archive, tmp_path, monkeypatch):
-    messages_db(messages_home / "chat.db", ["still in messages"])
-    in_data_folder = messages_db(tmp_path / "chat.db", ["still in messages", "gone from messages"])
-    monkeypatch.setattr(recall_paths, "SNAPSHOT_DB", in_data_folder)
-    monkeypatch.setattr(ui_server, "SNAPSHOT_DB", in_data_folder, raising=False)
+def databases_opened(monkeypatch):
+    """Every database that sqlite3 is asked to open from now on, as the text it was asked with."""
+    opened = []
+    connect = sqlite3.connect
 
-    job = run("setup_import", {"messagesPath": str(messages_csv(archive)), "includeContacts": False})
+    def note_and_connect(target, *args, **kwargs):
+        opened.append(str(target))
+        return connect(target, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", note_and_connect)
+    return opened
+
+
+@pytest.mark.parametrize("action", ["export", "setup_import"])
+def test_no_second_source_is_read_for_an_import(messages_home, archive, tmp_path, monkeypatch, action):
+    live = messages_db(messages_home / "chat.db", ["still in messages"])
+    # a copy where an earlier build kept one: it holds a message that Messages no longer has
+    second = messages_db(tmp_path / "chat.db", ["still in messages", "gone from messages"])
+    monkeypatch.setattr(recall_paths, "SNAPSHOT_DB", second)
+    opened = databases_opened(monkeypatch)
+
+    job = run(action, {"messagesPath": str(messages_csv(archive)), "includeContacts": False})
 
     assert job["status"] == "completed", job["error"]
     assert texts_in(messages_csv(archive)) == {"still in messages"}
     assert "recovered" not in job["result"]
+    # the database of Messages was opened; the second one was not, by any reader
+    assert any(str(live) in target for target in opened)
+    assert not any(str(second) in target for target in opened)
 
 
 def test_an_update_writes_the_three_files_and_leaves_nothing_else(messages_home, archive):
