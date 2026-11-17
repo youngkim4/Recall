@@ -30,6 +30,7 @@ class LoopbackHTTPServer(ThreadingHTTPServer):
         self.server_name = str(host)
         self.server_port = int(port)
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import parse_qs, unquote, urlparse
 
 import pandas as pd
@@ -308,6 +309,24 @@ def companion_report_paths(report_path: Path, contact: str) -> tuple[Path | None
 
 
 ARCHIVE_KEPT = "The archive was not changed."
+# how long an import waits before it tries a busy database once more
+BUSY_WAIT_SECONDS = 2
+# what sqlite3 says, in small letters, when a database is held, closed to this app, or not one of Messages
+BUSY_SIGNS = ("locked", "busy")
+CLOSED_SIGNS = ("unable to open", "permission", "not permitted", "authoriz")
+NOT_MESSAGES_SIGNS = ("no such table", "no such column", "not a database", "file is encrypted")
+
+
+class ImportStopped(Exception):
+    """An import that stops for a reason told to the reader in one plain sentence."""
+
+
+class DatabaseBusy(ImportStopped):
+    """Another program holds the database. The import is tried once more."""
+
+
+class ArchiveInParts(ImportStopped):
+    """An import stopped part way, and an earlier file could not be put back."""
 
 
 def archive_note(archive_there: bool) -> str:
@@ -346,6 +365,13 @@ def closed_to_recall(probe: DbProbe) -> str:
     )
 
 
+def not_there(probe: DbProbe) -> str:
+    """What to say where no database is."""
+    if probe.kind == "live":
+        return "There is no Messages database on this Mac."
+    return f"There is no file at {probe.path}."
+
+
 def no_messages(probe: DbProbe) -> str:
     """What to say of a database that holds no message to keep."""
     if probe.kind == "live":
@@ -353,30 +379,73 @@ def no_messages(probe: DbProbe) -> str:
     return f"The copy at {probe.path} holds no messages."
 
 
-def why_unreadable(probe: DbProbe) -> Exception | None:
+def not_messages(probe: DbProbe, said: str = "") -> str:
+    """What to say of a file that is not a database of Messages. `said` is what a check found, in brackets."""
+    what = "The file that Messages keeps on this Mac" if probe.kind == "live" else f"The copy at {probe.path}"
+    return f"{what} is not a Messages database{said}."
+
+
+def not_read(probe: DbProbe, said: str = "") -> str:
+    """What to say of a database that could not be read, when nothing more is known."""
+    what = "The Messages database on this Mac" if probe.kind == "live" else f"The copy at {probe.path}"
+    return f"{what} could not be read{said}."
+
+
+def held(probe: DbProbe) -> str:
+    """What to say of a database that another program holds."""
+    if probe.kind == "live":
+        return "The Messages database on this Mac is busy. Quit Messages or wait a moment, then try again."
+    return f"The copy at {probe.path} is busy. Close the app that has it open, then try again."
+
+
+def why_unreadable(probe: DbProbe, archive_there: bool) -> ImportStopped | None:
     """What stops an import before it starts, or None when the database can be tried.
 
     The check tells a database macOS keeps closed from one that is not there:
-    without Full Disk Access macOS can show the file as missing.
+    without Full Disk Access macOS can show the file as missing. The reason
+    speaks of the archive only when there is one.
     """
     # a busy database is tried: Messages may only be in the middle of a write
     if probe.status in ("readable", "locked"):
         return None
-    live = probe.kind == "live"
-    if probe.status == "fda_blocked":
-        return PermissionError(f"{closed_to_recall(probe)} {ARCHIVE_KEPT}")
-    if probe.status == "missing":
-        where = "There is no Messages database on this Mac." if live else f"There is no file at {probe.path}."
-        return FileNotFoundError(f"{where} {ARCHIVE_KEPT}")
-    if probe.status == "empty":
-        return ValueError(f"{no_messages(probe)} {ARCHIVE_KEPT}")
     said = f" ({probe.detail})" if probe.detail else ""
-    what = (
-        f"The Messages database on this Mac could not be read{said}."
-        if live
-        else f"The copy at {probe.path} is not a Messages database{said}."
+    if probe.status == "fda_blocked":
+        reason = closed_to_recall(probe)
+    elif probe.status == "missing":
+        reason = not_there(probe)
+    elif probe.status == "empty":
+        reason = no_messages(probe)
+    elif probe.status == "invalid":
+        reason = not_messages(probe, said)
+    else:
+        # the file could not be looked at: it is not said to be another kind of file
+        reason = not_read(probe, said)
+    return ImportStopped(f"{reason}{archive_note(archive_there)}")
+
+
+def reading_stopped(exc: Exception, probe: DbProbe, archive_there: bool) -> ImportStopped:
+    """The plain sentence for what a reader raised.
+
+    What the reader raised is not put into the sentence: it can hold the text
+    of a query. Only an error of sqlite3 is read for signs of its kind.
+    """
+    signs = str(exc).lower() if isinstance(exc, sqlite3.Error) else ""
+    note = archive_note(archive_there)
+    if any(sign in signs for sign in BUSY_SIGNS):
+        return DatabaseBusy(f"{held(probe)}{note}")
+    if any(sign in signs for sign in CLOSED_SIGNS):
+        return ImportStopped(f"{closed_to_recall(probe)}{note}")
+    if any(sign in signs for sign in NOT_MESSAGES_SIGNS):
+        return ImportStopped(f"{not_messages(probe)}{note}")
+    return ImportStopped(f"{not_read(probe)}{note}")
+
+
+def writing_stopped(exc: Exception, messages_path: Path, archive_there: bool) -> ImportStopped:
+    """The plain sentence for what stopped the writing of the archive. The files are as they were."""
+    reason = f": {exc.strerror}" if isinstance(exc, OSError) and exc.strerror else ""
+    return ImportStopped(
+        f"The archive could not be written to {messages_path.parent}{reason}.{archive_note(archive_there)}"
     )
-    return ValueError(f"{what} {ARCHIVE_KEPT}")
 
 
 def archive_files(messages_path: Path) -> tuple[Path, Path, Path]:
@@ -438,10 +507,6 @@ def restored(target: Path, had_earlier: bool) -> bool:
     return True
 
 
-class ArchiveInParts(Exception):
-    """An import stopped part way, and an earlier file could not be put back."""
-
-
 def move_in(targets: tuple[Path, ...]) -> None:
     """Move each new file to its place, or leave every place as it was.
 
@@ -471,8 +536,27 @@ def move_in(targets: tuple[Path, ...]) -> None:
         discard(earlier_path(target) for target in targets if target not in stuck)
 
 
-def write_archive(frames: tuple[pd.DataFrame, ...], messages_path: Path) -> None:
-    """Write the files of the archive, all of them or none. `frames` are in the order of archive_files."""
+class ArchiveFrames(NamedTuple):
+    """What an archive holds, in the order that its files move in (archive_files)."""
+
+    attachments: pd.DataFrame
+    reactions: pd.DataFrame
+    messages: pd.DataFrame
+
+
+def read_database(db_path: Path) -> ArchiveFrames:
+    """All that an archive holds, read from one database before a file is written."""
+    path = str(db_path)
+    messages = extract_messages(path)
+    return ArchiveFrames(
+        attachments=extract_attachments(path),
+        reactions=extract_reactions(path),
+        messages=messages,
+    )
+
+
+def write_archive(frames: ArchiveFrames, messages_path: Path) -> None:
+    """Write the files of the archive, all of them or none."""
     targets = archive_files(messages_path)
     try:
         messages_path.parent.mkdir(parents=True, exist_ok=True)
@@ -498,32 +582,26 @@ def export_database(db_path: Path, messages_path: Path) -> dict:
     """
     archive_there = path_exists(messages_path)
     probe = probe_database(db_path)
-    stopped = why_unreadable(probe)
+    stopped = why_unreadable(probe, archive_there)
     if stopped:
         raise stopped
     try:
-        messages = extract_messages(str(db_path))
-        attachments = extract_attachments(str(db_path))
-        reactions = extract_reactions(str(db_path))
-    except sqlite3.OperationalError as exc:
-        if any(sign in str(exc).lower() for sign in ("unable to open", "permission", "not permitted", "authoriz")):
-            raise PermissionError(f"{closed_to_recall(probe)} {ARCHIVE_KEPT}") from exc
-        raise
-    if messages.empty:
-        raise ValueError(f"{no_messages(probe)} {ARCHIVE_KEPT}")
-
+        frames = read_database(db_path)
+    except Exception as exc:  # noqa: BLE001 - whatever a reader raises is told in a plain sentence
+        raise reading_stopped(exc, probe, archive_there) from exc
+    if frames.messages.empty:
+        raise ImportStopped(f"{no_messages(probe)}{archive_note(archive_there)}")
     try:
-        write_archive((attachments, reactions, messages), messages_path)
-    except OSError as exc:
-        reason = exc.strerror or "the files could not be written"
-        raise OSError(
-            f"The archive could not be written to {messages_path.parent}: {reason}.{archive_note(archive_there)}"
-        ) from exc
+        write_archive(frames, messages_path)
+    except ImportStopped:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the files are as they were, and the reader is told so
+        raise writing_stopped(exc, messages_path, archive_there) from exc
 
     return {
-        "messages": len(messages),
-        "attachments": len(attachments),
-        "reactions": len(reactions),
+        "messages": len(frames.messages),
+        "attachments": len(frames.attachments),
+        "reactions": len(frames.reactions),
         "messagesPath": str(messages_path),
     }
 
@@ -532,11 +610,9 @@ def export_when_free(job_id: str, db_path: Path, messages_path: Path) -> dict:
     """Export, and try once more when the database is busy: Messages may be in the middle of a write."""
     try:
         return export_database(db_path, messages_path)
-    except (sqlite3.Error, pd.errors.DatabaseError) as exc:
-        if not any(sign in str(exc).lower() for sign in ("locked", "busy")):
-            raise
+    except DatabaseBusy:
         append_log(job_id, "The database is busy. Trying again in a moment")
-        time.sleep(2)
+        time.sleep(BUSY_WAIT_SECONDS)
         return export_database(db_path, messages_path)
 
 
@@ -809,6 +885,12 @@ def run_job(job_id: str, action: str, payload: dict):
                 raise ValueError(f"Unknown job action: {action}")
         writer.flush()
         update_job(job_id, status="completed", result=result)
+    except ImportStopped as exc:
+        writer.flush()
+        if exc.__cause__ is not None:
+            # what led to the sentence is for the log of the server, not for the page
+            traceback.print_exception(exc, file=sys.__stderr__)
+        update_job(job_id, status="failed", error=str(exc))
     except Exception as exc:
         writer.flush()
         append_log(job_id, traceback.format_exc())
@@ -3073,7 +3155,7 @@ class RecallHandler(BaseHTTPRequestHandler):
                     "archive": archive_summary(messages_path),
                 })
                 return
-            if why_unreadable(probe_database(db_path)):
+            if why_unreadable(probe_database(db_path), archive_there=False):
                 send_json(self, 400, {"error": f"There is no archive at {messages_path}, and Messages cannot be read."})
                 return
             df = decorate_contacts_frame(list_contacts(str(db_path), limit=limit))

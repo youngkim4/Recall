@@ -84,7 +84,8 @@ def probe_database(path: Path | str | None = None, deep: bool = False) -> DbProb
     except OSError as exc:
         if getattr(exc, "errno", None) in (1, 13):  # EPERM / EACCES
             return result("fda_blocked")
-        return result("error", detail=str(exc))
+        # the words of the system, without its number and the path
+        return result("error", detail=exc.strerror or str(exc))
 
     if not head.startswith(_SQLITE_MAGIC):
         return result("invalid", detail="not a SQLite database")
