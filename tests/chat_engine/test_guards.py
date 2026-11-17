@@ -1,6 +1,5 @@
 """The guards themselves: no network, no real key, no import of the old server."""
 
-import importlib
 import os
 import pkgutil
 import socket
@@ -12,11 +11,14 @@ import pytest
 import chat_engine
 from tests.chat_engine.conftest import NetworkBlocked
 
+_BANNED = ("ui_server", "openai_client", "retrieval_planner", "conversation", "tiktoken", "dotenv")
+
 
 def _module_names() -> list[str]:
     names = [chat_engine.__name__]
     for info in pkgutil.walk_packages(chat_engine.__path__, prefix="chat_engine."):
-        names.append(info.name)
+        if not info.name.endswith("__main__"):
+            names.append(info.name)
     return names
 
 
@@ -31,20 +33,19 @@ def test_api_key_is_a_dummy() -> None:
     assert os.environ["OPENAI_API_KEY"] == "test-key-not-real"
 
 
-def test_every_module_imports_without_network() -> None:
-    for name in _module_names():
-        module = importlib.import_module(name)
-        importlib.reload(module)
-
-
-def test_package_never_imports_the_old_server() -> None:
-    names = [name for name in _module_names() if not name.endswith("__main__")]
+def test_every_module_imports_in_a_clean_process_without_network_or_old_code() -> None:
+    """A fresh interpreter with sockets blocked imports the whole package."""
     code = (
-        "import importlib, sys\n"
-        f"for name in {names!r}:\n"
+        "import importlib, socket, sys\n"
+        "def blocked(*a, **k):\n"
+        "    raise RuntimeError('network used at import time')\n"
+        "socket.socket.connect = blocked\n"
+        "socket.socket.connect_ex = blocked\n"
+        "socket.create_connection = blocked\n"
+        "socket.getaddrinfo = blocked\n"
+        f"for name in {_module_names()!r}:\n"
         "    importlib.import_module(name)\n"
-        "banned = {'ui_server', 'openai_client', 'retrieval_planner', 'conversation', 'tiktoken'}\n"
-        "found = sorted(banned & set(sys.modules))\n"
+        f"found = sorted(set({_BANNED!r}) & set(sys.modules))\n"
         "assert not found, found\n"
     )
     env = {**os.environ, "OPENAI_API_KEY": "test-key-not-real"}
