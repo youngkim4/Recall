@@ -96,6 +96,11 @@ let fixtures: [Fixture] = [
     literal("korean", "오늘 저녁에 같이 밥 먹을래요? 학교에서 만나요."),
     literal("newline", "first line\nsecond line\n\nfourth line"),
     literal("tab_and_spaces", "  two leading spaces\tand a tab  "),
+    // characters that a clean-up step must not drop
+    literal("zwj_family", "Family \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} at the lake"),
+    literal("variation_selector", "Love \u{2764}\u{FE0F} and call \u{260E}\u{FE0F}"),
+    literal("invisible_marks", "zero\u{200B}width and word\u{2060}joiner and mark\u{200E}"),
+    literal("outer_newlines", "\n line with outer newlines \n"),
     literal("mutable_short", "short mutable text", mutable: true),
     literal("mutable_accented", "Crème brûlée à la carte", mutable: true),
     // attributes the way Messages writes them

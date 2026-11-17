@@ -18,6 +18,10 @@ format. The layout below was read from blobs made by Apple's encoder
 Integers: a byte below 0x80 is the value. 0x81 is followed by a 2-byte
 integer, 0x82 by a 4-byte integer, both in the byte order of the stream
 ("streamtyped" is little-endian). Apple uses the 2-byte form up to 32,767.
+
+Errors: data that cannot be read raises TypedStreamError and nothing else.
+The message of an error names an offset and what was expected there. It
+never holds bytes of the blob: they are the text of a message.
 """
 
 from __future__ import annotations
@@ -43,6 +47,7 @@ FIRST_REFERENCE = -110  # 0x92 as a signed byte
 STREAM_VERSION = 4
 BYTE_ORDERS = {b"streamtyped": "little", b"typedstream": "big"}
 BYTES_TYPE_NEW = b"\x84\x01+"
+MAX_CLASS_DEPTH = 64  # new classes in one chain. Apple's attributed strings have 3 at most.
 
 # Everything before the text length, in the two layouts that NSArchiver writes for an attributed
 # string: NSAttributedString with NSString, and the mutable classes. Both are little-endian.
@@ -72,7 +77,7 @@ def read_integer(data: bytes, offset: int, byteorder: str = "little") -> tuple[i
     elif head == TAG_INTEGER_4:
         width = 4
     else:
-        raise TypedStreamError(f"byte 0x{head:02x} does not start an integer")
+        raise TypedStreamError(f"expected an integer at offset {offset}")
     end = offset + 1 + width
     if end > len(data):
         raise TypedStreamError("integer is cut short")
@@ -117,7 +122,7 @@ class _Reader:
         elif head == TAG_INTEGER_4:
             number = int.from_bytes(self.take(4), self.order, signed=True)  # type: ignore[arg-type]
         elif 0x80 <= head < 0x92:
-            raise TypedStreamError(f"byte 0x{head:02x} is not a reference")
+            raise TypedStreamError(f"expected a reference at offset {self.pos - 1}")
         else:
             number = head - 256 if head >= 0x80 else head
         return number - FIRST_REFERENCE
@@ -144,23 +149,38 @@ class _Reader:
             raise TypedStreamError("a string reference points nowhere")
         return self.strings[index]
 
+    def known_chain(self, index: int) -> tuple[str, ...]:
+        """The class chain that a reference points at."""
+        known = self.objects[index] if 0 <= index < len(self.objects) else None
+        if known is None:
+            raise TypedStreamError("a class reference points nowhere")
+        return known
+
     def class_chain(self) -> tuple[str, ...]:
-        """Read a class and its superclasses. Return the names, most derived first."""
-        head = self.byte()
-        if head == TAG_NIL:
-            return ()
-        if head != TAG_NEW:
-            index = self.reference(head)
-            known = self.objects[index] if 0 <= index < len(self.objects) else None
-            if known is None:
-                raise TypedStreamError("a class reference points nowhere")
-            return known
-        name = self.shared_string().decode("ascii", "replace")
-        self.integer()  # class version, not used
-        slot = len(self.objects)
-        self.objects.append(None)
-        chain = (name, *self.class_chain())
-        self.objects[slot] = chain
+        """Read a class and its superclasses. Return the names, most derived first.
+
+        The classes are read in a loop, and no more than MAX_CLASS_DEPTH new ones. A stream made to
+        hold thousands of classes inside each other is refused: it cannot use up the call stack.
+        """
+        names: list[str] = []
+        chain: tuple[str, ...] = ()
+        first_slot = len(self.objects)
+        while True:
+            head = self.byte()
+            if head == TAG_NIL:
+                break
+            if head != TAG_NEW:
+                chain = self.known_chain(self.reference(head))
+                break
+            if len(names) == MAX_CLASS_DEPTH:
+                raise TypedStreamError(f"a class chain is longer than {MAX_CLASS_DEPTH} classes")
+            names.append(self.shared_string().decode("ascii", "replace"))
+            self.integer()  # class version, not used
+            self.objects.append(None)
+        # each new class took one entry of the table: the entry holds the chain from that class on
+        for level in reversed(range(len(names))):
+            chain = (names[level], *chain)
+            self.objects[first_slot + level] = chain
         return chain
 
     def new_object(self) -> tuple[str, ...]:
@@ -171,20 +191,27 @@ class _Reader:
         return self.class_chain()
 
     def expect_type(self, code: bytes) -> None:
-        found = self.shared_string()
-        if found != code:
-            raise TypedStreamError(f"expected type {code!r}, found {found[:16]!r}")
+        start = self.pos
+        if self.shared_string() != code:
+            raise TypedStreamError(f"expected type code {code!r} at offset {start}")
 
 
-def _as_bytes(blob: bytes | bytearray | memoryview) -> bytes:
-    return blob if isinstance(blob, bytes) else bytes(blob)
+def _as_bytes(blob: object) -> bytes:
+    """The blob as bytes. A value of another type cannot be a typedstream."""
+    if isinstance(blob, bytes):
+        return blob
+    if isinstance(blob, (bytearray, memoryview)):
+        return bytes(blob)
+    raise TypedStreamError(f"a blob is bytes, bytearray or memoryview, not {type(blob).__name__}")
 
 
 def _utf8(raw: bytes) -> str:
     try:
         return raw.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise TypedStreamError("the text is not valid UTF-8") from exc
+    except UnicodeDecodeError:
+        error = TypedStreamError("the text is not valid UTF-8")
+    # raised after the handler: the codec error holds the bytes of the text and must not go with this one
+    raise error
 
 
 def read_text(blob: bytes | bytearray | memoryview) -> str:
@@ -214,20 +241,29 @@ def parse_text(blob: bytes | bytearray | memoryview) -> str:
 
 
 def scan_text(blob: bytes | bytearray | memoryview) -> str:
-    """Find the first "bytes" value by its marker. For blobs with another outer layout."""
+    """Find the first "bytes" value by its marker. For a typedstream with another outer layout.
+
+    The data must start with a typedstream header. In other data the bytes after a marker are not
+    the text of a message, so such data is refused.
+    """
     data = _as_bytes(blob)
-    marker = data.find(BYTES_TYPE_NEW)
+    reader = _Reader(data)
+    reader.header()
+    marker = data.find(BYTES_TYPE_NEW, reader.pos)
     if marker < 0:
         raise TypedStreamError("no text value in the data")
-    order = "big" if b"typedstream" in data[:16] else "little"
-    length, start = read_integer(data, marker + len(BYTES_TYPE_NEW), order)
+    length, start = read_integer(data, marker + len(BYTES_TYPE_NEW), reader.order)
     if start + length > len(data):
         raise TypedStreamError("a length points past the end of the data")
     return _utf8(data[start : start + length])
 
 
 def decode_attributed_body(blob: bytes | bytearray | memoryview) -> str:
-    """Return the plain text of an attributedBody blob, exactly as archived."""
+    """Return the plain text of an attributedBody blob, exactly as archived.
+
+    A value that is not bytes and data that is not a typedstream raise TypedStreamError. The marker
+    scan runs only after the walk through the stream failed, and only on data with a typedstream header.
+    """
     data = _as_bytes(blob)
     try:
         return read_text(data)
@@ -236,8 +272,8 @@ def decode_attributed_body(blob: bytes | bytearray | memoryview) -> str:
 
 
 def attributed_body_text(blob: bytes | bytearray | memoryview | None) -> str | None:
-    """Like decode_attributed_body, but None for a missing or unreadable blob."""
-    if not blob:
+    """Like decode_attributed_body, but None for a missing or unreadable blob and for a value that is not bytes."""
+    if blob is None:
         return None
     try:
         return decode_attributed_body(blob)

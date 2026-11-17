@@ -8,6 +8,7 @@ zones with daylight saving, half-hour offsets and short-lived changes.
 
 from __future__ import annotations
 
+import itertools
 import os
 import random
 import time
@@ -31,6 +32,7 @@ ZONES = [
     "Australia/Lord_Howe",
     "Europe/London",
     "America/Santiago",
+    "America/Havana",
     "Africa/Casablanca",
     "Pacific/Apia",
     "UTC",
@@ -66,7 +68,7 @@ class TestOffsetChanges:
         assert (1_710_064_800, -25_200) in changes  # 2024-03-10 10:00 UTC, clocks go forward
         assert (1_730_624_400, -28_800) in changes  # 2024-11-03 09:00 UTC, clocks go back
         assert changes == sorted(changes)
-        assert all(a[1] != b[1] for a, b in zip(changes, changes[1:]))
+        assert all(a[1] != b[1] for a, b in itertools.pairwise(changes))
 
     def test_zone_without_daylight_saving_has_one_offset(self, zone: None) -> None:
         use_zone("Asia/Seoul")

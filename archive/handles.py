@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import re
 
-_GROUP_ID = re.compile(r"chat\d+")
-# digits, spaces, brackets, dots and hyphens (also U+2010 HYPHEN and U+2011 NON-BREAKING HYPHEN)
+_GROUP_ID = re.compile(r"chat[0-9]+")  # ASCII digits only: \d also matches the digits of other scripts
+# digits of any script, spaces, brackets, dots and hyphens (also U+2010 HYPHEN and U+2011 NON-BREAKING HYPHEN)
 _PHONE_CHARACTERS = r"[\d\s().\-" + chr(0x2010) + chr(0x2011) + "]"
 _PHONE = re.compile(rf"\+?{_PHONE_CHARACTERS}*\d{_PHONE_CHARACTERS}*")
 PHONE_MATCH_DIGITS = 10
