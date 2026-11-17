@@ -113,12 +113,17 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 
 ### Which database is read
 
-- `database_for` in `ui_server.py` names the database that a job reads. No other code selects a database for a job.
-  - An update (the `export` job) reads the database of Messages on this Mac. A path from the client does not change this.
-  - The setup guide (the `setup_import` job) can name a copy. The copy is read for that import only. With no copy named, the job reads Messages.
+- The app starts one job for a first setup and for an update: `setup_import`. Both doors to an update (Settings and the Overview) open the setup guide, and the guide starts that job. The `export` job reads Messages too; only the old page in `ui/` starts it.
+- An update never reads a copy. `database_for` in `ui_server.py` names the database that a job reads, and no other code selects a database for a job.
+  - An archive that holds a message is updated from the database of Messages on this Mac, and from nothing else. A path from the client does not change this.
+  - An import that names a copy (`dbPath`) for such an archive is refused with one plain sentence. `/api/jobs` answers 409, and no job is made.
+  - Only a first setup can name a copy: the archive file is not there, or it holds no row (`holds_messages`). The copy is read for that import only. With no copy named, the job reads Messages.
   - No other job reads a database. A report is written from the archive as it is.
+- The guide holds the same rule: in an update it offers no other source (`offersCopy` in `app/src/lib/setupGuide.ts`). It says why Messages cannot be read and how to correct that.
+- Known limit: a reader who works from copies only cannot update from a newer copy. They must remove the archive file first, and then do a first setup from the newer copy.
 - An import does not merge a second source. After an import, the archive holds what the database holds. `merge_export.py` is a hand tool. The app does not call it.
 - `probe_database` in `setup_status.py` knows the database of Messages by the parts of its path (`in_messages_folder`). A folder whose name only starts like the folder of Messages holds a copy.
+- The hand tool `parse_imessage.py` names no default database and no default file to write. WARNING: `cli.py --db` writes `messages.csv` in the current folder. In a checkout that file is the archive of the app.
 
 ### How a database is read
 
@@ -137,7 +142,7 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - An import writes all three files each time. A database with no attachments or no reactions gives a file with only its header. `_load_companion` in `conversation.py` reads that file as an empty table.
 - A database with no message to keep is not imported. The archive stays as it was.
 - An import changes all three files or none of them. `export_database`, `settle_earlier` and `move_in` in `ui_server.py` do these steps in this order:
-  1. Put back what an import before this one did not finish (see below).
+  1. Put back what an import before this one did not finish (see below), and remove the files that it left half written.
   2. Read the messages, the attachments and the reactions. No file is written before all three are read.
   3. Write each new file beside its place, with `.tmp-export` in its name.
   4. Keep each earlier file beside its place, with `.before-update` in its name, the messages first. The earlier file is a hard link, or a copy on a volume with no hard links.
@@ -152,12 +157,19 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - A request that the server answers during the moves reads a whole file at each of the three places.
   - For a moment it can read new attachments or new reactions beside the earlier messages.
   - It never reads new messages beside earlier attachments or earlier reactions, because the messages move last.
+- When the three files are in place, the import did its work.
+  - The server then drops each preview that it keeps (`forget_previews`), and the guide clears the previews that the browser keeps (`finishOnboarding` in `App.tsx`). No figure of the earlier archive is shown after an import.
+  - A later step of the job that fails does not make the import a failed one. The job ends as completed, with a plain `warning` in its result and in its log. The Done step shows the warning.
+- An import and the Overview give one count of messages: `what_the_archive_holds` uses `archive_summary`. A message in no conversation is shown nowhere in the app, and it is not counted.
 - A companion file that is a link is replaced by a file.
 - No code lists the folder of the archive. Do not add code that takes a file in that folder for an archive because of its name.
 
 ### Jobs
 
-- One import writes the archive at a time. `create_job` in `ui_server.py` decides this once, with `JOBS_LOCK` held, when the job is made. `ONE_AT_A_TIME` holds the rule. The same rule holds for the build of the semantic index.
+- One import writes the archive at a time. `create_job` in `ui_server.py` decides this once, with `JOBS_LOCK` held, when the job is made. `ONE_AT_A_TIME` holds the rules:
+  - A second import does not run beside an import.
+  - A second build of the meaning index (the `semantic` job) does not run beside a build.
+  - An import and a build do not run together. The index is of one archive, so an import during a build would leave the index out of date.
 - The first job runs. The second is refused: `/api/jobs` answers 409 with a plain sentence, and no job is made.
 - `check_request` refuses a request that cannot be a job. `/api/jobs` answers 400, and no job is made.
   - The action is text, and it is one of `JOB_ACTIONS`.
@@ -174,7 +186,6 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - An import that stops raises `ImportStopped`. Its text is one plain sentence for the reader. `why_unreadable`, `reading_stopped` and `writing_stopped` write the sentences.
   - The sentence holds no text of a query. What a reader raised goes to the log of the server. It does not go to the lines of the job.
   - The sentence ends with "The archive was not changed." only when there was an archive.
-- A first setup reads the archive back after it is written. When that fails, the sentence says that the archive was written.
 - `/api/contacts` answers a busy database with 503 and a database that fails with 500. The error is a plain sentence from `reading_stopped`.
 
 ### What is kept
@@ -192,7 +203,7 @@ WARNING: The story of a report is written by an AI model from the messages of ot
   - The step comes from the last check of the database (`db.status`), not from the state of setup (`state`). A first setup and an update use the same rule.
   - `canImport` is true for `readable` and for `locked`. The import is not offered for another status.
   - A copy that the reader chose is kept apart from the check of Messages. It is for one import. Back gives it up.
-- `importRequest` builds the request for an import. It names the archive file that the app reads (`messagesPath`), and the path that the reader chose for a copy.
+- `importRequest` builds the request for an import. It names the archive file that the app reads (`messagesPath`). In a first setup it names the path that the reader chose for a copy. In an update it names no database.
 - The import step cannot be left while the request to start is on its way. The import can have begun.
 - An import that the server refused has no id. The guide shows what the server said under "did not start".
 - `SetupFrame.tsx` moves the focus to the step when the step changes. `import`, `import_running` and `import_failed` are three steps. `importView` gives the view of each.
@@ -204,9 +215,10 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - The text of a message is stored as Messages has it. The export does not trim it.
   - Spaces and line breaks at the ends stay. A text of only spaces is a row.
   - Invisible characters stay: emoji joiners, variation selectors, direction marks.
-- `extract_messages` in `parse_imessage.py` takes the text from the text column. When that column is empty, it takes the text from `attributedBody` with `extract_text_from_attributed_body`.
+- `extract_messages` in `parse_imessage.py` takes the text from the text column. When that column holds no text, it takes the text from `attributedBody` with `extract_text_from_attributed_body`.
   - That function gives the whole text or no text. It never gives a part of a text.
-  - It drops only the C0 control characters other than tab and newline (`_DROPPED_CONTROLS`).
+  - One rule cleans both sources (`_text_of_message`): only the C0 control characters other than tab and newline are dropped (`_DROPPED_CONTROLS`). Text with nothing left is no text.
+- A text of only white space is a row of the export. Code that counts or shows text tests it with `strip()` or `display_text`, so such a message has no text for the reader.
 - `display_text` in `message_text.py` is the code that trims. It removes the attachment mark (U+FFFC) and the spaces at the ends. `clip_text` shortens a text for a list.
 - Code that shows a text, or that tests a text for emptiness, uses `display_text`. Do not trim a text when you write it to the export.
 
