@@ -3,97 +3,32 @@
 Function calling, streaming, `store=False`, an explicit timeout, a hard output
 cap, and bounded retries that stop once the first token is out. The model id
 and its limits come from the request: none is written here.
+
+Give `reasoning_effort` for a model that reasons. The adapter then asks for
+the encrypted reasoning and hands it back on the next call of the question,
+because nothing is stored at the provider. A model that does not reason
+refuses that request, so without `reasoning_effort` it is not made.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import re
 import time
 from typing import Any, Callable, Iterator, Optional
 
 import openai
 
 from .cancel import CancelToken
-from .errors import (
-    ChatEngineError,
-    KeyRejectedError,
-    ModelError,
-    ModelTimeoutError,
-    NoApiKeyError,
-    OfflineError,
-    RateLimitedError,
-    UnknownModelError,
-)
+from .errors import ModelError, NoApiKeyError
+from .openai_errors import Failure, map_error, stream_failure
 from .ports import ChatMessage, Completed, LLMEvent, LLMRequest, TextDelta, ToolCall, Usage
 
 logger = logging.getLogger(__name__)
 
 _MAX_WAIT_SECONDS = 20.0
 _BACKOFF_CAP_SECONDS = 8.0
-_SECRET_RE = re.compile(r"sk-[A-Za-z0-9_\-]+")
-_NO_CREDIT = "The API account has no credit left, or its spending limit is reached."
 _STOP_REASONS = {"max_output_tokens": "length", "content_filter": "filtered"}
-_KEY_CODES = {"invalid_api_key", "incorrect_api_key", "account_deactivated"}
-_LIMIT_CODES = {"rate_limit_exceeded", "insufficient_quota"}
-
-
-class _Failure(Exception):
-    """A typed error on its way out, and whether a new attempt may help."""
-
-    def __init__(self, error: ChatEngineError, retryable: bool) -> None:
-        super().__init__(error.message)
-        self.error = error
-        self.retryable = retryable
-
-
-def _detail(error: BaseException) -> str:
-    return _SECRET_RE.sub("sk-***", f"{type(error).__name__}: {error}")
-
-
-def _retry_after(error: BaseException) -> Optional[float]:
-    headers = getattr(getattr(error, "response", None), "headers", None) or {}
-    value = headers.get("retry-after")
-    try:
-        return None if value is None else float(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _from_code(code: Optional[str], detail: str) -> Optional[_Failure]:
-    if code == "model_not_found":
-        return _Failure(UnknownModelError(detail=detail), False)
-    if code in _KEY_CODES:
-        return _Failure(KeyRejectedError(detail=detail), False)
-    if code == "insufficient_quota":
-        return _Failure(RateLimitedError(_NO_CREDIT, detail=detail), False)
-    if code == "rate_limit_exceeded":
-        return _Failure(RateLimitedError(detail=detail), True)
-    return None
-
-
-def map_error(error: BaseException) -> _Failure:
-    """One typed error for each way the provider can fail."""
-    detail = _detail(error)
-    if isinstance(error, openai.APITimeoutError):
-        return _Failure(ModelTimeoutError(detail=detail), True)
-    if isinstance(error, openai.APIConnectionError):
-        return _Failure(OfflineError(detail=detail), True)
-    known = _from_code(getattr(error, "code", None), detail)
-    if isinstance(error, openai.RateLimitError):
-        if known is not None and not known.retryable:
-            return known
-        return _Failure(RateLimitedError(detail=detail, retry_after=_retry_after(error)), True)
-    if known is not None:
-        return known
-    if isinstance(error, (openai.AuthenticationError, openai.PermissionDeniedError)):
-        return _Failure(KeyRejectedError(detail=detail), False)
-    if isinstance(error, openai.NotFoundError):
-        return _Failure(UnknownModelError(detail=detail), False)
-    if isinstance(error, openai.InternalServerError):
-        return _Failure(ModelError(detail=detail), True)
-    return _Failure(ModelError(detail=detail), False)
 
 
 def _plain(value: Any) -> Any:
@@ -117,14 +52,16 @@ def _usage(response: Any) -> Usage:
     )
 
 
-def _carried(items: list[Any]) -> tuple[dict[str, Any], ...]:
+def _carried(items: list[Any], whole: bool = True) -> tuple[dict[str, Any], ...]:
     """Output items to hand back on the next call of the same question.
 
     Reasoning goes back only as encrypted content, because nothing is stored.
     Without it, item ids are left out: an id without its reasoning is refused.
+    A response that was cut (`whole=False`) can miss the item its reasoning
+    belongs to, so its reasoning does not go back either.
     """
     reasoning = [item for item in items if getattr(item, "type", "") == "reasoning"]
-    linked = bool(reasoning) and all(getattr(item, "encrypted_content", None) for item in reasoning)
+    linked = whole and bool(reasoning) and all(getattr(item, "encrypted_content", None) for item in reasoning)
     carried: list[dict[str, Any]] = []
     for item in items:
         kind = getattr(item, "type", "")
@@ -189,16 +126,17 @@ class OpenAIResponsesLLM:
         max_retries: int = 2,
         reasoning_effort: Optional[str] = None,
         verbosity: Optional[str] = None,
-        carry_reasoning: bool = True,
+        carry_reasoning: Optional[bool] = None,
         sleep: Optional[Callable[[float], None]] = None,
     ) -> None:
+        """`carry_reasoning=None` carries the reasoning when `reasoning_effort` is given."""
         self._client = client
         self._api_key = api_key
         self._timeout = float(timeout_seconds)
         self._max_retries = max(0, int(max_retries))
         self._reasoning_effort = reasoning_effort
         self._verbosity = verbosity
-        self._carry_reasoning = carry_reasoning
+        self._carry_reasoning = bool(reasoning_effort) if carry_reasoning is None else bool(carry_reasoning)
         self._sleep = sleep
 
     def stream(self, request: LLMRequest) -> Iterator[LLMEvent]:
@@ -212,7 +150,7 @@ class OpenAIResponsesLLM:
                     emitted = emitted or isinstance(event, (TextDelta, ToolCall))
                     yield event
                 return
-            except _Failure as failure:
+            except Failure as failure:
                 if _cancelled(request.cancel):
                     return
                 wait = self._retry_wait(failure, attempt)
@@ -232,12 +170,12 @@ class OpenAIResponsesLLM:
             if cancel is not None:
                 forget = cancel.on_cancel(lambda: _close(stream))
             yield from self._read(stream)
-        except (_Failure, GeneratorExit):
+        except (Failure, GeneratorExit):
             raise
         except Exception as error:
             if _cancelled(cancel):
                 return
-            raise map_error(error) from error
+            raise map_error(error, self._secret()) from error
         finally:
             forget()
             _close(stream)
@@ -255,31 +193,44 @@ class OpenAIResponsesLLM:
             elif kind == "response.refusal.delta":
                 yield TextDelta(event.delta)
             elif kind == "response.output_item.done":
-                items.append(event.item)
-                if getattr(event.item, "type", "") == "function_call":
-                    yield ToolCall(event.item.call_id, event.item.name, event.item.arguments or "{}")
+                item = event.item
+                if getattr(item, "status", None) == "incomplete":
+                    continue  # cut by the output cap: a call with half its arguments must not run
+                items.append(item)
+                if getattr(item, "type", "") == "function_call":
+                    yield ToolCall(item.call_id, item.name, item.arguments or "{}")
             elif kind == "response.completed":
                 yield Completed(_usage(event.response), "stop", _carried(items))
                 return
             elif kind == "response.incomplete":
                 reason = getattr(getattr(event.response, "incomplete_details", None), "reason", None)
-                yield Completed(_usage(event.response), _STOP_REASONS.get(reason or "", "length"), _carried(items))
+                stop = _STOP_REASONS.get(reason or "", "length")
+                yield Completed(_usage(event.response), stop, _carried(items, whole=False))
                 return
             elif kind == "response.failed":
                 problem = getattr(event.response, "error", None)
-                raise _stream_failure(getattr(problem, "code", None), getattr(problem, "message", ""))
+                code, message = getattr(problem, "code", None), getattr(problem, "message", "")
+                raise stream_failure(code, message, self._secret())
             elif kind == "error":
-                raise _stream_failure(getattr(event, "code", None), getattr(event, "message", ""))
-        raise _Failure(ModelError(detail="the stream ended without a completion"), False)
+                raise stream_failure(getattr(event, "code", None), getattr(event, "message", ""), self._secret())
+        raise Failure(ModelError(detail="the stream ended without a completion"), False)
 
     # --- request ---
 
     def _arguments(self, request: LLMRequest) -> dict[str, Any]:
         arguments: dict[str, Any] = {
             "model": request.model,
-            "instructions": "\n\n".join(m.content for m in request.messages if m.role == "system"),
             "input": _input_items(request.messages),
-            "tools": [
+            "max_output_tokens": request.max_output_tokens,
+            "store": False,
+            "stream": True,
+            "timeout": self._timeout,
+        }
+        instructions = "\n\n".join(m.content for m in request.messages if m.role == "system" and m.content)
+        if instructions:
+            arguments["instructions"] = instructions
+        if request.tools:
+            arguments["tools"] = [
                 {
                     "type": "function",
                     "name": tool.name,
@@ -288,13 +239,8 @@ class OpenAIResponsesLLM:
                     "strict": True,
                 }
                 for tool in request.tools
-            ],
-            "tool_choice": "auto" if request.allow_tools else "none",
-            "max_output_tokens": request.max_output_tokens,
-            "store": False,
-            "stream": True,
-            "timeout": self._timeout,
-        }
+            ]
+            arguments["tool_choice"] = "auto" if request.allow_tools else "none"
         if self._reasoning_effort:
             arguments["reasoning"] = {"effort": self._reasoning_effort}
         if self._verbosity:
@@ -303,17 +249,20 @@ class OpenAIResponsesLLM:
             arguments["include"] = ["reasoning.encrypted_content"]
         return arguments
 
+    def _secret(self) -> str:
+        return (self._api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
+
     def _ready_client(self) -> Any:
         if self._client is None:
-            key = self._api_key or os.environ.get("OPENAI_API_KEY", "")
-            if not key.strip():
+            key = self._secret()
+            if not key:
                 raise NoApiKeyError()
             self._client = openai.OpenAI(api_key=key, max_retries=0, timeout=self._timeout)
         return self._client
 
     # --- retries ---
 
-    def _retry_wait(self, failure: _Failure, attempt: int) -> Optional[float]:
+    def _retry_wait(self, failure: Failure, attempt: int) -> Optional[float]:
         """Seconds to wait before a new attempt, or None when there is none."""
         if not failure.retryable or attempt >= self._max_retries:
             return None
@@ -347,10 +296,3 @@ def _close(stream: Any) -> None:
         except Exception:  # the stream is going away; nothing to recover
             logger.debug("closing the model stream failed", exc_info=True)
 
-
-def _stream_failure(code: Optional[str], message: str) -> _Failure:
-    detail = _SECRET_RE.sub("sk-***", f"{code or 'error'}: {message}")
-    known = _from_code(code, detail)
-    if known is not None:
-        return known
-    return _Failure(ModelError(detail=detail), code == "server_error")

@@ -96,9 +96,15 @@ def _text_events(text: str = "Hello there") -> list[NS]:
     ]
 
 
-def _status_error(cls: type, status: int, code: str | None = None, headers: dict | None = None) -> Exception:
+def _status_error(
+    cls: type,
+    status: int,
+    code: str | None = None,
+    headers: dict | None = None,
+    message: str = "provider says no (key sk-proj-abc123)",
+) -> Exception:
     response = httpx.Response(status, request=httpx.Request("POST", URL), headers=headers or {})
-    return cls("provider says no (key sk-proj-abc123)", response=response, body={"code": code, "message": "x"})
+    return cls(message, response=response, body={"code": code, "message": "x"})
 
 
 def _llm(client: FakeClient, **settings: Any) -> OpenAIResponsesLLM:
@@ -128,8 +134,7 @@ def test_request_uses_function_calling_streaming_no_storage_a_timeout_and_a_cap(
             "strict": True,
         }
     ]
-    assert "reasoning" not in sent and "text" not in sent
-    assert sent["include"] == ["reasoning.encrypted_content"]
+    assert "reasoning" not in sent and "text" not in sent and "include" not in sent
 
 
 def test_optional_settings_are_sent_only_when_given() -> None:
@@ -404,3 +409,138 @@ def test_closing_the_iterator_closes_the_provider_stream() -> None:
     next(stream)
     stream.close()
     assert client.streams[0].closed is True
+
+
+# --- findings of the review ---------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("settings", "asked"),
+    [
+        ({}, False),
+        ({"reasoning_effort": "low"}, True),
+        ({"carry_reasoning": True}, True),
+        ({"reasoning_effort": "low", "carry_reasoning": False}, False),
+    ],
+)
+def test_encrypted_reasoning_is_asked_for_only_when_the_model_reasons(settings: dict, asked: bool) -> None:
+    client = FakeClient(_text_events())
+    list(_llm(client, **settings).stream(_request()))
+    assert ("include" in client.calls[0]) is asked
+
+
+def test_empty_tools_and_instructions_are_left_out() -> None:
+    client = FakeClient(_text_events())
+    request = LLMRequest(
+        model="model-under-test", messages=(ChatMessage("user", "hi"),), tools=(), max_output_tokens=64,
+        allow_tools=False,
+    )
+    list(_llm(client).stream(request))
+    sent = client.calls[0]
+    assert "tools" not in sent and "tool_choice" not in sent and "instructions" not in sent
+
+
+@pytest.mark.parametrize(
+    ("raised", "expected"),
+    [
+        (httpx.ReadTimeout("slow"), ModelTimeoutError),
+        (httpx.ConnectTimeout("slow"), ModelTimeoutError),
+        (httpx.RemoteProtocolError("peer closed the connection"), OfflineError),
+        (httpx.ReadError("connection reset"), OfflineError),
+    ],
+)
+def test_transport_failures_while_reading_the_stream_are_typed_and_retried(raised: Exception, expected: type) -> None:
+    with pytest.raises(expected):
+        list(_llm(FakeClient([raised]), max_retries=0).stream(_request()))
+    client = FakeClient([raised], _text_events())
+    events = list(_llm(client).stream(_request()))
+    assert len(client.calls) == 2 and isinstance(events[-1], Completed)
+
+
+@pytest.mark.parametrize(
+    ("raised", "expected"),
+    [
+        (_status_error(openai.APIStatusError, 408), ModelTimeoutError),
+        (_status_error(openai.ConflictError, 409), ModelError),
+        (_status_error(openai.APIStatusError, 500, "server_error"), ModelError),
+        (NS(type="response.failed", response=NS(error=NS(code="server_error", message="oops"))), ModelError),
+    ],
+)
+def test_a_failure_that_may_pass_is_retried(raised: Any, expected: type) -> None:
+    first = raised if isinstance(raised, BaseException) else [raised]
+    client = FakeClient(first, _text_events())
+    events = list(_llm(client).stream(_request()))
+    assert len(client.calls) == 2 and isinstance(events[-1], Completed)
+    again = raised if isinstance(raised, BaseException) else [raised]
+    with pytest.raises(expected) as caught:
+        list(_llm(FakeClient(again), max_retries=0).stream(_request()))
+    assert type(caught.value) is expected
+
+
+@pytest.mark.parametrize(
+    ("headers", "waited"),
+    [
+        ({"retry-after-ms": "1500"}, 1.5),
+        ({"retry-after-ms": "250", "retry-after": "9"}, 0.25),
+        ({"retry-after": "-5"}, 0.0),
+        ({"retry-after": "nan"}, 1.0),
+        ({"retry-after": "soon"}, 1.0),
+        ({"retry-after": "Wed, 21 Oct 2015 07:28:00 GMT"}, 0.0),
+    ],
+)
+def test_the_wait_the_provider_asks_for_is_read_in_every_form(headers: dict, waited: float) -> None:
+    limited = _status_error(openai.RateLimitError, 429, None, headers)
+    client = FakeClient(limited, _text_events())
+    llm = _llm(client)
+    list(llm.stream(_request()))
+    assert llm.waits == [waited]
+
+
+def test_a_cut_function_call_is_not_run_and_not_carried() -> None:
+    reasoning = NS(type="reasoning", id="rs_1", summary=[], encrypted_content="opaque", status="completed")
+    whole = NS(type="function_call", id="fc_1", call_id="call_1", name="search_messages",
+               arguments='{"query": "lease"}', status="completed")
+    cut = NS(type="function_call", id="fc_2", call_id="call_2", name="search_messages",
+             arguments='{"query": "lea', status="incomplete")
+    stream = [
+        NS(type="response.output_item.done", item=reasoning, output_index=0),
+        NS(type="response.output_item.done", item=whole, output_index=1),
+        NS(type="response.output_item.done", item=cut, output_index=2),
+        NS(type="response.incomplete",
+           response=NS(usage=_usage(), incomplete_details=NS(reason="max_output_tokens"))),
+    ]
+    events = list(_llm(FakeClient(stream)).stream(_request()))
+    assert [e for e in events if isinstance(e, ToolCall)] == [
+        ToolCall("call_1", "search_messages", '{"query": "lease"}')
+    ]
+    assert events[-1].stop_reason == "length"
+    assert events[-1].provider_items == (
+        {"type": "function_call", "call_id": "call_1", "name": "search_messages",
+         "arguments": '{"query": "lease"}'},
+    )
+
+
+def test_the_configured_key_is_never_in_the_detail() -> None:
+    secret = "custom-gateway-key-12345"
+    raised = _status_error(openai.BadRequestError, 400, None, message=f"bad request for key {secret}")
+    llm = OpenAIResponsesLLM(FakeClient(raised), api_key=secret, max_retries=0)
+    with pytest.raises(ModelError) as caught:
+        list(llm.stream(_request()))
+    assert secret not in caught.value.detail and "***" in caught.value.detail
+
+
+@pytest.mark.parametrize(
+    ("raised", "expected", "word"),
+    [
+        (_status_error(openai.NotFoundError, 404, None), ModelError, "failed"),
+        (_status_error(openai.NotFoundError, 404, None, message="The model `x-1` does not exist"),
+         UnknownModelError, "model"),
+        (_status_error(openai.PermissionDeniedError, 403, "unsupported_country_region_territory"),
+         ModelError, "region"),
+        (_status_error(openai.PermissionDeniedError, 403, None), KeyRejectedError, "key"),
+    ],
+)
+def test_not_found_and_forbidden_say_what_they_are(raised: Exception, expected: type, word: str) -> None:
+    with pytest.raises(expected) as caught:
+        list(_llm(FakeClient(raised), max_retries=0).stream(_request()))
+    assert type(caught.value) is expected and word in caught.value.message
