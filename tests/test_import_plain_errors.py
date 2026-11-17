@@ -11,7 +11,7 @@ import pytest
 
 import ui_server
 from setup_status import DbProbe
-from tests.archive_kit import left_behind, messages_csv, run, said, unchanged
+from tests.archive_kit import import_from, left_behind, messages_csv, run, said, unchanged
 from tests.invented_db import messages_db
 
 pytestmark = pytest.mark.usefixtures("fresh_bundle_cache", "no_saved_names", "messages_home")
@@ -30,10 +30,6 @@ def raising(error):
         raise error
 
     return reader
-
-
-def import_from(copy, archive_file):
-    return run("setup_import", {"dbPath": str(copy), "messagesPath": str(archive_file), "includeContacts": False})
 
 
 # ---- what the check of the database says ----
@@ -117,8 +113,8 @@ def test_a_probe_error_of_the_system_is_told_without_its_number(tmp_path, monkey
 
 
 @pytest.mark.parametrize("raised, words", [
-    (sqlite3.OperationalError("unable to open database file"), "macOS keeps that folder closed to it"),
-    (sqlite3.OperationalError("authorization denied"), "macOS keeps that folder closed to it"),
+    (sqlite3.OperationalError("unable to open database file"), "Give it Full Disk Access"),
+    (sqlite3.OperationalError("authorization denied"), "Give it Full Disk Access"),
     (sqlite3.OperationalError("no such table: handle"), "is not a Messages database."),
     (sqlite3.OperationalError("no such column: message.attributedBody"), "is not a Messages database."),
     (sqlite3.DatabaseError("file is not a database"), "is not a Messages database."),
@@ -135,7 +131,7 @@ def test_a_read_that_fails_is_told_in_a_plain_sentence(archive, tmp_path, monkey
     job = import_from(copy, messages_csv(archive))
 
     assert job["status"] == "failed"
-    assert job["error"].startswith(("Recall cannot read the copy at", "The copy at"))
+    assert job["error"].startswith(("Recall cannot read Messages.", "The file that Messages keeps", "The Messages database"))
     assert words in job["error"] and job["error"].endswith(KEPT)
     # neither the reason nor a line the job wrote holds what the reader raised
     assert str(raised) not in said(job) and "SELECT" not in said(job) and "Traceback" not in said(job)
@@ -164,7 +160,7 @@ def test_a_database_that_lacks_a_table_is_told_with_no_text_of_a_query(archive, 
     job = import_from(copy, messages_csv(archive))
 
     assert job["status"] == "failed"
-    assert job["error"] == f"The copy at {copy.resolve()} is not a Messages database. {KEPT}"
+    assert job["error"] == f"The file that Messages keeps on this Mac is not a Messages database. {KEPT}"
     assert "SELECT" not in said(job) and "FROM message" not in said(job)
     assert unchanged(archive)
 
@@ -186,7 +182,7 @@ def test_contacts_that_cannot_be_read_are_told_in_a_plain_line(archive, tmp_path
     copy = messages_db(tmp_path / "copy.db", ["one"])
     monkeypatch.setattr(ui_server, "export_contact_names", raising(RuntimeError(f"a failure with {QUERY} in it")))
 
-    job = run("setup_import", {"dbPath": str(copy), "messagesPath": str(messages_csv(archive)), "includeContacts": True})
+    job = import_from(copy, messages_csv(archive), contacts=True)
 
     assert job["status"] == "completed", job["error"]
     assert job["result"]["contactsSkipped"] is True
@@ -292,10 +288,26 @@ def test_export_when_free_gives_what_the_second_try_gives(messages_home, tmp_pat
     assert (result["messages"], result["messagesPath"]) == (2, str(tmp_path / "messages.csv"))
 
 
-def test_a_busy_copy_is_named_in_what_went_wrong(archive, tmp_path, monkeypatch, no_wait):
+def test_a_busy_copy_is_named_in_what_went_wrong(tmp_path, monkeypatch, no_wait):
     copy = messages_db(tmp_path / "copy.db", ["one"])
     busy_for(monkeypatch, times=5)
 
-    job = import_from(copy, messages_csv(archive))
+    job = import_from(copy, tmp_path / "new" / "messages.csv")
 
-    assert job["error"] == f"The copy at {copy.resolve()} is busy. Close the app that has it open, then try again. {KEPT}"
+    assert job["error"] == f"The copy at {copy.resolve()} is busy. Close the app that has it open, then try again."
+
+
+@pytest.mark.parametrize("raised, words", [
+    (sqlite3.OperationalError("unable to open database file"), "macOS keeps that folder closed to it"),
+    (sqlite3.OperationalError("no such table: handle"), "is not a Messages database."),
+    (sqlite3.OperationalError("disk I/O error"), "could not be read."),
+])
+def test_a_copy_that_fails_in_a_first_setup_is_named_and_no_archive_is_spoken_of(tmp_path, monkeypatch, raised, words):
+    copy = messages_db(tmp_path / "copy.db", ["one"])
+    monkeypatch.setattr(ui_server, "extract_messages", raising(raised))
+
+    job = import_from(copy, tmp_path / "new" / "messages.csv")
+
+    assert job["status"] == "failed"
+    assert str(copy.resolve()) in job["error"] and words in job["error"]
+    assert "archive" not in job["error"]

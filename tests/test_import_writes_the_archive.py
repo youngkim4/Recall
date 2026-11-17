@@ -10,16 +10,12 @@ import pytest
 
 import ui_server
 from conversation import load_attachments, load_reactions
-from tests.archive_kit import left_behind, messages_csv, run, texts_in, unchanged
+from tests.archive_kit import import_from, left_behind, messages_csv, texts_in, unchanged
 from tests.invented_db import PERSON, apple_archive, messages_db
 
 pytestmark = pytest.mark.usefixtures("fresh_bundle_cache", "no_saved_names", "messages_home")
 
 NAMES = ["messages.csv", "messages_attachments.csv", "messages_reactions.csv"]
-
-
-def import_from(copy, archive_file):
-    return run("setup_import", {"dbPath": str(copy), "messagesPath": str(archive_file), "includeContacts": False})
 
 
 @pytest.mark.parametrize("photo, reaction", [(False, False), (True, False), (False, True), (True, True)])

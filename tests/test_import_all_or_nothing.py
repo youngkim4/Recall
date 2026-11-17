@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 
 import ui_server
-from tests.archive_kit import left_behind, messages_csv, run, texts_in, unchanged
+from tests.archive_kit import import_from, left_behind, messages_csv, texts_in, unchanged
 from tests.invented_db import messages_db
 
 pytestmark = pytest.mark.usefixtures("fresh_bundle_cache", "no_saved_names", "messages_home")
@@ -22,10 +22,6 @@ pytestmark = pytest.mark.usefixtures("fresh_bundle_cache", "no_saved_names", "me
 NAMES = ["messages.csv", "messages_attachments.csv", "messages_reactions.csv"]
 NO_SPACE = OSError(errno.ENOSPC, "No space left on device")
 NO_LINKS = OSError(errno.ENOTSUP, "Operation not supported")
-
-
-def import_from(copy, archive_file):
-    return run("setup_import", {"dbPath": str(copy), "messagesPath": str(archive_file), "includeContacts": False})
 
 
 def fail_on_call(monkeypatch, owner, name, failing, error):
@@ -256,7 +252,7 @@ def test_the_next_import_first_puts_back_what_the_one_before_it_could_not(archiv
     # this one cannot even start: there is no file to read
     job = import_from(tmp_path / "gone.db", messages_csv(archive))
 
-    assert job["status"] == "failed" and "There is no file" in job["error"]
+    assert job["status"] == "failed" and "There is no Messages database" in job["error"]
     assert unchanged(archive)
     assert left_behind(archive) == []
 
@@ -311,7 +307,7 @@ def test_a_file_that_cannot_be_put_back_twice_is_still_put_back_the_third_time(a
     third = import_from(tmp_path / "gone.db", messages_csv(archive))
 
     assert second["status"] == "failed" and "messages_attachments.before-update.csv" in second["error"]
-    assert third["status"] == "failed" and "There is no file" in third["error"]
+    assert third["status"] == "failed" and "There is no Messages database" in third["error"]
     assert unchanged(archive)
     assert left_behind(archive) == []
 

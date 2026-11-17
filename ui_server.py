@@ -2,6 +2,7 @@
 """Local web UI server for Recall."""
 
 import contextlib
+import csv
 import io
 import json
 import mimetypes
@@ -341,13 +342,34 @@ def archive_note(archive_there: bool) -> str:
     return f" {ARCHIVE_KEPT}" if archive_there else ""
 
 
+def holds_messages(messages_path: Path) -> bool:
+    """True when the archive file holds a message. No file holds none, and neither does a file with no row.
+
+    A file that cannot be read is not taken for an archive with no message:
+    what cannot be looked at is not written over from a copy.
+    """
+    try:
+        with open(messages_path, newline="", encoding="utf-8") as archive:
+            rows = csv.reader(archive)
+            next(rows, None)
+            return next(rows, None) is not None
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError, csv.Error):
+        return True
+
+
 def database_for(action: str, payload: dict) -> Path | None:
     """The database a job reads, if it reads one.
 
-    An update reads the database Messages keeps on this Mac. A path the client
-    sends does not change that, and neither does a copy in the data folder.
-    Only the setup guide can name a copy, and only for the import it starts.
-    No other job reads a database.
+    An archive that holds messages is updated from the database Messages
+    keeps on this Mac, and from nothing else. A path the client sends does
+    not change that, and neither does a copy in the data folder: an import
+    that names a copy for such an archive is stopped (ImportStopped).
+
+    Only a first setup can name a copy: an import into an archive that holds
+    no message yet. The copy is read for that import only. No other job reads
+    a database.
     """
     if action == "export":
         return LIVE_CHAT_DB
@@ -355,6 +377,8 @@ def database_for(action: str, payload: dict) -> Path | None:
         named = payload.get("dbPath")
         if named and not isinstance(named, str):
             raise ValueError("The path of the copy must be text.")
+        if named and holds_messages(safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)):
+            raise ImportStopped(f"An update reads Messages on this Mac. It does not read a copy. {ARCHIVE_KEPT}")
         return safe_path(named, LIVE_CHAT_DB)
     return None
 
@@ -735,10 +759,14 @@ def check_request(action, payload: dict) -> None:
     usable_path(payload.get("messagesPath"), "the archive")
     usable_path(payload.get("outDir"), "the reports folder")
     if action == "setup_import":
-        # only the setup guide can name a copy (database_for)
         usable_path(payload.get("dbPath"), "the copy")
         if not isinstance(payload.get("includeContacts", True), bool):
             raise JobRefused("includeContacts must be true or false.", 400)
+        try:
+            # only a first setup can name a copy
+            database_for(action, payload)
+        except ImportStopped as stopped:
+            raise JobRefused(str(stopped), 409) from stopped
 
 
 def refuse_a_second(action: str) -> None:

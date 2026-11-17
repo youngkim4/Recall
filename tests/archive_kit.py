@@ -1,5 +1,8 @@
 """Run a job to its end and look at the archive it left. The fixtures that go
 with these helpers (`messages_home`, `archive`, `marker`) are in conftest.py."""
+import shutil
+from pathlib import Path
+
 import pandas as pd
 
 import ui_server
@@ -42,3 +45,21 @@ def said(job):
     """All that a job tells the reader: why it stopped, and each line it wrote."""
     lines = [str(entry.get("message", "")) for entry in job.get("logs", [])]
     return "\n".join([str(job.get("error") or ""), *lines])
+
+
+def import_from(db, archive_file, contacts=False):
+    """Import the database `db` into the archive at `archive_file`, the way the app can.
+
+    An archive that holds messages is updated from Messages itself, so `db` is
+    put where Messages keeps its own (the `messages_home` fixture). A `db` that
+    is not there leaves no database of Messages. A first import reads `db` as
+    a copy that the setup guide named.
+    """
+    named = {"dbPath": str(db)}
+    if ui_server.holds_messages(Path(archive_file)):
+        live = ui_server.LIVE_CHAT_DB
+        live.unlink(missing_ok=True)
+        if Path(db).exists():
+            shutil.copy(db, live)
+        named = {}
+    return run("setup_import", {**named, "messagesPath": str(archive_file), "includeContacts": contacts})
