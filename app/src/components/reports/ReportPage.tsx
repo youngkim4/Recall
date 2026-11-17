@@ -85,24 +85,27 @@ export function ReportPage({ entry, analysis, onOpenConversation }: ReportPagePr
 
       <ReportFigures stats={stats} />
 
-      <section className="section" aria-labelledby={`${baseId}-voices`}>
-        <div className="section-head">
-          <h3 id={`${baseId}-voices`}>By {activity.unit}</h3>
-        </div>
-        <div className="card card-pad">
-          <VoicesOverTime
-            // a new stretch of time starts with nothing picked out
-            key={`${activity.unit} ${activity.points[0]?.key} ${activity.points.length}`}
-            points={activity.points}
-            unit={activity.unit}
-            sent={stats.sentCount ?? 0}
-            received={stats.receivedCount ?? 0}
-            them={them}
-          />
-        </div>
-      </section>
-
-      <ReportNumbers analysis={analysis} them={them} group={group} />
+      {/* the two voices over time and the smaller figures: one under the other
+          in a narrow pane, fitted together side by side in a wide one */}
+      <div className="section report-data">
+        <section className="report-voices" aria-labelledby={`${baseId}-voices`}>
+          <div className="section-head">
+            <h3 id={`${baseId}-voices`}>By {activity.unit}</h3>
+          </div>
+          <div className="card card-pad">
+            <VoicesOverTime
+              // a new stretch of time starts with nothing picked out
+              key={`${activity.unit} ${activity.points[0]?.key} ${activity.points.length}`}
+              points={activity.points}
+              unit={activity.unit}
+              sent={stats.sentCount ?? 0}
+              received={stats.receivedCount ?? 0}
+              them={them}
+            />
+          </div>
+        </section>
+        <ReportNumbers analysis={analysis} them={them} group={group} />
+      </div>
 
       <ReportMoments
         events={analysis.events ?? []}
@@ -157,9 +160,23 @@ export function ReportPageSkeleton() {
           </div>
         ))}
       </div>
-      <div className="section">
-        <div className="card card-pad">
-          <div className="skeleton report-skeleton-chart" />
+      <div className="section report-data">
+        <div className="report-voices">
+          <div className="card card-pad">
+            <div className="skeleton report-skeleton-chart" />
+          </div>
+        </div>
+        {/* in a wide pane the smaller figures have their places beside the chart */}
+        <div className="section report-skeleton-numbers">
+          <div className="report-numbers">
+            {[0, 1, 2].map((place) => (
+              <div key={place} className="report-number card card-pad">
+                <p>
+                  <span className="skeleton">Name of it</span>
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
       <div className="section prose">

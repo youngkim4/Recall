@@ -52,10 +52,18 @@ function Kinds({ kinds }: { kinds: KindCount[] }) {
   )
 }
 
-function Block({ title, total, children }: { title: string; total?: number; children: ReactNode }) {
+type BlockProps = {
+  title: string
+  total?: number
+  // a bar and nothing under it: a short card, which a wide page places beside taller ones
+  brief?: boolean
+  children: ReactNode
+}
+
+function Block({ title, total, brief, children }: BlockProps) {
   const id = useId()
   return (
-    <section className="report-number card card-pad" aria-labelledby={id}>
+    <section className="report-number card card-pad" data-brief={brief || undefined} aria-labelledby={id}>
       <div className="section-head">
         <h3 id={id}>{title}</h3>
         {total ? <span className="meta">{formatNumber(total)}</span> : null}
@@ -83,7 +91,7 @@ export function ReportNumbers({ analysis, them, group }: ReportNumbersProps) {
       {cards ? (
         <div className="report-numbers">
           {first === null ? null : (
-            <Block title="First to write each day">
+            <Block title="First to write each day" brief>
               <Split sides={{ you: first, them: 1 - first }} them={group ? 'Someone else' : them} share />
             </Block>
           )}

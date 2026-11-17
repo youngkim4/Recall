@@ -280,4 +280,32 @@
       grid-column: 2;
     }
   }
+
+  /* In a wide pane what happened and what was said stand side by side: the
+     account keeps the line it reads at, the messages have the width they
+     have on a phone, and the card has no empty half. The last row is the
+     only one that gives, so a long exchange beside a short account moves no
+     line of the account. */
+  @container detail (min-width: 52rem) {
+    .report-moment-main {
+      grid-template-rows: auto auto 1fr;
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      gap: 0 var(--s-8);
+      max-width: none;
+    }
+
+    .report-moment-main > * {
+      grid-column: 1;
+    }
+
+    .report-moment-main > p {
+      margin-top: var(--s-1);
+    }
+
+    .report-moment-main > :is(blockquote, .thread) {
+      grid-area: 1 / 2 / span 3 / auto;
+      align-self: start;
+      margin-top: 0;
+    }
+  }
 }

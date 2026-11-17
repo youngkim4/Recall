@@ -30,8 +30,8 @@
   overflow: visible;
 }
 
-/* a column that answers to its own width cannot be broken across pages */
-:root[data-paper] :is(.workspace, .detail) {
+/* a column that answers to its own size cannot be broken across pages */
+:root[data-paper] :is(.workspace, .detail, .report-pane) {
   container-type: normal;
 }
 
@@ -132,6 +132,11 @@
 
   :root[data-paper] body {
     background: #fff;
+  }
+
+  /* the sheet sets the width of the page, not the app's reading column */
+  :root[data-paper] .report-page {
+    max-width: none;
   }
 
   /* bars, marks and bubbles are the content: they print in their colors */

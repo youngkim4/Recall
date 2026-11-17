@@ -46,13 +46,12 @@ export function ReportsView({
   if (!entries.length) {
     return (
       <div className="view">
-        <div className="page arrive-each">
-          <div className="empty">
-            <p>No reports yet</p>
-            <button type="button" className="btn" onClick={onChooseConversation}>
-              Analyze a conversation
-            </button>
-          </div>
+        {/* the words arrive, not the block that centers them: it fills the pane, and moving it would make the pane scroll */}
+        <div className="pane-empty arrive-each">
+          <p>No reports yet</p>
+          <button type="button" className="btn" onClick={onChooseConversation}>
+            Analyze a conversation
+          </button>
         </div>
       </div>
     )
@@ -62,6 +61,14 @@ export function ReportsView({
     onSelectReport(entry.report)
     setPane('detail')
   }
+
+  // in a narrow window, the way back to the list
+  const back = (
+    <button type="button" className="pane-back btn quiet" onClick={() => setPane('list')}>
+      <ChevronLeftIcon />
+      Reports
+    </button>
+  )
 
   return (
     <div className="split" data-pane={pane} style={{ '--list-w': `${listWidth}px` } as CSSProperties}>
@@ -76,32 +83,35 @@ export function ReportsView({
       <section
         // a new report starts at the top
         key={selected?.key}
-        className="pane pane-detail"
+        className="pane pane-detail report-pane"
         aria-label={selected?.title ?? 'Report'}
         aria-busy={waiting}
       >
-        <div className="detail">
-          <button type="button" className="pane-back btn quiet" onClick={() => setPane('list')}>
-            <ChevronLeftIcon />
-            Reports
-          </button>
-          {waiting ? (
-            <ReportPageSkeleton />
-          ) : selected && analysis ? (
-            <ReportPage
-              entry={selected}
-              analysis={analysis}
-              onOpenConversation={() => onOpenConversation(analysis.contact, selected.title)}
-            />
-          ) : selected ? (
-            <div className="empty">
+        {waiting || (selected && analysis) ? (
+          <div className="detail report-detail">
+            {back}
+            {waiting || !selected || !analysis ? (
+              <ReportPageSkeleton />
+            ) : (
+              <ReportPage
+                entry={selected}
+                analysis={analysis}
+                onOpenConversation={() => onOpenConversation(analysis.contact, selected.title)}
+              />
+            )}
+          </div>
+        ) : selected ? (
+          // the words stand in the middle of the pane, so they are not inside the page's own column
+          <>
+            {back}
+            <div className="pane-empty">
               <p>This report could not be opened</p>
               <button type="button" className="btn" onClick={() => onSelectReport(selected.report)}>
                 Try again
               </button>
             </div>
-          ) : null}
-        </div>
+          </>
+        ) : null}
       </section>
     </div>
   )

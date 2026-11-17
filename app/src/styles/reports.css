@@ -7,8 +7,35 @@
 @import './report-timeline.css';
 
 @layer views {
-  .report-page > * + .section {
+  /* ---- the pane: the report answers to how wide its pane is, and the list
+     of its chapters to how tall ---- */
+  .report-pane {
+    position: relative;
+    container: report-pane / size;
+  }
+
+  /* The page sets its own width, so the column that holds it sets none. In a
+     pane with no room to spare the page is the reading column it always was. */
+  .report-detail {
+    max-width: none;
+  }
+
+  .report-detail > .report-page {
+    max-width: var(--page-max);
+  }
+
+  .report-page > * + .section,
+  .report-data > * + .section {
     margin-top: var(--s-12);
+  }
+
+  /* a report that could not be opened: the words keep the middle of the pane
+     and the way back keeps the corner it has over a report */
+  .report-pane > .pane-back {
+    position: absolute;
+    top: var(--s-8);
+    left: var(--s-4);
+    margin: 0 0 0 -0.625rem;
   }
 
   /* a list with no heading over it starts one gutter down */
@@ -369,5 +396,185 @@
   .report-files > span:last-child {
     display: flex;
     gap: var(--s-4);
+  }
+
+  /* places for the smaller figures while a report loads: only a wide pane has them beside the chart */
+  .report-skeleton-numbers {
+    display: none;
+  }
+
+  /* ==== a wide pane: the report fills it, up to a page of 72rem that sits in
+     the middle of what is left over. 52rem of room is a pane of 56rem: the
+     least in which the story keeps most of its measure beside its chapters. ==== */
+  @container detail (min-width: 52rem) {
+    .report-detail > .report-page {
+      max-width: 72rem;
+      margin-inline: auto;
+    }
+
+    /* ---- the figures, the chart and the smaller figures are one block of
+       cards, 12px apart. Two columns: the gutter between them runs on from
+       the one between the second and third figures above. ---- */
+    .report-page > .report-data {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--s-3);
+      margin-top: var(--s-3);
+    }
+
+    /* the cards of the smaller figures take their places in that grid */
+    .report-data > .section,
+    .report-data .report-numbers {
+      display: contents;
+    }
+
+    /* The chart is a card among them, with its name inside it as theirs are.
+       Alone across the page it is 14rem tall, so it is not a strip. */
+    .report-voices {
+      --report-chart: 14rem;
+
+      display: flex;
+      flex-direction: column;
+      grid-column: 1 / -1;
+      padding: var(--s-4);
+      border-radius: var(--r-lg);
+      background: var(--bg-raised);
+      box-shadow: var(--shadow-raised);
+    }
+
+    .report-voices > .section-head {
+      margin-bottom: var(--s-3);
+    }
+
+    .report-voices > .card {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      padding: 0;
+      border-radius: 0;
+      background: none;
+      box-shadow: none;
+    }
+
+    /* its picture takes whatever height the cards beside it give the card */
+    .report-voices :is(.voices, .activity) {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+    }
+
+    .report-voices :is(.activity-frame, .report-skeleton-chart) {
+      flex: 1;
+      height: auto;
+      min-height: var(--report-chart);
+    }
+
+    /* With smaller figures beside it the chart keeps the left column, and the
+       row that gives is one the chart is in. So the two columns end on one
+       line, and no card but the chart is taller than what it holds. */
+    .report-data:has(.report-number:first-child:nth-last-child(n + 2)) > .report-voices,
+    .report-data:has(.report-number:only-child:not([data-brief])) > .report-voices {
+      --report-chart: 10rem;
+
+      grid-area: 1 / 1 / span 2 / auto;
+    }
+
+    /* three: the short one under the chart, the two lists on the right */
+    .report-data:has(.report-number:nth-child(3)) {
+      grid-template-rows: auto 1fr auto;
+    }
+
+    .report-number:first-child:nth-last-child(3) {
+      grid-area: 3 / 1;
+    }
+
+    .report-number:nth-child(2):nth-last-child(2) {
+      grid-area: 1 / 2;
+    }
+
+    .report-number:nth-child(3):last-child {
+      grid-area: 2 / 2 / span 2 / auto;
+    }
+
+    /* two: one over the other on the right */
+    .report-data:has(.report-number:first-child:nth-last-child(2)) {
+      grid-template-rows: auto 1fr;
+    }
+
+    .report-number:first-child:nth-last-child(2) {
+      grid-area: 1 / 2;
+    }
+
+    .report-number:nth-child(2):last-child {
+      grid-area: 2 / 2;
+    }
+
+    /* one list alone stands beside the chart; the short one alone runs under it */
+    .report-number:only-child:not([data-brief]) {
+      grid-area: 1 / 2 / span 2 / auto;
+    }
+
+    .report-number[data-brief]:only-child {
+      grid-column: 1 / -1;
+    }
+
+    /* in a group, who wrote how much runs under them all */
+    .report-data .people {
+      grid-column: 1 / -1;
+      margin-top: calc(var(--s-12) - var(--s-3));
+    }
+
+    /* while a report loads, the places are about the size of what will fill them */
+    .report-skeleton-numbers .report-number {
+      min-height: 14rem;
+    }
+
+    .report-skeleton-numbers .report-number:first-child {
+      min-height: 6rem;
+    }
+
+    /* ---- the story: the text keeps its measure, and the list of its
+       chapters stands beside it for as long as the story is in the pane.
+       The text takes its measure first; the list has what is left, 14rem at
+       the least. ---- */
+    .report-story {
+      display: grid;
+      grid-template-columns: minmax(0, var(--report-measure)) minmax(14rem, 1fr);
+      column-gap: var(--s-12);
+    }
+
+    .report-story > * {
+      grid-column: 1;
+    }
+
+    .report-story > .section-head {
+      grid-column: 1 / -1;
+    }
+
+    /* The story starts 16px under its heading, as it does in a narrow pane.
+       Margins do not run together in a grid, so each first thing brings 8px
+       to the heading's own 8px: the title, the opening, or with neither of
+       them the first chapter. */
+    .report-story > .section-head + :is(.report-chapter-title, .report-opening, .report-chapter),
+    .section-head + .report-contents + .report-chapter {
+      margin-top: var(--s-2);
+    }
+
+    /* The list is beside everything under the heading, however many rows
+       that is. It starts level with the first line of the story and stays
+       24px under the top of the pane, where a chapter gone to also lands. A
+       list taller than the pane scrolls by itself, so its last chapter can
+       be reached. */
+    .report-story > .report-contents {
+      position: sticky;
+      top: var(--s-6);
+      grid-area: 2 / 2 / span 99 / auto;
+      place-self: start end;
+      width: 100%;
+      max-width: 24rem;
+      max-height: calc(100cqb - var(--s-12));
+      margin-top: var(--s-2);
+      overflow-y: auto;
+    }
   }
 }
