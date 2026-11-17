@@ -171,8 +171,11 @@ def test_what_the_old_archive_holds_outside_its_one_file_survives_a_move_that_fa
     finally:
         other.close()
     monkeypatch.undo()
-    with sqlite3.connect(state.path) as check:
+    check = sqlite3.connect(state.path)
+    try:
         assert check.execute("SELECT word FROM written_by_another_process").fetchall() == [("kept",)]
+    finally:
+        check.close()
     assert data.texts_of(state.archive()) == ["first", "second", "third"]
 
 
