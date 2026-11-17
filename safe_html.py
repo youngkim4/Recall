@@ -68,6 +68,9 @@ STORY_WORK_LIMIT = 60_000_000
 # A story is read chapter by chapter (story_page). A report has four chapters;
 # a story with more parts than this is read as one piece.
 STORY_PARTS = 8
+# All the chapters of one page share this much processor time. A chapter that
+# starts when it is spent is shown as plain paragraphs.
+STORY_PAGE_SECONDS = 1.0
 _PART_START = re.compile(r"(?m)^(?=### )")
 _BLANK_LINE = re.compile(r"(?<=\n)[ \t]+\n")
 # a mark is anything that is not a letter, a digit, a space or a tab
@@ -264,14 +267,17 @@ def _plain(text: str) -> str:
     return "".join(f"<p>{part}</p>" for part in escape(_tamed(text)).split("\n\n") if part.strip())
 
 
-def _rendered(text: str) -> tuple[str, bool]:
-    """One piece of a story as HTML, and whether it is shown as plain paragraphs."""
+def _rendered(text: str, seconds: float | None = None) -> tuple[str, bool]:
+    """One piece of a story as HTML, and whether it is shown as plain paragraphs.
+
+    `seconds` is the processor time that the renderer may use, STORY_SECONDS when not given."""
+    allowed = STORY_SECONDS if seconds is None else seconds
     ready = prepared(text)
-    if story_work(ready) > STORY_WORK_LIMIT:
+    if allowed <= 0 or story_work(ready) > STORY_WORK_LIMIT:
         return _plain(text), True
     try:
         # the deadline is named last, so it holds every rule the others added
-        rules = [*STORY_EXTENSIONS, _Deadline(STORY_SECONDS)]
+        rules = [*STORY_EXTENSIONS, _Deadline(allowed)]
         rendered = markdown_lib.markdown(ready, extensions=rules, output_format="html5")
     except (RecursionError, _TooSlow):
         # nested deeper than the renderer can follow, or slow to read: the
@@ -311,8 +317,15 @@ def story_page(text: str | None) -> tuple[str, bool]:
 
     Each chapter is read by itself with the rules of story_html, so one dense
     chapter does not make plain paragraphs of the whole story. The work limit
-    and the time limit hold for each chapter."""
+    and the time limit hold for each chapter, and all the chapters share
+    STORY_PAGE_SECONDS: a hostile story cannot use the time of a piece once
+    for each chapter.
+
+    A chapter is cut at its line, whatever stands around it: a `### ` line
+    inside a code fence starts a chapter too. Each piece is made safe by
+    itself, so the page is safe; only its form can differ from story_html."""
     if not text:
         return "", False
-    pieces = [_rendered(part) for part in story_parts(text)]
+    stop_at = time.thread_time() + STORY_PAGE_SECONDS
+    pieces = [_rendered(part, min(STORY_SECONDS, stop_at - time.thread_time())) for part in story_parts(text)]
     return "\n".join(html for html, _ in pieces), any(plain for _, plain in pieces)

@@ -32,7 +32,8 @@ def _from_file(path: Path) -> str:
     try:
         from dotenv import dotenv_values
 
-        found = dotenv_values(path).get(KEY_NAME) if path.is_file() else None
+        # as it is written: a ${NAME} in the file is not filled in from the environment
+        found = dotenv_values(path, interpolate=False).get(KEY_NAME) if path.is_file() else None
     except (OSError, ValueError):  # a file that can not be read, or that is not text
         return ""
     return found.strip() if isinstance(found, str) else ""

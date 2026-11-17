@@ -1,6 +1,8 @@
 """Tests for the allowlist that rendered report text passes through."""
 import time
 
+import re
+
 import pytest
 
 from safe_html import STORY_LIMIT, STORY_WORK_LIMIT, prepared, sanitize, story_html, story_work
@@ -441,3 +443,91 @@ def test_a_link_title_far_longer_than_a_title_is_not_looked_for():
 
     assert took < 3.0
     assert_only_allowed(rendered)
+
+
+# ---- a story read chapter by chapter (story_page) ----
+
+
+def _chapters(count: int, body: str = "Some words about it.") -> str:
+    return "\n\n".join(f"### Chapter {number}\n\n{body}" for number in range(1, count + 1))
+
+
+def test_a_story_page_keeps_each_chapter_and_is_not_plain():
+    import safe_html
+
+    page, plain = safe_html.story_page(_chapters(4))
+    assert plain is False
+    assert page.count("<h3>") == 4 and page.count("<p>Some words about it.</p>") == 4
+
+
+def test_a_story_with_no_chapter_line_is_one_piece_and_reads_as_story_html_does():
+    import safe_html
+
+    text = "An opening.\n\n#### not a chapter\n\nMore words.\n ### neither, it does not start the line"
+    assert safe_html.story_parts(text) == [text]
+    assert safe_html.story_page(text) == (story_html(text), False)
+    assert safe_html.story_page("") == ("", False) and safe_html.story_page(None) == ("", False)
+
+
+def test_a_story_with_more_chapters_than_a_report_has_is_one_piece():
+    import safe_html
+
+    many = _chapters(safe_html.STORY_PARTS + 1)
+    assert len(safe_html.story_parts(_chapters(safe_html.STORY_PARTS))) == safe_html.STORY_PARTS
+    assert len(safe_html.story_parts(many)) == 1
+    assert safe_html.story_page(many)[0] == story_html(many)
+
+
+def test_the_whole_story_is_cut_to_its_limit_before_it_is_cut_into_chapters():
+    import safe_html
+
+    long = "### One\n\n" + "word " * (STORY_LIMIT // 5) + "\n\n### Past the limit\n\nnever read"
+    page, _plain = safe_html.story_page(long)
+    assert "never read" not in page and "Past the limit" not in page
+
+
+def test_a_hostile_chapter_gets_nothing_past_the_page():
+    import safe_html
+
+    hostile = (
+        "### One\n\n<script>alert(1)</script> [x](javascript:alert(2))\n\n```\n### <img src=x onerror=alert(3)>\n```\n\n"
+        "### Two\n\n<b onclick=alert(4)>bold</b> ![p](https://example.com/p.png)"
+    )
+    page, _plain = safe_html.story_page(hostile)
+    # what was a tag is text now: the page holds headings and paragraphs, and no tag has an attribute
+    assert set(re.findall(r"</?([a-z0-9]+)", page)) == {"h3", "p"}
+    assert re.search(r"<[a-z0-9]+\s", page) is None
+    assert "javascript:" not in page
+    assert sanitize(page) == page
+
+
+def test_one_dense_chapter_is_shown_plain_and_the_others_keep_their_form(monkeypatch):
+    import safe_html
+
+    dense = "[a" * 400
+    monkeypatch.setattr(safe_html, "STORY_WORK_LIMIT", story_work(prepared("### Two\n\n" + dense)) - 1)
+    page, plain = safe_html.story_page(f"### One\n\nplain words\n\n### Two\n\n{dense}\n\n### Three\n\nmore words")
+    assert plain is True
+    assert page.count("<h3>") == 2 and "<p>### Two</p>" in page
+
+
+def test_the_chapters_of_one_page_share_one_budget_of_time(monkeypatch):
+    """Eight chapters that each take all the time a piece may take do not take eight times that."""
+    import time
+
+    import safe_html
+
+    slow = _chapters(safe_html.STORY_PARTS, "[a" * 1900)
+    started = time.thread_time()
+    _page, plain = safe_html.story_page(slow)
+    spent = time.thread_time() - started
+    assert plain is True
+    assert spent < safe_html.STORY_PAGE_SECONDS + safe_html.STORY_SECONDS + 0.5
+
+
+def test_a_page_with_no_time_left_shows_its_chapters_plain(monkeypatch):
+    import safe_html
+
+    monkeypatch.setattr(safe_html, "STORY_PAGE_SECONDS", 0.0)
+    page, plain = safe_html.story_page(_chapters(3))
+    assert plain is True and "<h3>" not in page and page.count("<p>### Chapter") == 3

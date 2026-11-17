@@ -68,3 +68,10 @@ def test_no_file_above_the_data_folder_is_looked_for(tmp_path: Path, monkeypatch
     monkeypatch.delenv(keys.KEY_NAME, raising=False)
     monkeypatch.chdir(inner)
     assert keys.api_key() == ""
+
+
+def test_nothing_of_the_environment_is_filled_into_the_key(key_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the key is taken from the file, as it is written."""
+    monkeypatch.setenv("SOMETHING_ELSE", "a-value-of-the-environment")
+    key_file.write_text("OPENAI_API_KEY=${SOMETHING_ELSE}\n", encoding="utf-8")
+    assert keys.api_key() == "${SOMETHING_ELSE}"
