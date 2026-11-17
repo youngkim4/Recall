@@ -7,6 +7,7 @@ can be imported, the real `story_html` is used too.
 """
 
 import re
+import time
 from html import escape
 from html.parser import HTMLParser
 from typing import Any
@@ -14,6 +15,7 @@ from typing import Any
 import markdown as markdown_lib
 import pytest
 
+from report_engine.errors import StoreError
 from report_engine.markdown import clean_section, render_markdown
 from report_engine.models import SECTION_KEYS, SECTION_TITLES, Scope, Section
 
@@ -115,8 +117,8 @@ def test_the_heading_gives_the_conversation_id_back_as_it_is(conversation: str) 
 
 
 def test_a_conversation_id_stays_on_the_first_line() -> None:
-    text = render_markdown(make_report(conversation="first\n## Summary\nsecond"))
-    assert text.splitlines()[0] == "# Conversation Analysis - first ## Summary second"
+    text = render_markdown(make_report(conversation="first\n# second\nthird"))
+    assert text.splitlines()[0] == "# Conversation Analysis - first # second third"
     assert text.splitlines()[1] == ""
 
 
@@ -161,6 +163,33 @@ HOSTILE_BODIES = [
     "\\#escaped already",
     "&#35; entity\n&num; entity",
     "<h1>raw</h1>\n<h2 onclick=x>raw</h2>",
+    "1234567890. # a list number of ten digits",
+    "> 1234567890. # the same in a quote",
+    "123456789012345678901234567890. # thirty digits",
+    "- item\n\n    # in the second block of a list item",
+    "1. one\n\n\t# after a tab",
+]
+
+HOSTILE_LINKS = [
+    "see [the plan](https://attacker.example/x) now",
+    "see [a [b] c](https://attacker.example/x) now",
+    "see [a\\]b](https://attacker.example/x) now",
+    "see [a\nb](https://attacker.example/x) now",
+    'see [a](https://attacker.example/x "a title") now',
+    "see [a](<https://attacker.example/x>) now",
+    "click [here]\n\n[here]: https://attacker.example/x",
+    "click [here]\n\n[here]:\nhttps://attacker.example/x",
+    "click [here]\n\n> [here]: https://attacker.example/x",
+    "click [here]\n\n- [here]: https://attacker.example/x",
+    "[h] go\n\n>[h]:\n>https://attacker.example",
+    "click [][]\n\n[]: https://attacker.example/x",
+    "click [here][ref]\n\n[ref]: https://attacker.example/x",
+    "![a picture](https://attacker.example/p.png)",
+    "![a [b] c](https://attacker.example/p.png)",
+    "![pic][ref]\n\n[ref]: https://attacker.example/p.png",
+    "<https://attacker.example/x>",
+    "<a href='https://attacker.example/x'>go</a>",
+    "\\[a](https://attacker.example/x) and \\\\[b](https://attacker.example/y)",
 ]
 
 
@@ -180,6 +209,67 @@ def test_stored_section_text_makes_no_heading_when_it_is_rendered_alone(body: st
     cleaned = clean_section(f"Before.\n\n{body}\n\nAfter.")
     assert headings_of(story_html_steps(cleaned)).found == []
     assert clean_section(cleaned) == cleaned
+
+
+@pytest.mark.parametrize("body", HOSTILE_LINKS)
+def test_no_section_text_makes_a_link_or_an_image(body: str) -> None:
+    """The story is written from the messages of other people. A link in it
+    would be a link that one of them chose."""
+    cleaned = clean_section(f"Before.\n\n{body}\n\nAfter.")
+    tags = headings_of(story_html_steps(cleaned)).tags
+    assert "a" not in tags and "img" not in tags
+    raw = headings_of(markdown_lib.markdown(cleaned, extensions=STORY_EXTENSIONS)).tags
+    assert "a" not in raw and "img" not in raw
+    assert clean_section(cleaned) == cleaned
+    assert cleaned.startswith("Before.") and cleaned.endswith("After.")
+
+
+@pytest.mark.parametrize("body", HOSTILE_LINKS)
+def test_the_real_story_renderer_shows_no_link(body: str) -> None:
+    safe_html = pytest.importorskip("safe_html")
+    text = render_markdown(with_bodies(f"Before.\n\n{body}\n\nAfter."))
+    story = markdown_section(text, "Summary", stop_at_next_heading=False)
+    tags = headings_of(safe_html.story_html(story)).tags
+    assert "a" not in tags and "img" not in tags
+
+
+def test_brackets_read_as_they_were_written() -> None:
+    cleaned = clean_section("You said [sic] twice, and a[0] once.")
+    assert "You said [sic] twice, and a[0] once." in story_html_steps(cleaned)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "# a" + " " * 20_000 + "b",
+        "# " + "a " * 10_000 + "#" * 10_000,
+        "[" * 50_000 + "](x)",
+        "[" * 100_000,
+        "![" * 30_000 + "](x)" * 30_000,
+        "<a" * 50_000,
+        "1" * 100_000 + " # x",
+        "> " * 30_000 + "# x",
+        "-" * 100_000 + " x",
+        " " * 100_000 + "=",
+    ],
+)
+def test_no_line_makes_the_cleaning_slow(line: str) -> None:
+    """A model can be steered to write such a line. The cleaning must not stop a run."""
+    started = time.perf_counter()
+    cleaned = clean_section(line)
+    assert time.perf_counter() - started < 2.0
+    assert clean_section(cleaned) == cleaned
+
+
+def test_a_conversation_id_that_holds_a_section_marker_is_refused() -> None:
+    """The server finds a section with text.find. The id must stay as it is in
+    the first line, so an id that holds a marker can not be written."""
+    for conversation in ("chat ## Summary", "x ## Overview y"):
+        with pytest.raises(StoreError, match="conversation id"):
+            render_markdown(make_report(conversation=conversation))
+    assert render_markdown(make_report(conversation="a#b##c")).startswith(
+        "# Conversation Analysis - a#b##c\n"
+    )
 
 
 def test_lists_quotes_tables_and_emphasis_survive_the_story_renderer() -> None:
