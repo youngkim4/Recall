@@ -352,7 +352,7 @@ def _stats(conversation_id: str, rows: list[Message]) -> dict[str, Any]:
         per_day[message["timestamp"][:10]] += 1
     busiest = max(per_day.items(), key=lambda item: (item[1], _negative(item[0])), default=None)
     gap_days, gap_start, gap_end = 0.0, None, None
-    for earlier, later in zip(rows, rows[1:]):
+    for earlier, later in zip(rows, rows[1:], strict=False):
         days = (_moment(later) - _moment(earlier)).total_seconds() / 86400.0
         if days > gap_days:
             gap_days, gap_start, gap_end = days, earlier["timestamp"], later["timestamp"]

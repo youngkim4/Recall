@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Generator, Iterator, Optional
 
 from .cancel import CancelToken
 from .errors import ChatEngineError
@@ -142,7 +142,7 @@ class ChatEngine:
         scope: Scope,
         session: Optional[ChatSession],
         cancel: Optional[CancelToken],
-    ) -> Iterator[Event]:
+    ) -> Generator[Event, None, None]:
         text = str(question or "").strip()
         if not text:
             raise ValueError("the question is empty")

@@ -25,11 +25,13 @@ RAW_HANDLES = ["7205550199", "720555", "+1720", "rk.unsaved", "example.org"]
 
 
 class Bench:
-    def __init__(self, scope: Scope = Scope(), limits: Limits = Limits(), archive: FakeArchive | None = None) -> None:
+    def __init__(
+        self, scope: Scope | None = None, limits: Limits | None = None, archive: FakeArchive | None = None
+    ) -> None:
         self.archive = archive or tiny_archive()
         self.registry = EvidenceRegistry()
         self.aliases = ConversationAliases()
-        self.box = ToolBox(self.archive, tiny_labeler(), self.registry, self.aliases, scope, limits)
+        self.box = ToolBox(self.archive, tiny_labeler(), self.registry, self.aliases, scope or Scope(), limits)
 
     def run(self, tool: str, /, budget: int = 3000, **arguments: object):
         return self.box.prepare(tool, json.dumps(arguments)).run(budget)

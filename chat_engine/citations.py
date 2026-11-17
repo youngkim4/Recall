@@ -14,7 +14,7 @@ _MAX_MARKER = 64
 _MAX_RANGE = 20
 _DASH = r"[-–—]"
 _ONE = rf"m\d+(?:\s*{_DASH}\s*m?\d+)?"
-_MARKER_RE = re.compile(r"(?P<space>[ \t]*)\[(?P<body>[^\[\]\n]{1,%d})\]" % _MAX_MARKER)
+_MARKER_RE = re.compile(rf"(?P<space>[ \t]*)\[(?P<body>[^\[\]\n]{{1,{_MAX_MARKER}}})\]")
 _BODY_RE = re.compile(rf"^\s*{_ONE}(?:\s*(?:[,;&]|and)?\s*{_ONE})*\s*$", re.IGNORECASE)
 _PIECE_RE = re.compile(rf"m(\d+)(?:\s*{_DASH}\s*m?(\d+))?", re.IGNORECASE)
 

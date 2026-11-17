@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from typing import Any, Mapping
 
 from .synthetic import SyntheticArchive
 
@@ -63,7 +64,7 @@ def build_questions(synthetic: SyntheticArchive) -> list[Question]:
     ]
 
 
-def _recall(planted: dict) -> list[Question]:
+def _recall(planted: Mapping[str, str]) -> list[Question]:
     return [
         Question(
             "recall_starter", "recall", "What did Jonas name his sourdough starter?",
@@ -80,7 +81,7 @@ def _recall(planted: dict) -> list[Question]:
     ]
 
 
-def _counts(facts: dict) -> list[Question]:
+def _counts(facts: Mapping[str, Any]) -> list[Question]:
     return [
         Question(
             "count_sourdough", "count", "How many messages mention sourdough?",
@@ -106,7 +107,7 @@ def _counts(facts: dict) -> list[Question]:
     ]
 
 
-def _first_and_last(facts: dict, planted: dict) -> list[Question]:
+def _first_and_last(facts: Mapping[str, Any], planted: Mapping[str, str]) -> list[Question]:
     return [
         Question(
             "first_sourdough", "first_last", "When did Jonas and I first talk about sourdough?",
@@ -123,7 +124,7 @@ def _first_and_last(facts: dict, planted: dict) -> list[Question]:
     ]
 
 
-def _people(facts: dict, planted: dict) -> list[Question]:
+def _people(facts: Mapping[str, Any], planted: Mapping[str, str]) -> list[Question]:
     return [
         Question(
             "who_number", "who_is_this", "Who is the number ending in 0199?",
@@ -155,7 +156,7 @@ def _people(facts: dict, planted: dict) -> list[Question]:
     ]
 
 
-def _relative_dates(facts: dict, planted: dict) -> list[Question]:
+def _relative_dates(facts: Mapping[str, Any], planted: Mapping[str, str]) -> list[Question]:
     return [
         Question(
             "relative_summer", "relative_date", "What did Jonas bake last summer?",
@@ -172,7 +173,7 @@ def _relative_dates(facts: dict, planted: dict) -> list[Question]:
     ]
 
 
-def _follow_ups(facts: dict, planted: dict) -> list[Question]:
+def _follow_ups(facts: Mapping[str, Any], planted: Mapping[str, str]) -> list[Question]:
     return [
         Question(
             "follow_when", "follow_up", "When was that?",
@@ -199,7 +200,7 @@ def _not_in_the_archive() -> list[Question]:
     ]
 
 
-def _scoped(planted: dict) -> list[Question]:
+def _scoped(planted: Mapping[str, str]) -> list[Question]:
     return [
         Question(
             "scoped_absent", "scoped", "What did we say about the lease?",
@@ -214,7 +215,7 @@ def _scoped(planted: dict) -> list[Question]:
     ]
 
 
-def _other_languages_and_long_text(planted: dict) -> list[Question]:
+def _other_languages_and_long_text(planted: Mapping[str, str]) -> list[Question]:
     return [
         Question(
             "portuguese_question", "other_language", "O que a Inês disse sobre a cozinha do apartamento novo?",
@@ -237,7 +238,7 @@ def _other_languages_and_long_text(planted: dict) -> list[Question]:
     ]
 
 
-def _groups_and_threads(planted: dict) -> list[Question]:
+def _groups_and_threads(planted: Mapping[str, str]) -> list[Question]:
     return [
         Question(
             "group_flights", "group", "Who booked the flights to Lisbon?",

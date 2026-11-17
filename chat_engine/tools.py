@@ -17,7 +17,8 @@ from .scope import Scope
 from .tool_args import ToolInputError, parse_arguments
 from .tool_context import Prepared, ToolContext, ToolOutcome
 from .tool_figures import GROUPS, LIST_LIMIT_MAX, prepare_count, prepare_list, prepare_stats
-from .tool_search import READ_RADIUS_MAX, SEARCH_LIMIT_MAX, prepare_read, prepare_search
+from .tool_limits import SEARCH_LIMIT_MAX
+from .tool_search import READ_RADIUS_MAX, prepare_read, prepare_search
 
 logger = logging.getLogger(__name__)
 

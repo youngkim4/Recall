@@ -73,7 +73,7 @@ class EvidenceRegistry:
         return [{"ref": ref, "message": _copy(message)} for ref, message in self._by_ref.items()]
 
     @classmethod
-    def restore(cls, rows: Iterable[Mapping[str, Any]]) -> "EvidenceRegistry":
+    def restore(cls, rows: Iterable[Mapping[str, Any]]) -> EvidenceRegistry:
         registry = cls()
         for row in rows:
             registry.add(row["message"])
@@ -104,7 +104,7 @@ class ConversationAliases:
         return list(self._id_by_alias.values())
 
     @classmethod
-    def restore(cls, conversation_ids: Iterable[str]) -> "ConversationAliases":
+    def restore(cls, conversation_ids: Iterable[str]) -> ConversationAliases:
         aliases = cls()
         for conversation_id in conversation_ids:
             aliases.alias(conversation_id)

@@ -45,7 +45,7 @@ class ChatSession:
         }
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> "ChatSession":
+    def from_dict(cls, data: Mapping[str, Any]) -> ChatSession:
         session = cls()
         session.registry = EvidenceRegistry.restore(data.get("evidence") or [])
         session.aliases = ConversationAliases.restore(data.get("conversations") or [])
@@ -56,7 +56,7 @@ class ChatSession:
         return session
 
     @classmethod
-    def from_history(cls, history: Iterable[Mapping[str, Any]]) -> "ChatSession":
+    def from_history(cls, history: Iterable[Mapping[str, Any]]) -> ChatSession:
         """A session from plain role/content turns. The evidence is not restored."""
         session = cls()
         question = ""

@@ -200,3 +200,33 @@ class ResultWriter:
 
     def text(self) -> str:
         return "\n".join(self._parts)
+
+
+def fit_messages(
+    messages: Sequence[Message],
+    *,
+    header: Callable[[int], str],
+    drop: Callable[[list[Message]], list[Message]],
+    budget: int,
+    book: ConversationBook,
+    registry: EvidenceRegistry,
+    limits: Limits,
+    marks: Mapping[str, str],
+    titled: bool = True,
+) -> tuple[ResultWriter, list[Message]]:
+    """Render messages under a header; drop messages until the text fits the budget.
+
+    Only the messages that are shown stay in the registry. One message is always shown.
+    """
+    kept = list(messages)
+    while True:
+        writer = ResultWriter(budget, limits.count_tokens)
+        writer.add(header(len(kept)), force=True)
+        mark = registry.checkpoint()
+        lines = render_block(kept, book=book, registry=registry, limits=limits, marks=marks)
+        block = "\n".join(lines if titled else lines[1:])
+        if writer.fits(block) or len(kept) <= 1:
+            writer.add(block, force=True)
+            return writer, kept
+        registry.rollback(mark)
+        kept = drop(kept)

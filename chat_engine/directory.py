@@ -51,7 +51,7 @@ def _entry(conversation: Conversation, labeler: Labeler, book: ConversationBook)
     names = frozenset(token for text in labels if not is_mask(text) for token in words(text))
     kinds = [handle_kind(handle) for handle in handles]
     phones = tuple(
-        dict.fromkeys(re.sub(r"\D", "", h) for h, kind in zip(handles, kinds) if kind == "phone")
+        dict.fromkeys(re.sub(r"\D", "", h) for h, kind in zip(handles, kinds, strict=True) if kind == "phone")
     )
     via = "" if conversation.get("is_group") else next((kind for kind in kinds if kind != "other"), "")
     return Entry(conversation=conversation, label=label, names=names, digits=phones, via=via)
@@ -64,7 +64,7 @@ class Directory:
         )
 
     @classmethod
-    def load(cls, archive: ChatArchive, labeler: Labeler, book: ConversationBook, scope: Scope) -> "Directory":
+    def load(cls, archive: ChatArchive, labeler: Labeler, book: ConversationBook, scope: Scope) -> Directory:
         if scope.conversations:
             found = [book.get(conversation_id) for conversation_id in scope.conversations]
             conversations = [conversation for conversation in found if conversation]

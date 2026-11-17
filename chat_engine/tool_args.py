@@ -72,7 +72,7 @@ def choice_arg(
 
 def list_arg(arguments: Mapping[str, Any], key: str) -> Optional[list[str]]:
     value = arguments.get(key)
-    if value is None or value == [] or value == "":
+    if value is None or value in ([], ""):
         return None
     if isinstance(value, str):
         return [value]

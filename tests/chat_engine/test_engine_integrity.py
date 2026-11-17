@@ -5,8 +5,8 @@ from chat_engine.scope import Scope
 from chat_engine.session import ChatSession
 from tests.chat_engine.helpers import (
     RAW_HANDLES,
-    all_text,
     alias_of_line,
+    all_text,
     events_of,
     last_user,
     make_engine,

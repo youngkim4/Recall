@@ -21,7 +21,7 @@ class ArchiveAdapter:
     def __init__(self, archive: Any) -> None:
         self._archive = archive
 
-    def __enter__(self) -> "ArchiveAdapter":
+    def __enter__(self) -> ArchiveAdapter:
         return self
 
     def __exit__(self, *_exc: object) -> None:
@@ -109,13 +109,13 @@ class ArchiveAdapter:
 
 def _archive_class() -> Any:
     try:
-        from archive import Archive  # type: ignore[import-not-found]
+        from archive import Archive  # noqa: PLC0415 - the package is built in another branch
 
         return Archive
     except ImportError:
         pass
     try:
-        from archive.queries import Archive  # type: ignore[import-not-found]
+        from archive.queries import Archive  # noqa: PLC0415
 
         return Archive
     except ImportError as error:

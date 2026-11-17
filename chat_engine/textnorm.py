@@ -53,7 +53,7 @@ def query_units(query: str) -> list[str]:
 
 def _bare_units(chunk: str) -> list[str]:
     units: list[str] = []
-    for start, end, token in token_spans(chunk):
+    for _, end, token in token_spans(chunk):
         is_prefix = chunk[end:end + 1] == "*"
         units.append(f"{token}*" if is_prefix else token)
     return units

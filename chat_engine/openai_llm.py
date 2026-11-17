@@ -54,8 +54,9 @@ def _detail(error: BaseException) -> str:
 
 def _retry_after(error: BaseException) -> Optional[float]:
     headers = getattr(getattr(error, "response", None), "headers", None) or {}
+    value = headers.get("retry-after")
     try:
-        return float(headers.get("retry-after"))
+        return None if value is None else float(value)
     except (TypeError, ValueError):
         return None
 
@@ -225,7 +226,7 @@ class OpenAIResponsesLLM:
 
     def _once(self, client: Any, arguments: dict[str, Any], cancel: Optional[CancelToken]) -> Iterator[LLMEvent]:
         stream: Any = None
-        forget: Callable[[], None] = lambda: None
+        forget: Callable[[], None] = _nothing
         try:
             stream = client.responses.create(**arguments)
             if cancel is not None:
@@ -328,6 +329,10 @@ class OpenAIResponsesLLM:
             cancel.wait(seconds)
         else:
             time.sleep(seconds)
+
+
+def _nothing() -> None:
+    return None
 
 
 def _cancelled(cancel: Optional[CancelToken]) -> bool:

@@ -13,13 +13,14 @@ from typing import Iterable
 
 MIN_QUOTE_CHARS = 12
 _MAX_QUOTE = 2000
+_SPAN = f"{{1,{_MAX_QUOTE}}}"
 _PATTERNS = (
-    re.compile(r'"([^"]{1,%d})"' % _MAX_QUOTE),
-    re.compile(r"[“„]([^“”„]{1,%d})[”“]" % _MAX_QUOTE),
-    re.compile(r"«\s*([^«»]{1,%d}?)\s*»" % _MAX_QUOTE),
-    re.compile(r"[「『]([^「」『』]{1,%d})[」』]" % _MAX_QUOTE),
-    re.compile(r"‘(.{1,%d}?)’(?!\w)" % _MAX_QUOTE),
-    re.compile(r"(?<!\w)'(.{1,%d}?)'(?!\w)" % _MAX_QUOTE),
+    re.compile(rf'"([^"]{_SPAN})"'),
+    re.compile(rf"[“„]([^“”„]{_SPAN})[”“]"),
+    re.compile(rf"«\s*([^«»]{_SPAN}?)\s*»"),
+    re.compile(rf"[「『]([^「」『』]{_SPAN})[」』]"),
+    re.compile(rf"‘(.{_SPAN}?)’(?!\w)"),
+    re.compile(rf"(?<!\w)'(.{_SPAN}?)'(?!\w)"),
     re.compile(r"^>\s?(.+)$", re.MULTILINE),
 )
 _QUOTE_MARKS = str.maketrans(

@@ -15,11 +15,11 @@ from tests.chat_engine.tiny import (
 )
 
 
-def _directory(scope: Scope = Scope()):
+def _directory(scope: Scope | None = None):
     archive = tiny_archive()
     labeler = tiny_labeler()
     book = ConversationBook(archive, labeler, ConversationAliases())
-    return Directory.load(archive, labeler, book, scope), archive
+    return Directory.load(archive, labeler, book, scope or Scope()), archive
 
 
 def _ids(entries) -> list[str]:

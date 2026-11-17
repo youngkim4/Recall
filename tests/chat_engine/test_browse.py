@@ -127,17 +127,18 @@ def test_empty_or_unknown_conversation() -> None:
 # --- through the search_messages tool ---
 
 
-def _box(scope: Scope = Scope(), archive: FakeArchive | None = None):
+def _box(scope: Scope | None = None, archive: FakeArchive | None = None):
     registry = EvidenceRegistry()
     aliases = ConversationAliases()
-    box = ToolBox(archive or tiny_archive(), tiny_labeler(), registry, aliases, scope, Limits())
+    box = ToolBox(archive or tiny_archive(), tiny_labeler(), registry, aliases, scope or Scope(), Limits())
     return box, aliases, registry
 
 
 def test_search_tool_with_no_query_reads_the_start_of_one_conversation() -> None:
     box, aliases, registry = _box()
     alias = aliases.alias(UNSAVED_PHONE)
-    prepared = box.prepare("search_messages", json.dumps({"query": "", "conversations": [alias], "order": "oldest"}))
+    arguments = {"query": "", "conversations": [alias], "order": "oldest"}
+    prepared = box.prepare("search_messages", json.dumps(arguments))
     assert prepared.status == "Reading the first messages with a number ending in 0199"
     outcome = prepared.run(3000)
     assert outcome.ok
@@ -193,7 +194,8 @@ def test_search_tool_reads_a_period_and_says_when_it_cannot() -> None:
     nothing = box.prepare("search_messages", json.dumps(arguments)).run(3000)
     assert not nothing.ok and "count_messages" in nothing.text
     box, aliases, _ = _box()
-    arguments = {"query": "", "conversations": [aliases.alias(JONAS_PHONE)], "since": "2010-01-01", "until": "2010-12-31"}
+    jonas = aliases.alias(JONAS_PHONE)
+    arguments = {"query": "", "conversations": [jonas], "since": "2010-01-01", "until": "2010-12-31"}
     empty = box.prepare("search_messages", json.dumps(arguments)).run(3000)
     assert empty.text.startswith("No messages in")
 

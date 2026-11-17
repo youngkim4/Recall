@@ -42,14 +42,17 @@ def prepare_count(ctx: ToolContext, arguments: Mapping[str, Any]) -> Prepared:
     text = text_arg(arguments, "text")
     group_by = choice_arg(arguments, "group_by", GROUPS, None)
     since, until = day_arg(arguments, "since"), day_arg(arguments, "until")
-    filters = {
-        "from_me": bool_arg(arguments, "from_me"),
+    from_me = bool_arg(arguments, "from_me")
+    conversations = ctx.conversations(list_arg(arguments, "conversations"))
+    since, until = ctx.days(since, until)
+    filters: dict[str, Any] = {
+        "conversations": conversations,
+        "since": since,
+        "until": until,
+        "from_me": from_me,
         "text": text or None,
         "group_by": group_by,
     }
-    conversations = ctx.conversations(list_arg(arguments, "conversations"))
-    since, until = ctx.days(since, until)
-    filters = {**filters, "conversations": conversations, "since": since, "until": until}
     status = "Counting messages"
     if text:
         status += f" that mention “{text}”"
