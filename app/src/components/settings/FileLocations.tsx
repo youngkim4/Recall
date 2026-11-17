@@ -10,22 +10,19 @@ type FileLocationsProps = {
   onApply: (paths: RuntimePaths) => void
 }
 
-const LIVE_DATABASE = '~/Library/Messages/chat.db'
-
 const FIELDS: Array<{ key: keyof RuntimePaths; label: string }> = [
-  { key: 'dbPath', label: 'Messages database' },
   { key: 'messagesPath', label: 'Archive file' },
   { key: 'outDir', label: 'Reports folder' },
 ]
 
 const trimmed = (paths: RuntimePaths): RuntimePaths => ({
-  dbPath: paths.dbPath.trim(),
   messagesPath: paths.messagesPath.trim(),
   outDir: paths.outDir.trim(),
 })
 
-// Where the app reads Messages from, where it keeps the archive, and where
-// reports are saved. Nothing changes until Apply is pressed.
+// Where the app keeps the archive and where reports are saved. Messages is
+// not a location to choose: an update always reads Messages itself. Nothing
+// changes until Apply is pressed.
 export function FileLocations({ paths, defaultPaths, busy, onApply }: FileLocationsProps) {
   const [draft, setDraft] = useState(paths)
   const wanted = trimmed(draft)
@@ -64,15 +61,6 @@ export function FileLocations({ paths, defaultPaths, busy, onApply }: FileLocati
         <button type="button" className="btn" disabled={busy || atDefaults} onClick={() => setDraft(defaultPaths)}>
           Reset
         </button>
-        {wanted.dbPath === LIVE_DATABASE ? null : (
-          <button
-            type="button"
-            className="link"
-            onClick={() => setDraft((current) => ({ ...current, dbPath: LIVE_DATABASE }))}
-          >
-            Use the live Messages database
-          </button>
-        )}
       </div>
     </div>
   )

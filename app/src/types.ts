@@ -3,13 +3,23 @@ import type { Daily } from './lib/days'
 
 export type ViewKey = 'home' | 'analyze' | 'explore' | 'ask' | 'reports' | 'jobs' | 'settings'
 
+// How carefully a model reads, as the server ranks it.
+export type ModelLevel = 'low' | 'medium' | 'high' | 'top'
+
+// A model that the server offers: its id, its maker's name for it, its level.
+export type ModelChoice = {
+  id: string
+  label: string
+  level: ModelLevel
+}
+
 export type Defaults = {
   defaultModel: string
   models: string[]
-  dbPath: string
+  // the same models with their names and levels, lowest level first
+  modelChoices?: ModelChoice[]
   messagesPath: string
   outDir: string
-  hasDb: boolean
   hasMessages: boolean
   reports: ReportFile[]
   contactNames?: ContactNamesSummary
@@ -37,7 +47,6 @@ export type SetupMarker = {
   completed?: boolean
   skipped?: boolean
   firstWordsShown?: boolean
-  pickedDbPath?: string
 }
 
 export type SetupStatus = {
@@ -52,7 +61,8 @@ export type SetupStatus = {
     firstYear?: number | null
     lastYear?: number | null
   }
-  export: { exists: boolean; path: string }
+  // holdsMessages: the archive file has a message in it, so the guide is an update
+  export: { exists: boolean; path: string; holdsMessages?: boolean }
   setup: SetupMarker
 }
 
@@ -62,7 +72,8 @@ export type SetupImportResult = {
   firstYear?: number | null
   lastYear?: number | null
   contactsSkipped?: boolean
-  recovered?: number
+  // the archive is written, and a later step of the import failed
+  warning?: string
 }
 
 export type FirstWordsEntry = {
@@ -87,8 +98,8 @@ export type FirstWordsPayload = {
   }
 }
 
+// where the archive is kept and where reports are saved; no database is among them
 export type RuntimePaths = {
-  dbPath: string
   messagesPath: string
   outDir: string
 }
@@ -144,7 +155,6 @@ export type ContactsResponse = {
   contacts: Contact[]
   source: 'messages' | 'database'
   messagesPath?: string
-  dbPath?: string
   contactNameCount?: number
   archive?: ArchiveSummary
 }
@@ -185,6 +195,10 @@ export type Estimate = {
   token_budget?: number
   long_context_pricing?: boolean
   years?: number[]
+  // the parts of the plan, and how many of them an earlier run already read;
+  // the cost of those is not in estimated_cost
+  periods?: number
+  periods_cached?: number
 }
 
 export type MonthlyPoint = {
@@ -241,6 +255,8 @@ export type SearchResponse = {
   // how many are in results, and how many matched in all
   count: number
   total: number
+  // the place of the first result among all the matches
+  offset?: number
   results: SearchResult[]
 }
 
@@ -283,18 +299,7 @@ export type MemoriesPayload = {
   }>
 }
 
-export type SemanticStatus = {
-  state: 'none' | 'stale' | 'fresh'
-  windows?: number
-  builtAt?: string
-  model?: string
-  estimate?: {
-    windows: number
-    tokens: number
-    estimatedCost: number
-  }
-}
-
+// An answer of an older build, kept in a saved chat, has only the first six keys.
 export type AskResponse = {
   question: string
   contact?: string
@@ -302,6 +307,14 @@ export type AskResponse = {
   answer: string
   mode?: 'ai' | 'local'
   citations: SearchResult[]
+  // quotes in the answer that the archive does not hold
+  unverifiedQuotes?: string[]
+  // the reader stopped the question before the answer ended
+  cancelled?: boolean
+  // the answer was cut short
+  truncated?: boolean
+  steps?: unknown[]
+  usage?: Record<string, unknown>
 }
 
 export type Dynamics = {
@@ -319,7 +332,9 @@ export type Dynamics = {
 
 export type PreviewPayload = {
   stats: PreviewStats
-  estimate: Estimate
+  // null when the plan of a report cannot be made; estimateError then says why
+  estimate: Estimate | null
+  estimateError?: string
   // the months the chosen dates cover, silent ones included
   monthly: MonthlyPoint[]
   // the same stretch for the chart: by day when it is short, by month when long
@@ -338,6 +353,15 @@ export type AnalysisEvent = {
   category?: string
   score?: number | null
   quote?: string
+  // The place of the moment in the archive. A report of an older build has
+  // none of the four, and its moments open nothing.
+  chatId?: string
+  // "YYYY-MM-DD"
+  day?: string
+  // when the quoted message was sent, as `timestamp` of a day message; null with no quote
+  at?: string | null
+  // the id of the quoted message; '' when there is none
+  pickedId?: string
 }
 
 export type AnalysisPayload = PreviewPayload & {
@@ -353,6 +377,8 @@ export type AnalysisPayload = PreviewPayload & {
     reactions?: Record<string, number>
   }
   files?: Array<{ label: string; path: string; name: string; kind: string; size?: number }>
+  // the story is too long and dense for chapters, so it is shown as plain paragraphs
+  shownPlain?: boolean
 }
 
 export type Job = {
@@ -367,8 +393,15 @@ export type Job = {
   progress?: { step: number; of: number; label: string }
   result?: {
     reportPath?: string
-    eventsPath?: string
-    htmlPath?: string
+    eventsPath?: string | null
+    htmlPath?: string | null
+    jsonPath?: string
+    reportId?: string
+    status?: string
+    // what went wrong on the way to a report that was still written
+    warnings?: string[]
+    shownPlain?: boolean
+    usage?: Record<string, unknown>
     analysis?: AnalysisPayload
     reports?: ReportFile[]
     messages?: number
@@ -376,7 +409,9 @@ export type Job = {
     firstYear?: number | null
     lastYear?: number | null
     contactsSkipped?: boolean
-    recovered?: number
+    warning?: string
   } | null
   error?: string | null
+  // a fixed word for why a job failed, beside the sentence in error
+  code?: string
 }

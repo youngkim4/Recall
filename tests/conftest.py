@@ -1,8 +1,23 @@
 import sqlite3
 import threading
 
-import pandas as pd
-import pytest
+# These lines come before any import of the project. See tests/guards.py.
+# - The key is not a key, whatever the shell or a .env file holds.
+# - "~" is an empty folder: setup_status and contact_names work out where
+#   Messages and Contacts are from it when they are imported.
+# - No socket leaves this machine.
+from tests import guards
+
+guards.install()
+
+import pandas as pd  # noqa: E402
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def stay_on_this_machine(monkeypatch):
+    """No test reaches another host: not an AI provider, not anything else."""
+    guards.hold(monkeypatch)
 
 
 @pytest.fixture
@@ -11,11 +26,51 @@ def tmp_dir(tmp_path):
 
 
 @pytest.fixture
-def fresh_bundle_cache():
-    """Empty the parsed-export cache around a test, so each one reads its own CSV."""
+def messages_home(tmp_path, monkeypatch):
+    """A folder that stands in for ~/Library/Messages. The database in it is `chat.db`."""
+    import setup_status
     import ui_server
 
-    blank = {"sig": None, "df": None, "catalog": None, "names": None}
+    home = tmp_path / "Messages"
+    home.mkdir()
+    home = home.resolve()
+    monkeypatch.setattr(setup_status, "LIVE_MESSAGES_DIR", home)
+    monkeypatch.setattr(setup_status, "LIVE_CHAT_DB", home / "chat.db")
+    monkeypatch.setattr(ui_server, "LIVE_CHAT_DB", home / "chat.db")
+    return home
+
+
+@pytest.fixture
+def marker(tmp_path, monkeypatch):
+    """The file that records how far setup got."""
+    import ui_server
+
+    saves = tmp_path / "saves"
+    monkeypatch.setattr(ui_server, "SAVES_DIR", saves)
+    monkeypatch.setattr(ui_server, "SETUP_MARKER_PATH", saves / "setup.json")
+    return saves / "setup.json"
+
+
+@pytest.fixture
+def no_jobs():
+    """The list of jobs is empty before a test and after it."""
+    import ui_server
+
+    def clear():
+        with ui_server.JOBS_LOCK:
+            ui_server.JOBS.clear()
+
+    clear()
+    yield
+    clear()
+
+
+@pytest.fixture
+def fresh_bundle_cache():
+    """Empty the frame of the archive that the server keeps around a test, so each one reads its own archive."""
+    import ui_server
+
+    blank = {"sig": None, "df": None, "catalog": None, "names": None, "loading": None}
     with ui_server._ASK_CACHE_LOCK:
         ui_server._ASK_CACHE.update(blank)
     yield
@@ -32,7 +87,8 @@ def server():
         httpd = ui_server.LoopbackHTTPServer(("127.0.0.1", 0), ui_server.RecallHandler)
     except OSError as exc:
         pytest.skip(f"no loopback socket here: {exc}")
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    # a short wait between looks, so the server stops soon after a test ends
+    thread = threading.Thread(target=httpd.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True)
     thread.start()
     yield httpd
     httpd.shutdown()

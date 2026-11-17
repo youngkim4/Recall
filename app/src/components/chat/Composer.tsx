@@ -1,5 +1,5 @@
 import { useLayoutEffect, type KeyboardEvent, type RefObject } from 'react'
-import { ArrowUpIcon } from '../Icons'
+import { ArrowUpIcon, CloseIcon } from '../Icons'
 import { QualityControl } from '../ui/QualityControl'
 import type { PickerOption } from '../../lib/scope'
 import { ListPicker } from '../ui/ListPicker'
@@ -9,6 +9,8 @@ type ComposerProps = {
   draft: string
   canSend: boolean
   disabled: boolean
+  // an answer is on its way: the send control then stops it
+  pending: boolean
   scope: string
   scopeOptions: PickerOption[]
   model: string
@@ -17,6 +19,7 @@ type ComposerProps = {
   onScopeChange: (value: string) => void
   onModelChange: (value: string) => void
   onSubmit: () => void
+  onStop: () => void
 }
 
 export function Composer({
@@ -24,6 +27,7 @@ export function Composer({
   draft,
   canSend,
   disabled,
+  pending,
   scope,
   scopeOptions,
   model,
@@ -32,6 +36,7 @@ export function Composer({
   onScopeChange,
   onModelChange,
   onSubmit,
+  onStop,
 }: ComposerProps) {
   // grow with the text; the stylesheet caps the height and scrolls past it
   useLayoutEffect(() => {
@@ -77,9 +82,15 @@ export function Composer({
           emptyText="No conversations match"
         />
         <QualityControl models={models} value={model} onChange={onModelChange} align="end" />
-        <button type="submit" className="send" disabled={!canSend} aria-label="Send">
-          <ArrowUpIcon />
-        </button>
+        {pending ? (
+          <button type="button" className="send" aria-label="Stop the answer" onClick={onStop}>
+            <CloseIcon />
+          </button>
+        ) : (
+          <button type="submit" className="send" disabled={!canSend} aria-label="Send">
+            <ArrowUpIcon />
+          </button>
+        )}
       </div>
     </form>
   )

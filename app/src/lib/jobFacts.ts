@@ -85,8 +85,6 @@ export function whatItRead(result: Job['result']): Figure[] {
     typeof result.messages === 'number' ? { label: 'Messages', value: formatNumber(result.messages) } : null,
     typeof result.conversations === 'number' ? { label: 'Conversations', value: formatNumber(result.conversations) } : null,
     years ? { label: 'Years', value: years } : null,
-    // messages that iCloud had taken off this Mac, put back from the saved copy
-    result.recovered ? { label: 'Restored', value: formatNumber(result.recovered) } : null,
   ]
   return figures.filter((figure): figure is Figure => figure !== null)
 }

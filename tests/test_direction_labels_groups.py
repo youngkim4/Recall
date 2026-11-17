@@ -7,6 +7,8 @@ import pytest
 
 import ui_server
 from conversation import (
+    contact_label,
+    conversation_label,
     count_directions,
     direction_label,
     group_chat_mask,
@@ -14,119 +16,70 @@ from conversation import (
     received_mask,
     sent_mask,
 )
+from tests.export_kit import (  # noqa: F401 - archives and contacts_cache are fixtures
+    AVERY,
+    BLAKE,
+    GROUP as SMALL_GROUP,
+    MODEL,
+    NAMES,
+    archives,
+    contacts_cache,
+    get,
+    loaded,
+    row,
+    save_names,
+    thread,
+)
 
-pytestmark = pytest.mark.usefixtures("fresh_bundle_cache")
+pytestmark = pytest.mark.usefixtures("archives", "contacts_cache")
 
-COLUMNS = ["message_id", "timestamp", "sender", "text", "chat_id", "chat_display_name", "is_from_me"]
 NOW = pd.Timestamp("2026-11-16 12:00:00")
-AVERY = "+15550000001"
-BLAKE = "+15550000002"
-UNSAVED = "+15550000009"
 GROUP = "chat4471"
 # one person whose address starts with the letters a group id starts with
 CHATTER = "chatterbox@example.com"
-NAMES = {AVERY: "Avery Stone", BLAKE: "Blake Reyes"}
-
-
-def write_export(path, rows):
-    frame = pd.DataFrame(rows, columns=COLUMNS)
-    frame["message_id"] = range(1, len(frame) + 1)
-    frame.to_csv(path, index=False)
-    return path
-
-
-def row(chat_id, timestamp, text, from_me=0, sender=None):
-    return (0, timestamp, sender if sender is not None else chat_id, text, chat_id, "", from_me)
-
-
-def thread(chat_id, last, count):
-    stamps = pd.date_range(end=last, periods=count, freq="min")
-    return [row(chat_id, str(stamp), "ok then") for stamp in stamps]
 
 
 @pytest.fixture
-def saved_names(monkeypatch):
-    monkeypatch.setattr(
-        ui_server,
-        "resolve_contact_names",
-        lambda handles, **_: {handle: NAMES[handle] for handle in handles if handle in NAMES},
-    )
+def saved_names():
+    save_names(NAMES)
+
+
+def found(server, export, **query):
+    status, answer = get(server, "/api/search", messagesPath=export, **query)
+    assert status == 200, answer
+    return answer["results"]
 
 
 # ---- who sent it ----
 
 
-@pytest.mark.parametrize("stored, expected", [
-    (1, True),
-    (0, False),
-    ("yes", True),
-    ("no", False),
-    ("T", True),
-    ("maybe", None),
-    ("", None),
-])
-def test_a_found_message_says_who_sent_it_as_yes_no_or_unknown(tmp_path, saved_names, stored, expected):
-    csv = write_export(tmp_path / "messages.csv", [row(AVERY, "2025-01-01 09:00:00", "pizza night", from_me=stored)])
-
-    (result,) = ui_server.search_messages_payload(csv, query="pizza")["results"]
-
-    assert result["isFromMe"] is expected
-
-
-def test_a_found_message_reads_direction_words_from_a_merged_export(tmp_path, saved_names):
+def test_a_found_message_reads_direction_words_from_a_merged_export(tmp_path, saved_names, server):
     # a column that holds words and numbers is read back as text
-    csv = write_export(tmp_path / "messages.csv", [
+    export = loaded(tmp_path / "messages.csv", [
         row(AVERY, "2025-01-01 09:00:00", "pizza one", from_me="true"),
         row(AVERY, "2025-01-02 09:00:00", "pizza two", from_me="0"),
         row(AVERY, "2025-01-03 09:00:00", "pizza three", from_me="TRUE"),
     ])
 
-    results = ui_server.search_messages_payload(csv, query="pizza")["results"]
+    results = found(server, export, query="pizza")
 
     assert {result["text"]: result["isFromMe"] for result in results} == {
         "pizza one": True, "pizza two": False, "pizza three": True,
     }
 
 
-def test_your_own_message_in_a_group_carries_no_sender_name(tmp_path, saved_names):
-    csv = write_export(tmp_path / "messages.csv", [
-        row(GROUP, "2025-01-01 09:00:00", "pizza at mine", sender=AVERY),
-        row(GROUP, "2025-01-01 09:01:00", "pizza from me", from_me="yes", sender=AVERY),
+def test_your_own_message_in_a_group_carries_no_sender_name(tmp_path, saved_names, server):
+    export = loaded(tmp_path / "messages.csv", [
+        row(SMALL_GROUP, "2025-01-01 09:00:00", "pizza at mine", sender=AVERY),
+        row(SMALL_GROUP, "2025-01-01 09:01:00", "pizza from me", from_me="1", sender=AVERY),
     ])
 
-    by_text = {result["text"]: result for result in ui_server.search_messages_payload(csv, query="pizza")["results"]}
+    by_text = {result["text"]: result for result in found(server, export, query="pizza")}
 
     assert by_text["pizza at mine"]["senderName"] == "Avery Stone"
     # a row you sent can carry the handle it went to; that is not who wrote it
-    assert by_text["pizza from me"]["senderName"] == ""
-
-
-def test_the_model_is_told_which_lines_are_yours():
-    lines = ui_server.citation_context([
-        {"chatId": AVERY, "displayName": "Avery Stone", "isFromMe": True, "text": "on my way", "timestamp": "2025-01-01"},
-        {"chatId": AVERY, "displayName": "Avery Stone", "isFromMe": False, "text": "ok", "timestamp": "2025-01-01"},
-        {"chatId": AVERY, "displayName": "Avery Stone", "isFromMe": None, "text": "hm", "timestamp": "2025-01-01"},
-    ]).splitlines()
-
-    assert lines[0] == "[1] You in Avery Stone (2025-01-01): on my way"
-    assert lines[1] == "[2] Avery Stone (2025-01-01): ok"
-    assert lines[2] == "[3] Avery Stone (2025-01-01): hm"
-
-
-def test_the_conversation_around_a_match_marks_your_lines(tmp_path, saved_names):
-    frame = pd.DataFrame([
-        row(AVERY, "2025-01-01 09:00:00", "are we on for pizza"),
-        row(AVERY, "2025-01-01 09:01:00", "yes at eight", from_me="yes"),
-        row(AVERY, "2025-01-01 09:02:00", "see you then", from_me="no"),
-    ], columns=COLUMNS)
-    frame["timestamp"] = pd.to_datetime(frame["timestamp"])
-    frame["message_id"] = range(1, len(frame) + 1)
-
-    windows = ui_server.build_context_windows(frame, frame.iloc[[0]])
-    text = ui_server.format_context_windows(windows, {AVERY: "Avery Stone"}, {})
-
-    assert "[2025-01-01] You: yes at eight" in text
-    assert "[2025-01-01] Avery Stone: see you then" in text
+    assert (by_text["pizza from me"]["sender"], by_text["pizza from me"]["senderName"]) == ("", "")
+    assert by_text["pizza from me"]["isFromMe"] is True
 
 
 # every way a direction can be written, and what it says
@@ -177,20 +130,7 @@ def test_a_column_of_every_way_is_counted_one_way():
 ])
 def test_text_the_user_reads_names_a_conversation_the_way_the_interface_does(saved, chat_id, expected):
     # the same cases as conversationName in app/src/lib/conversations.ts
-    assert ui_server.conversation_label(saved, chat_id) == expected
-
-
-def test_a_local_answer_names_conversations_the_way_the_interface_does():
-    answer = ui_server.local_ask_answer(["pizza"], [
-        {"chatId": "sam99@example.com", "displayName": "", "text": "pizza tonight"},
-        {"chatId": "72345", "displayName": "", "text": "your pizza code"},
-        {"chatId": UNSAVED, "displayName": "", "text": "pizza?"},
-    ])
-
-    assert "- sam99@example.com: pizza tonight" in answer
-    assert "- 72345: your pizza code" in answer
-    assert "- Number ending in 0009: pizza?" in answer
-    assert UNSAVED not in answer
+    assert conversation_label(saved, chat_id) == expected
 
 
 @pytest.mark.parametrize("citation, expected", [
@@ -205,10 +145,10 @@ def test_a_local_answer_names_conversations_the_way_the_interface_does():
     ({}, "an unsaved contact"),
 ])
 def test_text_the_model_reads_never_holds_a_whole_handle(citation, expected):
-    assert ui_server.contact_label(citation) == expected
+    assert contact_label(citation) == expected
 
 
-@pytest.mark.parametrize("label", [ui_server.contact_label, lambda c: ui_server.conversation_label("", c["chatId"])])
+@pytest.mark.parametrize("label", [contact_label, lambda c: conversation_label("", c["chatId"])])
 def test_a_phone_number_is_never_written_out(label):
     for handle in (AVERY, "15550000001", "(555) 000-0001", "+44 20 7946 0958"):
         digits = "".join(ch for ch in handle if ch.isdigit())
@@ -222,19 +162,19 @@ def test_a_phone_number_is_never_written_out(label):
 
 @pytest.mark.parametrize("missing", [None, float("nan"), pd.NA, "", "  "])
 def test_a_name_or_an_id_that_is_missing_is_none_at_all(missing):
-    assert ui_server.conversation_label(missing, AVERY) == "Number ending in 0001"
-    assert ui_server.contact_label({"displayName": missing, "chatId": AVERY}) == "a number ending in 0001"
-    assert ui_server.conversation_label("Avery Stone", missing) == "Avery Stone"
-    assert ui_server.conversation_label(missing, missing) == "Unknown conversation"
-    assert ui_server.contact_label({"displayName": missing, "chatId": missing}) == "an unsaved contact"
+    assert conversation_label(missing, AVERY) == "Number ending in 0001"
+    assert contact_label({"displayName": missing, "chatId": AVERY}) == "a number ending in 0001"
+    assert conversation_label("Avery Stone", missing) == "Avery Stone"
+    assert conversation_label(missing, missing) == "Unknown conversation"
+    assert contact_label({"displayName": missing, "chatId": missing}) == "an unsaved contact"
 
 
-def test_the_server_and_a_report_run_label_with_the_same_two_functions():
+def test_a_report_of_the_command_line_labels_with_the_same_two_functions():
     import analysis
     import conversation
 
-    assert ui_server.contact_label is conversation.contact_label is analysis.contact_label
-    assert ui_server.conversation_label is conversation.conversation_label is analysis.conversation_label
+    assert conversation.contact_label is analysis.contact_label
+    assert conversation.conversation_label is analysis.conversation_label
 
 
 # ---- what a group is ----
@@ -272,25 +212,26 @@ def test_a_column_of_ids_is_read_the_same_way_as_one_id():
 def chatter_export(tmp_path):
     """An archive whose busiest thread is one person with an address that
     starts with "chat", beside a real group."""
-    return write_export(tmp_path / "messages.csv", [
+    return loaded(tmp_path / "messages.csv", [
         row(CHATTER, "2021-03-01 09:00:00", "hello from the new address"),
         row(CHATTER, "2021-03-01 09:05:00", "got it, saving this one", from_me=1),
-        *thread(CHATTER, "2024-01-01 12:00:00", 1100),
+        *thread(CHATTER, "2024-01-01 12:00:00", 1100, text="ok then"),
         row(GROUP, "2025-06-01 09:00:00", "who is in", sender=AVERY),
         row(GROUP, "2025-06-01 09:01:00", "me", sender=BLAKE),
-        *thread(AVERY, "2026-11-01 12:00:00", 5),
+        *thread(AVERY, "2026-11-01 12:00:00", 5, text="ok then"),
     ])
 
 
 def test_a_person_whose_address_starts_with_chat_is_listed_as_a_person(chatter_export, saved_names):
-    contacts = ui_server.contacts_from_messages(chatter_export, name_lookup=lambda handles: {})
-    by_id = contacts.set_index("chat_id")
+    status, answer = ui_server.contacts_answer({"messagesPath": str(chatter_export)})
+    by_id = {listed["chat_id"]: listed for listed in answer["contacts"]}
 
-    assert int(by_id.loc[CHATTER, "is_group"]) == 0
-    assert int(by_id.loc[GROUP, "is_group"]) == 1
+    assert status == 200
+    assert by_id[CHATTER]["is_group"] == 0
+    assert by_id[GROUP]["is_group"] == 1
     # only a group is named after the people in it
-    assert by_id.loc[CHATTER, "display_name"] == ""
-    assert by_id.loc[GROUP, "display_name"] == "Avery Stone and Blake Reyes"
+    assert by_id[CHATTER]["display_name"] == ""
+    assert by_id[GROUP]["display_name"] == "Avery Stone and Blake Reyes"
 
 
 def test_their_name_is_not_made_up_from_who_wrote_there(chatter_export, saved_names):
@@ -313,27 +254,17 @@ def test_they_can_be_someone_to_reconnect_with(chatter_export, saved_names):
 
 
 def test_their_recent_messages_are_not_given_a_group_sender(chatter_export, saved_names):
-    recent = ui_server.preview_payload(chatter_export, CHATTER, "gpt-5.4-mini")["recentMessages"]
+    recent = ui_server.preview_payload(chatter_export, CHATTER, MODEL)["recentMessages"]
 
+    assert recent
     assert {message["sender"] for message in recent} == {""}
 
 
-def test_a_match_in_their_thread_is_not_given_a_group_sender(chatter_export, saved_names, monkeypatch):
-    asked = []
-    monkeypatch.setattr(
-        ui_server, "resolve_contact_names", lambda handles, **_: asked.append(list(handles)) or {},
-    )
+def test_a_match_in_their_thread_is_not_given_a_group_sender(chatter_export, server):
+    # also when their address is saved: the name of who wrote is for a group only
+    save_names({**NAMES, CHATTER: "Casey Hatter"})
 
-    (result,) = ui_server.search_messages_payload(chatter_export, query="new address")["results"]
+    (result,) = found(server, chatter_export, query="new address")
 
-    assert result["chatId"] == CHATTER
-    # they are not looked up as someone who wrote in a group
-    assert [CHATTER] not in asked
-
-
-def test_the_model_is_not_told_their_thread_is_a_group():
-    lines = ui_server.citation_context([
-        {"chatId": CHATTER, "displayName": "", "sender": CHATTER, "isFromMe": False, "text": "hello", "timestamp": "2021-03-01"},
-    ]).splitlines()
-
-    assert lines == ["[1] an unsaved email contact (2021-03-01): hello"]
+    assert (result["chatId"], result["displayName"]) == (CHATTER, "Casey Hatter")
+    assert result["senderName"] == ""

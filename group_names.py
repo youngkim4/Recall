@@ -26,7 +26,7 @@ def join_names(names: list[str]) -> str:
     return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
-def _group_name(people: list[str | None]) -> str:
+def group_name(people: list[str | None]) -> str:
     """people holds one entry per person, busiest first: their saved name, or
     None for someone who is not in Contacts."""
     saved = [name for name in people if name]
@@ -77,7 +77,7 @@ def derive_group_names(
     )
 
     named = {
-        str(chat_id): _group_name([value or None for value in members["name"]])
+        str(chat_id): group_name([value or None for value in members["name"]])
         for chat_id, members in people.groupby("chat_id", sort=False)
     }
     return {chat_id: label for chat_id, label in named.items() if label}

@@ -1,9 +1,11 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { formatNumber } from '../../lib/format'
+import { dayOfMoment } from '../../lib/momentDay'
 import { leadingMoments, momentsByYear, readMoments, type Moment } from '../../lib/reportMoments'
 import type { AnalysisEvent } from '../../types'
 import { Thread } from '../ui/Thread'
 import { bringIntoView } from './bringIntoView'
+import { MomentDate } from './MomentDate'
 import { MomentStrip } from './MomentStrip'
 
 type ReportMomentsProps = {
@@ -117,7 +119,12 @@ export function ReportMoments({ events, first, last, paper }: ReportMomentsProps
                     data-target={moment.key === target || undefined}
                   >
                     <p className="report-moment-when">
-                      {moment.day ? <time dateTime={moment.day}>{dayInYear(moment.day)}</time> : null}
+                      {moment.day ? (
+                        // on paper a date opens nothing
+                        <MomentDate opens={paper ? null : dayOfMoment(events, moment.key)}>
+                          <time dateTime={moment.day}>{dayInYear(moment.day)}</time>
+                        </MomentDate>
+                      ) : null}
                       {moment.kind ? <span>{moment.kind}</span> : null}
                     </p>
                     <div className="report-moment-main">

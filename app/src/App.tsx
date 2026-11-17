@@ -4,7 +4,9 @@ import { ChatView } from './components/chat/ChatView'
 import { FirstWords } from './components/firstwords/FirstWords'
 import { JobsView } from './components/jobs/JobsView'
 import { OverviewView } from './components/overview/OverviewView'
+import { ArchiveWait } from './components/onboarding/ArchiveWait'
 import { OnboardingWizard } from './components/onboarding/OnboardingWizard'
+import { ReportDays } from './components/reports/ReportDays'
 import { ReportsView } from './components/reports/ReportsView'
 import { SearchView } from './components/search/SearchView'
 import { ResizeHandle } from './components/ResizeHandle'
@@ -12,6 +14,7 @@ import { SettingsView } from './components/settings/SettingsView'
 import { Sidebar } from './components/Sidebar'
 import { CloseIcon } from './components/Icons'
 import { recallApi } from './lib/api'
+import { orBuilding } from './lib/archiveBuild'
 import { isActiveJob, mergeJobs } from './lib/jobs'
 import {
   emptyPaths,
@@ -24,11 +27,14 @@ import {
   storeRuntimePaths,
 } from './lib/appStorage'
 import { NARROW_WINDOW } from './lib/layout'
+import { offerModels } from './lib/models'
 import { useLayout } from './lib/useLayout'
 import { nameReports } from './lib/reports'
+import { isUpdate, revealsFirstWords } from './lib/setupGuide'
 import { useMediaQuery } from './lib/useMediaQuery'
 import { clearPreviewCache, previewCacheStats } from './lib/cache'
 import { useConversationPreview } from './lib/useConversationPreview'
+import { useJobPoll } from './lib/useJobPoll'
 import type {
   AnalysisPayload,
   ArchiveSummary,
@@ -47,9 +53,6 @@ import type {
 const CONVERSATION_LIMIT = 5000
 
 const NO_DATES = { since: '', until: '' }
-const POLL_MS = 1200
-// this many unanswered questions in a row, and a job is taken to be lost
-const LOST_AFTER_MISSES = 5
 
 // A marker that setup got somewhere. One that fails to save changes nothing
 // now: the same thing is found out again at the next launch.
@@ -85,6 +88,8 @@ function App() {
   const [settingsStatus, setSettingsStatus] = useState('')
   const [cacheStats, setCacheStats] = useState(() => previewCacheStats())
   const [error, setError] = useState<string | null>(null)
+  // the job that loads the archive from an earlier export; the window waits while it runs
+  const [building, setBuilding] = useState<Job | null>(null)
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null)
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [rerunSetup, setRerunSetup] = useState(false)
@@ -96,7 +101,6 @@ function App() {
       defaults
         ? {
             ...defaults,
-            dbPath: paths.dbPath || defaults.dbPath,
             messagesPath: paths.messagesPath || defaults.messagesPath,
             outDir: paths.outDir || defaults.outDir,
           }
@@ -123,12 +127,13 @@ function App() {
   const contactsRequest = useRef(0)
   const loadContacts = useCallback(async (data: Defaults, runtimePaths: RuntimePaths) => {
     const request = ++contactsRequest.current
-    const response = await recallApi.contacts({
-      messagesPath: runtimePaths.messagesPath || data.messagesPath,
-      dbPath: runtimePaths.dbPath || data.dbPath,
-      limit: CONVERSATION_LIMIT,
-    })
+    const response = await recallApi
+      .contacts({ messagesPath: runtimePaths.messagesPath || data.messagesPath, limit: CONVERSATION_LIMIT })
+      .catch(orBuilding)
     if (request !== contactsRequest.current) return
+    // an archive that is still being loaded is waited for, and that is no error
+    setBuilding('building' in response ? response.building : null)
+    if ('building' in response) return
     const nextContacts = response.contacts || []
     setContacts(nextContacts)
     setArchive(response.archive ?? null)
@@ -152,6 +157,7 @@ function App() {
     const data = await recallApi.defaults()
     const nextPaths =
       pathOverride || (hasRuntimePath(paths) ? paths : readStoredPaths(pathsFromDefaults(data)))
+    offerModels(data.modelChoices)
     setDefaults(data)
     setPaths(nextPaths)
     setReports(data.reports || [])
@@ -171,6 +177,7 @@ function App() {
       try {
         const data = await recallApi.defaults()
         if (cancelled) return
+        offerModels(data.modelChoices)
         setDefaults(data)
         const nextPaths = readStoredPaths(pathsFromDefaults(data))
         setPaths(nextPaths)
@@ -183,7 +190,7 @@ function App() {
         // first run: no archive and no completed marker -> the wizard decides
         if (!data.setupCompleted && !data.hasMessages) {
           try {
-            const status = await recallApi.setupStatus({})
+            const status = await recallApi.setupStatus({ messagesPath: nextPaths.messagesPath })
             if (!cancelled) {
               if (status.state === 'ready') {
                 markSetup({ completed: true })
@@ -280,13 +287,10 @@ function App() {
     setError(null)
     try {
       const created = await recallApi.createAnalyzeJob({
-        dbPath: effectiveDefaults.dbPath,
         messagesPath: effectiveDefaults.messagesPath,
         outDir: effectiveDefaults.outDir,
         contact: selectedContact.chat_id,
         model,
-        html: true,
-        extractFirst: false,
         since: scope.since,
         until: scope.until,
       })
@@ -336,45 +340,21 @@ function App() {
   // a job the server no longer knows stops being asked about. Once the watch
   // is over, an answer still on its way opens no report and changes no job.
   const watchedJob = runningJob && isActiveJob(runningJob) ? runningJob.id : ''
-  useEffect(() => {
-    if (!watchedJob) return
-    let asking = false
-    let ended = false
-    let stopped = false
-    let misses = 0
-    const ask = async () => {
-      if (asking || ended) return
-      asking = true
-      try {
-        const { job } = await recallApi.job(watchedJob)
-        if (stopped) return
-        misses = 0
-        if (job.status === 'completed') {
-          ended = true
-          await showFinished(job, () => !stopped)
-          if (stopped) return
-        }
-        setRunningJob((current) => (current?.id === job.id ? job : current))
-      } catch {
-        if (stopped) return
-        misses += 1
-        if (misses < LOST_AFTER_MISSES) return
-        ended = true
-        setRunningJob((current) =>
-          current?.id === watchedJob
-            ? { ...current, status: 'failed', error: 'The report stopped answering. Run it again.' }
-            : current,
-        )
-      } finally {
-        asking = false
+  const followReport = useCallback(
+    async (job: Job, watched: () => boolean) => {
+      if (job.status === 'completed') {
+        await showFinished(job, watched)
+        if (!watched()) return
       }
-    }
-    const timer = window.setInterval(() => void ask(), POLL_MS)
-    return () => {
-      stopped = true
-      window.clearInterval(timer)
-    }
-  }, [showFinished, watchedJob])
+      setRunningJob((current) => (current?.id === job.id ? job : current))
+    },
+    [showFinished],
+  )
+  const reportLost = useCallback(() => {
+    const lost = { status: 'failed' as const, error: 'The report stopped answering. Run it again.' }
+    setRunningJob((current) => (current?.id === watchedJob ? { ...current, ...lost } : current))
+  }, [watchedJob])
+  useJobPoll(watchedJob, followReport, reportLost)
 
   const handleModelChange = useCallback((nextModel: string) => {
     storePreferredModel(nextModel)
@@ -401,7 +381,6 @@ function App() {
   const applyRuntimePaths = useCallback(
     async (nextPaths: RuntimePaths) => {
       const normalized = {
-        dbPath: nextPaths.dbPath.trim(),
         messagesPath: nextPaths.messagesPath.trim(),
         outDir: nextPaths.outDir.trim(),
       }
@@ -467,6 +446,13 @@ function App() {
 
   const finishOnboarding = useCallback(
     async (result: SetupImportResult | null) => {
+      // the first words follow the first setup, not each update
+      const reveal = revealsFirstWords(rerunSetup, result)
+      // no preview of the archive before the import is shown again, and no error from before it
+      clearPreviewCache()
+      setError(null)
+      // a report that was opened holds the figures of the archive before the import
+      setOpened(null)
       setShowOnboarding(false)
       setRerunSetup(false)
       setActiveView('home')
@@ -478,7 +464,7 @@ function App() {
       } catch {
         // the shell still renders; data loads on the next interaction
       }
-      if (!result) return
+      if (!reveal) return
       try {
         const { firstWords: payload } = await recallApi.firstWords({ messagesPath: written || undefined })
         if (payload.entries.length) {
@@ -490,7 +476,7 @@ function App() {
         // the reveal is a nicety, never a blocker
       }
     },
-    [paths.messagesPath, reloadRuntimeData],
+    [paths.messagesPath, reloadRuntimeData, rerunSetup],
   )
 
   const skipOnboarding = useCallback(() => {
@@ -517,19 +503,34 @@ function App() {
   // guide is told to start.
   const openSetup = useCallback(async () => {
     try {
-      const status = await recallApi.setupStatus({ deep: true })
+      const status = await recallApi.setupStatus({ deep: true, messagesPath: effectiveDefaults?.messagesPath })
       setSetupStatus(status)
-      setRerunSetup(Boolean(archive?.conversations))
+      setRerunSetup(isUpdate(status))
       setShowOnboarding(true)
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Unable to start setup.')
     }
-  }, [archive])
+  }, [effectiveDefaults])
+
+  if (building) {
+    return (
+      <ArchiveWait
+        job={building}
+        onReload={reloadRuntimeData}
+        onLeave={(failure) => {
+          // the app says what went wrong, and its Update door opens the setup guide
+          setBuilding(null)
+          setError(failure)
+        }}
+      />
+    )
+  }
 
   if (showOnboarding && setupStatus) {
     return (
       <OnboardingWizard
         initialStatus={setupStatus}
+        messagesPath={effectiveDefaults?.messagesPath ?? ''}
         rerun={rerunSetup}
         onFinished={(result) => void finishOnboarding(result)}
         onSkip={skipOnboarding}
@@ -587,22 +588,30 @@ function App() {
             onOpenSetup={() => void openSetup()}
           />
         ) : activeView === 'reports' ? (
-          <ReportsView
-            reports={reports}
-            selectedReport={selectedReport}
-            analysis={analysis}
-            loading={loadingReport}
-            failed={Boolean(selectedReport) && failedReport === selectedReport?.path}
-            listWidth={layout.reportListWidth}
-            onListWidthChange={(reportListWidth) => changeLayout({ reportListWidth })}
-            onSelectReport={openReport}
-            onOpenConversation={(chatId, name) =>
-              selectContactForAnalyze(
-                contacts.find((contact) => contact.chat_id === chatId) ?? { chat_id: chatId, display_name: name },
-              )
-            }
-            onChooseConversation={() => setActiveView('analyze')}
-          />
+          // a moment of a report opens its day in a sheet over the report
+          <ReportDays
+            messagesPath={effectiveDefaults?.messagesPath ?? ''}
+            contacts={contacts}
+            name={selectedReport?.displayName}
+            onOpenConversation={selectContactForAnalyze}
+          >
+            <ReportsView
+              reports={reports}
+              selectedReport={selectedReport}
+              analysis={analysis}
+              loading={loadingReport}
+              failed={Boolean(selectedReport) && failedReport === selectedReport?.path}
+              listWidth={layout.reportListWidth}
+              onListWidthChange={(reportListWidth) => changeLayout({ reportListWidth })}
+              onSelectReport={openReport}
+              onOpenConversation={(chatId, name) =>
+                selectContactForAnalyze(
+                  contacts.find((contact) => contact.chat_id === chatId) ?? { chat_id: chatId, display_name: name },
+                )
+              }
+              onChooseConversation={() => setActiveView('analyze')}
+            />
+          </ReportDays>
         ) : activeView === 'explore' ? (
           <SearchView defaults={effectiveDefaults} contacts={contacts} onSelectContact={selectContactForAnalyze} />
         ) : activeView === 'ask' ? (
@@ -625,7 +634,7 @@ function App() {
           />
         ) : activeView === 'settings' ? (
           <SettingsView
-            key={`${appliedSettingsPaths.dbPath}\n${appliedSettingsPaths.messagesPath}\n${appliedSettingsPaths.outDir}`}
+            key={`${appliedSettingsPaths.messagesPath}\n${appliedSettingsPaths.outDir}`}
             defaults={effectiveDefaults}
             archive={archive}
             defaultPaths={defaultSettingsPaths}

@@ -10,8 +10,11 @@ Purpose:
 - Provide a simple CLI to export results to a CSV file
 
 Usage:
-  python parse_imessage.py --db ~/Library/Messages/chat.db --out messages.csv
+  python parse_imessage.py --db ~/Library/Messages/chat.db --out ~/Desktop/messages.csv
   python parse_imessage.py --db ~/Library/Messages/chat.db --list-contacts
+
+WARNING: In a checkout of Recall, ./messages.csv is the archive of the app.
+Name another file for --out, or this tool writes over the archive.
 
 Notes:
 - Timestamp conversion handles seconds, microseconds, and nanoseconds since 2001-01-01.
@@ -24,7 +27,10 @@ import re
 import sqlite3
 import sys
 from typing import Optional
+
 import pandas as pd
+
+from setup_status import open_read_only
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +51,17 @@ def imessage_timestamp_sql(column: str) -> str:
     return f"datetime(({seconds_expr}) + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')"
 
 
+def read_frame(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> pd.DataFrame:
+    """The rows of a query as a frame. With no rows, the frame still has the columns.
+
+    An error is the one sqlite3 raises. pandas.read_sql_query puts the whole
+    text of the query into the error, and that text would reach the page.
+    """
+    cursor = conn.execute(sql, params)
+    names = [column[0] for column in cursor.description]
+    return pd.DataFrame.from_records(cursor.fetchall(), columns=names, coerce_float=True)
+
+
 def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
     """Return column names for a SQLite table."""
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
@@ -56,76 +73,149 @@ def chat_display_name_sql(conn: sqlite3.Connection) -> str:
         return "NULLIF(TRIM(chat.display_name), '')"
     return "NULL"
 
-def extract_text_from_attributed_body(blob: bytes) -> Optional[str]:
+
+# attributedBody is a typedstream (NSArchiver) of an NSAttributedString:
+#   ...NSString...+[length][UTF-8 text]...
+_NSSTRING_MARKER = b"NSString"
+_STRING_TYPE_CODE = b"+"
+# from the class name to the type code: class version, superclass, then "+"
+_TYPE_CODE_WINDOW = 20
+# a length of 128 or more: this tag byte, then this many bytes, low byte first
+_WIDE_LENGTH_BYTES = {0x81: 2, 0x82: 4}
+# C0 controls other than tab and newline: not part of a message, and NUL breaks the CSV
+_DROPPED_CONTROLS = re.compile("[\x00-\x08\x0b-\x1f]")
+# a blob with no NSString marker: what it must be to count as a message
+_FALLBACK_MAX_BYTES = 4096
+_FALLBACK_MIN_CHARS = 2
+
+
+def _typedstream_length(data: bytes, pos: int) -> Optional[tuple[int, int]]:
+    """Read the length at pos: (length, offset of the byte after it), or None.
+
+    A byte below 0x80 is the length. 0x81 is followed by a 2-byte length and
+    0x82 by a 4-byte length, low byte first. This is not BER: 0x81 does not
+    mean "one length byte follows".
     """
-    Extract plain text from attributedBody blob (NSAttributedString).
-    
-    Newer macOS/iMessage versions store message text in attributedBody instead of text column.
-    The blob is a streamtyped NSAttributedString with format:
-    ...NSString...+[length_byte][text_content][marker]...
+    if pos >= len(data):
+        return None
+    head = data[pos]
+    if head < 0x80:
+        return head, pos + 1
+    width = _WIDE_LENGTH_BYTES.get(head)
+    if width is None:
+        return None
+    end = pos + 1 + width
+    if end > len(data):
+        return None
+    return int.from_bytes(data[pos + 1:end], "little"), end
+
+
+def _nsstring_bytes(data: bytes, marker: int) -> Optional[bytes]:
+    """UTF-8 bytes of the NSString whose class name is at marker, or None."""
+    search_start = marker + len(_NSSTRING_MARKER)
+    type_code = data.find(_STRING_TYPE_CODE, search_start, search_start + _TYPE_CODE_WINDOW)
+    if type_code == -1:
+        return None
+    length = _typedstream_length(data, type_code + 1)
+    if length is None:
+        return None
+    text_len, text_start = length
+    text_end = text_start + text_len
+    if text_end > len(data):
+        return None
+    return data[text_start:text_end]
+
+
+def _message_text(raw: bytes) -> Optional[str]:
+    """Decode the bytes of a message. None when they are not UTF-8 or hold no text."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return _DROPPED_CONTROLS.sub("", text) or None
+
+
+def _fallback_text(data: bytes) -> Optional[str]:
+    """Text of a blob with no NSString marker, only when the whole blob is plain text.
+
+    Plain text is UTF-8 with no C0 control other than tab and newline, at most
+    _FALLBACK_MAX_BYTES, with _FALLBACK_MIN_CHARS or more characters and a
+    letter or a digit. It comes back whole, with its ends as they are.
+    A run of text is never taken out of a blob, and a longer blob is not cut
+    to fit: a part of a text reads as a whole message. A typedstream starts
+    with a control byte, so it never passes.
     """
-    if not blob:
+    if len(data) > _FALLBACK_MAX_BYTES:
         return None
     try:
-        # The format is: ...NSString\x01+\x[len][text]...
-        # Find the NSString marker and extract text after the + length indicator
-        
-        # Method 1: Look for the +[length][text] pattern after NSString
-        ns_string_marker = b'NSString'
-        idx = blob.find(ns_string_marker)
-        if idx != -1:
-            # Skip past NSString and look for the + marker
-            search_start = idx + len(ns_string_marker)
-            plus_idx = blob.find(b'+', search_start, search_start + 20)
-            if plus_idx != -1 and plus_idx + 2 < len(blob):
-                # Decode length using BER-style encoding:
-                # - 0x00-0x7F: direct length (0-127)
-                # - 0x80+: long form — low 7 bits = number of subsequent length bytes
-                first_byte = blob[plus_idx + 1]
-                if first_byte < 0x80:
-                    text_len = first_byte
-                    text_start = plus_idx + 2
-                else:
-                    num_len_bytes = first_byte & 0x7F
-                    if 1 <= num_len_bytes <= 4 and plus_idx + 2 + num_len_bytes <= len(blob):
-                        text_len = int.from_bytes(
-                            blob[plus_idx + 2:plus_idx + 2 + num_len_bytes], 'big'
-                        )
-                        text_start = plus_idx + 2 + num_len_bytes
-                    else:
-                        # Fallback: treat as direct single-byte length
-                        text_len = first_byte
-                        text_start = plus_idx + 2
-
-                text_end = text_start + text_len
-                if 0 < text_len and text_end <= len(blob):
-                    try:
-                        text = blob[text_start:text_end].decode('utf-8')
-                        text = ''.join(c for c in text if c.isprintable() or c in '\n\t ')
-                        if text.strip():
-                            return text.strip()
-                    except UnicodeDecodeError:
-                        pass
-        
-        # Method 2: Fallback - try to find readable text between markers
-        # Look for text that's surrounded by non-printable bytes
-        decoded = blob.decode('utf-8', errors='ignore')
-        
-        # Remove known metadata patterns
-        cleaned = re.sub(r'(streamtyped|NSAttributedString|NSMutableString|NSString|NSObject|NSDictionary|NSNumber|NSArray)', '', decoded)
-        
-        # Find sequences of printable characters (min 2 chars, not just 'iI' or similar markers)
-        matches = re.findall(r'[a-zA-Z0-9\s\.\,\!\?\'\"\-\:\;\@\#\$\%\&\*\(\)\[\]\{\}\/\\]+', cleaned)
-        matches = [m.strip() for m in matches if len(m.strip()) >= 2 and m.strip() not in ['iI', 'II', 'ii', 'NS']]
-        
-        if matches:
-            # Return the longest meaningful match
-            return max(matches, key=len)
-        
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
         return None
+    if _DROPPED_CONTROLS.search(text):
+        return None
+    visible = text.strip()
+    if len(visible) < _FALLBACK_MIN_CHARS or not any(char.isalnum() for char in visible):
+        return None
+    return text
+
+
+def extract_text_from_attributed_body(blob: Optional[bytes]) -> Optional[str]:
+    """
+    Text of a message from its attributedBody blob, as Messages stored it.
+
+    Newer macOS/iMessage versions store message text in attributedBody instead of text column.
+    The blob is a typedstream of an NSAttributedString:
+    ...NSString...+[length][UTF-8 text]...
+
+    The result is the same string as the text column gives: the ends are not
+    trimmed, and invisible characters stay (emoji joiners, variation selectors,
+    direction marks). Only C0 controls other than tab and newline are dropped.
+
+    Returns None when the blob holds no text or cannot be read. Never raises.
+    A blob with the NSString marker gives its text or None, never a part of it.
+    """
+    if not isinstance(blob, (bytes, bytearray, memoryview)):
+        return None
+    try:
+        data = bytes(blob)
+        marker = data.find(_NSSTRING_MARKER)
+        if marker == -1:
+            return _fallback_text(data)
+        raw = _nsstring_bytes(data, marker)
+        return None if raw is None else _message_text(raw)
     except Exception:
         logger.debug("Failed to extract text from attributedBody blob", exc_info=True)
         return None
+
+
+def _attachment_note(types, files) -> Optional[str]:
+    """What stands for the text of a message that is only an attachment, or None when it has none."""
+    if pd.isna(types) and pd.isna(files):
+        return None
+    types, files = types or "", files or ""
+    if types and files:
+        return f"[Attachment] {types} | {files}"
+    if types:
+        return f"[Attachment] {types}"
+    return "[Attachment]"
+
+
+def _text_of_message(text, body, types, files) -> Optional[str]:
+    """The text of one message: the text column, then attributedBody, then a note of its attachments.
+
+    One rule cleans the text of both: the control characters that the decoder
+    drops are dropped from the text column too. Text with nothing left is no
+    text. The ends are not trimmed.
+    """
+    if pd.notna(text):
+        cleaned = _DROPPED_CONTROLS.sub("", text) if isinstance(text, str) else text
+        if not isinstance(cleaned, str) or cleaned:
+            return cleaned
+    if pd.notna(body):
+        extracted = extract_text_from_attributed_body(body)
+        if extracted:
+            return extracted
+    return _attachment_note(types, files)
 
 
 def extract_messages(db_path: str) -> pd.DataFrame:
@@ -144,8 +234,11 @@ def extract_messages(db_path: str) -> pd.DataFrame:
       - chat_display_name (custom group chat title, when available)
       - is_from_me (1 if sent by you, 0 if received)
       - service (iMessage/SMS)
+      - attachment_types, attachment_files (what hangs on the message, joined with "|")
+
+    A database with no messages gives a frame with these columns and no rows.
     """
-    conn = sqlite3.connect(db_path)
+    conn = open_read_only(db_path)
     try:
         display_name_expr = chat_display_name_sql(conn)
         # SQL projection maps core fields we need for analysis. The conversion below
@@ -185,39 +278,17 @@ def extract_messages(db_path: str) -> pd.DataFrame:
         ORDER BY
             timestamp ASC;
         """
-
-        df = pd.read_sql_query(query, conn)
+        df = read_frame(conn, query)
     finally:
         conn.close()
-    
-    # Extract text from attributedBody where text is NULL
-    def get_text(row):
-        if pd.notna(row['text']):
-            return row['text']
-        if pd.notna(row['attributedBody']):
-            extracted = extract_text_from_attributed_body(row['attributedBody'])
-            if extracted:
-                return extracted
-        # Preserve non-text messages with attachment metadata
-        attachment_types = row.get('attachment_types')
-        attachment_files = row.get('attachment_files')
-        if pd.notna(attachment_types) or pd.notna(attachment_files):
-            types = attachment_types or ""
-            files = attachment_files or ""
-            if types and files:
-                return f"[Attachment] {types} | {files}"
-            if types:
-                return f"[Attachment] {types}"
-            return "[Attachment]"
-        return None
-    
-    df['text'] = df.apply(get_text, axis=1)
-    
-    # Drop attributedBody column and rows with no text
-    df = df.drop(columns=['attributedBody'])
-    df = df.dropna(subset=['text'])
-    
-    return df
+
+    texts = [
+        _text_of_message(text, body, types, files)
+        for text, body, types, files in zip(df["text"], df["attributedBody"], df["attachment_types"], df["attachment_files"])
+    ]
+    # the text of a message is kept as it is; a message with none is no row
+    with_text = df.drop(columns=["attributedBody"]).assign(text=pd.Series(texts, index=df.index, dtype="object"))
+    return with_text.dropna(subset=["text"])
 
 
 def list_contacts(db_path: str, limit: int = 20) -> pd.DataFrame:
@@ -226,7 +297,7 @@ def list_contacts(db_path: str, limit: int = 20) -> pd.DataFrame:
     
     Returns DataFrame with: chat_id, display_name, message_count, first_msg, last_msg, is_group
     """
-    conn = sqlite3.connect(db_path)
+    conn = open_read_only(db_path)
     try:
         display_name_expr = chat_display_name_sql(conn)
         query = f"""
@@ -248,20 +319,39 @@ def list_contacts(db_path: str, limit: int = 20) -> pd.DataFrame:
         ORDER BY message_count DESC
         LIMIT ?;
         """
-        df = pd.read_sql_query(query, conn, params=(limit,))
+        df = read_frame(conn, query, (limit,))
     finally:
         conn.close()
     return df
 
 
+def _attachment_category(mime) -> str:
+    """The kind of an attachment, from its type."""
+    if pd.isna(mime):
+        return "unknown"
+    mime = str(mime).lower()
+    if "gif" in mime:
+        return "gif"
+    if mime.startswith("image"):
+        return "photo"
+    if mime.startswith("video"):
+        return "video"
+    if mime.startswith("audio"):
+        return "audio"
+    if "pdf" in mime or "document" in mime:
+        return "document"
+    return "other"
+
+
 def extract_attachments(db_path: str) -> pd.DataFrame:
     """
     Extract attachment metadata from the iMessage database.
-    
-    Returns DataFrame with: message_id, chat_id, filename, mime_type, 
-    total_bytes, is_from_me, timestamp
+
+    Returns DataFrame with: message_id, chat_id, filename, mime_type,
+    total_bytes, is_from_me, timestamp, category. A database with no
+    attachments gives a frame with these columns and no rows.
     """
-    conn = sqlite3.connect(db_path)
+    conn = open_read_only(db_path)
     try:
         query = f"""
         SELECT
@@ -279,40 +369,46 @@ def extract_attachments(db_path: str) -> pd.DataFrame:
         LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
         ORDER BY timestamp ASC;
         """
-        df = pd.read_sql_query(query, conn)
+        df = read_frame(conn, query)
     finally:
         conn.close()
-    
-    # Categorize attachments
-    def categorize(mime: Optional[str]) -> str:
-        if pd.isna(mime):
-            return "unknown"
-        mime = str(mime).lower()
-        if "gif" in mime:
-            return "gif"
-        if mime.startswith("image"):
-            return "photo"
-        if mime.startswith("video"):
-            return "video"
-        if mime.startswith("audio"):
-            return "audio"
-        if "pdf" in mime or "document" in mime:
-            return "document"
-        return "other"
-    
-    df["category"] = df["mime_type"].apply(categorize)
-    return df
+
+    categories = [_attachment_category(mime) for mime in df["mime_type"]]
+    return df.assign(category=pd.Series(categories, index=df.index, dtype="object"))
+
+
+_REACTION_NAMES = {0: "love", 1: "like", 2: "dislike", 3: "laugh", 4: "emphasis", 5: "question"}
+
+
+def _decode_reaction(code) -> tuple[str, bool]:
+    """A tapback from its type code: its name, and True when it was added.
+
+    2000-2005 add a reaction and 3000-3005 take one away.
+    """
+    if pd.isna(code):
+        return ("unknown", False)
+    code = int(code)
+    if 2000 <= code <= 2005:
+        return (_REACTION_NAMES.get(code - 2000, "unknown"), True)
+    if 3000 <= code <= 3005:
+        return (_REACTION_NAMES.get(code - 3000, "unknown"), False)
+    return ("unknown", False)
 
 
 def extract_reactions(db_path: str) -> pd.DataFrame:
     """
     Extract tapback reactions from the iMessage database.
-    
+
     Reactions are stored as associated messages with specific type codes:
     2000-2005 = add reaction, 3000-3005 = remove reaction
     Types: 0=love, 1=like, 2=dislike, 3=laugh, 4=emphasis, 5=question
+
+    Returns DataFrame with: reaction_id, associated_message_guid,
+    associated_message_type, is_from_me, chat_id, timestamp, reaction_type,
+    is_add. A database with no reactions gives a frame with these columns and
+    no rows.
     """
-    conn = sqlite3.connect(db_path)
+    conn = open_read_only(db_path)
     try:
         query = f"""
         SELECT
@@ -329,34 +425,22 @@ def extract_reactions(db_path: str) -> pd.DataFrame:
            OR (m.associated_message_type BETWEEN 3000 AND 3005)
         ORDER BY timestamp ASC;
         """
-        df = pd.read_sql_query(query, conn)
+        df = read_frame(conn, query)
     finally:
         conn.close()
-    
-    # Decode reaction types
-    reaction_names = {0: "love", 1: "like", 2: "dislike", 3: "laugh", 4: "emphasis", 5: "question"}
-    
-    def decode_reaction(atype: int) -> tuple:
-        if pd.isna(atype):
-            return ("unknown", False)
-        atype = int(atype)
-        if 2000 <= atype <= 2005:
-            return (reaction_names.get(atype - 2000, "unknown"), True)  # added
-        if 3000 <= atype <= 3005:
-            return (reaction_names.get(atype - 3000, "unknown"), False)  # removed
-        return ("unknown", False)
-    
-    df[["reaction_type", "is_add"]] = df["associated_message_type"].apply(
-        lambda x: pd.Series(decode_reaction(x))
+
+    decoded = [_decode_reaction(code) for code in df["associated_message_type"]]
+    return df.assign(
+        reaction_type=pd.Series([name for name, _ in decoded], index=df.index, dtype="object"),
+        is_add=pd.Series([added for _, added in decoded], index=df.index, dtype="bool"),
     )
-    return df
 
 
 def search_contacts(db_path: str, query: str, limit: int = 10) -> pd.DataFrame:
     """
     Search contacts by partial chat_id or group display-name match.
     """
-    conn = sqlite3.connect(db_path)
+    conn = open_read_only(db_path)
     try:
         display_name_expr = chat_display_name_sql(conn)
         sql = f"""
@@ -375,7 +459,7 @@ def search_contacts(db_path: str, query: str, limit: int = 10) -> pd.DataFrame:
         LIMIT ?;
         """
         like_query = f"%{query}%"
-        df = pd.read_sql_query(sql, conn, params=(like_query, like_query, limit))
+        df = read_frame(conn, sql, (like_query, like_query, limit))
     finally:
         conn.close()
     return df
@@ -383,13 +467,18 @@ def search_contacts(db_path: str, query: str, limit: int = 10) -> pd.DataFrame:
 
 def main():
     parser = argparse.ArgumentParser(description="Extract iMessage messages to CSV")
-    parser.add_argument("--db", dest="db_path", default="chat.db", help="Path to chat.db (default: ./chat.db)")
-    parser.add_argument("--out", dest="out_csv", default="messages.csv", help="Output CSV path (default: messages.csv)")
+    # No default for either path. In a checkout, ./chat.db is an old copy and
+    # ./messages.csv is the archive of the app: one command with no argument
+    # must not write the one over the other.
+    parser.add_argument("--db", dest="db_path", required=True, help="Path to a Messages database (chat.db)")
+    parser.add_argument("--out", dest="out_csv", help="Output CSV path. Needed for every use but --list-contacts")
     parser.add_argument("--list-contacts", action="store_true", help="List top contacts by message count")
     parser.add_argument("--limit", type=int, default=20, help="Number of contacts to show (default: 20)")
     parser.add_argument("--attachments", action="store_true", help="Export attachments metadata")
     parser.add_argument("--reactions", action="store_true", help="Export reactions/tapbacks")
     args = parser.parse_args()
+    if not args.list_contacts and not args.out_csv:
+        parser.error("--out is needed: name the file to write")
 
     try:
         if args.list_contacts:

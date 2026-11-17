@@ -1,7 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import type { PreviewPayload } from '../types'
 import { recallApi } from './api'
-import { isPreviewPayload, makePreviewCacheKey, readPreviewCache, writePreviewCache } from './cache'
+import {
+  isPreviewPayload,
+  makePreviewCacheKey,
+  previewGeneration,
+  readPreviewCache,
+  watchPreviewCache,
+  writePreviewCache,
+} from './cache'
+import { NOTHING_HELD, shownPreview, type Held } from './previewHeld'
 
 type PreviewRequest = {
   // '' for any of the first three means there is nothing to ask for yet
@@ -10,14 +18,6 @@ type PreviewRequest = {
   model: string
   since: string
   until: string
-}
-
-type Held = {
-  // the request the figures answer
-  key: string
-  // the archive and conversation they belong to
-  subject: string
-  payload: PreviewPayload | null
 }
 
 // the request that could not be answered, and why
@@ -35,17 +35,18 @@ export type ConversationPreview = {
   retry: () => void
 }
 
-const NOTHING: Held = { key: '', subject: '', payload: null }
-
 // Loads the figures for one conversation, from the browser's store first and
 // then from the server. onStored is called when a fresh answer has been kept.
+// When the saved figures are cleared (an import does it), the figures held
+// here go too and are asked for again: they were of the archive before.
 export function useConversationPreview(
   { messagesPath, contact, model, since, until }: PreviewRequest,
   onStored: () => void,
 ): ConversationPreview {
-  const [held, setHeld] = useState<Held>(NOTHING)
+  const [held, setHeld] = useState<Held>(NOTHING_HELD)
   const [failure, setFailure] = useState<Failure | null>(null)
   const [attempt, setAttempt] = useState(0)
+  const generation = useSyncExternalStore(watchPreviewCache, previewGeneration)
   const ready = Boolean(messagesPath && contact && model)
   const key = ready ? makePreviewCacheKey({ messagesPath, contact, model, since, until }) : ''
   const subject = ready ? `${messagesPath}\n${contact}` : ''
@@ -56,17 +57,19 @@ export function useConversationPreview(
     const stored = readPreviewCache(key)
     if (stored) {
       queueMicrotask(() => {
-        if (!cancelled) setHeld({ key, subject, payload: stored })
+        if (!cancelled) setHeld({ key, subject, generation, payload: stored })
       })
     }
     recallApi
       .preview({ messagesPath, contact, model, since, until })
       .then((payload) => {
         if (!isPreviewPayload(payload)) throw new Error('This conversation could not be read.')
+        // asked before the saved figures were cleared: an answer of the archive before
+        if (previewGeneration() !== generation) return
         writePreviewCache(key, payload)
         if (cancelled) return
         onStored()
-        setHeld({ key, subject, payload })
+        setHeld({ key, subject, generation, payload })
         setFailure(null)
       })
       .catch((apiError: unknown) => {
@@ -80,17 +83,15 @@ export function useConversationPreview(
     return () => {
       cancelled = true
     }
-  }, [key, subject, messagesPath, contact, model, since, until, onStored, attempt])
+  }, [key, subject, generation, messagesPath, contact, model, since, until, onStored, attempt])
 
   const retry = useCallback(() => {
     setFailure(null)
     setAttempt((current) => current + 1)
   }, [])
 
-  const fresh = Boolean(key) && held.key === key
   return {
-    payload: fresh || (Boolean(subject) && held.subject === subject) ? held.payload : null,
-    settled: fresh && held.payload !== null,
+    ...shownPreview(held, { key, subject, generation }),
     error: failure && failure.key === key ? failure.message : null,
     retry,
   }

@@ -20,44 +20,44 @@ Add a rule here when a review finds a new one.
 - `daily` in a preview covers the whole conversation. It feeds the calendar.
 - `activity`, `stats`, `monthly`, `dynamics`, attachments and reactions follow the chosen dates.
 - A month or a day with no messages keeps its place on a time axis. `fill_months` and `day_points` in `conversation.py` do this.
-- A message has one of three directions: sent, received, or unknown.
+- A message of an export frame has one of three directions: sent, received, or unknown. The archive holds two: every message is sent or received.
   - `total` counts all three.
   - `sent` counts sent only. `received` counts received only.
   - Never compute received as `total` minus `sent`.
   - Server: `sent_mask` and `received_mask` in `conversation.py`. Client: `receivedCount` in `app/src/lib/conversations.ts`.
-- `isFromMe` in a message is `true`, `false` or `null`. `sent_by_me` in `ui_server.py` writes it. `isOutbound` in `app/src/lib/conversations.ts` reads it, and also accepts the older forms that saved chats hold.
+- `isFromMe` in a message is `true`, `false` or `null`. `messages.payload` in `recall_services/messages.py` writes it for a search result, a day and a citation; `sent_by_me` in `ui_server.py` writes it for the figures. `isOutbound` in `app/src/lib/conversations.ts` reads it, and also accepts the older forms that saved chats hold.
 - The `direction` of a first message is `outgoing`, `incoming`, or any other value, which means unknown. Only `sentByMe` in `app/src/lib/direction.ts` reads it.
-- `voicesOf` in `app/src/lib/conversations.ts` gives what each side wrote in a conversation of the list, or null when the list does not say. The list read from the Messages database has totals only. A row with no voices draws one bar in the neutral color.
+- `voicesOf` in `app/src/lib/conversations.ts` gives what each side wrote in a conversation of the list, or null when the list does not say. The list read from the Messages database before there is an archive has totals only. A row with no voices draws one bar in the neutral color.
 - Rhythm rows start on Monday. `hour_by_weekday` writes them. `Rhythm.tsx` maps them to the week of the reader.
 - Heat levels use one scale for the whole archive. The busiest count is always level 4. `heatSteps` and `heatLevel` in `app/src/lib/heat.ts` hold this.
-- Search: `total` is the number of matches. `count` is the number of matches that the response holds. The screen shows `total`.
+- Search: `total` is the number of matches. `count` is the number of matches that the response holds, from the place `offset`. The screen shows `total`. `recall_services/search.py` states what a query matches: whole words in any order, a quoted phrase, and the last word as a prefix while the reader types.
 
 ## Names
 
 - The server sends a saved name, a group name made from saved names, or an empty string.
 - Only one function on each side labels a conversation that has no name.
   - Client: `conversationName` in `app/src/lib/conversations.ts`.
-  - Server, for text that the user reads: `conversation_label` in `conversation.py`.
+  - Server, for text that the user reads: `conversation_label` in `conversation.py` (the saved report of the hand tool uses it).
   - The two functions must use the same words.
 - No screen shows a full telephone number.
-- Text that goes to the AI model uses `contact_label` in `conversation.py`. It never sends a handle that is not saved. A report run tells the model a saved name, or the given name of a group, or this label. `tests/test_prompt_privacy.py` checks each prompt.
+- Text that goes to the AI model never holds a handle that is not saved. Chat uses `names.chat_labeler`: a saved name or a mask. A report uses `names.report_labeler` for the writers: a saved name, or a name that the report engine gives each unsaved writer. Both mask a handle that is not saved where it stands in the text of a message (`MaskingLabeler.redact`; `_Masked` in `recall_services/reports.py` for a report). The hand tool uses `contact_label` in `conversation.py`, and `tests/test_prompt_privacy.py` checks its prompts.
 - The title of a saved HTML report is `conversation_label`. The file name and the heading of the Markdown report keep the conversation id.
 - A group id is `chat` followed by digits only. Three places hold this rule and must change together:
   - `is_group_chat` and `group_chat_mask` in `conversation.py`.
   - `isGroupChat` in `app/src/lib/conversations.ts`.
   - The SQL in `list_contacts` in `parse_imessage.py`.
-- Names follow the Contacts cache. The messages bundle signature and `preview_cache_key` include the signature of the Contacts cache file.
+- Names follow the Contacts cache. The messages bundle signature and `preview_cache_key` include the signature of the Contacts cache file. See "The archive and the services", Names.
 
 ## A day of a conversation
 
-- `/api/day` gives one day of one conversation. `day_window` in `day_view.py` decides which messages; `day_payload` in `ui_server.py` gives each message the shape that search results have.
-- The conversation id must match exactly. This route never matches part of an id. `in_conversation` in `conversation.py` holds the rule, and `filter_conversation` uses it too.
+- `/api/day` gives one day of one conversation. `Archive.day` decides which messages; `day.payload` in `recall_services/day.py` gives each message the shape that search results have (`messages.payload`). `day_window` in `day_view.py` is the same rule on a frame, and `tests/integration/test_day_against_day_view.py` holds the two together.
+- The conversation id must match exactly. This route never matches part of an id. On a frame, `in_conversation` in `conversation.py` holds the rule, and `filter_conversation` uses it too.
 - A message with no conversation id belongs to no conversation. It is in no day and in no moment.
 - A place given as `offset` is used as it is, from 0 to the total. The answer can hold fewer rows than `limit`. A `limit` below 1 is refused; a `limit` above 400 is 400.
 - The command line can name a conversation by a part of its id. `find_conversation` in `conversation.py` does this, and it refuses a part that several ids hold.
 - A day longer than the limit is given in part. `total` is the number of messages in the day and `offset` is the place of the first message given.
 - `previousDay` and `nextDay` are the nearest days that hold messages, or null.
-- A moment in `/api/memories` carries `day`, and `previewAt` and `previewId` when it quotes a message. `previewAt` is written in the same form as `timestamp` in a message of `/api/day`. `previewId` is written by `message_id_text`, the same code that writes `messageId`.
+- A moment in `/api/memories` carries `day`, and `previewAt` and `previewId` when it quotes a message. `previewAt` is written in the same form as `timestamp` in a message of `/api/day`. `previewId` is the `message_id` of the frame (`message_id_text`), which is the id that `messageId` holds. A moment of a report carries the same as `at` and `pickedId`.
 - The `count` of an on-this-day moment is every message of that day in that conversation. It is the same number as `total` in `/api/day`.
 - The client finds the quoted message with `quotedIndex` in `app/src/lib/dayParts.ts`: first by `previewId` equal to `messageId`, then by `previewAt` equal to `timestamp`.
 - The client reads a long day in parts with `partToAsk`: it asks for the rows that are there and no more. `joinPart` adds a part only when it meets what is shown.
@@ -68,13 +68,14 @@ Add a rule here when a review finds a new one.
 ## Reports
 
 - The report heading carries the conversation id. `report_contact` in `ui_server.py` reads it back.
-- The first line of the Overview section is the scope line. `reports.py` writes it. `report_scope` in `ui_server.py` reads it first, and uses the First / Last line for older reports.
+- The first line of the Overview section is the scope line. `report_engine/markdown.py` writes it (`reports.py` for the hand tool). `report_scope` in `ui_server.py` reads it first, and uses the First / Last line for older reports.
   - `- Scope: 2024-06-01 to 2024-06-30`
   - `- Scope: from 2024-06-01`
   - `- Scope: through 2024-06-30`
   - `- Scope: all dates`
 - A saved report shows figures for the days in its scope.
-- A run that finds no events removes the older events file. `write_events_timeline` in `analysis.py` does this.
+- A run that finds no events removes the older events file. `write` in `recall_services/report_files.py` does this (`write_events_timeline` in `analysis.py` for the hand tool).
+- The steps of an import have one order on the server (`import_messages`) and in the guide (`PHASES` in `ImportStep.tsx`): names, reading, archive. `tests/test_server_faults.py` holds the two together.
 - The app shows an analysis only with the report file that it was read from. `App.tsx` keeps the file path with the analysis.
 - An analysis answer with no `analysis` is a failure. A job watch that has ended changes nothing.
 
@@ -82,13 +83,13 @@ Add a rule here when a review finds a new one.
 
 WARNING: The story of a report is written by an AI model from the messages of other people. Treat it as hostile input.
 
-- One function turns a story into HTML: `story_html` in `safe_html.py`.
-- The app page and the saved HTML report both use `story_html`. Do not render a story in any other way.
+- One function turns a piece of a story into HTML: `story_html` in `safe_html.py`.
+- The saved HTML report of the hand tool uses `story_html`. The app page uses `story_page`, which cuts the story where a chapter starts (a line that begins with `### `) and gives each chapter to the same renderer. A story with more than `STORY_PARTS` chapters is one piece. Do not render a story in any other way.
 - The result holds only the tags in `ALLOWED_TAGS`.
 - The result holds only three attributes: `href` and `rel` on a link, and `start` on a numbered list.
 - A link address starts with `http://`, `https://` or `mailto:`. Each link has `rel="noopener noreferrer"`.
 - `story_html` limits its input: the length of the text (`STORY_LIMIT`), a run of one mark, and a run of empty lines.
-- `story_html` limits its work: an estimate of the work before the renderer starts (`STORY_WORK_LIMIT`) and the processor time of the renderer (`STORY_SECONDS`). A story past a limit, or nested too deep, is shown as plain paragraphs.
+- `story_html` limits its work: an estimate of the work before the renderer starts (`STORY_WORK_LIMIT`) and the processor time of the renderer (`STORY_SECONDS`). A piece past a limit, or nested too deep, is shown as plain paragraphs. The limits hold for each chapter of `story_page`, all the chapters of one page share `STORY_PAGE_SECONDS`, and the whole story is cut to `STORY_LIMIT` first. A chapter is cut at its line whatever stands around it (a code fence too): each piece is made safe by itself. `story_page` says whether a chapter is shown plain, and `/api/analysis` gives that as `shownPlain`.
 - A picture becomes its caption.
 - The client puts this HTML into the page in one place: `ReportStory.tsx` in `app/src/components/reports`.
 - `readStory` in `app/src/lib/story.ts` cuts the story into an opening and chapters. It moves whole elements and changes heading levels only. It never makes markup from text.
@@ -109,12 +110,208 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - `app/src/styles/paper.css` holds the paper state and the print rules. A layout rule for the screen must not change the pages.
 - In the Mac app, `window.print()` sends the `print` command to the shell. `saveAsPDF` in `macos/Recall/RecallApp.swift` saves the page as a PDF and then sends `afterprint` to the page.
 
+## Import and update
+
+### Which database is read
+
+- The app starts one job for a first setup and for an update: `setup_import`. Both doors to an update (Settings and the Overview) open the setup guide, and the guide starts that job. The `export` job reads Messages too; only the old page in `ui/` starts it.
+- An update never reads a copy. `database_for` in `ui_server.py` names the database that a job reads, and no other code selects a database for a job.
+  - An archive that holds a message is updated from the database of Messages on this Mac, and from nothing else. A path from the client does not change this.
+  - An import that names a copy (`dbPath`) for such an archive is refused with one plain sentence. `/api/jobs` answers 409, and no job is made.
+  - Only a first setup can name a copy: the archive holds no message (`holds_messages`). The copy is read for that import only. With no copy named, the job reads Messages.
+  - An export of an earlier build that waits to be loaded counts as an archive that holds a message. An archive file that cannot be opened is not taken for an empty one.
+  - No other job reads a database. A report is written from the archive as it is.
+- The guide holds the same rule: in an update it offers no other source (`offersCopy` in `app/src/lib/setupGuide.ts`). It says why Messages cannot be read and how to correct that.
+- One test says whether the guide is an update: `holds_messages`. `/api/setup/status` gives it as `export.holdsMessages`, and `isUpdate` in `app/src/lib/setupGuide.ts` reads it. Do not decide this from the list of conversations.
+- Each check of setup names the archive file that the app reads (`messagesPath`): at launch, when the guide opens, and in the guide.
+- Known limit: a reader who works from copies only cannot update from a newer copy. They must remove the archive file first, and then do a first setup from the newer copy.
+- `probe_database` in `setup_status.py` knows the database of Messages by the parts of its path (`in_messages_folder`). A folder whose name only starts like the folder of Messages holds a copy.
+- The hand tool `parse_imessage.py` names no default database and no default file to write. WARNING: `cli.py --db` writes `messages.csv` in the current folder. In a checkout that file is the export that the archive is first loaded from.
+
+### How a database is read
+
+- An update is one full pull: `pull_into_archive` in `ui_server.py` calls `ArchiveState.pull_from_messages` in `recall_services/archive_state.py`, which calls `import_chat_db` of the package `archive`. After a pull the archive holds what the database holds: new rows are added, changed rows are changed, and rows that the database no longer has are removed. Nothing of a second source is merged.
+- The importer copies the database to a work file of its own and reads that copy (`archive/source.py`). It opens the database to read only.
+- The other readers of a Messages database open it with `open_read_only` in `setup_status.py`: the readers of the hand tool in `parse_imessage.py` (the list of `/api/contacts` before there is an archive uses one of them), and `probe_database`.
+  - The database is opened to read only. A path that holds no file makes no file.
+  - The path is quoted in the address, so a `?`, a `#` or a `%` in a file name is part of the name. The path is taken as the file it means: links are followed and `..` is worked out.
+  - The database of Messages is not opened as immutable. Messages can write to it at any moment, and the reader also gets what is in the `-wal` file.
+  - A copy with no `-wal` file and no `-journal` file beside it is opened as immutable. SQLite makes no file beside it.
+- `/api/permissions/fulldisk` opens no database. It answers from `probe_database`.
+
+### All or nothing
+
+- A pull changes the archive or leaves it as it was. A database that cannot be read, a reader that stops, and a pull that is refused all leave the archive with the messages that it had.
+- A first pull that does not end leaves no archive file (`_forget_empty_archive`).
+- A database with no message to keep is not imported. A first pull of such a database leaves no archive file (`_forget_first_archive`). An update from one is stopped by the limit below.
+- A pull that would remove more than 20% of the stored messages is refused before it changes anything (`DEFAULT_MAX_REMOVED_SHARE`). The job fails with the code `removal_limit` and one sentence with the numbers.
+  - Only a request that says `allowRemoval: true` lifts the limit. Any other value does not.
+  - The limit guards an archive that holds a message (`holds_messages`). An archive with none has nothing to lose, so a first setup is not held up by it.
+  - The guide then says so in plain words and offers "Update anyway" (`failedImport` in `app/src/lib/setupGuide.ts`).
+  - Rows that the bridge loaded (`legacy:` ids) are replaced by the first pull. They have no id of Messages, so the limit compares totals for them (`_check_bridge_rows` in `archive/mirror.py`): a database that holds far fewer rows than the export gave is refused in the same way. An export that reaches further back than Messages is not lost without a question.
+- When the archive is written, the import did its work.
+  - The server then drops each preview and each opened report that it keeps (`forget_previews`), and the guide clears the previews that the browser keeps (`finishOnboarding` in `App.tsx`). `useConversationPreview.ts` drops the figures that it holds in memory (`previewGeneration` in `app/src/lib/cache.ts`).
+  - A later step of the job that fails does not make the import a failed one. The job ends as completed, with a plain `warning` in its result and in its log (`counted`). The Done step shows the warning.
+- An import and the Overview give one count of messages: `what_the_archive_holds` uses `archive_summary`. A message in no conversation is shown nowhere in the app, and it is not counted.
+
+### The export of an earlier build
+
+- Earlier builds kept three CSV files: `messages.csv`, `messages_attachments.csv` and `messages_reactions.csv`. The server never writes, moves or deletes them now. They are the source of the bridge until the first pull.
+- The bridge loads `messages.csv` into the archive one time (`ensure_from_export`). The job is `bridge` (`load_export`).
+  - At the start of the server, `load_export_at_start` starts that job when an export waits (`export_waits`).
+  - A request that needs the archive when only an export is there starts the same job (`archive_for`) and answers 503 with the code `archive_building` and the job. The app shows a waiting state (`ArchiveWait.tsx`) and loads its data again when the job ends.
+  - A load that did not end well is not started again until the export file changes (`BRIDGE_FAILED`, `bridge_failure`). The answer is then 500 with the code `archive_failed` and the sentence. A load that met a busy archive is tried again after `BRIDGE_RETRY_SECONDS`.
+  - A request also waits (503, `archive_building`, the import job) while a first import fills an archive that holds nothing yet.
+- An export never replaces an archive that a pull filled.
+- No code lists the folder of the archive. Do not add code that takes a file in that folder for an archive because of its name.
+
+### Jobs
+
+- One import writes the archive at a time. `create_job` in `ui_server.py` decides this once, with `JOBS_LOCK` held, when the job is made. `IMPORT_ACTIONS` holds the jobs that write the archive: `setup_import`, `export` and `bridge`.
+- The first job runs. The second is refused: `/api/jobs` answers 409 with a plain sentence, and no job is made.
+- `check_request` refuses a request that cannot be a job. `/api/jobs` answers 400, and no job is made.
+  - The action is text, and it is one of `JOB_ACTIONS`.
+  - A path (`messagesPath`, `outDir`, and `dbPath` for a `setup_import`) is text that the system can hold.
+  - `includeContacts` is `true` or `false`.
+- A body that is not JSON is answered with 400 on each POST route (`BadRequest`).
+- The answer to a new job is a copy of the job as it was made (`job_copy`). Its status is `queued`. The answer about a job is a copy too. A copy shares no list with the job.
+- A job always ends in the list. `run_job` marks a job as failed when its work is over and the list still says `queued` or `running`. A job that stays in one of these states holds up each later import.
+- A failed job has `error`, one plain sentence, and `code`, a fixed word for the client or null (`TOLD_IN_A_SENTENCE`). A failure that nobody planned for says `JOB_FAILED` with the code `job_failed`: what was raised goes to the log of the server and to no line of the job.
+- A step after the work of a job is a warning, not a failure: a count after an import (`counted`), the opening of a report that is written (`opened_report`).
+- What a thread that answers a request prints is never a line of a job (`_JobStreamRouter.answering`).
+
+### What the reader is told
+
+- `recall_services/unreadable.py` is the one place for the sentences about a database that cannot be read. The server and the archive state import it. It uses `probe_database`, because macOS can show a protected file as missing.
+- A busy database (`locked`) is tried. The importer waits for it.
+- An import that stops raises `ImportStopped`. Its text is one plain sentence for the reader.
+  - The sentence holds no text of a query. What a reader raised goes to the log of the server (`PullFailed.detail`). It does not go to the lines of the job.
+  - The sentence ends with what is true of the archive (`archive_note`): nothing when there is no archive, or "The archive was not changed."
+- `/api/contacts` answers a busy database with 503 and a database that fails with 500. The error is a plain sentence from `reading_stopped`.
+
+### What is kept
+
+- The server keeps no path to a database. `/api/defaults` names no database. `/api/contacts` takes no database from the client.
+- The note beside the archive (`archive.sqlite3.source.json`) says only where the content came from: an export, or Messages. It holds no path of a database.
+- The record of setup holds three things, each `true` or `false`: `completed`, `skipped` and `firstWordsShown`.
+  - `setup_marker_updates` takes only `true` and `false` from the client.
+  - `read_setup_marker` gives only `true` and `false`. It drops `pickedDbPath` and each value that an earlier build wrote as text.
+  - `write_setup_marker` holds `SETUP_MARKER_LOCK` from its read to its write.
+- The client keeps no path to a database. `RuntimePaths` holds the archive file and the reports folder only.
+
+### The guide
+
+- `guideStep` in `app/src/lib/setupGuide.ts` gives the step that the guide shows. `OnboardingWizard.tsx` keeps no step.
+  - The step comes from the last check of the database (`db.status`), not from the state of setup (`state`). A first setup and an update use the same rule.
+  - `canImport` is true for `readable` and for `locked`. The import is not offered for another status.
+  - A copy that the reader chose is kept apart from the check of Messages. It is for one import. Back gives it up.
+- `importRequest` builds the request for an import. It names the archive file that the app reads (`messagesPath`). In a first setup it names the path that the reader chose for a copy. In an update it names no database.
+- The import step cannot be left while the request to start is on its way. The import can have begun.
+- An import that the server refused has no id. The guide shows what the server said under "did not start".
+- `SetupFrame.tsx` moves the focus to the step when the step changes. `import`, `import_running` and `import_failed` are three steps. `importView` gives the view of each.
+- What the reader is told at a step belongs to that step (`StepNotes`). It goes when the step changes.
+- `revealsFirstWords` decides whether the first words show: after the first setup, and not after an update.
+
+## Message text
+
+- The text of a message is stored as Messages has it. The export does not trim it.
+  - Spaces and line breaks at the ends stay. A text of only spaces is a row.
+  - Invisible characters stay: emoji joiners, variation selectors, direction marks.
+- `extract_messages` in `parse_imessage.py` takes the text from the text column. When that column holds no text, it takes the text from `attributedBody` with `extract_text_from_attributed_body`.
+  - That function gives the whole text or no text. It never gives a part of a text.
+  - One rule cleans both sources (`_text_of_message`): only the C0 control characters other than tab and newline are dropped (`_DROPPED_CONTROLS`). Text with nothing left is no text.
+- A text of only white space is a row of the export. Code that counts or shows text tests it with `strip()` or `display_text`, so such a message has no text for the reader.
+- `display_text` in `message_text.py` is the code that trims. It removes the attachment mark (U+FFFC) and the spaces at the ends. `clip_text` shortens a text for a list.
+- Code that shows a text, or that tests a text for emptiness, uses `display_text`. Do not trim a text when you write it to the export.
+
+WARNING: Do not run `merge_export.py` on an archive that was written before the decoder fix (commit `5ac7086`). The tool compares the text in the archive with the text that the decoder gives. The texts that the earlier decoder cut or trimmed are different, so the tool adds those rows a second time.
+
+## Tests
+
+- No test reads the Messages database or the Contacts of this Mac, and no test connects to another host. `tests/guards.py` is the one guard of every suite. `tests/conftest.py` sets it for each test file:
+  - Before the project is imported, it sets a key that is not a key, an empty home folder and a temp data folder. It removes the proxy and address settings. `load_dotenv` reads no file.
+  - It refuses a connection, a send and a name lookup to a host that is not this machine. The error is `NetworkBlocked`, an `OSError`. Loopback and socket files stay open.
+  - Each test starts with a check that the guard holds.
+- A conftest of a package does not make a guard of its own. It adds only what its suite needs from `tests/guards.py`: the fixed time zone, the pinned data folder, the block of loopback.
+- A child process has no socket guard. A test that starts one opens no socket there.
+- Code that blocks the network for a run gives it back when the run ends (`network_blocked` in `chat_engine/eval/volume.py`).
+- A test that needs a Messages database makes one with `messages_db` in `tests/invented_db.py`.
+- No test starts a helper of the app. WARNING: `export_contact_names` starts the Contacts helper with `open`, outside every guard of a process, and that helper reads the real Contacts. `tests/guards.py` refuses to start `open`, `osascript` and the compilers (`HelperBlocked`). A trial run of the server must block them too.
+
 ## Caches
 
-- `PREVIEW_PAYLOAD_VERSION` in `ui_server.py` is 7. The browser key in `app/src/lib/cache.ts` is `recall.previewCache.v7`. Change the two together when the shape of a preview changes.
-- `ANALYSIS_PAYLOAD_VERSION` in `ui_server.py` is 5. Increase it when a stored analysis can differ for the same key. A change to `story_html` is such a change.
+- `PREVIEW_PAYLOAD_VERSION` in `ui_server.py` is 8. The browser key in `app/src/lib/cache.ts` is `recall.previewCache.v8`. Change the two together when the shape of a preview changes.
+- `preview_cache_key` holds `file_mark()` of the archive, the file of what earlier report runs read, and the Contacts cache.
+- `ANALYSIS_PAYLOAD_VERSION` in `ui_server.py` is 6. Increase it when a stored analysis can differ for the same key. A change to `story_html` or `story_page` is such a change.
 - `analysis_cache_key` holds `preview_cache_key`, so a stored analysis is not used after its figures change.
 - A stale browser entry is safe. `useConversationPreview` always asks the server again.
+
+## The archive and the services
+
+- Every route reads one archive: a SQLite file of the package `archive`. The functions in `recall_services/` build each answer. `ui_server.py` calls them and adds no second way to read messages.
+- The app names one file in each request (`messagesPath`). `recall_services/places.py` says which archive stands for it:
+  - Nothing named, the default export or the default archive: `saves/archive.sqlite3` in the data folder.
+  - A name that ends in `.sqlite3`: that file is the archive.
+  - Any other name is an export of an earlier build. Its archive stands beside it with the ending `.sqlite3`.
+  - `/api/defaults` gives the default archive file as `messagesPath`. Its `hasMessages` is `holds_messages`: an archive that a first import is still filling holds nothing yet, so setup is not taken for done.
+- `archive_for` in `ui_server.py` gives the archive of a request, or raises `ArchiveNotReady`. Its codes are `archive_building` (503, with the job), `no_archive` (400) and `archive_failed` (500). Each route answers with that status and `{error, code}`.
+- A read route with no archive gives an empty answer where the Overview needs one before setup (`bundle_or_none`): `/api/memories`, `/api/overview`, `/api/first-words`.
+- `named_archive` reads the archive file of a request. A name that is not text, that no system can hold, or that names no file is 400.
+- A request that fails in a way nobody planned for answers 500 with `SERVER_FAULT` and the code `server_error` (`server_fault`). What was raised goes to the log of the server. `/api/ask/stream` tells it as its last event when the stream is open.
+- The request log holds the path of a request and no query (`log_message`): a query holds handles and search words.
+- A message in no conversation is in no figure (`_parse_archive`), as it is in no list and no total.
+- The figures on pandas read `frame.messages_frame(state)`. A cache in memory is keyed by `archive_signature` (the place, `generation` and `file_mark()`). A cache on disk is keyed by `file_mark()` only: `generation` starts at 0 at each start of the server.
+- A message that was unsent is a row with no text in each list, each day and each figure. A payload gives it the label `UNSENT_LABEL` of `message_text.py` in `attachment`.
+- A message id is text: Apple's guid after a pull, `legacy:<ROWID>` after the bridge. No code reads it as a number.
+
+### Names
+
+- Names come from the Contacts cache only: `saved_names` in `ui_server.py` calls `names.cached`. No request reads the Contacts database of the Mac.
+- Two actions read Contacts into the cache, and each is started by the reader: `/api/contact-names`, and the first step of a `setup_import` (`names_from_contacts`).
+- `recall_services/names.py` is the one place that names a conversation and a writer. A group that nobody named is named from all its saved members.
+
+### Models
+
+- `recall_services/models.json` is the one source for the offered models: id, label, level, limits and prices. `ai_config.py` and `cli.py` hold tables for the hand tools only.
+- These three change together: `/api/defaults` (`models.defaults_payload`), each route and job that takes a model, and `app/src/lib/models.ts`, which builds its levels from `modelChoices`. No model id is written in the app.
+- A model that is not in the file, or that is not offered, is an error with a code before any call. It is never run or priced as another model.
+- The packaged server ships `models.json` (`packaging/recall_server.spec`).
+
+### The key of the provider
+
+- `recall_services/keys.py` gives the key: `OPENAI_API_KEY` in the environment of the server, or in the file `.env` in the data folder. The file is read at each call, as it is written (nothing of the environment is filled in). No file above the data folder is looked for.
+- Each model client is given the address of the provider, and takes no proxy from the environment (`build_client` in `report_engine/openai_llm.py`, `_ready_client` in `chat_engine/openai_llm.py`).
+- WARNING: A run with a dummy key still sends its request. Tests and trial runs block the network.
+
+### Chat
+
+- `/api/ask/stream` sends the events of `recall_services/chat.py`: `status` (with `reset` when the text so far was a note of the model), `delta`, and then `done` or `error`. `askStream` in `app/src/lib/api.ts` and `app/src/lib/chatStore.ts` read them.
+- A failure is one plain sentence and a `code`. No keyword answer stands in for an answer that failed.
+- Each "user" row of the history holds `contact`: the conversation that its question was asked of. A row with no `contact` was asked of everything, and its answer does not go to a question that has a scope.
+- The app gives each question a `requestId`. `/api/ask/cancel` stops the question with that id (`ASKING`). A write to a reader who left stops it too.
+- Text for the model holds a saved name or a mask, never a handle that is not saved (`names.chat_labeler`).
+
+### Reports
+
+- The `analyze` job runs `recall_services/reports.run` (`write_report`). It writes the report file and the events file together, saves the report as JSON, and writes no HTML page.
+- A report can be read when its conversation left the archive: `/api/analysis` then gives the story with no figures (`empty_preview`).
+- A moment that was written on the rows of the bridge is found again after the first pull by its row number, when the conversation and the day agree (`_quoted` in `recall_services/reports.py`).
+- `/api/analysis` reads a saved report by the text of its report file (`saved_report`). Each moment then carries `chatId`, `day`, `at` and `pickedId`, and the Reports page opens its day at the quoted message (`MomentDate.tsx`, `ReportDays.tsx`). A report of the older kind has no saved report: its events file is read with each cell as text (`events_of_file`).
+- The estimate of a preview is the plan of the report engine (`reports.estimate`). `preview_cache_key` holds the file of what earlier runs read, so the estimate follows a run at once. With no plan, `estimate` is null and `estimateError` is one sentence.
+- `shownPlain` in `/api/analysis` is true when a chapter of the story is shown as plain paragraphs. The Reports page then says so in one line (`ReportPage.tsx`).
+
+### What the browser keeps
+
+- A saved message is known by its conversation, its time and its text, never by its id (`bookmarkId` in `app/src/lib/bookmarks.ts`). A message has three ids in its life.
+- A saved chat shows a citation from its stored copy and opens its day by conversation and time (`quotedIndex`).
+- A stored model id that is not offered falls back to the default model (`preferredModel`).
+
+## Mac shell
+
+- What the page keeps in `localStorage` belongs to the origin `http://127.0.0.1:<port>`. `portForThisLaunch` in `macos/Recall/RecallApp.swift` remembers one port in the defaults of `local.recall.app` and asks for it at each launch: `RecallServerPort` for the packaged app, `RecallServerPortDev` for the development build. On another port the page starts with an empty store.
+- The shell waits about 3 s for a remembered port that is in use (`rememberedPortChecks`, `rememberedPortPause`). `main` in `ui_server.py` must let go of the port in less time: it calls `server_close()` when it stops serving. Change the two sides together.
+- A remembered port that is still in use is not replaced. That launch gets a drawn port and an empty store.
+- The server binds with `SO_REUSEADDR` and without `SO_REUSEPORT` (`ThreadingHTTPServer`). The shell's check of a port (`isPortAvailable`) does the same.
 
 ## Interface
 

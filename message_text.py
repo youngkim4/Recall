@@ -9,6 +9,8 @@ from __future__ import annotations
 import pandas as pd
 
 ATTACHMENT_PLACEHOLDER = "￼"
+# what stands in the place of a message that its writer took back: it has no words and no attachment
+UNSENT_LABEL = "Unsent message"
 _SEPARATOR = "|"
 
 # kind -> (one of them, several of them)

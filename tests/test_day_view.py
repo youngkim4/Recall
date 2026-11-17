@@ -1,21 +1,24 @@
 """Tests for one day of a conversation: the messages of that day, the part of
 a long day that is shown, and the days with messages on either side."""
-import json
-from urllib.parse import urlencode
-
 import pandas as pd
 import pytest
 
 import ui_server
 from day_view import DAY_LIMIT_MAX, day_window
-from tests.loopback import fetch
+from tests.export_kit import (  # noqa: F401 - archives and contacts_cache are fixtures
+    AVERY,
+    BLAKE,
+    MODEL,
+    NAMES,
+    archives,
+    contacts_cache,
+    get,
+    loaded,
+    row,
+    save_names,
+)
 
-pytestmark = pytest.mark.usefixtures("fresh_bundle_cache")
-
-COLUMNS = ["message_id", "timestamp", "sender", "text", "chat_id", "chat_display_name", "is_from_me"]
-AVERY = "+15550000001"
-BLAKE = "+15550000002"
-NAMES = {AVERY: "Avery Stone", BLAKE: "Blake Reyes"}
+pytestmark = pytest.mark.usefixtures("archives", "contacts_cache")
 
 
 def conversation(stamps):
@@ -181,108 +184,21 @@ def test_a_day_that_is_not_a_day_is_refused(day):
         day_window(conversation(["2024-11-16 10:00:00"]), day)
 
 
-# ---- through the server: the same shape every message has elsewhere
-
-
-def write_export(path, rows):
-    frame = pd.DataFrame(rows, columns=COLUMNS)
-    frame["message_id"] = range(1, len(frame) + 1)
-    frame.to_csv(path, index=False)
-    return path
-
-
-def row(chat_id, timestamp, text, from_me=0, sender=None):
-    return (0, timestamp, sender if sender is not None else chat_id, text, chat_id, "", from_me)
-
-
-@pytest.fixture
-def saved_names(monkeypatch):
-    monkeypatch.setattr(
-        ui_server,
-        "resolve_contact_names",
-        lambda handles, **_: {handle: NAMES[handle] for handle in handles if handle in NAMES},
-    )
-
-
-def test_a_day_of_one_conversation_is_given_as_messages(tmp_path, saved_names):
-    csv = write_export(tmp_path / "messages.csv", [
-        row(AVERY, "2024-11-15 22:00:00", "the night before"),
-        row(AVERY, "2024-11-16 09:00:00", "morning", from_me=1),
-        row(AVERY, "2024-11-16 09:01:00", "hello back"),
-        row(BLAKE, "2024-11-16 09:02:00", "another conversation"),
-        row(AVERY, "2024-11-18 08:00:00", "two days on"),
-    ])
-
-    payload = ui_server.day_payload(csv, AVERY, "2024-11-16")
-
-    assert payload["day"] == "2024-11-16"
-    assert [message["text"] for message in payload["messages"]] == ["morning", "hello back"]
-    assert [message["isFromMe"] for message in payload["messages"]] == [True, False]
-    assert (payload["total"], payload["offset"]) == (2, 0)
-    assert (payload["previousDay"], payload["nextDay"]) == ("2024-11-15", "2024-11-18")
-
-
-def test_in_a_group_each_message_names_who_wrote_it(tmp_path, saved_names):
-    csv = write_export(tmp_path / "messages.csv", [
-        row("chat77", "2024-11-16 09:00:00", "from Avery", sender=AVERY),
-        row("chat77", "2024-11-16 09:01:00", "from someone unsaved", sender="+15550000009"),
-    ])
-
-    messages = ui_server.day_payload(csv, "chat77", "2024-11-16")["messages"]
-
-    assert [message["senderName"] for message in messages] == ["Avery Stone", ""]
-
-
-def test_a_conversation_whose_id_starts_another_is_not_that_other(tmp_path, saved_names):
-    csv = write_export(tmp_path / "messages.csv", [row(AVERY, "2024-11-16 09:00:00", "hello")])
-
-    payload = ui_server.day_payload(csv, AVERY[:-1], "2024-11-16")
-
-    assert (payload["total"], payload["messages"]) == (0, [])
-
-
-def test_messages_sent_in_the_same_second_keep_the_order_of_the_export(tmp_path, saved_names):
-    csv = write_export(tmp_path / "messages.csv", [
-        row(AVERY, "2024-11-16 09:00:00", "first"),
-        row(AVERY, "2024-11-16 09:00:00", "second", from_me=1),
-        row(AVERY, "2024-11-16 09:00:00", "third"),
-    ])
-
-    messages = ui_server.day_payload(csv, AVERY, "2024-11-16")["messages"]
-
-    assert [message["text"] for message in messages] == ["first", "second", "third"]
-
-
-@pytest.mark.parametrize("limit", [0, -3])
-def test_the_server_refuses_a_limit_below_one(tmp_path, saved_names, limit):
-    csv = write_export(tmp_path / "messages.csv", [row(AVERY, "2024-11-16 09:00:00", "hello")])
-
-    with pytest.raises(ValueError):
-        ui_server.day_payload(csv, AVERY, "2024-11-16", limit=limit)
-
-
-def test_the_server_gives_the_part_of_a_long_day_that_was_asked_for(tmp_path, saved_names):
-    csv = write_export(tmp_path / "messages.csv", [
-        row(AVERY, stamp, f"m{index}") for index, stamp in enumerate(minutes("2024-11-16", 450))
-    ])
-
-    payload = ui_server.day_payload(csv, AVERY, "2024-11-16", offset=400, limit=200)
-
-    assert (payload["total"], payload["offset"]) == (450, 400)
-    assert [message["text"] for message in payload["messages"]] == [f"m{index}" for index in range(400, 450)]
-
-
 # ---- the route: what the address may hold
 
 
 def ask_for_day(server, **query):
-    status, _headers, body = fetch(server, f"/api/day?{urlencode(query)}")
-    return status, json.loads(body)
+    return get(server, "/api/day", **query)
+
+
+@pytest.fixture
+def saved_names():
+    save_names(NAMES)
 
 
 @pytest.fixture
 def one_day(tmp_path, saved_names):
-    return write_export(tmp_path / "messages.csv", [
+    return loaded(tmp_path / "messages.csv", [
         row(AVERY, "2024-11-16 09:00:00", "morning", from_me=1),
         row(AVERY, "2024-11-16 09:01:00", "hello back"),
     ])
@@ -293,6 +209,9 @@ def test_the_route_gives_a_day(one_day, server):
 
     assert status == 200
     assert [message["text"] for message in payload["messages"]] == ["morning", "hello back"]
+    assert [message["isFromMe"] for message in payload["messages"]] == [True, False]
+    # an id of the archive is text, never a number
+    assert [message["messageId"] for message in payload["messages"]] == ["legacy:1", "legacy:2"]
 
 
 def test_the_route_reads_a_time_that_names_a_zone(one_day, server):
@@ -321,38 +240,50 @@ def test_the_route_refuses_what_it_cannot_read(one_day, server, query):
     assert payload["error"]
 
 
-def test_the_route_says_when_the_export_is_not_there(tmp_path, server):
-    status, payload = ask_for_day(server, messagesPath=tmp_path / "absent.csv", contact=AVERY, day="2024-11-16")
+def test_the_route_says_when_there_is_no_archive(tmp_path, server):
+    absent = tmp_path / "absent.csv"
 
-    # the same answer the preview gives for an export that is gone
-    assert status == 400
-    assert "not found" in payload["error"]
+    status, payload = ask_for_day(server, messagesPath=absent, contact=AVERY, day="2024-11-16")
+    preview_status, preview = get(server, "/api/preview", messagesPath=absent, contact=AVERY, model=MODEL)
+
+    assert (status, payload["code"]) == (400, "no_archive")
+    assert "no archive" in payload["error"]
+    # the same answer the preview gives when there is nothing to read
+    assert (preview_status, preview) == (status, payload)
 
 
-def test_a_moment_says_which_day_it_is_and_when_its_message_was_sent(tmp_path, saved_names):
+def test_a_moment_says_which_day_it_is_and_when_its_message_was_sent(tmp_path, saved_names, server):
     now = pd.Timestamp("2026-11-16 12:00:00")
-    csv = write_export(tmp_path / "messages.csv", [
+    csv = loaded(tmp_path / "messages.csv", [
         row(AVERY, "2024-11-16 09:00:00", "ok"),
         row(AVERY, "2024-11-16 21:15:00", "a line long enough to be worth quoting back"),
     ])
 
     (moment,) = ui_server.memories_payload(csv, now=now)["onThisDay"]
+    _status, day = ask_for_day(server, messagesPath=csv, contact=AVERY, day=moment["day"], around=moment["previewAt"])
 
     assert moment["day"] == "2024-11-16"
     assert moment["previewAt"] == "2024-11-16 21:15:00"
+    # the time and the id are written as the day writes them: the app finds the quoted message by either
+    quoted = [message for message in day["messages"] if message["messageId"] == moment["previewId"]]
+    assert [(message["timestamp"], message["text"]) for message in quoted] == [
+        (moment["previewAt"], "a line long enough to be worth quoting back"),
+    ]
 
 
-@pytest.mark.parametrize("contact", ["<NA>", "nan", "None", ""])
-def test_messages_that_no_conversation_holds_are_not_served_as_one(tmp_path, saved_names, contact):
+@pytest.mark.parametrize("contact", ["<NA>", "nan", "None"])
+def test_messages_that_no_conversation_holds_are_not_served_as_one(tmp_path, saved_names, server, contact):
     """Rows with no conversation id come from different threads. No id, and no
     text that stands for "no value", opens them as one conversation."""
-    csv = write_export(tmp_path / "messages.csv", [
+    csv = loaded(tmp_path / "messages.csv", [
         row("", "2024-11-16 09:00:00", "from one thread", sender=AVERY),
         row("", "2024-11-16 09:01:00", "from another", sender=BLAKE),
         row(AVERY, "2024-11-16 09:02:00", "a real conversation"),
     ])
 
-    payload = ui_server.day_payload(csv, contact, "2024-11-16")
+    status, payload = ask_for_day(server, messagesPath=csv, contact=contact, day="2024-11-16")
 
+    assert status == 200
     assert payload["total"] == 0
     assert payload["messages"] == []
+    assert (payload["previousDay"], payload["nextDay"]) == (None, None)

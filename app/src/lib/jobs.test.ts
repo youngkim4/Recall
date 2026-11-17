@@ -65,7 +65,9 @@ test('a job is named for what it does', () => {
 
   assert.equal(jobTitle(job({ action: 'export' }), contacts), 'Message export')
   assert.equal(jobTitle(job({ action: 'setup_import' }), contacts), 'Archive import')
-  assert.equal(jobTitle(job({ action: 'semantic' }), contacts), 'Meaning index')
+  assert.equal(jobTitle(job({ action: 'bridge' }), contacts), 'Archive load')
+  // a kind of job that is gone has no name of its own
+  assert.equal(jobTitle(job({ action: 'semantic' }), contacts), 'semantic')
   assert.equal(jobTitle(job({ action: 'something_new' }), contacts), 'something_new')
 })
 

@@ -191,6 +191,7 @@ export function ChatView({
               draft={draft}
               canSend={hasArchive && Boolean(draft.trim()) && !isPending}
               disabled={Boolean(defaults) && !hasArchive}
+              pending={isPending}
               scope={scope}
               scopeOptions={scopeOptions}
               model={model}
@@ -199,6 +200,9 @@ export function ChatView({
               onScopeChange={setScope}
               onModelChange={onModelChange}
               onSubmit={() => submit()}
+              onStop={() => {
+                if (activeChatId) chatStore.stop(activeChatId)
+              }}
             />
           </div>
 

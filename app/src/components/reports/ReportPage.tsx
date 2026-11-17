@@ -117,6 +117,11 @@ export function ReportPage({ entry, analysis, onOpenConversation }: ReportPagePr
         paper={paper}
       />
 
+      {analysis.shownPlain ? (
+        <p className="section section-note" data-screen-only>
+          This story is long, so it is shown as plain paragraphs.
+        </p>
+      ) : null}
       <ReportStory html={analysis.summaryHtml || ''} />
 
       {(analysis.files ?? []).length ? (

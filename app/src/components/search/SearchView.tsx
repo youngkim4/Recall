@@ -29,6 +29,11 @@ const FEWEST_LETTERS = 2
 // what was found, and the search it answers
 type Found = { key: string; results: SearchResult[]; total: number }
 
+// What tells one row of the list from another. A saved message is known by
+// its conversation, time and words (bookmarkId), and two messages can share
+// all three, so a row goes by the id of its message when it has one.
+const rowId = (message: SearchResult) => (message.messageId ? `id:${message.messageId}` : bookmarkId(message))
+
 // Exact words, found as they are typed: each match as the message it was,
 // with the words picked out, and beside the list the day around the match
 // that is chosen. With nothing typed, the messages saved from earlier
@@ -78,8 +83,8 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
   const failed = failedFor === key
   const shown = searching ? (found?.results ?? []) : saved
   // a list that no longer holds the chosen message shows the day of its first
-  const current = shown.find((message) => bookmarkId(message) === pickedId) ?? shown[0] ?? null
-  const currentId = current ? bookmarkId(current) : ''
+  const current = shown.find((message) => rowId(message) === pickedId) ?? shown[0] ?? null
+  const currentId = current ? rowId(current) : ''
   const currentContact = current ? contacts.find((contact) => contact.chat_id === current.chatId) : undefined
   // a message the export gives no time for is in no day
   const currentDay = current ? dayOfMessage(current.timestamp) : null
@@ -103,7 +108,7 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
   function handleListFocus(event: FocusEvent<HTMLUListElement>) {
     const rows = [...event.currentTarget.querySelectorAll<HTMLElement>('[data-roving]')]
     const message = shown[rows.indexOf(event.target as HTMLElement)]
-    if (message) setPickedId(bookmarkId(message))
+    if (message) setPickedId(rowId(message))
   }
 
   function handleListKey(event: KeyboardEvent<HTMLUListElement>) {
@@ -187,10 +192,11 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
               onFocus={handleListFocus}
             >
               {shown.map((message, index) => {
-                const id = bookmarkId(message)
-                const isSaved = savedIds.has(id)
+                // the row by its own id: two messages can share a second and their words
+                const id = rowId(message)
+                const isSaved = savedIds.has(bookmarkId(message))
                 return (
-                  <li key={id}>
+                  <li key={`${id}\n${index}`}>
                     <MessageHit
                       message={message}
                       term={searching ? term : ''}

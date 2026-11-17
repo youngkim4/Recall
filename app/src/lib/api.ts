@@ -12,10 +12,11 @@ import type {
   PreviewPayload,
   ReportFile,
   SearchResponse,
-  SemanticStatus,
   SetupMarker,
   SetupStatus,
 } from '../types'
+import { ApiError, apiErrorFrom } from './apiError'
+import { readFrame, takeFrames } from './askEvents'
 
 const apiBase = import.meta.env.VITE_RECALL_API_BASE?.replace(/\/$/, '') ?? ''
 
@@ -41,32 +42,37 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
 
-  if (!response.ok) {
-    let message = `${response.status} ${response.statusText}`
-    try {
-      const body = (await response.json()) as { error?: string }
-      message = body.error || message
-    } catch {
-      // Keep the HTTP status as the fallback error.
-    }
-    throw new Error(message)
-  }
+  if (!response.ok) throw await refusal(response)
 
   return response.json() as Promise<T>
 }
 
-type AskInput = {
+// The error for an answer that failed: the server's sentence, its fixed word
+// and the whole body. An answer that is not JSON leaves the HTTP status.
+async function refusal(response: Response): Promise<ApiError> {
+  const body: unknown = await response.json().catch(() => null)
+  return apiErrorFrom(response.status, response.statusText, body)
+}
+
+// An earlier turn of a chat. A question carries the conversation that it was
+// asked of ('' for everything); one from an older build carries none.
+export type AskTurn = { role: 'user' | 'assistant'; content: string; contact?: string }
+
+export type AskInput = {
   messagesPath: string
   question: string
   contact?: string
   model?: string
-  limit?: number
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>
+  history?: AskTurn[]
+  // made by the app for each question; /api/ask/cancel names it
+  requestId?: string
 }
 
 type AskStreamHandlers = {
   onStatus?: (text: string) => void
   onDelta?: (text: string) => void
+  // the text that the deltas gave so far was not the answer: clear it
+  onReset?: () => void
 }
 
 function askBody(input: AskInput) {
@@ -75,19 +81,18 @@ function askBody(input: AskInput) {
     question: input.question,
     contact: input.contact,
     model: input.model,
-    limit: input.limit ?? 8,
     history: input.history,
+    requestId: input.requestId,
   }
 }
 
 export const recallApi = {
   defaults: () => request<Defaults>('/api/defaults'),
 
-  contacts: (input: { messagesPath?: string; dbPath?: string; limit?: number }) =>
+  contacts: (input: { messagesPath?: string; limit?: number }) =>
     request<ContactsResponse>(
       `/api/contacts${queryString({
         messagesPath: input.messagesPath,
-        dbPath: input.dbPath,
         limit: input.limit ?? 80,
       })}`,
     ),
@@ -113,13 +118,15 @@ export const recallApi = {
 
   jobs: () => request<{ jobs: Job[] }>('/api/jobs'),
 
-  search: (input: { messagesPath: string; query: string; contact?: string; limit?: number }) =>
+  // offset is the place of the first match to give, for the matches after the first answer
+  search: (input: { messagesPath: string; query: string; contact?: string; limit?: number; offset?: number }) =>
     request<SearchResponse>(
       `/api/search${queryString({
         messagesPath: input.messagesPath,
         query: input.query,
         contact: input.contact,
         limit: input.limit ?? 60,
+        offset: input.offset,
       })}`,
     ),
 
@@ -149,18 +156,19 @@ export const recallApi = {
       body: JSON.stringify(askBody(input)),
     }),
 
-  // Streams the answer: status lines while retrieving, then text deltas as the
-  // model writes, then the final payload. Resolves with the same AskResponse
-  // shape as ask().
-  askStream: async (input: AskInput, handlers: AskStreamHandlers): Promise<AskResponse> => {
+  // Streams the answer: status lines while the server reads, then text deltas
+  // as the model writes, then the final payload. Resolves with the same
+  // AskResponse shape as ask(). An error event is thrown as an ApiError with
+  // the server's sentence and its fixed word. `signal` ends the request from
+  // this side; the read then fails with an AbortError.
+  askStream: async (input: AskInput, handlers: AskStreamHandlers = {}, signal?: AbortSignal): Promise<AskResponse> => {
     const response = await fetch(`${apiBase}/api/ask/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(askBody(input)),
+      signal,
     })
-    if (!response.ok || !response.body) {
-      throw new Error(`${response.status} ${response.statusText}`)
-    }
+    if (!response.ok || !response.body) throw await refusal(response)
 
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
@@ -168,37 +176,41 @@ export const recallApi = {
     let finalPayload: AskResponse | null = null
 
     const handleFrame = (frame: string) => {
-      const line = frame.split('\n').find((l) => l.startsWith('data: '))
-      if (!line) return
-      const event = JSON.parse(line.slice(6)) as {
-        type: 'status' | 'delta' | 'done' | 'error'
-        text?: string
-        payload?: AskResponse
-        error?: string
-      }
-      if (event.type === 'status' && event.text) handlers.onStatus?.(event.text)
-      else if (event.type === 'delta' && event.text) handlers.onDelta?.(event.text)
-      else if (event.type === 'done' && event.payload) finalPayload = event.payload
-      else if (event.type === 'error') throw new Error(event.error || 'Ask failed.')
+      const event = readFrame(frame)
+      if (!event) return
+      if (event.type === 'status') {
+        if (event.reset) handlers.onReset?.()
+        if (event.text) handlers.onStatus?.(event.text)
+      } else if (event.type === 'delta') handlers.onDelta?.(event.text)
+      else if (event.type === 'done') finalPayload = event.payload
+      else throw new ApiError(event.error, { status: 0, code: event.code, body: event.body, retryAfter: event.retryAfter })
     }
 
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      let boundary = buffer.indexOf('\n\n')
-      while (boundary !== -1) {
-        const frame = buffer.slice(0, boundary)
-        buffer = buffer.slice(boundary + 2)
-        handleFrame(frame)
-        boundary = buffer.indexOf('\n\n')
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const taken = takeFrames(buffer + decoder.decode(value, { stream: true }))
+        buffer = taken.rest
+        taken.frames.forEach(handleFrame)
       }
+      if (buffer.trim()) handleFrame(buffer)
+    } finally {
+      // an error event ends the reading before the stream ends: let the connection go
+      reader.cancel().catch(() => undefined)
     }
-    if (buffer.trim()) handleFrame(buffer)
 
-    if (!finalPayload) throw new Error('The answer stream ended unexpectedly.')
+    if (!finalPayload) throw new Error('The answer ended before it was whole. Ask again.')
     return finalPayload
   },
+
+  // Stops a question that is being answered. `cancelled` is false when the
+  // server no longer holds a question under that id.
+  cancelAsk: (requestId: string) =>
+    request<{ cancelled: boolean }>('/api/ask/cancel', {
+      method: 'POST',
+      body: JSON.stringify({ requestId }),
+    }),
 
   analysis: (input: { messagesPath: string; model: string; reportPath: string; contact?: string }) =>
     request<{ analysis: AnalysisPayload; cached?: boolean }>(
@@ -210,26 +222,18 @@ export const recallApi = {
       })}`,
     ),
 
+  // a report is written from the archive as it is; it names no database
   createAnalyzeJob: (input: {
-    dbPath: string
     messagesPath: string
     outDir: string
     contact: string
     model: string
-    html: boolean
-    extractFirst: boolean
     since?: string
     until?: string
   }) =>
     request<{ job: Job }>('/api/jobs', {
       method: 'POST',
       body: JSON.stringify({ action: 'analyze', ...input }),
-    }),
-
-  createExportJob: (input: { dbPath: string; messagesPath: string }) =>
-    request<{ job: Job }>('/api/jobs', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'export', ...input }),
     }),
 
   memories: (input: { messagesPath?: string }) =>
@@ -241,17 +245,6 @@ export const recallApi = {
     request<{ overview: ArchivePatterns }>(
       `/api/overview${queryString({ messagesPath: input.messagesPath })}`,
     ),
-
-  semanticStatus: (input: { messagesPath?: string }) =>
-    request<{ semantic: SemanticStatus }>(
-      `/api/semantic${queryString({ messagesPath: input.messagesPath })}`,
-    ),
-
-  createSemanticJob: (input: { messagesPath: string }) =>
-    request<{ job: Job }>('/api/jobs', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'semantic', ...input }),
-    }),
 
   refreshContactNames: () =>
     request<{ contactNames: ContactNamesSummary; message?: string }>('/api/contact-names', {
@@ -282,10 +275,15 @@ export const recallApi = {
       body: JSON.stringify(input),
     }),
 
+  // The one import that can name a database: a copy chosen in the setup
+  // guide, for this import only. With none named it reads Messages itself.
+  // allowRemoval lets an update take out of the archive more messages than
+  // the limit allows; without it the limit holds.
   createSetupImportJob: (input: {
     dbPath?: string
     messagesPath?: string
     includeContacts?: boolean
+    allowRemoval?: true
   }) =>
     request<{ job: Job }>('/api/jobs', {
       method: 'POST',

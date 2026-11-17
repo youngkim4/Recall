@@ -1,33 +1,30 @@
 import { recallApi } from './api'
-import type { AskResponse } from '../types'
+import { errorSentence } from './apiError'
+import {
+  historyRows,
+  inChat,
+  readSavedChats,
+  settled,
+  withAnswer,
+  withDelta,
+  withoutMessage,
+  type ChatMessage,
+  type SavedChat,
+} from './chatMessages'
+
+export type { ChatMessage, SavedChat } from './chatMessages'
 
 // Module-level chat store. Lives outside React so an in-flight request keeps
 // running (and its answer still saves) when the user navigates away from Chat,
 // and so deleting a chat mid-response clears its loading state cleanly.
-
-export type ChatMessage = {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  response?: AskResponse
-  streaming?: boolean
-}
-
-export type SavedChat = {
-  id: string
-  title: string
-  scope: string
-  messages: ChatMessage[]
-  createdAt: number
-  updatedAt: number
-}
 
 export type AskParams = {
   messagesPath: string
   question: string
   contact: string
   model: string
-  limit: number
+  // not sent: the server decides how much it reads
+  limit?: number
 }
 
 type ChatState = {
@@ -38,14 +35,16 @@ type ChatState = {
   status: Record<string, string>
 }
 
+// A question that is being answered: the id the server knows it by, and the
+// way to end the request from this side.
+type Running = { requestId: string; controller: AbortController }
+
 const CHATS_KEY = 'recall.chats.v1'
+const NO_ANSWER = 'Recall did not answer. Ask again.'
 
 function readChats(): SavedChat[] {
   try {
-    const raw = window.localStorage.getItem(CHATS_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as SavedChat[]
-    return Array.isArray(parsed) ? parsed : []
+    return readSavedChats(window.localStorage.getItem(CHATS_KEY))
   } catch {
     return []
   }
@@ -63,6 +62,11 @@ function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+// what the server knows a question by; a page that is not secure has no randomUUID
+function makeRequestId() {
+  return globalThis.crypto?.randomUUID?.() ?? makeId('ask')
+}
+
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   const next = { ...record }
   delete next[key]
@@ -76,6 +80,9 @@ let state: ChatState = {
   errors: {},
   status: {},
 }
+
+// the question that each chat is waiting on, by the id of the chat
+let running: Record<string, Running> = {}
 
 const listeners = new Set<() => void>()
 
@@ -104,7 +111,24 @@ export const chatStore = {
     set({ activeChatId: id })
   },
 
+  // Ends the question that a chat is waiting on: the request is given up
+  // here and the server is told to stop. What was written so far stays, and
+  // is marked as stopped. A chat that waits on nothing is left as it is.
+  stop(chatId: string) {
+    const run = running[chatId]
+    if (!run) return
+    running = omitKey(running, chatId)
+    run.controller.abort()
+    // the request is over on this side whatever the server answers
+    recallApi.cancelAsk(run.requestId).catch(() => undefined)
+    const chats = inChat(state.chats, chatId, (messages) => settled(messages, true))
+    persist(chats)
+    set({ chats, pending: omitKey(state.pending, chatId), status: omitKey(state.status, chatId) })
+  },
+
+  // a chat deleted while it waits on an answer ends that question first
   deleteChat(id: string) {
+    chatStore.stop(id)
     const chats = state.chats.filter((chat) => chat.id !== id)
     persist(chats)
     set({
@@ -121,169 +145,107 @@ export const chatStore = {
   // message stops being marked as streaming.
   restoreChat(chat: SavedChat, index: number) {
     if (chatExists(chat.id)) return
-    const settled: SavedChat = {
-      ...chat,
-      messages: chat.messages.map((message) => ({ ...message, streaming: undefined })),
-    }
+    const restored: SavedChat = { ...chat, messages: settled(chat.messages) }
     const at = Math.max(0, Math.min(index, state.chats.length))
-    const chats = [...state.chats.slice(0, at), settled, ...state.chats.slice(at)]
+    const chats = [...state.chats.slice(0, at), restored, ...state.chats.slice(at)]
     persist(chats)
     set({ chats })
   },
 
   // Append the question, run the request, and save the answer — all independent
   // of any React component, so it completes even after navigating away.
+  // `scope` is the conversation that the question is asked of, '' for
+  // everything. It stays on the question and goes back with the history.
   async send(question: string, scope: string, ask: AskParams) {
     const text = question.trim()
     if (!text) return
+    const prior = state.chats.find((chat) => chat.id === state.activeChatId) ?? null
+    // a question asked before the last answer ended takes its place
+    if (prior) chatStore.stop(prior.id)
+
     const now = Date.now()
-    const userMessage: ChatMessage = { id: makeId('user'), role: 'user', content: text }
-
-    let chatId = state.activeChatId
+    const userMessage: ChatMessage = { id: makeId('user'), role: 'user', content: text, scope }
     // prior turns let the backend resolve follow-ups ("what about her?")
-    const priorChat = chatId ? state.chats.find((chat) => chat.id === chatId) : null
-    const history = (priorChat?.messages ?? [])
-      .slice(-6)
-      .map((message) => ({ role: message.role, content: message.content }))
-    if (chatId && chatExists(chatId)) {
-      const chats = state.chats.map((chat) =>
-        chat.id === chatId
-          ? { ...chat, messages: [...chat.messages, userMessage], updatedAt: now }
-          : chat,
-      )
-      persist(chats)
-      set({ chats })
-    } else {
-      chatId = makeId('chat')
-      const chat: SavedChat = {
-        id: chatId,
-        title: text.slice(0, 60),
-        scope,
-        messages: [userMessage],
-        createdAt: now,
-        updatedAt: now,
-      }
-      const chats = [chat, ...state.chats]
-      persist(chats)
-      set({ chats })
+    const history = historyRows(state.chats.find((chat) => chat.id === prior?.id)?.messages ?? [])
+    const targetId = prior?.id ?? makeId('chat')
+    const started: SavedChat = {
+      id: targetId,
+      title: text.slice(0, 60),
+      scope,
+      messages: [userMessage],
+      createdAt: now,
+      updatedAt: now,
     }
+    const chats = prior
+      ? inChat(state.chats, targetId, (messages) => [...messages, userMessage], now)
+      : [started, ...state.chats]
+    persist(chats)
 
-    const targetId = chatId
+    const run: Running = { requestId: makeRequestId(), controller: new AbortController() }
+    running = { ...running, [targetId]: run }
     set({
+      chats,
       activeChatId: targetId,
       pending: { ...state.pending, [targetId]: true },
       errors: omitKey(state.errors, targetId),
       status: { ...state.status, [targetId]: 'Thinking…' },
     })
 
-    // created on the first streamed token, then grows in place
-    let assistantId: string | null = null
-
-    const appendDelta = (delta: string) => {
-      if (!chatExists(targetId)) return // chat deleted mid-stream
-      if (!assistantId) {
-        const id = makeId('assistant')
-        assistantId = id
-        const opener: ChatMessage = { id, role: 'assistant', content: delta, streaming: true }
-        const chats = state.chats.map((chat) =>
-          chat.id === targetId ? { ...chat, messages: [...chat.messages, opener] } : chat,
-        )
-        set({ chats, status: omitKey(state.status, targetId) })
-        return
-      }
-      const chats = state.chats.map((chat) =>
-        chat.id === targetId
-          ? {
-              ...chat,
-              messages: chat.messages.map((message) =>
-                message.id === assistantId
-                  ? { ...message, content: message.content + delta }
-                  : message,
-              ),
-            }
-          : chat,
-      )
-      set({ chats })
-    }
+    // False once the question was stopped, its chat deleted, or another
+    // question asked in its place: what still arrives for it changes nothing.
+    const mine = () => running[targetId] === run
+    // the answer has one id from its first streamed piece to its whole text
+    const answerId = makeId('assistant')
 
     try {
       const payload = await recallApi.askStream(
-        { ...ask, history },
         {
-          onStatus: (text) => {
-            if (chatExists(targetId) && state.pending[targetId]) {
-              set({ status: { ...state.status, [targetId]: text } })
-            }
-          },
-          onDelta: appendDelta,
+          messagesPath: ask.messagesPath,
+          question: text,
+          contact: ask.contact,
+          model: ask.model,
+          history,
+          requestId: run.requestId,
         },
+        {
+          onStatus: (said) => {
+            if (mine()) set({ status: { ...state.status, [targetId]: said } })
+          },
+          onDelta: (delta) => {
+            if (!mine()) return
+            set({
+              chats: inChat(state.chats, targetId, (messages) => withDelta(messages, answerId, delta)),
+              status: omitKey(state.status, targetId),
+            })
+          },
+          onReset: () => {
+            if (mine()) set({ chats: inChat(state.chats, targetId, (messages) => withoutMessage(messages, answerId)) })
+          },
+        },
+        run.controller.signal,
       )
-      if (chatExists(targetId)) {
-        // If the model failed AFTER text streamed, the server falls back to a
-        // keyword summary (mode 'local'). Never replace prose the user has
-        // already read with that — keep the streamed text, trim the citation
-        // dump, and let the note explain.
-        const streamedContent = assistantId
-          ? state.chats
-              .find((chat) => chat.id === targetId)
-              ?.messages.find((message) => message.id === assistantId)?.content ?? ''
-          : ''
-        const keepStreamed = payload.mode === 'local' && streamedContent.length > 80
-        const final: ChatMessage = {
-          id: assistantId ?? makeId('assistant'),
-          role: 'assistant',
-          content: keepStreamed ? streamedContent : payload.answer,
-          response: keepStreamed
-            ? { ...payload, mode: 'ai', citations: payload.citations.slice(0, 6) }
-            : payload,
-        }
-        const chats = state.chats.map((chat) =>
-          chat.id === targetId
-            ? {
-                ...chat,
-                updatedAt: Date.now(),
-                messages: assistantId
-                  ? chat.messages.map((message) => (message.id === assistantId ? final : message))
-                  : [...chat.messages, final],
-              }
-            : chat,
-        )
-        persist(chats)
-        set({
-          chats,
-          pending: omitKey(state.pending, targetId),
-          status: omitKey(state.status, targetId),
-        })
-      } else {
-        // chat was deleted mid-flight — discard the answer
-        set({
-          pending: omitKey(state.pending, targetId),
-          status: omitKey(state.status, targetId),
-        })
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to query messages.'
-      // keep any partial text, but stop marking it as streaming
-      const chats = assistantId
-        ? state.chats.map((chat) =>
-            chat.id === targetId
-              ? {
-                  ...chat,
-                  messages: chat.messages.map((msg) =>
-                    msg.id === assistantId ? { ...msg, streaming: undefined } : msg,
-                  ),
-                }
-              : chat,
-          )
-        : state.chats
-      if (assistantId) persist(chats)
+      if (!mine()) return
+      running = omitKey(running, targetId)
+      const answered = inChat(state.chats, targetId, (messages) => withAnswer(messages, answerId, payload), Date.now())
+      persist(answered)
       set({
-        chats,
+        chats: answered,
         pending: omitKey(state.pending, targetId),
         status: omitKey(state.status, targetId),
-        errors: chatExists(targetId)
-          ? { ...state.errors, [targetId]: message }
-          : omitKey(state.errors, targetId),
+      })
+    } catch (error) {
+      // stopped or deleted: stop() already left the chat in order
+      if (!mine()) return
+      running = omitKey(running, targetId)
+      // keep any partial text, but stop marking it as streaming
+      const ended = inChat(state.chats, targetId, settled)
+      persist(ended)
+      set({
+        chats: ended,
+        pending: omitKey(state.pending, targetId),
+        status: omitKey(state.status, targetId),
+        // the server's sentence, as it is
+        errors: { ...state.errors, [targetId]: errorSentence(error, NO_ANSWER) },
       })
     }
   },

@@ -1,9 +1,10 @@
 import sys
 sys.path.insert(0, ".")
 
-from cli import parse_date, MODEL_PRICING
+import pytest
+
+from cli import parse_date, MODEL_PRICING, get_model_pricing
 from analysis import DEFAULT_MODEL
-from ai_config import UI_MODEL_CHOICES
 
 
 class TestParseDate:
@@ -42,6 +43,6 @@ class TestModelPricing:
         assert inp == 0.25
         assert out == 2.00
 
-    def test_ui_model_choices_are_priced(self):
-        for model in UI_MODEL_CHOICES:
-            assert model in MODEL_PRICING
+    def test_a_model_with_no_price_on_file_is_not_priced_as_another(self):
+        with pytest.raises(ValueError, match="No price is on file for the model gpt-unknown"):
+            get_model_pricing("gpt-unknown")

@@ -48,9 +48,9 @@ class TestEstimateCost:
         # gpt-5 costs more per token
         assert result_big["estimated_cost"] >= result_mini["estimated_cost"]
 
-    def test_unknown_model_uses_default_rate(self, messages_csv):
-        result = estimate_cost(messages_csv, "chat123", model="unknown-model")
-        assert result["estimated_cost"] >= 0
+    def test_an_unknown_model_is_not_priced_as_the_default_model(self, messages_csv):
+        with pytest.raises(ValueError, match="No price is on file for the model unknown-model"):
+            estimate_cost(messages_csv, "chat123", model="unknown-model")
 
     def test_date_filter_applies_to_estimate(self, messages_csv):
         result = estimate_cost(messages_csv, "chat123", since=datetime(2024, 2, 1))

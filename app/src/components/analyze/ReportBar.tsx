@@ -14,8 +14,10 @@ type ReportBarProps = {
   onScopeChange: (scope: Scope) => void
   // how many messages each day of the conversation holds; no days while that is not known
   daily: Daily
-  // null while the cost is being worked out
+  // null while the cost is being worked out, and when it cannot be
   estimate: Estimate | null
+  // why there is no cost, in one sentence; a report cannot be run then
+  estimateError?: string
   canRun: boolean
   running: boolean
   // set when the last report for this conversation could not be written
@@ -34,6 +36,7 @@ export function ReportBar({
   onScopeChange,
   daily,
   estimate,
+  estimateError,
   canRun,
   running,
   failure,
@@ -53,7 +56,7 @@ export function ReportBar({
               <span key={cost} className="swap">
                 {Number.isFinite(cost) ? `About ${formatMoney(cost)}` : ''}
               </span>
-            ) : (
+            ) : estimateError ? null : (
               <span className="skeleton">About $0.00</span>
             )}
           </span>
@@ -66,6 +69,11 @@ export function ReportBar({
       {failure ? (
         <p className="notice bad" role="alert">
           {failure}
+        </p>
+      ) : null}
+      {!estimate && estimateError ? (
+        <p className="notice bad" role="alert">
+          {estimateError}
         </p>
       ) : null}
     </div>

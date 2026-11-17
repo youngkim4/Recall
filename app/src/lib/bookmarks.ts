@@ -5,18 +5,21 @@ import type { SearchResult } from '../types'
 const BOOKMARKS_KEY = 'recall.bookmarks.v1'
 const BOOKMARK_LIMIT = 100
 
-// What tells one message from every other. An export with no message ids
-// leaves the chat, the moment and the words themselves. It is worked out
-// from the message each time, so a message saved by an older build is still
-// matched to the same message in a new search.
+// What tells one message from every other: its conversation, its time and
+// its words. Never its id: a message has three ids in its life (a number,
+// "legacy:<n>", an Apple guid), and it is the same message under each. It is
+// worked out from the message each time, so a message saved by an older
+// build is still matched to the same message in a new search. The spaces at
+// the ends of the words are not part of it.
 export function bookmarkId(message: SearchResult) {
-  const own = message.messageId ? `id:${message.messageId}` : `text:${message.text}`
-  return [message.chatId, message.timestamp, own].join('\n')
+  return [message.chatId, message.timestamp ?? '', message.text.trim()].join('\n')
 }
 
 // what a message may leave out, and must have as text when it does not
-const LABELS = ['timestamp', 'messageId', 'displayName', 'senderName', 'sender', 'attachment']
+const LABELS = ['timestamp', 'displayName', 'senderName', 'sender', 'attachment']
 const textOrMissing = (value: unknown) => value === undefined || value === null || typeof value === 'string'
+// an older build kept the id as the number it then was
+const idOrMissing = (value: unknown) => textOrMissing(value) || typeof value === 'number'
 
 // A stored value that can be shown as a message again: its chat and its words
 // are text, and so is every label it carries.
@@ -26,15 +29,21 @@ function isSavedMessage(value: unknown): value is SearchResult {
   return (
     typeof message.chatId === 'string' &&
     typeof message.text === 'string' &&
+    idOrMissing(message.messageId) &&
     LABELS.every((label) => textOrMissing(message[label]))
   )
+}
+
+// the id of a message is text, whatever the build that saved it wrote
+function withTextId(message: SearchResult): SearchResult {
+  return typeof message.messageId === 'number' ? { ...message, messageId: String(message.messageId) } : message
 }
 
 export function readBookmarks(): SearchResult[] {
   try {
     const stored = window.localStorage.getItem(BOOKMARKS_KEY)
     const parsed: unknown = stored ? JSON.parse(stored) : []
-    return Array.isArray(parsed) ? parsed.filter(isSavedMessage).slice(0, BOOKMARK_LIMIT) : []
+    return Array.isArray(parsed) ? parsed.filter(isSavedMessage).map(withTextId).slice(0, BOOKMARK_LIMIT) : []
   } catch {
     return []
   }

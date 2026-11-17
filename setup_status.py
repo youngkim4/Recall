@@ -2,8 +2,8 @@
 
 The onboarding wizard derives every screen from these answers, so the rules
 are strict: never crash (the endpoint always answers 200), never write a
-byte to the database (read-only sqlite URIs -- a bare connect() would CREATE
-a missing file), and never trust a plain FileNotFoundError on the live path:
+byte to the database (open_read_only -- a bare connect() would CREATE a
+missing file), and never trust a plain FileNotFoundError on the live path:
 without Full Disk Access, macOS TCC reports protected files as missing
 rather than permission-denied.
 """
@@ -15,9 +15,12 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 LIVE_MESSAGES_DIR = Path("~/Library/Messages").expanduser()
 LIVE_CHAT_DB = LIVE_MESSAGES_DIR / "chat.db"
+# files that SQLite keeps beside a database while what was written is not all in the database file
+_UNSETTLED = ("-wal", "-journal")
 
 _APPLE_EPOCH_UNIX = 978307200  # 2001-01-01 in unix seconds
 _SQLITE_MAGIC = b"SQLite format 3"
@@ -35,13 +38,54 @@ class DbProbe:
     last_year: int | None = None
 
 
-def probe_database(path: Path | str | None = None, deep: bool = False) -> DbProbe:
-    target = Path(path).expanduser() if path else LIVE_CHAT_DB
+def _whole(path: Path) -> Path:
+    """The path with its links followed, or as it is when that cannot be done."""
     try:
-        target = target.resolve()
-    except OSError:
-        pass
-    kind = "live" if str(target).startswith(str(LIVE_MESSAGES_DIR)) else "copy"
+        return path.resolve()
+    except (OSError, ValueError):
+        return path
+
+
+def in_messages_folder(target: Path) -> bool:
+    """True for a file in the folder that Messages keeps.
+
+    The parts of the path are compared, not its text: a folder beside it
+    whose name only starts the same way holds a copy. Both paths are taken
+    as the files they mean, with links followed and ".." worked out.
+    """
+    return _whole(Path(target)).is_relative_to(_whole(LIVE_MESSAGES_DIR))
+
+
+def open_read_only(db_path: str | os.PathLike, timeout: float = 5.0) -> sqlite3.Connection:
+    """Open a database to read it, and for nothing else.
+
+    A path that holds no file makes no file: sqlite3.connect(path) would make
+    an empty one. The path goes into the address quoted, so a "?", a "#" or a
+    "%" in a name is part of the name.
+
+    The database of Messages can change at any moment, and what Messages has
+    written to the -wal file is read too. For that, SQLite keeps a -shm file
+    beside the database, and makes it and the -wal file when they are not
+    there.
+
+    A copy with no -wal file beside it holds all there is to read. It is
+    opened as a file that does not change: SQLite makes nothing beside it, and
+    a folder that cannot be written to is no obstacle.
+    """
+    whole = os.path.realpath(os.fspath(db_path))
+    settled = not any(os.path.lexists(whole + mark) for mark in _UNSETTLED)
+    still = settled and not in_messages_folder(Path(whole))
+    how = "mode=ro&immutable=1" if still else "mode=ro"
+    return sqlite3.connect(f"file://{quote(whole)}?{how}", uri=True, timeout=timeout)
+
+
+def probe_database(path: Path | str | None = None, deep: bool = False) -> DbProbe:
+    try:
+        target = _whole(Path(path).expanduser() if path else LIVE_CHAT_DB)
+        kind = "live" if in_messages_folder(target) else "copy"
+    except (OSError, ValueError) as exc:
+        # a name that no system can hold, such as one with a NUL in it
+        return DbProbe(status="error", kind="copy", path=str(path), detail=str(exc))
 
     def result(status: str, detail: str = "", **extra) -> DbProbe:
         return DbProbe(status=status, kind=kind, path=str(target), detail=detail, **extra)
@@ -66,16 +110,19 @@ def probe_database(path: Path | str | None = None, deep: bool = False) -> DbProb
         return result("missing")
     except IsADirectoryError:
         return result("invalid", detail="that is a folder, not a database file")
+    except ValueError as exc:
+        return result("error", detail=str(exc))
     except OSError as exc:
         if getattr(exc, "errno", None) in (1, 13):  # EPERM / EACCES
             return result("fda_blocked")
-        return result("error", detail=str(exc))
+        # the words of the system, without its number and the path
+        return result("error", detail=exc.strerror or str(exc))
 
     if not head.startswith(_SQLITE_MAGIC):
         return result("invalid", detail="not a SQLite database")
 
     try:
-        conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True, timeout=2.0)
+        conn = open_read_only(target, timeout=2.0)
     except sqlite3.OperationalError as exc:
         return result(_locked_or_invalid(exc), detail=str(exc))
 

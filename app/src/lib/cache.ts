@@ -7,7 +7,7 @@ import type { PreviewPayload } from '../types'
 
 // the version changes with the shape of a preview, so an old shape is never read back
 const CACHE_PREFIX = 'recall.previewCache.'
-const PREVIEW_CACHE_KEY = `${CACHE_PREFIX}v7`
+const PREVIEW_CACHE_KEY = `${CACHE_PREFIX}v8`
 const PREVIEW_CACHE_LIMIT = 96
 const PREVIEW_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 14
 // the last moment a Date can hold
@@ -140,10 +140,30 @@ export function previewCacheStats(now = Date.now()) {
   }
 }
 
+// How many times the saved figures were cleared in this session. Figures
+// held in memory from before a clearing are of the archive as it was, and a
+// view that holds some watches this number to drop them.
+let generation = 0
+const watchers = new Set<() => void>()
+
+export function previewGeneration() {
+  return generation
+}
+
+// Calls `listener` after each clearing. Returns the way to stop.
+export function watchPreviewCache(listener: () => void) {
+  watchers.add(listener)
+  return () => {
+    watchers.delete(listener)
+  }
+}
+
 export function clearPreviewCache() {
   try {
     storage()?.removeItem(PREVIEW_CACHE_KEY)
   } catch {
     // a store that cannot be reached holds nothing to clear
   }
+  generation += 1
+  watchers.forEach((listener) => listener())
 }

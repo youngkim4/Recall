@@ -12,7 +12,6 @@ import { ChoiceMenu } from '../ui/ChoiceMenu'
 import { Disclosure } from '../ui/Disclosure'
 import { QualityControl } from '../ui/QualityControl'
 import { FileLocations } from './FileLocations'
-import { MeaningIndex } from './MeaningIndex'
 
 type SettingsViewProps = {
   defaults: Defaults | null
@@ -89,10 +88,6 @@ export function SettingsView({
                 <span className="setting-value" />
                 <QualityControl models={defaults?.models ?? []} value={model} onChange={onModelChange} align="end" quietLabel />
               </div>
-              <MeaningIndex
-                messagesPath={paths.messagesPath || defaults?.messagesPath || ''}
-                refreshKey={`${archive?.messages} ${archive?.lastMessage}`}
-              />
             </div>
           </section>
         </div>

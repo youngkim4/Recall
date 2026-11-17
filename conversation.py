@@ -273,7 +273,10 @@ def read_times(values: pd.Series) -> pd.Series:
 
 def load_messages(csv_path: str, since: datetime = None, until: datetime = None) -> pd.DataFrame:
     """Load messages CSV with optional date filtering."""
-    df = pd.read_csv(csv_path, dtype={"chat_id": "string", "sender": "string"})
+    # The file is read whole, not in parts: a column that is empty for many
+    # rows and then holds text would be typed part by part, and pandas would
+    # write a warning that goes to the lines of a job.
+    df = pd.read_csv(csv_path, dtype={"chat_id": "string", "sender": "string"}, low_memory=False)
     if "timestamp" not in df.columns:
         raise ValueError("messages CSV must contain a 'timestamp' column")
     df["timestamp"] = read_times(df["timestamp"])

@@ -1,3 +1,4 @@
+import { answerNotes } from '../../lib/answerNotes'
 import { bookmarkId } from '../../lib/bookmarks'
 import type { ChatMessage } from '../../lib/chatStore'
 import { plural } from '../../lib/format'
@@ -61,6 +62,11 @@ export function ChatThread({
             {keywordOnly ? (
               <p className="answer-note">AI answer unavailable. These are keyword matches.</p>
             ) : null}
+            {answerNotes(message).map((note) => (
+              <p key={note} className="answer-note">
+                {note}
+              </p>
+            ))}
             {!citations.length ? null : beside ? (
               // the same words in the same place as the disclosure; here they put this answer's messages in the pane
               <button

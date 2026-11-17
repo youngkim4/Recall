@@ -38,8 +38,11 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         }
 
         do {
-            serverPort = findAvailablePort()
-            if let bundledServer = bundledServerExecutable() {
+            let bundledServer = bundledServerExecutable()
+            serverPort = Self.portForThisLaunch(
+                rememberedAs: bundledServer == nil ? Self.developmentPortKey : Self.packagedPortKey
+            )
+            if let bundledServer {
                 // packaged app: self-contained server, data in App Support
                 let dataDir = try ensureDataDirectory()
                 try startBundledBackend(executable: bundledServer, dataDir: dataDir, port: serverPort)
@@ -302,7 +305,10 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         }
 
         let configuration = WKWebViewConfiguration()
-        // Persistent store so localStorage (saved chats, model/path/layout prefs) survives app restarts.
+        // The persistent store keeps localStorage (saved chats, saved messages,
+        // model/path/layout prefs) between launches, one store for each origin.
+        // The origin holds the port, so the page finds its state again only
+        // when it opens on the same port: see portForThisLaunch.
         configuration.websiteDataStore = WKWebsiteDataStore.default()
         // native bridge for the onboarding wizard: FDA deep-link, file picker, relaunch
         configuration.userContentController.add(self, name: "recall")
@@ -535,17 +541,95 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         serverProcess = nil
     }
 
-    private func findAvailablePort() -> Int {
-        for _ in 0..<100 {
-            let port = Int.random(in: 49152...65535)
-            if isPortAvailable(port) {
+    // MARK: - Server port
+
+    /// Where a port is remembered in the app's defaults. The packaged app and
+    /// the development build read two archives, so each has a port, and with
+    /// it a store, of its own.
+    static let packagedPortKey = "RecallServerPort"
+    static let developmentPortKey = "RecallServerPortDev"
+    /// The dynamic ports. Each Mac draws its own: no port is the same for everybody.
+    static let serverPortRange = 49152...65535
+    /// How many ports are drawn before the last resort.
+    static let portDraws = 100
+    /// The server's own default (ui_server.py), for when no drawn port is free.
+    static let lastResortPort = 8765
+    /// A remembered port that is in use gets 30 checks with 0.1 s between them: about 3 s.
+    static let rememberedPortChecks = 30
+    static let rememberedPortPause: TimeInterval = 0.1
+
+    /// The port of this launch: the remembered port when it is free, so that
+    /// the page opens on the same origin and finds its saved state again (see
+    /// createWindow).
+    ///
+    /// The first port that is drawn is remembered in `defaults` under `key`,
+    /// and it stays. When it is in use at a later launch (a second copy of the
+    /// app, or a server of the last launch that has not stopped), that launch
+    /// gets a drawn port, where the page does not find its saved state, and
+    /// the next launch asks for the remembered port again. To remember the
+    /// drawn port in its place would leave all saved state behind for good.
+    static func portForThisLaunch(
+        rememberedAs key: String,
+        in defaults: UserDefaults = .standard,
+        isFree: (Int) -> Bool = RecallApp.isPortAvailable,
+        pause: () -> Void = { Thread.sleep(forTimeInterval: RecallApp.rememberedPortPause) }
+    ) -> Int {
+        let remembered = defaults.integer(forKey: key)
+        let chosen = choosePort(
+            remembered: remembered,
+            isFree: isFree,
+            draw: { Int.random(in: serverPortRange) },
+            pause: pause
+        )
+        guard let port = chosen else {
+            // the last resort is not remembered: the next launch chooses again
+            return lastResortPort
+        }
+        if !serverPortRange.contains(remembered) {
+            defaults.set(port, forKey: key)
+        }
+        return port
+    }
+
+    /// Chooses the port of the server. `remembered` is the port in the
+    /// defaults; a number outside the range means that there is none.
+    ///
+    /// The remembered port is taken when it is free. When it is in use, it is
+    /// asked about again after each `pause`, because the server of the last
+    /// launch needs time to let go of it: about 0.5 s after SIGTERM when no
+    /// job runs, and in the packaged app at most 2 s after the shell is gone,
+    /// also when the shell crashed or a job still runs (`main` in
+    /// ui_server.py). The server of the development build has no such limit.
+    /// After the last check a port is drawn.
+    ///
+    /// The result is nil when no drawn port is free.
+    static func choosePort(
+        remembered: Int,
+        isFree: (Int) -> Bool,
+        draw: () -> Int,
+        pause: () -> Void
+    ) -> Int? {
+        if serverPortRange.contains(remembered) {
+            for check in 0..<rememberedPortChecks {
+                if check > 0 {
+                    pause()
+                }
+                if isFree(remembered) {
+                    return remembered
+                }
+            }
+        }
+        for _ in 0..<portDraws {
+            let port = draw()
+            if isFree(port) {
                 return port
             }
         }
-        return 8765
+        return nil
     }
 
-    private func isPortAvailable(_ port: Int) -> Bool {
+    // nonisolated: it only binds a socket, and portForThisLaunch takes it as a plain function
+    private nonisolated static func isPortAvailable(_ port: Int) -> Bool {
         let descriptor = socket(AF_INET, SOCK_STREAM, 0)
         if descriptor < 0 {
             return false
