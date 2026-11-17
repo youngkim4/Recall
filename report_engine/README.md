@@ -90,7 +90,7 @@ An export holds rows that no person wrote, or that do not say who wrote them. Th
 | Row | What happens | Where |
 |-----|--------------|-------|
 | A tapback (`Loved “...”`, `Liked “...”`, `Laughed at an image`, `Removed a heart from “...”`, `Reacted <symbol> to “...”`) | Left out. | `FrameSource` |
-| `is_from_me` is empty or not a known value | Left out. If no row of the conversation says who sent it, the run stops with `SourceError`. | `FrameSource` |
+| `is_from_me` is empty or not a known value | Left out. If no row of the whole conversation says who sent it, the run stops with `SourceError`. The values are read as `parse_boolish` in `conversation.py` reads them. | `FrameSource` |
 | No usable timestamp | Left out. | `FrameSource` |
 | Text is empty, or holds only the attachment placeholder (U+FFFC), control characters or zero-width marks | Left out. | the engine, for each source |
 | A message has words and a placeholder | The words stay. The placeholder goes. | the engine |
@@ -99,7 +99,8 @@ Why tapbacks are left out: the export stores a tapback as text that holds the wo
 `report_engine.tapbacks` knows the English phrases only. A typed message that is exactly one of these phrases with quoted text is read as a tapback too.
 `ArchiveSource` needs no such rule: the archive does not give tapbacks as messages.
 
-`FrameSource` writes the count of each kind to the log (`report_engine.frame_source`). The log never holds a row.
+`FrameSource` writes the count of each kind to the log (`report_engine.frame_source`). The log never holds a row, and no warning of pandas is shown.
+A column of timestamps with two UTC offsets is read as instants and changed to local time. No row of it is lost.
 A known limit: a message that got only a tapback as its answer looks like a message with no answer.
 
 ### Labeler
@@ -182,13 +183,16 @@ The budget is also limited by the model. One request must fit `max_input_tokens`
 The engine keeps room for the fixed prompt text, the speaker names and the notes.
 
 No period is larger than its budget. A message that is larger than a period is cut until it fits (see "Long messages").
+Each size is the size of a text with the line break that follows it, and the header of each day is counted. So the size of a period is never less than the size of the text that is sent.
+A budget that cannot hold the header of a day and one line is a `ConfigError` before any model call.
 
 ## Long messages
 
 An export can hold text that nobody typed, and one such row can be megabytes long.
 
-- A message longer than `max_message_chars` (4,000 characters) keeps its start. The line ends with the mark `[...]`.
-- The cut does not fall inside a word.
+- A message longer than `max_message_chars` (4,000 characters) keeps its start. The line ends with the mark `[...]`. The mark is inside the cap: a line never shows more than `max_message_chars` characters.
+- The cut does not fall inside a word, and not between a letter and its accent. A text that is one long run of letters and digits shows the mark only.
+- The text that the model reads is in one Unicode form (NFC).
 - The cut is made one time, when the messages are read. The period sizes, the transcripts and the estimate all use the cut text.
 - The cap counts characters. Text can hold a token in every character, so a line can still be larger than a small period. Such a line is cut again until it fits.
 - The quote check reads the whole message, not the cut text.
@@ -229,6 +233,8 @@ A `Moment` has `date`, `title`, `detail`, `category`, `score`, `quote`, `message
 
 Section `markdown` has no heading, link, image or HTML tag. The engine removes them from the model reply, also when they are nested.
 A line that starts with `#` has a backslash before the `#`, and no line holds only `=` or `-`: Python-Markdown reads both as headings.
+Each `[` and `]` has a backslash before it, so no form of a link or an image can be read from the text. A renderer shows the brackets as they were written. In a code span the backslash shows.
+The cleaning takes time in proportion to the length of the text.
 Render section text with `story_html` in `safe_html.py`, as `CONTRACTS.md` says.
 
 A `PeriodSummary` has `label`, `first_day`, `last_day`, `summary`, `carry_over`, `moments`, `usage`, `cache_key`, `from_cache`, `error`, `message_count`.
@@ -344,7 +350,7 @@ Report files have mode `0600`. New folders have mode `0700`.
 `render_markdown(report)` gives the layout that the Reports page and the server read.
 It was checked against `CONTRACTS.md`, `ui_server.py` (`report_contact`, `report_scope`, `markdown_section`) and `safe_html.py` at commit `ab20b5e`.
 
-- Line 1: `# Conversation Analysis - <conversation id>`. The id is written as it is, on one line: `report_contact` reads it back.
+- Line 1: `# Conversation Analysis - <conversation id>`. The id is written as it is, on one line: `report_contact` reads it back. An id that holds `## ` is refused with `StoreError`, because the server finds a section with a search for its marker.
 - `## Overview`. Its first line is the scope line: `- Scope: 2024-06-01 to 2024-06-30`, `- Scope: from 2024-06-01`, `- Scope: through 2024-06-30` or `- Scope: all dates`.
 - `## Key Events`. One `### <date> - <title>` block for each moment. The section is empty when the report has no moment.
 - `## Summary`. It is the last section and holds the four sections under `###` headings.
@@ -395,6 +401,7 @@ It prints numbers only: no text of a message, no name and no handle. A conversat
 - Totals for all conversations and for each budget.
 
 Options: `--top N`, `--estimates N`, `--budgets 40000,80000`, `--cuts N`, `--heuristic` (count with no tokenizer), `--tokenizer-family NAME`.
+The tool shows no warning of a library, because a warning can quote a cell of the file. An error is named by its type only. When the tokenizer does not load, the output says that the token counts are an estimate.
 Use the numbers to set `max_message_chars` and `period_token_budget`.
 
 ## Tests
