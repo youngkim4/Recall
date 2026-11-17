@@ -71,7 +71,7 @@ def _message_id(value: Any, position: int) -> str:
     return _whole_number_text(value) or f"row-{position}"
 
 
-def _direction(value: Any) -> bool | None:
+def direction_of(value: Any) -> bool | None:
     """True for sent, False for received, None when the row does not say."""
     if _missing(value):
         return None
@@ -165,7 +165,7 @@ class FrameSource:
             keep &= stamps <= high
         order = moments[keep].sort_values(kind="stable").index
         chosen = rows.loc[order]
-        directions = [_direction(value) for value in chosen["is_from_me"].tolist()]
+        directions = [direction_of(value) for value in chosen["is_from_me"].tolist()]
         texts = [_text(value) for value in chosen["text"].tolist()]
         if directions and all(direction is None for direction in directions):
             raise SourceError("the export does not say who sent the messages of this conversation")

@@ -26,8 +26,8 @@ REMOVED = (
 THINGS = ("an image", "a movie", "an audio message", "an attachment")
 STICKER = "Reacted with a sticker to"
 
-_OPEN_MARKS = chr(0x201C) + '"'
-_CLOSE_MARKS = chr(0x201D) + '"'
+OPEN_MARKS = chr(0x201C) + '"'
+CLOSE_MARKS = chr(0x201D) + '"'
 # a tapback with a symbol of the person's choice: the symbol has no letter and no digit
 _SYMBOL = r"[^\sA-Za-z0-9]{1,16}"
 _PHRASES = "|".join(
@@ -39,7 +39,7 @@ _PHRASES = "|".join(
 )
 _THINGS = "|".join(re.escape(thing) for thing in THINGS)
 _TAPBACK = re.compile(
-    rf"(?:{_PHRASES}) (?:[{_OPEN_MARKS}].*[{_CLOSE_MARKS}]|{_THINGS})",
+    rf"(?:{_PHRASES}) (?:[{OPEN_MARKS}].*[{CLOSE_MARKS}]|{_THINGS})",
     re.DOTALL,
 )
 _FIRST_LETTERS = frozenset(phrase[0] for phrase in (*ADDED, *REMOVED, STICKER))
