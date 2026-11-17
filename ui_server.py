@@ -511,7 +511,10 @@ class _JobStreamRouter(io.TextIOBase):
         return self._target().write(text)
 
     def flush(self):
-        self._target().flush()
+        target = self._target()
+        # at the end of the process the stream can be closed before this is
+        if not getattr(target, "closed", False):
+            target.flush()
 
 
 _JOB_STDOUT = _JobStreamRouter(sys.stdout)
