@@ -1,18 +1,24 @@
 """Tests for what the Reports reader is given when a saved report is opened."""
-import pandas as pd
 import pytest
 
 import ui_server
+from tests.export_kit import (  # noqa: F401 - archives and contacts_cache are fixtures
+    AVERY,
+    BLAKE,
+    GROUP,
+    MODEL,
+    NAMES,
+    PLACEHOLDER,
+    archives,
+    contacts_cache,
+    loaded,
+    row,
+    save_names,
+)
 from tests.html_shape import assert_only_allowed, shape
 from ui_server import build_analysis_payload, markdown_to_html, report_scope
 
-pytestmark = pytest.mark.usefixtures("fresh_bundle_cache")
-
-COLUMNS = ["message_id", "timestamp", "sender", "text", "chat_id", "chat_display_name", "is_from_me"]
-AVERY = "+15550000001"
-BLAKE = "+15550000002"
-GROUP = "chat77"
-NAMES = {AVERY: "Avery Stone", BLAKE: "Blake Reyes"}
+pytestmark = pytest.mark.usefixtures("archives", "contacts_cache")
 
 OVERVIEW = """# Conversation Analysis - {contact}
 
@@ -26,29 +32,14 @@ They made plans.
 """
 
 
-def write_export(path, rows):
-    frame = pd.DataFrame(rows, columns=COLUMNS)
-    frame["message_id"] = range(1, len(frame) + 1)
-    frame.to_csv(path, index=False)
-    return path
-
-
-def row(chat_id, timestamp, text, from_me=0, sender=None):
-    return (0, timestamp, sender if sender is not None else chat_id, text, chat_id, "", from_me)
-
-
 @pytest.fixture
-def saved_names(monkeypatch):
-    monkeypatch.setattr(
-        ui_server,
-        "resolve_contact_names",
-        lambda handles, **_: {handle: NAMES[handle] for handle in handles if handle in NAMES},
-    )
+def saved_names():
+    save_names(NAMES)
 
 
 @pytest.fixture
 def export(tmp_path):
-    return write_export(tmp_path / "messages.csv", [
+    return loaded(tmp_path / "messages.csv", [
         row(AVERY, "2024-11-05 09:00:00", "long before"),
         row(AVERY, "2024-12-06 09:00:00", "are we still on"),
         row(AVERY, "2024-12-17 21:00:00", "yes", from_me=1),
@@ -71,7 +62,7 @@ def test_a_report_shows_the_figures_of_the_days_it_covers(tmp_path, export, save
     report = tmp_path / "analysis.md"
     report.write_text(OVERVIEW.format(contact=AVERY, first="2024-12-06 09:00:00", last="2024-12-17 21:00:00"))
 
-    payload = build_analysis_payload(export, AVERY, "gpt-5.5", report_path=str(report))
+    payload = build_analysis_payload(export, AVERY, MODEL, report_path=str(report))
 
     # the story was written about these two messages, so the figures beside it are theirs
     assert payload["stats"]["totalMessages"] == 2
@@ -84,7 +75,7 @@ def test_a_report_with_no_days_in_it_shows_the_whole_conversation(tmp_path, expo
     report = tmp_path / "analysis.md"
     report.write_text("# Report\n\n## Summary\nA story.\n")
 
-    payload = build_analysis_payload(export, AVERY, "gpt-5.5", report_path=str(report))
+    payload = build_analysis_payload(export, AVERY, MODEL, report_path=str(report))
 
     assert payload["stats"]["totalMessages"] == 4
 
@@ -93,7 +84,7 @@ def test_a_report_carries_everything_the_conversation_view_reads(tmp_path, expor
     report = tmp_path / "analysis.md"
     report.write_text("# Report\n\n## Summary\nA story.\n")
 
-    payload = build_analysis_payload(export, AVERY, "gpt-5.5", report_path=str(report))
+    payload = build_analysis_payload(export, AVERY, MODEL, report_path=str(report))
 
     # the reader draws the same chart and figures as Analyze, from the same fields
     assert {"stats", "activity", "daily", "dynamics", "monthly", "recentMessages"} <= set(payload)
@@ -101,14 +92,14 @@ def test_a_report_carries_everything_the_conversation_view_reads(tmp_path, expor
 
 
 def test_a_report_on_an_unnamed_group_is_named_after_its_people(tmp_path, saved_names):
-    csv = write_export(tmp_path / "messages.csv", [
+    csv = loaded(tmp_path / "messages.csv", [
         row(GROUP, "2025-01-01 09:00:00", "who is in", sender=AVERY),
         row(GROUP, "2025-01-01 09:01:00", "me", sender=BLAKE),
     ])
     report = tmp_path / "analysis.md"
     report.write_text("# Report\n\n## Summary\nA story.\n")
 
-    payload = build_analysis_payload(csv, GROUP, "gpt-5.5", report_path=str(report))
+    payload = build_analysis_payload(csv, GROUP, MODEL, report_path=str(report))
 
     assert payload["contactDisplayName"] == "Avery Stone and Blake Reyes"
 
@@ -168,7 +159,7 @@ def test_a_report_with_no_heading_is_known_by_its_file_name(tmp_path, monkeypatc
 
 
 def test_a_job_remembers_the_conversation_it_is_for():
-    job = ui_server.job_record("analyze", {"contact": AVERY, "model": "gpt-5.5"})
+    job = ui_server.job_record("analyze", {"contact": AVERY, "model": MODEL})
 
     # the list of jobs can then say whose report is being written
     assert job["contact"] == AVERY
@@ -306,30 +297,31 @@ def test_a_scope_among_the_events_is_not_the_scope_of_the_report():
     assert report_scope(text) == ("2024-12-06", "2024-12-17")
 
 
-def test_a_reopened_report_counts_what_fell_in_its_dates_after_the_last_message(tmp_path, export, saved_names):
-    # asked for all of December: the last message is on the 17th, a reaction came on the 20th
-    pd.DataFrame({
-        "reaction_id": [1, 2],
-        "is_from_me": [1, 0],
-        "chat_id": [AVERY, AVERY],
-        "timestamp": ["2024-12-20 08:00:00", "2025-01-05 08:00:00"],
-        "reaction_type": ["love", "like"],
-        "is_add": [True, True],
-    }).to_csv(tmp_path / "messages_reactions.csv", index=False)
+def test_a_reopened_report_counts_what_fell_in_its_dates_after_its_last_message(tmp_path, saved_names):
+    # asked for all of December: the report names the 17th as its last message, and a picture of the 20th is in the archive
+    csv = loaded(tmp_path / "messages.csv", [
+        row(AVERY, "2024-11-05 09:00:00", "long before"),
+        row(AVERY, "2024-12-06 09:00:00", "are we still on"),
+        row(AVERY, "2024-12-17 21:00:00", "yes", from_me=1),
+        row(AVERY, "2024-12-20 08:00:00", PLACEHOLDER, attachments="image/heic"),
+        row(AVERY, "2025-01-05 08:00:00", PLACEHOLDER, attachments="image/heic"),
+    ])
     report = tmp_path / "analysis.md"
     report.write_text(SCOPED.format(contact=AVERY, scope="2024-12-01 to 2024-12-31"))
 
-    payload = build_analysis_payload(export, AVERY, "gpt-5.5", report_path=str(report))
+    payload = build_analysis_payload(csv, AVERY, MODEL, report_path=str(report))
 
-    assert payload["stats"]["totalMessages"] == 2
-    assert payload["stats"]["reactions"]["total"] == 1
+    # the dates that were asked for are the scope, not the days of the first and the last message
+    assert payload["stats"]["totalMessages"] == 3
+    assert payload["stats"]["attachments"]["photos"] == 1
+    assert payload["media"]["attachments"]["photos"] == 1
 
 
 def test_a_report_on_all_dates_shows_the_whole_conversation(tmp_path, export, saved_names):
     report = tmp_path / "analysis.md"
     report.write_text(SCOPED.format(contact=AVERY, scope="all dates"))
 
-    payload = build_analysis_payload(export, AVERY, "gpt-5.5", report_path=str(report))
+    payload = build_analysis_payload(export, AVERY, MODEL, report_path=str(report))
 
     # the days of its messages are not taken for its scope
     assert payload["stats"]["totalMessages"] == 4
@@ -339,27 +331,46 @@ def test_the_scope_line_is_not_part_of_the_story(tmp_path, export, saved_names):
     report = tmp_path / "analysis.md"
     report.write_text(SCOPED.format(contact=AVERY, scope="2024-12-01 to 2024-12-31"))
 
-    payload = build_analysis_payload(export, AVERY, "gpt-5.5", report_path=str(report))
+    payload = build_analysis_payload(export, AVERY, MODEL, report_path=str(report))
 
     assert payload["summary"] == "They made plans."
     assert "Scope" not in payload["summaryHtml"]
 
 
 def test_a_stored_report_is_not_reused_once_its_figures_can_differ(tmp_path, monkeypatch):
-    csv = tmp_path / "messages.csv"
-    csv.write_text("x", encoding="utf-8")
+    rows = [row(AVERY, "2024-12-06 09:00:00", "are we still on")]
+    csv = loaded(tmp_path / "messages.csv", rows)
 
     def key():
-        return str(ui_server.analysis_cache_key(csv, AVERY, "gpt-5.4-mini"))
+        return str(ui_server.analysis_cache_key(csv, AVERY, MODEL))
 
     first = key()
-    # the figures of a report count attachments and reactions
-    (tmp_path / "messages_attachments.csv").write_text("a", encoding="utf-8")
-    with_attachments = key()
-    (tmp_path / "messages_reactions.csv").write_text("r", encoding="utf-8")
-    with_reactions = key()
+    again = key()
+    # the figures of a report are those of the archive
+    loaded(csv, [*rows, row(AVERY, "2024-12-17 21:00:00", "yes", from_me=1)])
+    with_another_archive = key()
+    # a report holds names: the people of a group, who wrote a recent message
+    save_names(NAMES)
+    with_names = key()
     # and a report holds a preview, so a preview that changed in shape is a new report
     monkeypatch.setattr(ui_server, "PREVIEW_PAYLOAD_VERSION", ui_server.PREVIEW_PAYLOAD_VERSION + 1)
     with_new_preview = key()
 
-    assert len({first, with_attachments, with_reactions, with_new_preview}) == 4
+    assert first == again
+    assert len({first, with_another_archive, with_names, with_new_preview}) == 4
+
+
+def test_a_stored_report_is_not_reused_for_another_range_or_another_file(tmp_path):
+    csv = loaded(tmp_path / "messages.csv", [row(AVERY, "2024-12-06 09:00:00", "are we still on")])
+    report = tmp_path / "analysis.md"
+    report.write_text("# Report\n\n## Summary\nA story.\n")
+
+    def key(**more):
+        return str(ui_server.analysis_cache_key(csv, AVERY, MODEL, **more))
+
+    whole = key(report_path=str(report))
+    december = key(report_path=str(report), since="2024-12-01", until="2024-12-31")
+    report.write_text("# Report\n\n## Summary\nA longer story than before.\n")
+    rewritten = key(report_path=str(report))
+
+    assert len({whole, december, rewritten}) == 3
