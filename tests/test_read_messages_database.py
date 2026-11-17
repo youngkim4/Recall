@@ -1,15 +1,24 @@
 """The readers of a Messages database.
 
 A reader gives a frame with all of its columns, also when there is nothing to
-give.
+give. It opens the database to read and nothing else: a path with no file
+makes no file, and what is still in the -wal file is read.
 """
+import shutil
 import sqlite3
 
 import pytest
 
 from conversation import load_attachments, load_reactions
-from parse_imessage import extract_attachments, extract_messages, extract_reactions
-from tests.invented_db import messages_db
+from parse_imessage import (
+    extract_attachments,
+    extract_messages,
+    extract_reactions,
+    list_contacts,
+    open_read_only,
+    search_contacts,
+)
+from tests.invented_db import fill, messages_db
 
 MESSAGE_COLUMNS = [
     "message_id", "timestamp", "sender", "text", "chat_id", "chat_display_name",
@@ -22,6 +31,15 @@ REACTION_COLUMNS = [
     "reaction_id", "associated_message_guid", "associated_message_type", "is_from_me",
     "chat_id", "timestamp", "reaction_type", "is_add",
 ]
+
+READERS = {
+    "extract_messages": extract_messages,
+    "extract_attachments": extract_attachments,
+    "extract_reactions": extract_reactions,
+    "list_contacts": list_contacts,
+    "search_contacts": lambda path: search_contacts(path, "555"),
+}
+
 
 def read_all(db):
     return extract_messages(str(db)), extract_attachments(str(db)), extract_reactions(str(db))
@@ -91,3 +109,100 @@ def test_files_written_from_empty_frames_are_read_back_as_empty(tmp_path):
 
     assert read_attachments.empty and list(read_attachments.columns) == ATTACHMENT_COLUMNS
     assert read_reactions.empty and list(read_reactions.columns) == REACTION_COLUMNS
+
+
+# ---- the database is opened to read, and nothing else ----
+
+
+@pytest.mark.parametrize("reader", READERS)
+def test_a_reader_makes_no_file_where_there_is_none(tmp_path, reader):
+    ghost = tmp_path / "ghost.db"
+
+    with pytest.raises(sqlite3.OperationalError):
+        READERS[reader](str(ghost))
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_write_is_refused(tmp_path):
+    db = messages_db(tmp_path / "chat.db", ["one"])
+    conn = open_read_only(db)
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            conn.execute("DELETE FROM message")
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("reader", READERS)
+def test_a_reader_leaves_the_database_as_it_was(tmp_path, reader):
+    db = messages_db(tmp_path / "chat.db", ["one", "two"])
+    before = db.read_bytes()
+
+    READERS[reader](str(db))
+
+    assert db.read_bytes() == before
+    assert [path.name for path in tmp_path.iterdir()] == ["chat.db"]
+
+
+@pytest.mark.parametrize(
+    "name", ["with space.db", "what?.db", "hash#tag.db", "per%cent.db", "per%20cent.db", "café.db", "a&b=c.db"]
+)
+def test_a_name_with_marks_in_it_is_the_name_of_the_file(tmp_path, name):
+    db = messages_db(tmp_path / name, ["one"])
+
+    assert list(extract_messages(str(db))["text"]) == ["one"]
+    assert [path.name for path in tmp_path.iterdir()] == [name]
+
+
+def test_a_path_that_is_not_whole_is_read_from_the_folder_in_use(tmp_path, monkeypatch):
+    messages_db(tmp_path / "chat.db", ["one"])
+    monkeypatch.chdir(tmp_path)
+
+    assert list(extract_messages("chat.db")["text"]) == ["one"]
+
+
+def tables_in_the_file_alone(path, folder):
+    """How many tables the database file holds without its -wal file."""
+    folder.mkdir()
+    conn = sqlite3.connect(str(shutil.copy(path, folder / path.name)))
+    try:
+        return conn.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_what_is_still_in_the_wal_is_read(tmp_path):
+    path = tmp_path / "chat.db"
+    writer = sqlite3.connect(str(path))
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        # nothing moves from the -wal file into the database while the writer holds it
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        fill(writer, ["first", "second", "third"])
+        assert path.with_name("chat.db-wal").stat().st_size > 0
+        assert tables_in_the_file_alone(path, tmp_path / "alone") == 0
+
+        messages, attachments, reactions = read_all(path)
+    finally:
+        writer.close()
+
+    assert set(messages["text"]) == {"first", "second", "third"}
+    assert (len(attachments), len(reactions)) == (1, 1)
+
+
+def test_a_copy_brought_with_its_wal_is_read_whole(tmp_path):
+    path = tmp_path / "chat.db"
+    copied = tmp_path / "copied"
+    copied.mkdir()
+    writer = sqlite3.connect(str(path))
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        fill(writer, ["first", "second"])
+        for name in ("chat.db", "chat.db-wal", "chat.db-shm"):
+            shutil.copy(tmp_path / name, copied / name)
+    finally:
+        writer.close()
+
+    assert set(extract_messages(str(copied / "chat.db"))["text"]) == {"first", "second"}

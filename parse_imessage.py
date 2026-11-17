@@ -19,11 +19,13 @@ Notes:
 """
 import argparse
 import logging
+import os
 import pathlib
 import re
 import sqlite3
 import sys
-from typing import Optional
+from typing import Optional, Union
+from urllib.parse import quote
 
 import pandas as pd
 
@@ -44,6 +46,18 @@ def imessage_timestamp_sql(column: str) -> str:
         f"END"
     )
     return f"datetime(({seconds_expr}) + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')"
+
+
+def open_read_only(db_path: Union[str, os.PathLike], timeout: float = 5.0) -> sqlite3.Connection:
+    """Open a database to read it, and for nothing else.
+
+    A path that holds no file makes no file: sqlite3.connect(path) would make
+    an empty one. The path goes into the address quoted, so a "?", a "#" or a
+    "%" in a name is part of the name. The database is not opened as one that
+    cannot change: what Messages has written to the -wal file is read too.
+    """
+    whole = os.path.abspath(os.fspath(db_path))
+    return sqlite3.connect(f"file://{quote(whole)}?mode=ro", uri=True, timeout=timeout)
 
 
 def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
@@ -215,7 +229,7 @@ def extract_messages(db_path: str) -> pd.DataFrame:
 
     A database with no messages gives a frame with these columns and no rows.
     """
-    conn = sqlite3.connect(db_path)
+    conn = open_read_only(db_path)
     try:
         display_name_expr = chat_display_name_sql(conn)
         # SQL projection maps core fields we need for analysis. The conversion below
@@ -274,7 +288,7 @@ def list_contacts(db_path: str, limit: int = 20) -> pd.DataFrame:
     
     Returns DataFrame with: chat_id, display_name, message_count, first_msg, last_msg, is_group
     """
-    conn = sqlite3.connect(db_path)
+    conn = open_read_only(db_path)
     try:
         display_name_expr = chat_display_name_sql(conn)
         query = f"""
@@ -328,7 +342,7 @@ def extract_attachments(db_path: str) -> pd.DataFrame:
     total_bytes, is_from_me, timestamp, category. A database with no
     attachments gives a frame with these columns and no rows.
     """
-    conn = sqlite3.connect(db_path)
+    conn = open_read_only(db_path)
     try:
         query = f"""
         SELECT
@@ -385,7 +399,7 @@ def extract_reactions(db_path: str) -> pd.DataFrame:
     is_add. A database with no reactions gives a frame with these columns and
     no rows.
     """
-    conn = sqlite3.connect(db_path)
+    conn = open_read_only(db_path)
     try:
         query = f"""
         SELECT
@@ -417,7 +431,7 @@ def search_contacts(db_path: str, query: str, limit: int = 10) -> pd.DataFrame:
     """
     Search contacts by partial chat_id or group display-name match.
     """
-    conn = sqlite3.connect(db_path)
+    conn = open_read_only(db_path)
     try:
         display_name_expr = chat_display_name_sql(conn)
         sql = f"""
