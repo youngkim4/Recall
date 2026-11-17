@@ -13,11 +13,44 @@ const message = (fields: Partial<SearchResult> = {}): SearchResult => ({
   ...fields,
 })
 
-test('a message with an id of its own is known by it', () => {
-  const first = message({ messageId: 'm-1' })
+test('a message is known by its conversation, its time and its words, never by its id', () => {
+  // one message has three ids in its life: a number, legacy:<n>, an Apple guid
+  const first = message({ messageId: '4471' })
 
-  assert.equal(bookmarkId(first), bookmarkId({ ...first, text: 'the same message, cleaned differently' }))
-  assert.notEqual(bookmarkId(first), bookmarkId(message({ messageId: 'm-2' })))
+  assert.equal(bookmarkId(first), bookmarkId({ ...first, messageId: 'legacy:4471' }))
+  assert.equal(bookmarkId(first), bookmarkId({ ...first, messageId: '8A6F0C2E-1B7D-4E0A-9C55-3F2D1A7B9E10' }))
+  assert.equal(bookmarkId(first), bookmarkId(message()))
+  assert.notEqual(bookmarkId(first), bookmarkId({ ...first, text: 'running late' }))
+})
+
+test('a message saved by an older build is the same message in a new search', () => {
+  pageWithStorage(fakeStorage({ [STORE_KEY]: JSON.stringify([message({ messageId: '4471' })]) }))
+  const found = message({ messageId: '8A6F0C2E-1B7D-4E0A-9C55-3F2D1A7B9E10', displayName: 'Avery Stone' })
+
+  const saved = readBookmarks()
+
+  assert.equal(saved.map(bookmarkId).includes(bookmarkId(found)), true)
+  // it is saved once: pressing again takes it back out
+  assert.deepEqual(toggleBookmark(saved, found), [])
+})
+
+test('an id that an older build kept as a number is read as text', () => {
+  const numbered = { ...message(), messageId: 4471 }
+  pageWithStorage(fakeStorage({ [STORE_KEY]: JSON.stringify([numbered]) }))
+
+  assert.deepEqual(readBookmarks(), [message({ messageId: '4471' })])
+})
+
+test('spaces at the ends of the words do not make another message', () => {
+  assert.equal(bookmarkId(message({ text: ' on my way\n' })), bookmarkId(message()))
+  assert.notEqual(bookmarkId(message({ text: 'on  my way' })), bookmarkId(message()))
+})
+
+test('a message with no time is still told from one with a time', () => {
+  const timeless = message({ timestamp: null })
+
+  assert.equal(bookmarkId(timeless), bookmarkId({ ...timeless, messageId: 'legacy:9' }))
+  assert.notEqual(bookmarkId(timeless), bookmarkId(message()))
 })
 
 test('two messages with no ids that begin alike are still two messages', () => {
@@ -63,9 +96,9 @@ test('taking out one of two messages that begin alike leaves the other', () => {
 
 test('the oldest saved messages give way past a hundred', () => {
   pageWithStorage(fakeStorage())
-  const many = Array.from({ length: 100 }, (_, index) => message({ messageId: `m-${index}` }))
+  const many = Array.from({ length: 100 }, (_, index) => message({ messageId: `m-${index}`, text: `message ${index}` }))
 
-  const next = toggleBookmark(many, message({ messageId: 'new' }))
+  const next = toggleBookmark(many, message({ messageId: 'new', text: 'a new message' }))
 
   assert.equal(next.length, 100)
   assert.equal(next[0].messageId, 'new')
