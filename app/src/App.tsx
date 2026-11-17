@@ -244,6 +244,8 @@ function App() {
           reportPath: report.path,
           contact: report.contact,
         })
+        // an answer with no report in it would be asked for again and again
+        if (!data.analysis) throw new Error('This report could not be read.')
         if (request === reportRequest.current) setOpened({ path: report.path, analysis: data.analysis })
       } catch (apiError) {
         if (request !== reportRequest.current) return
@@ -270,8 +272,11 @@ function App() {
     }
   }, [activeView, analysis, failedReport, loadingReport, openReport, selectedReport])
 
+  // a second press before the first has its answer starts nothing
+  const startingReport = useRef(false)
   const runReport = useCallback(async () => {
-    if (!effectiveDefaults || !selectedContact || !model) return
+    if (!effectiveDefaults || !selectedContact || !model || startingReport.current) return
+    startingReport.current = true
     setError(null)
     try {
       const created = await recallApi.createAnalyzeJob({
@@ -289,19 +294,31 @@ function App() {
       await loadJobs()
     } catch (apiError) {
       setError(apiError instanceof Error ? apiError.message : 'Unable to start report.')
+    } finally {
+      startingReport.current = false
     }
   }, [effectiveDefaults, loadJobs, model, scope.since, scope.until, selectedContact])
 
-  // what a finished report job leaves: the list of reports, and the report itself opened
+  // What a finished report job leaves: the list of reports, and the report
+  // itself opened. `watched` says whether the job is still the one being
+  // followed. When it is not, the lists are brought up to date and nothing is
+  // opened over what the reader has gone on to.
   const showFinished = useCallback(
-    async (job: Job) => {
+    async (job: Job, watched: () => boolean) => {
       try {
         const nextReports = job.result?.reports || (await recallApi.reports()).reports
         setReports(nextReports)
         await loadJobs()
+        if (!watched()) return
         const written = job.result?.analysis
         const report = nextReports.find((item) => item.path === job.result?.reportPath)
-        if (!written || !report) return
+        if (!written || !report) {
+          // the job ended well and has nothing to show: say so, and leave the
+          // report chosen, if it is among the reports, for Reports to read
+          if (report) setSelectedReport(report)
+          setError('The report finished, but it could not be opened. Look for it in Reports.')
+          return
+        }
         setOpened({ path: report.path, analysis: written })
         setSelectedReport(report)
         // only auto-open the report if the user is still where they
@@ -316,25 +333,30 @@ function App() {
 
   // A report job is asked about until it ends: one question at a time. An
   // answer about a job that is no longer the one watched changes nothing, and
-  // a job the server no longer knows stops being asked about.
+  // a job the server no longer knows stops being asked about. Once the watch
+  // is over, an answer still on its way opens no report and changes no job.
   const watchedJob = runningJob && isActiveJob(runningJob) ? runningJob.id : ''
   useEffect(() => {
     if (!watchedJob) return
     let asking = false
     let ended = false
+    let stopped = false
     let misses = 0
     const ask = async () => {
       if (asking || ended) return
       asking = true
       try {
         const { job } = await recallApi.job(watchedJob)
+        if (stopped) return
         misses = 0
         if (job.status === 'completed') {
           ended = true
-          await showFinished(job)
+          await showFinished(job, () => !stopped)
+          if (stopped) return
         }
         setRunningJob((current) => (current?.id === job.id ? job : current))
       } catch {
+        if (stopped) return
         misses += 1
         if (misses < LOST_AFTER_MISSES) return
         ended = true
@@ -348,7 +370,10 @@ function App() {
       }
     }
     const timer = window.setInterval(() => void ask(), POLL_MS)
-    return () => window.clearInterval(timer)
+    return () => {
+      stopped = true
+      window.clearInterval(timer)
+    }
   }, [showFinished, watchedJob])
 
   const handleModelChange = useCallback((nextModel: string) => {
