@@ -94,6 +94,18 @@
     min-width: 0;
   }
 
+  /* in a narrow window the name takes the row, with how it stands and when under it */
+  @container workspace (max-width: 40rem) {
+    .job {
+      grid-template-columns: minmax(0, 1fr) auto;
+      row-gap: var(--s-1);
+    }
+
+    .job-main {
+      grid-column: 1 / -1;
+    }
+  }
+
   .job-title {
     overflow: hidden;
     text-overflow: ellipsis;
