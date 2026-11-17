@@ -78,19 +78,30 @@ test('the remembered quality is used only while the server still offers it', () 
 })
 
 test('a remembered file location stands in for the one the server suggests', () => {
-  const suggested = { dbPath: '/suggested/chat.db', messagesPath: '/suggested/messages.csv', outDir: '/suggested/out' }
+  const suggested = { messagesPath: '/suggested/messages.csv', outDir: '/suggested/out' }
   pageWithStorage(fakeStorage())
   assert.deepEqual(readStoredPaths(suggested), suggested)
 
-  storeRuntimePaths({ dbPath: '', messagesPath: '/mine/messages.csv', outDir: '' })
+  storeRuntimePaths({ messagesPath: '/mine/messages.csv', outDir: '' })
 
   assert.deepEqual(readStoredPaths(suggested), { ...suggested, messagesPath: '/mine/messages.csv' })
-  assert.equal(hasRuntimePath({ dbPath: '', messagesPath: '', outDir: '' }), false)
-  assert.equal(hasRuntimePath({ dbPath: '', messagesPath: '/mine/messages.csv', outDir: '' }), true)
+  assert.equal(hasRuntimePath({ messagesPath: '', outDir: '' }), false)
+  assert.equal(hasRuntimePath({ messagesPath: '/mine/messages.csv', outDir: '' }), true)
+})
+
+// An update reads Messages itself, so the app keeps no path to a database.
+test('a database path remembered by an earlier build is left behind', () => {
+  const suggested = { messagesPath: '/suggested/messages.csv', outDir: '/suggested/out' }
+  const remembered = { dbPath: '/old/chat.db', messagesPath: '', outDir: '/mine/out' }
+  pageWithStorage(fakeStorage({ 'recall.runtimePaths.v1': JSON.stringify(remembered) }))
+
+  assert.deepEqual(readStoredPaths(suggested), { messagesPath: '/suggested/messages.csv', outDir: '/mine/out' })
+  // a path to a database alone is no location that was chosen
+  assert.equal(hasRuntimePath({ ...remembered, outDir: '' }), false)
 })
 
 test('where nothing can be remembered the app starts from its first settings', () => {
-  const suggested = { dbPath: 'a', messagesPath: 'b', outDir: 'c' }
+  const suggested = { messagesPath: 'b', outDir: 'c' }
   const starts = () => {
     assert.deepEqual(readStoredLayout(), DEFAULT_LAYOUT)
     assert.equal(preferredModel(['gpt-5.4'], 'gpt-5.4'), 'gpt-5.4')

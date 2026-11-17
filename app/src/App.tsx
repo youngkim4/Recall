@@ -96,7 +96,6 @@ function App() {
       defaults
         ? {
             ...defaults,
-            dbPath: paths.dbPath || defaults.dbPath,
             messagesPath: paths.messagesPath || defaults.messagesPath,
             outDir: paths.outDir || defaults.outDir,
           }
@@ -125,7 +124,6 @@ function App() {
     const request = ++contactsRequest.current
     const response = await recallApi.contacts({
       messagesPath: runtimePaths.messagesPath || data.messagesPath,
-      dbPath: runtimePaths.dbPath || data.dbPath,
       limit: CONVERSATION_LIMIT,
     })
     if (request !== contactsRequest.current) return
@@ -280,13 +278,11 @@ function App() {
     setError(null)
     try {
       const created = await recallApi.createAnalyzeJob({
-        dbPath: effectiveDefaults.dbPath,
         messagesPath: effectiveDefaults.messagesPath,
         outDir: effectiveDefaults.outDir,
         contact: selectedContact.chat_id,
         model,
         html: true,
-        extractFirst: false,
         since: scope.since,
         until: scope.until,
       })
@@ -401,7 +397,6 @@ function App() {
   const applyRuntimePaths = useCallback(
     async (nextPaths: RuntimePaths) => {
       const normalized = {
-        dbPath: nextPaths.dbPath.trim(),
         messagesPath: nextPaths.messagesPath.trim(),
         outDir: nextPaths.outDir.trim(),
       }
@@ -625,7 +620,7 @@ function App() {
           />
         ) : activeView === 'settings' ? (
           <SettingsView
-            key={`${appliedSettingsPaths.dbPath}\n${appliedSettingsPaths.messagesPath}\n${appliedSettingsPaths.outDir}`}
+            key={`${appliedSettingsPaths.messagesPath}\n${appliedSettingsPaths.outDir}`}
             defaults={effectiveDefaults}
             archive={archive}
             defaultPaths={defaultSettingsPaths}

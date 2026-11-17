@@ -77,11 +77,11 @@ test('a step outside its count is held inside it', () => {
 })
 
 test('what an import read is given as figures', () => {
-  const figures = whatItRead({ messages: 565666, conversations: 1405, firstYear: 2016, lastYear: 2026, recovered: 1200 })
+  const figures = whatItRead({ messages: 565666, conversations: 1405, firstYear: 2016, lastYear: 2026 })
 
   assert.deepEqual(
     figures.map((figure) => figure.label),
-    ['Messages', 'Conversations', 'Years', 'Restored'],
+    ['Messages', 'Conversations', 'Years'],
   )
   assert.equal(figures[2].value, '2016–2026')
   assert.match(figures[0].value, /565.666/)
@@ -91,7 +91,7 @@ test('a figure the job did not give is not shown', () => {
   assert.deepEqual(whatItRead(null), [])
   assert.deepEqual(whatItRead({ reportPath: '/reports/analysis_x.md' }), [])
   assert.deepEqual(
-    whatItRead({ messages: 12, firstYear: 2024, lastYear: 2024, recovered: 0 }).map((figure) => [figure.label, figure.value]),
+    whatItRead({ messages: 12, firstYear: 2024, lastYear: 2024 }).map((figure) => [figure.label, figure.value]),
     [
       ['Messages', '12'],
       ['Years', '2024'],

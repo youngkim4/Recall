@@ -35,7 +35,7 @@ export function ImportStep({ status, job, rerun, onStart, onRetry, onBack }: Imp
   if (job?.status === 'failed') {
     return (
       <>
-        <h1>The import did not finish</h1>
+        <h1>{rerun ? 'The update did not finish' : 'The import did not finish'}</h1>
         {job.error ? (
           <p className="notice bad" role="alert">
             {job.error}
@@ -83,14 +83,18 @@ export function ImportStep({ status, job, rerun, onStart, onRetry, onBack }: Imp
   }
 
   const size = sizeOf(status.db)
+  // a copy is read only because it was chosen in this guide, and the reader is told what that does
+  const fromCopy = status.db.kind === 'copy'
   return (
     <>
       <h1>{rerun ? 'Update your archive' : 'Build your archive'}</h1>
       {size ? <p className="setup-size">{size}</p> : null}
       <p className="setup-lead">
-        {rerun
-          ? 'Recall reads Messages again and brings in everything since the last import. Messages and its database are not changed.'
-          : 'Recall copies your message history into its own file on this Mac. Messages and its database are not changed.'}
+        {fromCopy
+          ? 'Recall reads the copy you chose. The archive then holds what that copy holds and nothing else. The copy is not changed.'
+          : rerun
+            ? 'Recall reads Messages again. The archive then holds what Messages holds now, so a message deleted there leaves the archive too. Messages and its database are not changed.'
+            : 'Recall copies your message history into its own file on this Mac. Messages and its database are not changed.'}
       </p>
       <div className="setup-actions">
         <button type="button" className="btn primary lg" onClick={onStart}>

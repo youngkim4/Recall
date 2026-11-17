@@ -109,6 +109,20 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - `app/src/styles/paper.css` holds the paper state and the print rules. A layout rule for the screen must not change the pages.
 - In the Mac app, `window.print()` sends the `print` command to the shell. `saveAsPDF` in `macos/Recall/RecallApp.swift` saves the page as a PDF and then sends `afterprint` to the page.
 
+## Import and update
+
+- `database_for` in `ui_server.py` names the database that a job reads. No other code selects a database for a job.
+  - An update (the `export` job) reads the database of Messages on this Mac. A path from the client does not change this.
+  - The setup guide (the `setup_import` job) can name a copy. The copy is read for that import only. With no copy named, the job reads Messages.
+  - No other job reads a database. A report is written from the archive as it is.
+- An import does not merge a second source. After an import, the archive holds what the database holds. `merge_export.py` is a hand tool. The app does not call it.
+- `export_database` reads the messages, the attachments and the reactions before it writes a file. It writes each file beside its place and then moves it. A failure leaves the three files as they were.
+- `export_database` moves the messages file last, so the other two files are new before the messages file changes.
+- `why_unreadable` gives the reason when a database cannot be read. It uses `probe_database`, because macOS can show a protected file as missing.
+- The server keeps no path to a database. `read_setup_marker` drops `pickedDbPath`. `/api/defaults` names no database. `/api/contacts` takes no database from the client.
+- The client keeps no path to a database. `RuntimePaths` holds the archive file and the reports folder only.
+- The setup guide opens an update on the state of the database (`phaseForDatabase` in `OnboardingWizard.tsx`), not on the state of setup.
+
 ## Caches
 
 - `PREVIEW_PAYLOAD_VERSION` in `ui_server.py` is 7. The browser key in `app/src/lib/cache.ts` is `recall.previewCache.v7`. Change the two together when the shape of a preview changes.

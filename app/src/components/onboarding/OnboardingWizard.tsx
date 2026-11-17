@@ -42,6 +42,23 @@ function phaseForStatus(status: SetupStatus): Phase {
   }
 }
 
+// An update is of an archive that is already there, so the state of setup
+// says nothing about it. What there is to do is read from the database:
+// where Messages cannot be read, the update says so before it is started.
+function phaseForDatabase(status: SetupStatus): Phase {
+  switch (status.db.status) {
+    case 'readable':
+      return 'import'
+    case 'fda_blocked':
+      return 'permission'
+    case 'missing':
+    case 'empty':
+      return 'no_messages'
+    default:
+      return 'db_problem'
+  }
+}
+
 function frameStep(phase: Phase): number {
   if (phase === 'welcome') return 0
   if (phase === 'permission' || phase === 'no_messages' || phase === 'db_problem') return 1
@@ -51,9 +68,11 @@ function frameStep(phase: Phase): number {
 
 export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onSkip }: Props) {
   // an update has no welcome to read: it opens on what there is to do
-  const [phase, setPhase] = useState<Phase>(() => (rerun ? phaseForStatus(initialStatus) : 'welcome'))
+  const [phase, setPhase] = useState<Phase>(() => (rerun ? phaseForDatabase(initialStatus) : 'welcome'))
   const [status, setStatus] = useState<SetupStatus>(initialStatus)
-  const [pickedDbPath, setPickedDbPath] = useState(initialStatus.setup?.pickedDbPath || '')
+  // A copy chosen in this guide, for the import it starts. It is not kept:
+  // the next time the guide opens, it reads Messages itself again.
+  const [pickedDbPath, setPickedDbPath] = useState('')
   const [pickBusy, setPickBusy] = useState(false)
   const [pickError, setPickError] = useState('')
   const [job, setJob] = useState<Job | null>(null)
@@ -172,7 +191,6 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
       if (next.db.status === 'readable') {
         setPickedDbPath(path)
         setStatus(next)
-        markSetup({ pickedDbPath: path })
         setPhase('import')
       } else if (next.db.status === 'empty') {
         setPickError('That database has nothing in it.')
@@ -232,6 +250,10 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
     onSkip()
   }, [onSkip])
 
+  // Leaving an update goes back to the app and records nothing: setup was
+  // finished before. Leaving the first setup is recorded as skipped.
+  const leave = rerun ? onSkip : skip
+
   const finish = useCallback(() => {
     onFinished(result)
   }, [onFinished, result])
@@ -256,7 +278,7 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
           }}
           onPick={pickFile}
           onManualPath={validatePath}
-          onSkip={skip}
+          onSkip={leave}
         />
       ) : phase === 'no_messages' ? (
         <NoMessagesStep
@@ -266,7 +288,7 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
           onRecheck={recheck}
           onPick={pickFile}
           onManualPath={validatePath}
-          onSkip={skip}
+          onSkip={leave}
           stillNothing={recheckCount > 0}
         />
       ) : phase === 'db_problem' ? (
@@ -278,7 +300,8 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
           onRetry={() => void recheck()}
           onPick={pickFile}
           onManualPath={validatePath}
-          onBack={() => setPhase('welcome')}
+          // an update was opened from the app, and leaving it goes back there
+          onBack={rerun ? onSkip : () => setPhase('welcome')}
         />
       ) : phase === 'import' ? (
         <ImportStep
@@ -287,7 +310,6 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
           rerun={rerun}
           onStart={() => void startImport()}
           onRetry={retryImport}
-          // an update was opened from the app, and leaving it goes back there
           onBack={rerun ? onSkip : () => setPhase('welcome')}
         />
       ) : (

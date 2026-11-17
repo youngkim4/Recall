@@ -10,6 +10,7 @@ import re
 import sqlite3
 import sys
 import threading
+import time
 import traceback
 import uuid
 from collections import OrderedDict
@@ -83,7 +84,6 @@ from recall_paths import (
     SAVES_DIR,
     OUT_DIR,
     DEFAULT_MESSAGES_CSV,
-    SNAPSHOT_DB,
     ensure_data_dirs,
 )
 from setup_status import LIVE_CHAT_DB, DbProbe, derive_state, probe_database
@@ -306,66 +306,142 @@ def companion_report_paths(report_path: Path, contact: str) -> tuple[Path | None
     )
 
 
-def merge_snapshot_into(db_path: Path, messages_path: Path) -> int:
-    """Restore messages the live database has offloaded to iCloud ("Optimize
-    Storage") by merging the frozen chat.db snapshot into the just-written
-    export. Returns the count of recovered rows. Never raises — a refresh must
-    not fail because of the merge.
+ARCHIVE_KEPT = "The archive was not changed."
+
+
+def database_for(action: str, payload: dict) -> Path | None:
+    """The database a job reads, if it reads one.
+
+    An update reads the database Messages keeps on this Mac. A path the client
+    sends does not change that, and neither does a copy in the data folder.
+    Only the setup guide can name a copy, and only for the import it starts.
+    No other job reads a database.
     """
-    snapshot = SNAPSHOT_DB
+    if action == "export":
+        return LIVE_CHAT_DB
+    if action == "setup_import":
+        named = payload.get("dbPath")
+        if named and not isinstance(named, str):
+            raise ValueError("The path of the copy must be text.")
+        return safe_path(named, LIVE_CHAT_DB)
+    return None
+
+
+def closed_to_recall(probe: DbProbe) -> str:
+    """What to do about a database macOS will not let this app open."""
+    if probe.kind == "live":
+        return (
+            "Recall cannot read Messages. Give it Full Disk Access in System Settings > "
+            "Privacy & Security > Full Disk Access, then open Recall again."
+        )
+    return (
+        f"Recall cannot read the copy at {probe.path}: macOS keeps that folder closed to it. "
+        "Move the copy to your home folder and choose it again."
+    )
+
+
+def why_unreadable(probe: DbProbe) -> Exception | None:
+    """What stops an import before it starts, or None when the database can be tried.
+
+    The check tells a database macOS keeps closed from one that is not there:
+    without Full Disk Access macOS can show the file as missing.
+    """
+    # a busy database is tried: Messages may only be in the middle of a write
+    if probe.status in ("readable", "locked"):
+        return None
+    live = probe.kind == "live"
+    if probe.status == "fda_blocked":
+        return PermissionError(f"{closed_to_recall(probe)} {ARCHIVE_KEPT}")
+    if probe.status == "missing":
+        where = "There is no Messages database on this Mac." if live else f"There is no file at {probe.path}."
+        return FileNotFoundError(f"{where} {ARCHIVE_KEPT}")
+    if probe.status == "empty":
+        what = "Messages holds no messages on this Mac." if live else f"The copy at {probe.path} holds no messages."
+        return ValueError(f"{what} {ARCHIVE_KEPT}")
+    said = f" ({probe.detail})" if probe.detail else ""
+    what = (
+        f"The Messages database on this Mac could not be read{said}."
+        if live
+        else f"The copy at {probe.path} is not a Messages database{said}."
+    )
+    return ValueError(f"{what} {ARCHIVE_KEPT}")
+
+
+def export_database(db_path: Path, messages_path: Path) -> dict:
+    """Write the archive from one database: messages, attachments, reactions.
+
+    Nothing is merged in from a second source, so the archive holds what the
+    database holds. All three are read before a file is written, and each file
+    is written beside its place and moved in whole: a failure leaves the
+    archive as it was, and a request served meanwhile reads a complete file.
+    """
+    probe = probe_database(db_path)
+    stopped = why_unreadable(probe)
+    if stopped:
+        raise stopped
     try:
-        if not snapshot.exists() or snapshot.resolve() == db_path.resolve():
-            return 0
-        from merge_export import merge as _merge
-
-        merged, recovered = _merge(str(snapshot), str(messages_path))
-        count = int(len(recovered))
-        if count:
-            merged.to_csv(messages_path, index=False)
-            print(f"Recovered {count:,} message(s) from snapshot {snapshot.name}")
-        return count
-    except Exception as exc:  # noqa: BLE001 - export must survive merge failures
-        print(f"Snapshot merge skipped: {exc}")
-        return 0
-
-
-def export_database(db_path: Path, messages_path: Path):
-    try:
-        df = extract_messages(str(db_path))
+        messages = extract_messages(str(db_path))
+        attachments = extract_attachments(str(db_path))
+        reactions = extract_reactions(str(db_path))
     except sqlite3.OperationalError as exc:
-        text = str(exc).lower()
-        if any(s in text for s in ("unable to open", "permission", "not permitted", "authoriz")):
-            raise PermissionError(
-                f"Couldn't read the Messages database at {db_path}. If this is your live database "
-                "(~/Library/Messages/chat.db), grant Full Disk Access to this app in "
-                "System Settings > Privacy & Security > Full Disk Access, then reopen Recall."
-            ) from exc
+        if any(sign in str(exc).lower() for sign in ("unable to open", "permission", "not permitted", "authoriz")):
+            raise PermissionError(f"{closed_to_recall(probe)} {ARCHIVE_KEPT}") from exc
         raise
+
+    # The messages go in last. The archive is known by its messages file, so
+    # when that one is new the other two already are.
+    files = (
+        (messages_path.with_name(f"{messages_path.stem}_attachments.csv"), attachments),
+        (messages_path.with_name(f"{messages_path.stem}_reactions.csv"), reactions),
+        (messages_path, messages),
+    )
+    # a database with no attachments or no reactions writes no file for them
+    staged = [
+        (target.with_name(f"{target.stem}.tmp-export{target.suffix}"), target, frame)
+        for target, frame in files
+        if target == messages_path or not frame.empty
+    ]
     messages_path.parent.mkdir(parents=True, exist_ok=True)
-    # write to a temp file and swap in atomically: requests served during the
-    # export keep reading the complete old file instead of a half-written one
-    tmp_path = messages_path.with_name(messages_path.stem + ".tmp-export" + messages_path.suffix)
-    df.to_csv(tmp_path, index=False)
-
-    # Merge the frozen snapshot to recover messages the live DB has pruned.
-    recovered = merge_snapshot_into(db_path, tmp_path)
-    os.replace(tmp_path, messages_path)
-
-    attachments_df = extract_attachments(str(db_path))
-    if not attachments_df.empty:
-        attachments_df.to_csv(messages_path.with_name(messages_path.stem + "_attachments.csv"), index=False)
-
-    reactions_df = extract_reactions(str(db_path))
-    if not reactions_df.empty:
-        reactions_df.to_csv(messages_path.with_name(messages_path.stem + "_reactions.csv"), index=False)
+    try:
+        for staging, _, frame in staged:
+            frame.to_csv(staging, index=False)
+        for staging, target, _ in staged:
+            os.replace(staging, target)
+    finally:
+        for staging, _, _ in staged:
+            staging.unlink(missing_ok=True)
 
     return {
-        "messages": len(df) + recovered,
-        "recovered": recovered,
-        "attachments": len(attachments_df),
-        "reactions": len(reactions_df),
+        "messages": len(messages),
+        "attachments": len(attachments),
+        "reactions": len(reactions),
         "messagesPath": str(messages_path),
     }
+
+
+def export_when_free(job_id: str, db_path: Path, messages_path: Path) -> dict:
+    """Export, and try once more when the database is busy: Messages may be in the middle of a write."""
+    try:
+        return export_database(db_path, messages_path)
+    except (sqlite3.Error, pd.errors.DatabaseError) as exc:
+        if not any(sign in str(exc).lower() for sign in ("locked", "busy")):
+            raise
+        append_log(job_id, "The database is busy. Trying again in a moment")
+        time.sleep(2)
+        return export_database(db_path, messages_path)
+
+
+def refuse_second_import(job_id: str) -> None:
+    """One import writes the archive at a time."""
+    with JOBS_LOCK:
+        running = any(
+            job["id"] != job_id
+            and job["action"] in {"setup_import", "export"}
+            and job["status"] in {"queued", "running"}
+            for job in JOBS.values()
+        )
+    if running:
+        raise ValueError("An import is already running.")
 
 
 def job_record(action: str, payload: dict) -> dict:
@@ -446,11 +522,20 @@ SETUP_MARKER_PATH = SAVES_DIR / "setup.json"
 
 
 def read_setup_marker() -> dict:
+    """How far setup got. A path picked in an earlier setup is not kept: a
+    pick is for the one import it was made for."""
     try:
         marker = json.loads(SETUP_MARKER_PATH.read_text(encoding="utf-8"))
-        return marker if isinstance(marker, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
+    if not isinstance(marker, dict):
+        return {}
+    return {key: value for key, value in marker.items() if key != "pickedDbPath"}
+
+
+def setup_marker_updates(payload: dict) -> dict:
+    """What the client may record about setup: how far it got, and no path."""
+    return {key: bool(payload[key]) for key in ("completed", "skipped", "firstWordsShown") if key in payload}
 
 
 def write_setup_marker(updates: dict) -> dict:
@@ -496,20 +581,13 @@ def run_job(job_id: str, action: str, payload: dict):
     try:
         with contextlib.redirect_stdout(_JOB_STDOUT), contextlib.redirect_stderr(_JOB_STDERR):
             if action == "export":
-                db_path = safe_path(payload.get("dbPath"))
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
-                if not path_exists(db_path):
-                    raise FileNotFoundError(f"Database not found: {db_path}")
-                append_log(job_id, f"Exporting {db_path}")
-                result = export_database(db_path, messages_path)
+                refuse_second_import(job_id)
+                append_log(job_id, "Reading Messages")
+                result = export_when_free(job_id, database_for(action, payload), messages_path)
             elif action == "analyze":
-                db_path = safe_path(payload.get("dbPath"))
+                # a report is written from the archive as it is: it reads no database
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
-                if payload.get("extractFirst"):
-                    if not path_exists(db_path):
-                        raise FileNotFoundError(f"Database not found: {db_path}")
-                    append_log(job_id, "Refreshing CSV export before analysis")
-                    export_database(db_path, messages_path)
                 if not path_exists(messages_path):
                     raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
                 contact = payload.get("contact")
@@ -548,36 +626,14 @@ def run_job(job_id: str, action: str, payload: dict):
                     "reports": list_report_files(),
                 }
             elif action == "setup_import":
-                import time as _time
-
-                db_path = safe_path(payload.get("dbPath"), LIVE_CHAT_DB)
+                db_path = database_for(action, payload)
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
                 include_contacts = bool(payload.get("includeContacts", True))
-
-                with JOBS_LOCK:
-                    duplicate = any(
-                        j["id"] != job_id
-                        and j["action"] in {"setup_import", "export"}
-                        and j["status"] in {"queued", "running"}
-                        for j in JOBS.values()
-                    )
-                if duplicate:
-                    raise ValueError("An import is already running.")
+                refuse_second_import(job_id)
 
                 update_job(job_id, progress={"step": 1, "of": 3, "label": "Reading your Messages database"})
-                if not path_exists(db_path):
-                    raise FileNotFoundError(f"Database not found: {db_path}")
-                append_log(job_id, f"Exporting {db_path}")
-                try:
-                    export_result = export_database(db_path, messages_path)
-                except Exception as exc:
-                    if "locked" in str(exc).lower() or "busy" in str(exc).lower():
-                        # Messages mid-write; one quiet retry covers most of it
-                        append_log(job_id, "Database is busy -- retrying in a moment")
-                        _time.sleep(2)
-                        export_result = export_database(db_path, messages_path)
-                    else:
-                        raise
+                append_log(job_id, "Reading Messages" if db_path == LIVE_CHAT_DB else f"Reading the copy at {db_path}")
+                export_when_free(job_id, db_path, messages_path)
 
                 contacts_skipped = False
                 if include_contacts:
@@ -601,8 +657,6 @@ def run_job(job_id: str, action: str, payload: dict):
                     "lastYear": int(years.max()) if len(years) else None,
                     "contactsSkipped": contacts_skipped,
                 }
-                if isinstance(export_result, dict) and export_result.get("recovered"):
-                    result["recovered"] = export_result["recovered"]
             elif action == "semantic":
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
                 if not path_exists(messages_path):
@@ -2765,14 +2819,7 @@ class RecallHandler(BaseHTTPRequestHandler):
                 clear_cache_namespace(PREVIEW_CACHE_NAMESPACE)
                 send_json(self, 200, {"cleared": True})
             elif parsed.path == "/api/setup/complete":
-                payload = parse_body(self)
-                updates: dict = {}
-                for key in ("completed", "skipped", "firstWordsShown"):
-                    if key in payload:
-                        updates[key] = bool(payload[key])
-                if payload.get("pickedDbPath"):
-                    updates["pickedDbPath"] = str(safe_path(str(payload["pickedDbPath"])))
-                send_json(self, 200, {"setup": write_setup_marker(updates)})
+                send_json(self, 200, {"setup": write_setup_marker(setup_marker_updates(parse_body(self)))})
             elif parsed.path == "/api/ask":
                 payload = parse_body(self)
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
@@ -2833,15 +2880,14 @@ class RecallHandler(BaseHTTPRequestHandler):
     def handle_api_get(self, parsed):
         query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
         if parsed.path == "/api/defaults":
-            db_path = SNAPSHOT_DB
+            # where the archive and the reports are. No database is named: an
+            # update reads Messages itself (database_for).
             messages_path = DEFAULT_MESSAGES_CSV
             send_json(self, 200, {
                 "defaultModel": DEFAULT_MODEL,
                 "models": list(UI_MODEL_CHOICES),
-                "dbPath": str(db_path) if db_path.exists() else str(Path("~/Library/Messages/chat.db").expanduser()),
                 "messagesPath": str(messages_path),
                 "outDir": str(OUT_DIR),
-                "hasDb": db_path.exists(),
                 "hasMessages": messages_path.exists(),
                 "reports": list_report_files(),
                 "contactNames": contacts_cache_summary(),
@@ -2887,7 +2933,9 @@ class RecallHandler(BaseHTTPRequestHandler):
             messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             send_json(self, 200, {"overview": archive_patterns(messages_path)})
         elif parsed.path == "/api/contacts":
-            db_path = safe_path(query.get("dbPath"))
+            # The names of groups, and the list itself before there is an
+            # archive, come from Messages itself. The client names no database.
+            db_path = LIVE_CHAT_DB
             messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             limit = int(query.get("limit", "40"))
             if path_exists(messages_path):
@@ -2900,14 +2948,13 @@ class RecallHandler(BaseHTTPRequestHandler):
                     "archive": archive_summary(messages_path),
                 })
                 return
-            if not path_exists(db_path):
-                send_json(self, 400, {"error": f"Message export or database not found: {messages_path} / {db_path}"})
+            if why_unreadable(probe_database(db_path)):
+                send_json(self, 400, {"error": f"There is no archive at {messages_path}, and Messages cannot be read."})
                 return
             df = decorate_contacts_frame(list_contacts(str(db_path), limit=limit))
             send_json(self, 200, {
                 "contacts": df.to_dict(orient="records"),
                 "source": "database",
-                "dbPath": str(db_path),
                 "contactNameCount": count_display_names(df),
             })
         elif parsed.path == "/api/preview":

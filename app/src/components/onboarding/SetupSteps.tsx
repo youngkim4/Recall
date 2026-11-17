@@ -1,5 +1,5 @@
 import { recallBridge } from '../../lib/bridge'
-import { formatNumber, plural } from '../../lib/format'
+import { plural } from '../../lib/format'
 import type { SetupImportResult } from '../../types'
 import { OtherSource } from './OtherSource'
 
@@ -210,9 +210,6 @@ export function DoneStep({ result, rerun, onFinish }: DoneStepProps) {
     <>
       <h1>Your archive is ready</h1>
       {counted.length ? <p className="setup-lead">{counted.join(', ')}</p> : null}
-      {result?.recovered ? (
-        <p className="setup-note">{formatNumber(result.recovered)} older messages were recovered from the saved copy.</p>
-      ) : null}
       {result?.contactsSkipped ? (
         <p className="setup-note">
           Contacts could not be read, so some people show as numbers. Read them again from Settings at any time.

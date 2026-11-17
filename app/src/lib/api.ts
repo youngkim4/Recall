@@ -83,11 +83,10 @@ function askBody(input: AskInput) {
 export const recallApi = {
   defaults: () => request<Defaults>('/api/defaults'),
 
-  contacts: (input: { messagesPath?: string; dbPath?: string; limit?: number }) =>
+  contacts: (input: { messagesPath?: string; limit?: number }) =>
     request<ContactsResponse>(
       `/api/contacts${queryString({
         messagesPath: input.messagesPath,
-        dbPath: input.dbPath,
         limit: input.limit ?? 80,
       })}`,
     ),
@@ -210,26 +209,19 @@ export const recallApi = {
       })}`,
     ),
 
+  // a report is written from the archive as it is; it names no database
   createAnalyzeJob: (input: {
-    dbPath: string
     messagesPath: string
     outDir: string
     contact: string
     model: string
     html: boolean
-    extractFirst: boolean
     since?: string
     until?: string
   }) =>
     request<{ job: Job }>('/api/jobs', {
       method: 'POST',
       body: JSON.stringify({ action: 'analyze', ...input }),
-    }),
-
-  createExportJob: (input: { dbPath: string; messagesPath: string }) =>
-    request<{ job: Job }>('/api/jobs', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'export', ...input }),
     }),
 
   memories: (input: { messagesPath?: string }) =>
@@ -282,6 +274,8 @@ export const recallApi = {
       body: JSON.stringify(input),
     }),
 
+  // The one import that can name a database: a copy chosen in the setup
+  // guide, for this import only. With none named it reads Messages itself.
   createSetupImportJob: (input: {
     dbPath?: string
     messagesPath?: string

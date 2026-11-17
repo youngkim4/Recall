@@ -19,7 +19,7 @@ export type LayoutState = {
   sidebarCollapsed: boolean
 }
 
-export const emptyPaths: RuntimePaths = { dbPath: '', messagesPath: '', outDir: '' }
+export const emptyPaths: RuntimePaths = { messagesPath: '', outDir: '' }
 
 const defaultLayout: LayoutState = {
   sidebarWidth: RAIL_WIDTH.initial,
@@ -60,18 +60,19 @@ export function storePreferredModel(model: string) {
 }
 
 export function pathsFromDefaults(defaults: Defaults): RuntimePaths {
-  return { dbPath: defaults.dbPath, messagesPath: defaults.messagesPath, outDir: defaults.outDir }
+  return { messagesPath: defaults.messagesPath, outDir: defaults.outDir }
 }
 
 export function hasRuntimePath(paths: RuntimePaths) {
-  return Boolean(paths.dbPath || paths.messagesPath || paths.outDir)
+  return Boolean(paths.messagesPath || paths.outDir)
 }
 
+// Only the two locations are read. A path to a database that an earlier
+// build remembered is left behind: an update reads Messages itself.
 export function readStoredPaths(fallback: RuntimePaths): RuntimePaths {
   const stored = read<RuntimePaths>(PATHS_KEY)
   if (!stored) return fallback
   return {
-    dbPath: stored.dbPath || fallback.dbPath,
     messagesPath: stored.messagesPath || fallback.messagesPath,
     outDir: stored.outDir || fallback.outDir,
   }

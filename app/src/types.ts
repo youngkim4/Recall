@@ -6,10 +6,8 @@ export type ViewKey = 'home' | 'analyze' | 'explore' | 'ask' | 'reports' | 'jobs
 export type Defaults = {
   defaultModel: string
   models: string[]
-  dbPath: string
   messagesPath: string
   outDir: string
-  hasDb: boolean
   hasMessages: boolean
   reports: ReportFile[]
   contactNames?: ContactNamesSummary
@@ -37,7 +35,6 @@ export type SetupMarker = {
   completed?: boolean
   skipped?: boolean
   firstWordsShown?: boolean
-  pickedDbPath?: string
 }
 
 export type SetupStatus = {
@@ -62,7 +59,6 @@ export type SetupImportResult = {
   firstYear?: number | null
   lastYear?: number | null
   contactsSkipped?: boolean
-  recovered?: number
 }
 
 export type FirstWordsEntry = {
@@ -87,8 +83,8 @@ export type FirstWordsPayload = {
   }
 }
 
+// where the archive is kept and where reports are saved; no database is among them
 export type RuntimePaths = {
-  dbPath: string
   messagesPath: string
   outDir: string
 }
@@ -144,7 +140,6 @@ export type ContactsResponse = {
   contacts: Contact[]
   source: 'messages' | 'database'
   messagesPath?: string
-  dbPath?: string
   contactNameCount?: number
   archive?: ArchiveSummary
 }
@@ -376,7 +371,6 @@ export type Job = {
     firstYear?: number | null
     lastYear?: number | null
     contactsSkipped?: boolean
-    recovered?: number
   } | null
   error?: string | null
 }
