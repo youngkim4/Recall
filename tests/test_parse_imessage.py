@@ -279,6 +279,79 @@ class TestExtractTextFromAttributedBody:
         view.release()
         assert extract_text_from_attributed_body(view) is None
 
+    def test_owner_check_counts_where_the_old_rule_differs(self, tmp_path, capsys):
+        """scripts/verify_decoder_counts.py keeps a copy of the old rule and
+        prints numbers only. Here it reads a database of Apple's archives."""
+        import importlib.util
+        from pathlib import Path
+
+        script = Path(__file__).parent.parent / "scripts" / "verify_decoder_counts.py"
+        spec = importlib.util.spec_from_file_location("verify_decoder_counts", script)
+        check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(check)
+
+        names = [
+            "ascii_127",         # the two rules agree
+            "spaces_both_ends",  # the old rule trimmed the ends
+            "zwj_emoji",         # the old rule dropped the joiners
+            "whitespace_only",   # the old rule gave a name from inside the archive
+            "ascii_128",         # the old rule lost the last byte
+            "emoji_end_130",     # the same, and that split the emoji
+            "ascii_300",         # the old rule kept 43 bytes
+            "ascii_70000",       # the old rule kept 28,687 bytes
+            "empty",             # None from the two rules
+            "not_text",          # no marker: the old rule gave a class name
+        ]
+        db_path = tmp_path / "chat.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE message (ROWID INTEGER PRIMARY KEY, text TEXT, attributedBody BLOB)")
+        conn.executemany(
+            "INSERT INTO message (text, attributedBody) VALUES (NULL, ?)",
+            [(self._blob(name),) for name in names],
+        )
+        # not checked: a row that has text, and a row that has no blob
+        conn.execute("INSERT INTO message (text, attributedBody) VALUES ('has text', ?)", (self._blob("ascii_300"),))
+        conn.execute("INSERT INTO message (text, attributedBody) VALUES (NULL, NULL)")
+        conn.commit()
+        conn.close()
+        before = db_path.read_bytes()
+
+        assert check.main(["--db", str(db_path)]) == 0
+        printed = capsys.readouterr().out
+        conn = check.open_read_only(db_path)
+        counts = check.tally(check.read_blobs(conn))
+        with pytest.raises(sqlite3.OperationalError):
+            conn.execute("DELETE FROM message")
+        conn.close()
+
+        assert check.old_extract_text(self._blob("ascii_300")) == self._stored("ascii_300")[:43]
+        assert {key: count for key, count in counts.items() if count} == {
+            "checked": 10,
+            "differ": 8,
+            "old none": 1,
+            "new none": 2,
+            "no marker": 1,
+            "differ, new none": 1,
+            "under 128": 3,
+            ("under 128", "only the ends"): 1,
+            ("under 128", "characters dropped"): 1,
+            ("under 128", "cut or fragment"): 1,
+            "128 to 255": 2,
+            ("128 to 255", "cut or fragment"): 2,
+            "256 and more": 2,
+            ("256 and more", "cut or fragment"): 2,
+        }
+        assert "Rows with text NULL and attributedBody not NULL: 10" in printed
+        assert "Rows where the old rule and the new rule differ: 8" in printed
+        assert "Rows where the new rule gives None: 2" in printed
+        # numbers only: no text of a message, and the database is as it was
+        archived = [self._stored(name).strip() for name in names if self._manifest()[name]["utf8_hex"]]
+        starts = [text[:8] for text in archived if len(text) >= 8]
+        assert len(starts) == 6
+        assert not any(start in printed for start in starts)
+        assert db_path.read_bytes() == before
+
+        assert check.main(["--db", str(tmp_path / "missing.db")]) == 1
 
 
 class TestExtractMessages:
