@@ -65,8 +65,18 @@
     margin-top: var(--s-8);
   }
 
-  .detail > .detail-body > * + .section {
+  /* the facts and the people keep together, in a column of their own where
+     there is room for one */
+  .detail > .detail-body > * + .section,
+  .detail > .detail-body > * + .detail-side,
+  .detail-side > * + .section {
     margin-top: var(--s-12);
+  }
+
+  /* with nothing to say it takes no room */
+  .detail-side:empty,
+  .detail-side.is-waiting {
+    display: none;
   }
 
   /* ---- people: everyone who wrote in a group, busiest first. Opened, the
@@ -97,4 +107,156 @@
     box-shadow: inset 0 1px 0 var(--line);
   }
 
+  /* ---- the pane, wide ----
+     The pane is as wide as the window lets it be, up to a cap, and what is
+     in it answers to that width and never to the window: the list beside it
+     can be dragged. Until two columns fit, everything keeps to one column as
+     wide as a page. */
+  .analyze-detail {
+    --wide-max: 80rem;
+    --side-w: 20rem;
+    max-width: calc(var(--wide-max) + var(--page-pad) * 2);
+  }
+
+  .analyze-detail > * {
+    max-width: var(--page-max);
+  }
+
+  /* In a pane too narrow for a bar beside each name, the columns that are
+     left would not fit either: the bar's place goes to the name. */
+  @container detail (max-width: 20rem) {
+    .analyze-detail .ranked-row {
+      grid-template-columns: 1.25rem minmax(0, 1fr) 4.5rem 2.5rem;
+    }
+
+    .analyze-detail .ranked-bar {
+      display: none;
+    }
+  }
+
+  /* 52rem is a main column of 480px beside the side column: a 1440 window
+     with the list at its usual width */
+  @container detail (min-width: 52rem) {
+    /* the name and the report bar run the whole width, so the ways onward sit
+       over the right edge of the column below them */
+    .analyze-detail > * {
+      max-width: none;
+    }
+
+    /* The chart, and the messages under it, on the left; what they come to on
+       the right. Only the second row can stretch, so a tall right column
+       lengthens that row and never opens a gap under the chart. */
+    .analyze-detail > .detail-body:has(> .detail-side > *) {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) var(--side-w);
+      grid-template-rows: auto 1fr;
+      column-gap: var(--s-8);
+    }
+
+    .analyze-detail > .detail-body > :first-child {
+      grid-area: 1 / 1;
+    }
+
+    .analyze-detail > .detail-body > .detail-side ~ * {
+      grid-area: 2 / 1;
+    }
+
+    /* Its top edge is level with the capitals of the legend beside it, which
+       stand in the middle of their line, and not with the top of that line. */
+    .analyze-detail > .detail-body > .detail-side {
+      grid-area: 1 / 2 / span 2;
+      align-self: start;
+      margin-top: 0;
+      /* a web engine that has no cap unit keeps the line above */
+      margin-top: calc((var(--lh-body) - 1cap) / 2);
+    }
+
+    /* while the figures are worked out, a card holds their place */
+    .analyze-detail > .detail-body > .detail-side.is-waiting {
+      display: block;
+    }
+
+    /* The facts are a card here: a label over what it comes to, and between
+       one fact and the next a hairline that starts and ends where the words do. */
+    .detail-side > .facts,
+    .detail-side > .people {
+      border-radius: var(--r-lg);
+      background: var(--bg-raised);
+      box-shadow: var(--shadow-raised);
+    }
+
+    .detail-side > .facts > div {
+      display: block;
+      padding: var(--s-3) var(--s-4);
+    }
+
+    .detail-side > .facts > div + div {
+      padding-top: 0;
+    }
+
+    .detail-side > .facts > div + div::before {
+      content: '';
+      display: block;
+      height: 1px;
+      margin-bottom: var(--s-3);
+      background: var(--line);
+    }
+
+    .detail-side > .facts dt {
+      font-size: var(--t-small);
+      line-height: var(--lh-small);
+    }
+
+    /* a long one runs on to a second line; none is cut short */
+    .detail-side > .facts dd {
+      margin-top: 0.125rem;
+      overflow-wrap: anywhere;
+    }
+
+    /* In a group the people are a second card under the first, in the same
+       rhythm: 12px above and below each line of words, a hairline between
+       rows. A row keeps its 8px inset, so its words stand under the heading
+       and its hairline starts and ends where they do. */
+    .detail-side > .people {
+      margin-top: var(--s-4);
+      padding: var(--s-3) var(--s-4) 0;
+    }
+
+    .detail-side .people .row {
+      margin-bottom: 0;
+      padding-block: calc(var(--s-3) + 1px) var(--s-3);
+      border-radius: 0;
+      background: linear-gradient(var(--line), var(--line)) no-repeat var(--s-2) 0 / calc(100% - var(--s-4)) 1px;
+    }
+
+    /* the first row stands under the heading, with no line over it */
+    .detail-side .people > .rows > .row:first-child {
+      padding-top: var(--s-2);
+      background: none;
+    }
+
+    /* Your own row takes its line from the part that holds it, which moves
+       away from the rows above while places between them are left out. */
+    .detail-side .people-own {
+      box-shadow: inset 0 1px 0 var(--line);
+    }
+
+    .detail-side .people-own .row {
+      background: none;
+    }
+
+    .detail-side > .people > .section-note {
+      margin-top: 0;
+      padding-bottom: var(--s-3);
+    }
+
+    /* no room for a bar beside a name here; the share says the same thing */
+    .detail-side .ranked-row {
+      grid-template-columns: 1.25rem minmax(0, 1fr) 4.5rem 2.5rem;
+    }
+
+    .detail-side .ranked-bar {
+      display: none;
+    }
+  }
 }

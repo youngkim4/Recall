@@ -5,7 +5,7 @@ import type { Contact, PreviewPayload, ReportFile } from '../../types'
 import { ChevronLeftIcon } from '../Icons'
 import { Thread, type ThreadMessage } from '../ui/Thread'
 import { VoicesSkeleton } from '../ui/VoicesOverTime'
-import { Figures } from './Figures'
+import { FactsSkeleton, Figures } from './Figures'
 import { ReportBar } from './ReportBar'
 
 type Scope = { since: string; until: string }
@@ -88,7 +88,7 @@ export function ConversationDetail({
 
   return (
     <section className="pane pane-detail" aria-label={title}>
-      <div className="detail arrive-each">
+      <div className="detail analyze-detail arrive-each">
         <button type="button" className="pane-back btn quiet" onClick={onShowList}>
           <ChevronLeftIcon />
           Conversations
@@ -146,8 +146,12 @@ export function ConversationDetail({
             ) : null}
           </div>
         ) : failed ? null : (
-          <div className="section">
-            <VoicesSkeleton />
+          // the shape the figures will have, so nothing moves when they arrive
+          <div className="detail-body" aria-hidden="true">
+            <div className="section">
+              <VoicesSkeleton />
+            </div>
+            <FactsSkeleton />
           </div>
         )}
       </div>
