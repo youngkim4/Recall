@@ -5,21 +5,17 @@ import ui_server
 
 
 def write_messages_csv(path, rows):
+    """Rows name a direction for readability; the export itself stores is_from_me."""
     frame = pd.DataFrame(
         rows,
         columns=["message_id", "chat_id", "timestamp", "direction", "text", "sender"],
     )
+    frame = frame.assign(is_from_me=frame["direction"].eq("outgoing").astype(int)).drop(columns="direction")
     frame.to_csv(path, index=False)
     return path
 
 
-@pytest.fixture(autouse=True)
-def fresh_bundle_cache():
-    with ui_server._ASK_CACHE_LOCK:
-        ui_server._ASK_CACHE.update({"sig": None, "df": None, "catalog": None, "names": None})
-    yield
-    with ui_server._ASK_CACHE_LOCK:
-        ui_server._ASK_CACHE.update({"sig": None, "df": None, "catalog": None, "names": None})
+pytestmark = pytest.mark.usefixtures("fresh_bundle_cache")
 
 
 def test_first_words_basic(tmp_path, monkeypatch):
@@ -84,7 +80,37 @@ def test_first_words_unnamed_fallback_masks_labels(tmp_path, monkeypatch):
     entries = ui_server.first_words_payload(csv)["entries"]
     assert entries, "unnamed fallback should still produce entries"
     for entry in entries:
-        assert "+1555000000" not in entry["person"], "full numbers must never label entries"
+        # someone not in Contacts has no name here; the interface labels them
+        # from the id, the same way everywhere, and never with the full number
+        assert entry["person"] == ""
+        assert entry["chatId"].startswith("+1555000000")
+
+
+def test_first_words_reads_direction_from_a_real_export(tmp_path, monkeypatch):
+    # a real export has is_from_me and no direction column
+    monkeypatch.setattr(ui_server, "resolve_contact_names", lambda handles, **_: {
+        "+15550000001": "Mom",
+        "+15550000002": "Sam Park",
+    })
+    frame = pd.DataFrame(
+        [
+            (1, "2014-06-12 09:00:00", "+15550000001", "call me when you land", "+15550000001", "", 0),
+            (2, "2014-06-12 09:05:00", "+15550000001", "landed safe, love you", "+15550000001", "", 1),
+            (3, "2016-02-01 12:00:00", "+15550000002", "yo is this sam?", "+15550000002", "", 1),
+            (4, "2016-02-01 12:10:00", "+15550000002", "yeah who is this", "+15550000002", "", 0),
+        ],
+        columns=["message_id", "timestamp", "sender", "text", "chat_id", "chat_display_name", "is_from_me"],
+    )
+    csv = tmp_path / "messages.csv"
+    frame.to_csv(csv, index=False)
+
+    by_person = {entry["person"]: entry for entry in ui_server.first_words_payload(csv)["entries"]}
+
+    assert by_person["Mom"]["direction"] == "incoming"
+    assert by_person["Mom"]["reply"]["direction"] == "outgoing"
+    assert by_person["Mom"]["reply"]["text"] == "landed safe, love you"
+    assert by_person["Sam Park"]["direction"] == "outgoing"
+    assert by_person["Sam Park"]["reply"]["direction"] == "incoming"
 
 
 def test_first_words_missing_csv(tmp_path):

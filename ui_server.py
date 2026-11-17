@@ -14,7 +14,6 @@ import traceback
 import uuid
 from collections import OrderedDict
 from datetime import datetime
-from html import escape
 import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -31,7 +30,6 @@ class LoopbackHTTPServer(ThreadingHTTPServer):
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-import markdown as markdown_lib
 import pandas as pd
 from openai import OpenAI
 
@@ -47,18 +45,34 @@ from contact_names import (
 )
 from local_store import clear_cache_namespace, get_cache_entry, set_cache_entry, stable_cache_key
 from conversation import (
+    activity_series,
     compute_stats,
+    day_totals,
+    direction_word,
+    fill_months,
     filter_conversation,
+    group_chat_mask,
+    hour_by_weekday,
+    is_group_chat,
     load_attachments,
     load_messages,
     load_reactions,
+    month_points,
     parse_boolish,
     progression_series,
+    received_mask,
     sanitize_filename,
+    sent_mask,
+    within_dates,
 )
+from day_view import DAY_LIMIT, day_window
+from group_names import derive_group_names
+from group_people import group_speakers
+from message_text import ATTACHMENT_PLACEHOLDER, attachment_label, clip_text, display_text
 from openai_client import _call_openai, _call_openai_stream
 from parse_imessage import extract_attachments, extract_messages, extract_reactions, list_contacts
 from retrieval_planner import build_catalog, plan_retrieval
+from safe_html import story_html
 import semantic_index as sem
 from recall_paths import (
     DATA_DIR,
@@ -238,6 +252,22 @@ def update_job(job_id: str, **fields):
             JOBS[job_id]["updatedAt"] = datetime.now().isoformat(timespec="seconds")
 
 
+_REPORT_HEADING = re.compile(r"^# Conversation Analysis - (.+)$", re.MULTILINE)
+
+
+def report_contact(path: Path) -> str:
+    """The conversation a saved report is about. A file name cannot hold an
+    email address, so the id is read from the report's own heading; the file
+    name stands in when there is none."""
+    markdown_path = path.with_suffix(".md")
+    try:
+        with markdown_path.open(encoding="utf-8") as report:
+            match = _REPORT_HEADING.search(report.readline())
+    except OSError:
+        match = None
+    return match.group(1).strip() if match else path.stem.removeprefix("analysis_")
+
+
 def list_report_files():
     reports = []
     out_dir = OUT_DIR
@@ -246,7 +276,7 @@ def list_report_files():
     for path in sorted(out_dir.glob("analysis_*.*"), key=lambda p: p.stat().st_mtime, reverse=True):
         if path.suffix.lower() not in {".html", ".md"}:
             continue
-        contact = path.stem.removeprefix("analysis_")
+        contact = report_contact(path)
         reports.append({
             "name": path.name,
             "path": str(path),
@@ -334,18 +364,26 @@ def export_database(db_path: Path, messages_path: Path):
     }
 
 
-def create_job(action: str, payload: dict) -> dict:
-    job_id = uuid.uuid4().hex[:12]
-    job = {
-        "id": job_id,
+def job_record(action: str, payload: dict) -> dict:
+    """A job as it is listed: what it does, for which conversation if any, and how far along it is."""
+    now = datetime.now().isoformat(timespec="seconds")
+    return {
+        "id": uuid.uuid4().hex[:12],
         "action": action,
+        # the conversation a report is written about; "" for work on the whole archive
+        "contact": str(payload.get("contact") or ""),
         "status": "queued",
-        "createdAt": datetime.now().isoformat(timespec="seconds"),
-        "updatedAt": datetime.now().isoformat(timespec="seconds"),
+        "createdAt": now,
+        "updatedAt": now,
         "logs": [],
         "result": None,
         "error": None,
     }
+
+
+def create_job(action: str, payload: dict) -> dict:
+    job = job_record(action, payload)
+    job_id = job["id"]
     with JOBS_LOCK:
         JOBS[job_id] = job
         # prune finished jobs so a long session doesn't grow memory unbounded
@@ -636,49 +674,79 @@ def compute_dynamics(conv: pd.DataFrame) -> dict:
         lifetime_avg = float(monthly_counts.mean())
         recent_avg = float(monthly_counts.tail(3).mean())
         out["volumeTrendPct"] = int(round((recent_avg - lifetime_avg) / lifetime_avg * 100))
-    out["quietDays"] = int((pd.Timestamp.now() - last_ts).days)
 
     if "sender" in frame.columns:
-        inbound = frame[frame["sender"].fillna("").astype(str) != ""]
-        if not inbound.empty and inbound["sender"].astype(str).nunique() > 1:
-            shares = inbound.groupby(inbound["sender"].astype(str)).size().sort_values(ascending=False)
-            total = int(shares.sum())
-            speaker_names = resolve_contact_names(list(shares.index[:5]))
-            out["topSpeakers"] = [
-                {
-                    "name": speaker_names.get(sender) or contact_label({"chatId": sender}),
-                    "count": int(count),
-                    "share": round(int(count) / total, 3),
-                }
-                for sender, count in shares.head(5).items()
-            ]
+        # A row you sent can carry the handle it went to, so speakers are counted
+        # from received rows. A row that does not say could be one of those too.
+        received = frame[received_mask(frame["is_from_me"])] if "is_from_me" in frame.columns else frame
+        senders = received["sender"].fillna("").astype(str).str.strip()
+        senders = senders[senders.ne("")]
+        if senders.nunique() > 1:
+            saved = dict(resolve_contact_names(sorted(senders.unique())))
+            # everyone is listed, so a place in the list is a true place; a name is
+            # the saved one or "", and the interface labels the rest
+            speaker_count, speakers = group_speakers(senders, saved)
+            if speaker_count > 1:
+                out["speakerCount"] = speaker_count
+                out["speakers"] = speakers
     return out
+
+
+RECENT_MESSAGE_COUNT = 18
+RECENT_MESSAGE_LIMIT = 240
+# Bump when the preview changes in shape or in what a figure counts, so that a
+# stored one is not served as it was. Version 7: a row that does not say who
+# sent it is no longer counted as received, and names follow Contacts.
+PREVIEW_PAYLOAD_VERSION = 7
+
+
+def sent_by_me(value) -> bool | None:
+    """Who sent a message, the way every payload says it: True for you, False
+    for someone else, None when the export does not say. One reading of
+    is_from_me (parse_boolish) for everything the interface is sent."""
+    from_me = parse_boolish(value)
+    return None if pd.isna(from_me) else int(from_me) == 1
+
+
+def recent_message_payload(row, in_group: bool, sender_names: dict[str, str]) -> dict:
+    mine = sent_by_me(row.get("is_from_me"))
+    # who wrote it matters in a group; with one person the page already says
+    sender = _row_str(row, "sender") if in_group and mine is False else ""
+    return {
+        "timestamp": row["timestamp"],
+        "text": clip_text(display_text(row.get("text")), RECENT_MESSAGE_LIMIT),
+        "attachment": attachment_label(row.get("attachment_types")),
+        "isFromMe": mine,
+        "sender": sender,
+        "senderName": str(sender_names.get(sender) or ""),
+    }
 
 
 def preview_payload(messages_path: Path, contact: str, model: str, since=None, until=None):
     # the warm bundle replaces what used to be TWO full CSV parses per preview
     # (one here, one inside estimate_cost) -- ~4s of dead 'Calculating...' time
     full_df, _, _ = cached_messages_bundle(messages_path)
-    df = full_df
     since_dt = parse_optional_date(since)
     until_dt = parse_optional_date(until)
-    if since_dt:
-        df = df[df["timestamp"] >= pd.Timestamp(since_dt)]
-    if until_dt:
-        df = df[df["timestamp"] <= pd.Timestamp(until_dt)]
+    df = within_dates(full_df, since_dt, until_dt)
     conv = filter_conversation(df, contact)
     if conv.empty:
         raise ValueError(f"No messages found for contact '{contact}'")
 
-    attachments_df = load_attachments(str(messages_path))
-    reactions_df = load_reactions(str(messages_path))
+    attachments_df = load_attachments(str(messages_path), since_dt, until_dt)
+    reactions_df = load_reactions(str(messages_path), since_dt, until_dt)
     stats = compute_stats(conv, attachments_df, reactions_df)
-    monthly = progression_series(conv).tail(72)
+    monthly = fill_months(progression_series(conv))
+    # the dates are chosen from the whole conversation, so this does not narrow with them
+    daily = day_totals(conv if df is full_df else filter_conversation(full_df, contact))
     estimate = estimate_cost(
         str(messages_path), contact, model=model,
         since=since_dt, until=until_dt, frame=df,
     )
-    recent = conv.tail(18)
+    recent = conv.tail(RECENT_MESSAGE_COUNT)
+    in_group = is_group_chat(str(contact))
+    recent_senders = sorted({_row_str(row, "sender") for _, row in recent.iterrows()} - {""}) if in_group else []
+    sender_names = dict(resolve_contact_names(recent_senders)) if recent_senders else {}
 
     return {
         "stats": {
@@ -709,14 +777,9 @@ def preview_payload(messages_path: Path, contact: str, model: str, since=None, u
             }
             for _, row in monthly.iterrows()
         ],
-        "recentMessages": [
-            {
-                "timestamp": row["timestamp"],
-                "text": str(row.get("text", ""))[:240],
-                "isFromMe": row.get("is_from_me"),
-            }
-            for _, row in recent.iterrows()
-        ],
+        "activity": activity_series(conv),
+        "daily": daily,
+        "recentMessages": [recent_message_payload(row, in_group, sender_names) for _, row in recent.iterrows()],
     }
 
 
@@ -726,9 +789,12 @@ def companion_data_path(messages_path: Path, suffix: str) -> Path:
 
 def preview_cache_key(messages_path: Path, contact: str, model: str, since=None, until=None) -> tuple:
     return (
+        PREVIEW_PAYLOAD_VERSION,
         file_cache_signature(messages_path),
         file_cache_signature(companion_data_path(messages_path, "_attachments.csv")),
         file_cache_signature(companion_data_path(messages_path, "_reactions.csv")),
+        # a preview holds names: the people in a group, who wrote a recent message
+        file_cache_signature(CONTACTS_CACHE_PATH),
         str(contact or ""),
         str(model or ""),
         str(since or ""),
@@ -794,17 +860,53 @@ def markdown_section(text: str, heading: str, stop_at_next_heading: bool = True)
 
 
 def markdown_to_html(text: str) -> str:
-    if not text:
-        return ""
-    escaped = escape(text)
-    # escaping turns blockquote markers into &gt; before markdown can see
-    # them; restore line-leading ones so quoted messages render as quotes
-    escaped = re.sub(r"(?m)^(\s*)&gt; ?", r"\1> ", escaped)
-    return markdown_lib.markdown(
-        escaped,
-        extensions=["extra", "sane_lists"],
-        output_format="html5",
-    )
+    # The story is written by a model from other people's words, and the page
+    # puts it in as HTML. safe_html decides what that HTML may hold, for this
+    # page and for the saved report alike.
+    return story_html(text)
+
+
+_REPORT_DAYS = re.compile(r"^- First / Last: (\d{4}-\d{2}-\d{2})[^/\n]* / (\d{4}-\d{2}-\d{2})", re.MULTILINE)
+_REPORT_SCOPE = re.compile(r"^- Scope: (.*)$", re.MULTILINE)
+_DAY = r"\d{4}-\d{2}-\d{2}"
+_SCOPE_BETWEEN = re.compile(rf"({_DAY}) to ({_DAY})")
+_SCOPE_FROM = re.compile(rf"from ({_DAY})")
+_SCOPE_THROUGH = re.compile(rf"through ({_DAY})")
+
+
+def _stated_scope(overview: str) -> tuple[str | None, str | None] | None:
+    """The dates a report says it was asked for (scope_text in reports wrote
+    the line), or None when it does not say in words that can be read."""
+    line = _REPORT_SCOPE.search(overview)
+    stated = line.group(1).strip() if line else ""
+    if stated == "all dates":
+        return (None, None)
+    if between := _SCOPE_BETWEEN.fullmatch(stated):
+        return (between.group(1), between.group(2))
+    if since := _SCOPE_FROM.fullmatch(stated):
+        return (since.group(1), None)
+    if until := _SCOPE_THROUGH.fullmatch(stated):
+        return (None, until.group(1))
+    return None
+
+
+def report_scope(text: str) -> tuple[str | None, str | None]:
+    """The days a saved report covers: (since, until), either side open.
+
+    A report states the dates it was asked for, and those are used: reactions
+    and attachments that fell inside them after the last message are then
+    counted, as they were when the report was written. A report written before
+    it stated them is taken to cover the days of its first and last message. A
+    report that says neither covers the whole conversation.
+
+    Only the Overview is read. The story and the events are a model's words
+    and may hold a line that looks like either."""
+    overview = markdown_section(text or "", "Overview")
+    stated = _stated_scope(overview)
+    if stated is not None:
+        return stated
+    match = _REPORT_DAYS.search(overview)
+    return (match.group(1), match.group(2)) if match else (None, None)
 
 
 def report_file(label: str, path: str, kind: str) -> dict:
@@ -822,6 +924,50 @@ def report_file(label: str, path: str, kind: str) -> dict:
     }
 
 
+_REPORT_FILE_NAME = re.compile(r"(?:analysis_.+\.(?:md|html)|events_timeline_.+\.csv)", re.IGNORECASE)
+_REPORT_FILE_TYPES = {
+    ".md": "text/markdown; charset=utf-8",
+    ".html": "text/html; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8",
+}
+
+
+def served_report_file(raw_path: str) -> Path | None:
+    """The saved report file a link may open, or None. Links to report files
+    are the only use of the route, so it serves nothing else in the data
+    folder: not the messages, not the key file. A symbolic link is followed
+    first, and the file it leads to is the one judged."""
+    try:
+        file_path = safe_path(raw_path)
+        if not file_path or not file_path.is_file() or not ensure_under_root(file_path):
+            return None
+    except (OSError, ValueError):
+        return None
+    return file_path if _REPORT_FILE_NAME.fullmatch(file_path.name) else None
+
+
+# A saved report page: an origin of its own, no script, nothing fetched. Its
+# styles are in the page, so those are allowed and nothing else is.
+_REPORT_PAGE_POLICY = "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+
+
+def report_file_headers(file_path: Path) -> dict[str, str]:
+    """A report is made from a model's words about other people's messages.
+    The browser is told to take the file for the type it is given. An HTML
+    report opens in an origin of its own, where no script runs and nothing is
+    fetched: a report saved by an older build can hold a handler in its text,
+    and it must not be able to run or to send the page anywhere. The other
+    report files are text and run nothing."""
+    suffix = file_path.suffix.lower()
+    headers = {
+        "Content-Type": _REPORT_FILE_TYPES.get(suffix, "text/plain; charset=utf-8"),
+        "X-Content-Type-Options": "nosniff",
+    }
+    if suffix == ".html":
+        return {**headers, "Content-Security-Policy": _REPORT_PAGE_POLICY}
+    return headers
+
+
 def file_cache_signature(path: Path | str | None) -> tuple | None:
     if not path:
         return None
@@ -831,6 +977,12 @@ def file_cache_signature(path: Path | str | None) -> tuple | None:
     except OSError:
         return (str(file_path), None, None)
     return (str(file_path), stat.st_mtime_ns, stat.st_size)
+
+
+# Bump when an opened report changes in shape or in how its story is rendered,
+# so that a stored one is not served as it was. Version 3: the story HTML is
+# written from an allowlist, and stories stored before that are not.
+ANALYSIS_PAYLOAD_VERSION = 4
 
 
 def analysis_cache_key(
@@ -844,6 +996,7 @@ def analysis_cache_key(
     html_path: str = None,
 ) -> tuple:
     return (
+        ANALYSIS_PAYLOAD_VERSION,
         file_cache_signature(messages_path),
         str(contact or ""),
         str(model or ""),
@@ -959,18 +1112,22 @@ def build_analysis_payload(
     events_path: str = None,
     html_path: str = None,
 ) -> dict:
-    preview, _ = cached_preview_payload(messages_path, contact, model, since=since, until=until)
-    stats = preview["stats"]
     summary = ""
-
     if report_path:
         report_file_path = safe_path(report_path)
         if report_file_path and report_file_path.exists():
-            summary = markdown_section(
-                report_file_path.read_text(encoding="utf-8"),
-                "Summary",
-                stop_at_next_heading=False,
-            )
+            report_text = report_file_path.read_text(encoding="utf-8")
+            summary = markdown_section(report_text, "Summary", stop_at_next_heading=False)
+            if not (since or until):
+                # the figures beside a story are for the days the story was written about
+                since, until = report_scope(report_text)
+
+    try:
+        preview, _ = cached_preview_payload(messages_path, contact, model, since=since, until=until)
+    except ValueError:
+        # the archive no longer holds those days; the whole conversation is the closest truth
+        preview, _ = cached_preview_payload(messages_path, contact, model)
+    stats = preview["stats"]
 
     events = []
     if events_path:
@@ -1004,17 +1161,16 @@ def build_analysis_payload(
 
     attachments = stats.get("attachments") or {}
     reactions = stats.get("reactions") or {}
-    display_name = resolve_contact_names([contact]).get(contact, "")
+    # the names the conversation list uses: saved, given to a group, or made from its people
+    _df, _catalog, names = cached_messages_bundle(messages_path)
     return {
+        # the same chart and figures as the conversation view, from the same fields
+        **preview,
         "contact": contact,
-        "contactDisplayName": display_name,
+        "contactDisplayName": str(names.get(str(contact)) or ""),
         "generatedAt": datetime.now().isoformat(timespec="seconds"),
         "summary": summary,
         "summaryHtml": markdown_to_html(summary),
-        "stats": stats,
-        "estimate": preview["estimate"],
-        "monthly": preview["monthly"],
-        "recentMessages": preview["recentMessages"],
         "events": events,
         "patterns": [
             {
@@ -1067,7 +1223,7 @@ def group_display_names_from_database(db_path: Path | None, chat_ids) -> dict[st
     wanted = sorted({
         str(chat_id)
         for chat_id in chat_ids
-        if str(chat_id or "").startswith("chat")
+        if is_group_chat(str(chat_id or ""))
     })
     if not wanted:
         return {}
@@ -1111,7 +1267,7 @@ def fill_group_display_names(df: pd.DataFrame, db_path: Path | None = None) -> p
 
     display_names = result["display_name"].fillna("").astype(str).str.strip()
     chat_ids = result["chat_id"].fillna("").astype(str)
-    missing_group_names = display_names.eq("") & chat_ids.str.startswith("chat")
+    missing_group_names = display_names.eq("") & group_chat_mask(chat_ids)
     if not missing_group_names.any():
         result["display_name"] = display_names
         return result
@@ -1126,37 +1282,69 @@ def fill_group_display_names(df: pd.DataFrame, db_path: Path | None = None) -> p
     return result
 
 
+def name_groups_after_their_people(df: pd.DataFrame, names: dict[str, str]) -> pd.DataFrame:
+    """Give group chats that still have no display name the one derived from
+    the people in them (see group_names)."""
+    if df.empty:
+        return df
+    chat_ids = df["chat_id"].astype(str)
+    current = df["display_name"].fillna("").astype(str).str.strip()
+    unnamed_group = current.eq("") & group_chat_mask(chat_ids)
+    derived = chat_ids.map(lambda chat_id: str(names.get(chat_id) or ""))
+    return df.assign(display_name=current.where(~unnamed_group, derived))
+
+
 def contacts_from_messages(messages_path: Path, limit: int = 40, name_lookup=None, db_path: Path | None = None) -> pd.DataFrame:
     """List conversations from the same messages CSV used for preview/reporting."""
-    df, _, _ = cached_messages_bundle(messages_path)
+    df, catalog, names = cached_messages_bundle(messages_path)
     if "chat_id" not in df.columns:
         raise ValueError("messages CSV must contain a 'chat_id' column")
 
-    conversations = df[df["chat_id"].notna()].copy()
-    if conversations.empty:
-        return pd.DataFrame(columns=["chat_id", "message_count", "first_msg", "last_msg", "is_group", "display_name"])
-
-    conversations["chat_id"] = conversations["chat_id"].astype(str)
-    aggregations = {
-        "message_count": ("chat_id", "size"),
-        "first_msg": ("timestamp", "min"),
-        "last_msg": ("timestamp", "max"),
-    }
-    if "chat_display_name" in conversations.columns:
-        conversations["chat_display_name"] = conversations["chat_display_name"].fillna("").astype(str).str.strip()
-        aggregations["display_name"] = ("chat_display_name", first_nonempty)
-
-    grouped = (
-        conversations
-        .groupby("chat_id", as_index=False)
-        .agg(**aggregations)
-    )
-    if "display_name" not in grouped.columns:
-        grouped["display_name"] = ""
-    grouped["is_group"] = grouped["chat_id"].str.startswith("chat").astype(int)
+    grouped = catalog.assign(is_group=group_chat_mask(catalog["chat_id"]).astype(int))
     grouped = grouped.sort_values(["message_count", "last_msg"], ascending=[False, False])
     grouped = fill_group_display_names(grouped.head(limit), db_path)
+    grouped = name_groups_after_their_people(grouped, names)
     return decorate_contacts_frame(grouped, name_lookup)
+
+
+def archive_summary(messages_path: Path) -> dict:
+    """Size and span of the whole archive. The conversation list is capped, so
+    totals come from here and never from adding up that list."""
+    empty = {"messages": 0, "conversations": 0, "firstMessage": None, "lastMessage": None}
+    if not path_exists(messages_path):
+        return empty
+    _df, catalog, _names = cached_messages_bundle(messages_path)
+    if catalog.empty:
+        return empty
+    first, last = catalog["first_msg"].min(), catalog["last_msg"].max()
+    return {
+        "messages": int(catalog["message_count"].sum()),
+        "conversations": int(len(catalog)),
+        "firstMessage": None if pd.isna(first) else first.isoformat(),
+        "lastMessage": None if pd.isna(last) else last.isoformat(),
+    }
+
+
+_PATTERNS_CACHE: dict = {"sig": None, "value": None}
+_PATTERNS_LOCK = threading.Lock()
+
+
+def archive_patterns(messages_path: Path) -> dict:
+    """The shape of the whole archive, for the Overview: messages by month in
+    both voices, by day, and by hour of each weekday. Worked out once per
+    export."""
+    if not path_exists(messages_path):
+        nothing = pd.DataFrame({"timestamp": pd.to_datetime([])})
+        return {"monthly": [], "daily": day_totals(nothing), "rhythm": hour_by_weekday(nothing)}
+    sig = file_cache_signature(messages_path)
+    # held while it is worked out: requests that arrive together wait for one answer
+    with _PATTERNS_LOCK:
+        if sig and _PATTERNS_CACHE["sig"] == sig:
+            return _PATTERNS_CACHE["value"]
+        df, _catalog, _names = cached_messages_bundle(messages_path)
+        patterns = {"monthly": month_points(df), "daily": day_totals(df), "rhythm": hour_by_weekday(df)}
+        _PATTERNS_CACHE.update({"sig": sig, "value": patterns})
+        return patterns
 
 
 def count_display_names(df: pd.DataFrame) -> int:
@@ -1189,19 +1377,7 @@ def _row_str(row, key: str, default: str = "") -> str:
     return str(value)
 
 
-def _is_from_me_value(value):
-    """Return a JSON-safe outbound flag (0/1) or None."""
-    if value is None:
-        return None
-    try:
-        if pd.isna(value):
-            return None
-    except (TypeError, ValueError):
-        pass
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return value
+MESSAGE_TEXT_LIMIT = 600
 
 
 def message_row_payload(
@@ -1213,14 +1389,10 @@ def message_row_payload(
     text = _row_str(row, "text")
     sender = _row_str(row, "sender")
     display_name = (name_map or {}).get(chat_id, "")
-    from_me = _is_from_me_value(row.get("is_from_me"))
-    outbound = str(from_me).strip() in {"1", "true", "True"}
+    mine = sent_by_me(row.get("is_from_me"))
     # who actually said it (matters in group chats); blank for my own messages
-    sender_name = ""
-    if not outbound and sender:
-        sender_name = (sender_map or {}).get(sender, "")
-        if not sender_name and chat_id.startswith("chat"):
-            sender_name = contact_label({"chatId": sender})
+    # the saved name or "": the interface labels a sender who is not in Contacts
+    sender_name = (sender_map or {}).get(sender, "") if mine is not True and sender else ""
     return {
         "messageId": _row_str(row, "message_id"),
         "chatId": chat_id,
@@ -1228,8 +1400,41 @@ def message_row_payload(
         "senderName": sender_name,
         "timestamp": _row_str(row, "timestamp") or None,
         "sender": sender,
-        "text": text[:600],
-        "isFromMe": from_me,
+        "text": clip_text(display_text(text), MESSAGE_TEXT_LIMIT),
+        "attachment": attachment_label(row.get("attachment_types")),
+        "isFromMe": mine,
+    }
+
+
+def day_payload(
+    messages_path: Path,
+    contact: str,
+    day: str,
+    around: str | None = None,
+    offset: int | None = None,
+    limit: int = DAY_LIMIT,
+) -> dict:
+    """One day of one conversation, as the messages it was, with the nearest
+    days that hold messages on either side. A very long day is given in part."""
+    if not path_exists(messages_path):
+        raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
+    df, _, names = cached_messages_bundle(messages_path)
+    # this conversation and no other: an id is never matched in part here
+    conv = df[df["chat_id"].astype(str) == str(contact)]
+    window = day_window(conv, day, around=around, limit=max(1, min(int(limit or DAY_LIMIT), 400)), offset=offset)
+    rows = window.rows
+    # in a group, who wrote each message
+    in_group = is_group_chat(contact) and "sender" in rows.columns
+    senders = sorted(set(rows["sender"].dropna().astype(str)) - {""}) if in_group else []
+    sender_map = dict(resolve_contact_names(senders)) if senders else {}
+    return {
+        "contact": str(contact),
+        "day": window.day,
+        "total": window.total,
+        "offset": window.offset,
+        "previousDay": window.previous_day,
+        "nextDay": window.next_day,
+        "messages": [message_row_payload(row, names, sender_map) for _, row in rows.iterrows()],
     }
 
 
@@ -1238,7 +1443,8 @@ def search_messages_payload(messages_path: Path, query: str = "", contact: str =
         raise FileNotFoundError(f"Messages CSV not found: {messages_path}")
 
     limit = max(1, min(int(limit or 60), 200))
-    df, _, _ = cached_messages_bundle(messages_path)
+    # the names the conversation list uses: saved, given to a group, or made from its people
+    df, _, names = cached_messages_bundle(messages_path)
     if contact:
         df = filter_conversation(df, contact)
 
@@ -1246,19 +1452,23 @@ def search_messages_payload(messages_path: Path, query: str = "", contact: str =
     if needle:
         text = df["text"].fillna("").astype(str)
         df = df[text.str.contains(needle, case=False, na=False, regex=False)]
-    else:
-        df = df.tail(limit)
 
+    # everything that matches is counted, so the list can say when it is not showing it all
+    total = int(len(df))
     if df.empty:
-        return {"query": needle, "contact": contact, "results": [], "count": 0}
+        return {"query": needle, "contact": contact, "results": [], "count": 0, "total": 0}
 
     df = df.sort_values("timestamp", ascending=False).head(limit)
-    name_map = resolve_contact_names(df["chat_id"].dropna().astype(str).unique())
+    # in a group, who wrote each match
+    in_groups = df[group_chat_mask(df["chat_id"])]
+    senders = sorted(set(in_groups["sender"].dropna().astype(str)) - {""}) if "sender" in df.columns else []
+    sender_map = dict(resolve_contact_names(senders)) if senders else {}
     return {
         "query": needle,
         "contact": contact,
         "count": int(len(df)),
-        "results": [message_row_payload(row, name_map) for _, row in df.iterrows()],
+        "total": total,
+        "results": [message_row_payload(row, names, sender_map) for _, row in df.iterrows()],
     }
 
 
@@ -1386,28 +1596,68 @@ def _burst_scores(df: pd.DataFrame, terms: list[str], window: int = 5) -> pd.Ser
     return scores.reindex(df.index)
 
 
+# a phone number is recognised by its last digits; fewer than this is a short code
+PHONE_DIGITS_MIN = 7
+_NOT_A_DIGIT = re.compile(r"[^0-9]")
+_ONLY_NUMBER_MARKS = re.compile(r"[0-9+() .-]+")
+
+
+def conversation_label(saved_name, chat_id) -> str:
+    """The name a conversation goes by in text the user reads. The same rules
+    in the same order as conversationName in the interface
+    (app/src/lib/conversations.ts): change the two together. A phone number
+    is never written out; its last four digits are enough to know the thread."""
+    name = str(saved_name or "").strip()
+    if name:
+        return name
+    handle = str(chat_id or "").strip()
+    if not handle:
+        return "Unknown conversation"
+    if is_group_chat(handle):
+        return "Unnamed group"
+    if "@" in handle:
+        return handle
+    digits = _NOT_A_DIGIT.sub("", handle)
+    # a short code is already its own name
+    if len(digits) < PHONE_DIGITS_MIN:
+        return handle
+    return f"Number ending in {digits[-4:]}"
+
+
 def contact_label(citation: dict) -> str:
-    """Human label for a citation's contact. Never expose a raw handle/number."""
+    """The label for a conversation or a person in text the model reads, and so
+    in what it writes back. A saved name is used as it is. A handle with no
+    name is never sent whole: a phone number goes by its last four digits and
+    an email address only by what it is."""
     name = str(citation.get("displayName") or "").strip()
     if name:
         return name
     handle = str(citation.get("chatId") or "").strip()
     if not handle:
         return "an unsaved contact"
-    if handle.startswith("chat"):
+    if is_group_chat(handle):
         return "a group chat"
-    digits = re.sub(r"\D", "", handle)
-    if digits:
-        return f"an unsaved contact (ending {digits[-4:]})"
+    if "@" in handle:
+        return "an unsaved email contact"
+    digits = _NOT_A_DIGIT.sub("", handle)
+    if len(digits) >= PHONE_DIGITS_MIN:
+        return f"a number ending in {digits[-4:]}"
+    # a short code is a sender's public number, not somebody's own
+    if digits and _ONLY_NUMBER_MARKS.fullmatch(handle):
+        return f"the short code {digits}"
     return "an unsaved contact"
 
 
 def citation_context(citations: list[dict]) -> str:
     lines = []
     for idx, citation in enumerate(citations, start=1):
-        outbound = str(citation.get("isFromMe")).strip().lower() in {"1", "true"}
+        outbound = sent_by_me(citation.get("isFromMe")) is True
         convo = contact_label(citation)
-        speaker = "You" if outbound else (citation.get("senderName") or convo)
+        in_group = is_group_chat(str(citation.get("chatId") or ""))
+        sender = str(citation.get("sender") or "")
+        # in a group, someone who is not in Contacts is still told apart from the rest
+        unsaved = contact_label({"chatId": sender}) if in_group and sender else convo
+        speaker = "You" if outbound else (citation.get("senderName") or unsaved)
         timestamp = citation.get("timestamp") or "unknown time"
         text = str(citation.get("text") or "").replace("\n", " ").strip()
         # name the conversation only when it adds info (a group, or You speaking)
@@ -1427,7 +1677,8 @@ def local_ask_answer(terms: list[str], citations: list[dict]) -> str:
 
     highlights = []
     for citation in citations[:3]:
-        name = contact_label(citation)
+        # the user reads this, so a conversation goes by the name the interface gives it
+        name = conversation_label(citation.get("displayName"), citation.get("chatId"))
         text = str(citation.get("text") or "").replace("\n", " ").strip()
         if text:
             highlights.append(f"{name}: {text[:180]}")
@@ -1495,7 +1746,7 @@ def format_context_windows(windows: list[dict], name_map=None, sender_map=None) 
     blocks = []
     for window in windows:
         cid = window["chat_id"]
-        is_group = cid.startswith("chat")
+        is_group = is_group_chat(cid)
         label = (name_map or {}).get(cid) or contact_label({"chatId": cid})
         date = str(window.get("timestamp") or "")[:10]
         all_ns = sorted({n for ns in window["hits"].values() for n in ns})
@@ -1506,7 +1757,7 @@ def format_context_windows(windows: list[dict], name_map=None, sender_map=None) 
             text = _row_str(row, "text").replace("\n", " ").strip()[:280]
             if not text:
                 continue
-            outbound = str(_is_from_me_value(row.get("is_from_me"))).strip() in {"1", "true", "True"}
+            outbound = sent_by_me(row.get("is_from_me")) is True
             if outbound:
                 who = "You"
             else:
@@ -1605,14 +1856,26 @@ def ai_ask_answer(
     )
 
 
+CATALOG_COLUMNS = [
+    "chat_id", "message_count", "sent_count", "received_count", "first_msg", "last_msg", "display_name",
+]
+
+
 def _conversation_catalog(df: pd.DataFrame) -> pd.DataFrame:
-    """Per-conversation rollup (chat_id, message_count, last_msg, display_name)."""
+    """Per-conversation rollup (CATALOG_COLUMNS). Built once per export and
+    cached with it, so nothing that lists conversations walks the messages again."""
     convo = df[df["chat_id"].notna()].copy() if "chat_id" in df.columns else pd.DataFrame()
     if convo.empty:
-        return pd.DataFrame(columns=["chat_id", "message_count", "last_msg", "display_name"])
+        return pd.DataFrame(columns=CATALOG_COLUMNS)
     convo["chat_id"] = convo["chat_id"].astype(str)
+    # a row that does not say who sent it is in the total and in neither count
+    convo["sent"] = sent_mask(convo["is_from_me"]) if "is_from_me" in convo.columns else False
+    convo["received"] = received_mask(convo["is_from_me"]) if "is_from_me" in convo.columns else False
     aggregations = {
         "message_count": ("chat_id", "size"),
+        "sent_count": ("sent", "sum"),
+        "received_count": ("received", "sum"),
+        "first_msg": ("timestamp", "min"),
         "last_msg": ("timestamp", "max"),
     }
     if "chat_display_name" in convo.columns:
@@ -1652,6 +1915,12 @@ def invalidate_semantic_cache():
         _SEM_CACHE.update({"sig": None, "index": None})
 
 
+FIRST_WORDS_QUOTE_LIMIT = 280
+# a quoted memory reads best as a sentence or two
+MEMORY_QUOTE_MIN = 25
+MEMORY_QUOTE_LIMIT = 130
+
+
 _FW_URL_ONLY_RE = re.compile(r"^https?://\S+$", re.I)
 _FW_LETTER_RE = re.compile(r"[^\W\d_]")
 _FW_EMOJI_RE = re.compile("[\U0001f000-\U0001faff☀-➿❤♥]")
@@ -1663,7 +1932,7 @@ def _first_real_texts(rows: pd.DataFrame) -> pd.DataFrame:
     texts = rows["text"].fillna("").astype(str).str.strip()
     ok = (
         texts.ne("")
-        & ~texts.str.contains("￼", regex=False)
+        & ~texts.str.contains(ATTACHMENT_PLACEHOLDER, regex=False)
         & ~texts.str.lower().str.startswith("[attachment")
         & ~texts.str.match(_FW_URL_ONLY_RE)
         & (texts.str.contains(_FW_LETTER_RE) | texts.str.contains(_FW_EMOJI_RE))
@@ -1686,7 +1955,7 @@ def first_words_payload(messages_path: Path, limit: int = 5) -> dict:
     if df.empty or catalog.empty or "timestamp" not in df.columns:
         return empty
 
-    direct = catalog[~catalog["chat_id"].astype(str).str.startswith("chat")].copy()
+    direct = catalog[~group_chat_mask(catalog["chat_id"])].copy()
     if direct.empty:
         return {**empty, "totals": {"messages": int(len(df)), "people": 0}}
     direct["chat_id"] = direct["chat_id"].astype(str)
@@ -1718,29 +1987,31 @@ def first_words_payload(messages_path: Path, limit: int = 5) -> dict:
         real = _first_real_texts(rows)
         if real.empty:
             continue
+        real = real.assign(direction=real["is_from_me"].map(direction_word))
         first = real.iloc[0]
-        first_dir = str(first.get("direction") or "")
+        first_dir = str(first["direction"])
         reply = None
+        # the reply is the first thing the other side said back; when the export
+        # does not say who sent the first message there is no telling which side that is
         later = real.iloc[1:]
-        if not later.empty and "direction" in later.columns:
-            opposite = later[later["direction"].fillna("").astype(str) != first_dir].head(1)
-            if not opposite.empty:
-                row = opposite.iloc[0]
-                reply = {
-                    "text": str(row["text"]).strip()[:280],
-                    "direction": str(row.get("direction") or ""),
-                    "timestamp": str(row["timestamp"]),
-                }
+        answers = later[later["direction"].ne("") & later["direction"].ne(first_dir)] if first_dir else later.iloc[0:0]
+        if not answers.empty:
+            row = answers.iloc[0]
+            reply = {
+                "text": clip_text(display_text(row["text"]), FIRST_WORDS_QUOTE_LIMIT),
+                "direction": str(row["direction"]),
+                "timestamp": str(row["timestamp"]),
+            }
         cid = str(first["chat_id"])
-        display = names.get(cid) or contact_label({"chatId": cid})
         first_ts = pd.Timestamp(first["timestamp"])
         entries.append({
-            "person": display,
+            # the saved name or "": the interface labels someone who is not in Contacts
+            "person": str(names.get(cid) or ""),
             "chatId": cid,
             "timestamp": str(first["timestamp"]),
             "yearsAgo": max(0, int((pd.Timestamp.now() - first_ts).days // 365)),
             "direction": first_dir,
-            "text": str(first["text"]).strip()[:280],
+            "text": clip_text(display_text(first["text"]), FIRST_WORDS_QUOTE_LIMIT),
             "reply": reply,
             "messageCount": int(person["count"]),
         })
@@ -1758,10 +2029,13 @@ def first_words_payload(messages_path: Path, limit: int = 5) -> dict:
     }
 
 
-def memories_payload(messages_path: Path) -> dict:
+def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> dict:
     """Proactive memories computed from the cached dataframe -- no AI calls.
     On-this-day moments from past years, upcoming first-message anniversaries,
-    and reconnect nudges for high-volume conversations gone quiet."""
+    and reconnect nudges for high-volume conversations gone quiet.
+
+    name is the saved name or "": the interface labels unsaved conversations,
+    so the same conversation reads the same everywhere."""
     empty = {"onThisDay": [], "anniversaries": [], "reconnect": []}
     if not path_exists(messages_path):
         return empty
@@ -1769,31 +2043,43 @@ def memories_payload(messages_path: Path) -> dict:
     if df.empty or "timestamp" not in df.columns:
         return empty
 
-    now = pd.Timestamp.now()
+    now = now if now is not None else pd.Timestamp.now()
+    # An archive that has not been updated is not a conversation gone quiet:
+    # silence is measured up to the last message the archive holds.
+    archive_end = df["timestamp"].max()
+    if pd.isna(archive_end):
+        # no time in the export could be read, so nothing can be placed on a day
+        return empty
     cids = df["chat_id"].astype(str)
 
-    def label(cid: str) -> str:
-        name = names.get(cid)
-        if name:
-            return name
-        digits = re.sub(r"\D", "", cid)
-        if cid.startswith("chat"):
-            return f"Group ·{digits[-4:]}" if digits else "Group chat"
-        return f"Unsaved ·{digits[-4:]}" if digits else "Unsaved contact"
+    def saved_name(cid: str) -> str:
+        return str(names.get(cid) or "")
 
-    def memory_preview(texts: pd.Series) -> str:
-        """A quote that reads like a memory: conversational, never a link or a paste."""
+    def memory_quote(cid: str, day_rows: pd.DataFrame) -> dict:
+        """A quote that reads like a memory: conversational, never a link or a
+        paste. Says who sent it, so it is never shown as someone else's words."""
+        blank = {"preview": "", "previewFromMe": None, "previewSender": "", "previewAt": None}
+        texts = day_rows["text"].map(display_text)
         clean = texts[
             ~texts.str.contains("http", case=False, na=False)
             & texts.str.contains(r"[a-zA-Z]{3}", na=False)
         ]
         if clean.empty:
-            return ""
+            return blank
         lengths = clean.str.len()
-        sweet = clean[(lengths >= 25) & (lengths <= 130)]
-        if not sweet.empty:
-            return str(sweet.loc[sweet.str.len().idxmax()])
-        return str(clean.loc[lengths.idxmax()])[:120]
+        sweet = lengths[(lengths >= MEMORY_QUOTE_MIN) & (lengths <= MEMORY_QUOTE_LIMIT)]
+        chosen = day_rows.loc[(sweet if not sweet.empty else lengths).idxmax()]
+        mine = sent_by_me(chosen.get("is_from_me"))
+        sender = _row_str(chosen, "sender")
+        # in a group the title is the group, so the quote needs its own name
+        in_group = is_group_chat(cid) and mine is False and bool(sender)
+        return {
+            "preview": clip_text(texts.loc[chosen.name], MEMORY_QUOTE_LIMIT),
+            "previewFromMe": mine,
+            "previewSender": str(resolve_contact_names([sender]).get(sender) or "") if in_group else "",
+            # when it was sent, so the day can be opened at this message
+            "previewAt": _row_str(chosen, "timestamp") or None,
+        }
 
     # --- on this day, in past years ---
     on_this_day: list[dict] = []
@@ -1821,16 +2107,15 @@ def memories_payload(messages_path: Path) -> dict:
             day_rows = past_today[
                 (past_today["timestamp"].dt.year == year) & (cids[day_mask] == cid)
             ]
-            texts = day_rows["text"].astype(str)
-            preview = memory_preview(texts) if not texts.empty else ""
             on_this_day.append(
                 {
                     "chatId": cid,
-                    "name": label(cid),
+                    "name": saved_name(cid),
                     "year": year,
+                    "day": f"{year:04d}-{now.month:02d}-{now.day:02d}",
                     "yearsAgo": int(now.year - year),
                     "count": count,
-                    "preview": preview,
+                    **memory_quote(cid, day_rows),
                 }
             )
 
@@ -1868,15 +2153,15 @@ def memories_payload(messages_path: Path) -> dict:
     reconnect: list[dict] = []
     for cid, last in lasts.items():
         cid = str(cid)
-        if cid.startswith("chat") or int(counts.get(cid, 0)) < 1000:
+        if is_group_chat(cid) or int(counts.get(cid, 0)) < 1000:
             continue
-        quiet_days = int((now - last).days)
+        quiet_days = int((archive_end - last).days)
         if quiet_days < 90:
             continue
         reconnect.append(
             {
                 "chatId": cid,
-                "name": label(cid),
+                "name": saved_name(cid),
                 "count": int(counts[cid]),
                 "quietDays": quiet_days,
                 "lastDate": str(last)[:10],
@@ -1891,36 +2176,66 @@ def memories_payload(messages_path: Path) -> dict:
     }
 
 
+def _parse_export(messages_path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
+    df = load_messages(str(messages_path))
+    if "text" not in df.columns:
+        df = df.assign(text="")
+    return df, _conversation_catalog(df)
+
+
+def _conversation_names(df: pd.DataFrame, catalog: pd.DataFrame) -> dict[str, str]:
+    """The name each conversation goes by: the one saved in Contacts, the one a
+    group was given in Messages, or for a group nobody named, the people in it."""
+    if catalog.empty:
+        return {}
+    saved = dict(resolve_contact_names(catalog["chat_id"].tolist()))
+    # groups have no Contacts entry; their iMessage display name is the label
+    given = {
+        str(row["chat_id"]): str(row.get("display_name") or "").strip()
+        for _, row in catalog.iterrows()
+    }
+    names = {**saved, **{cid: name for cid, name in given.items() if name and not saved.get(cid)}}
+    unnamed_groups = [
+        cid for cid in catalog["chat_id"].astype(str)
+        if is_group_chat(cid) and not names.get(cid)
+    ]
+    return {
+        **names,
+        **derive_group_names(df, unnamed_groups, lambda handles: dict(resolve_contact_names(handles))),
+    }
+
+
+def bundle_signature(messages_path: Path) -> tuple:
+    """What the cached archive is made from: the export, and for its names, Contacts."""
+    return (file_cache_signature(messages_path), file_cache_signature(CONTACTS_CACHE_PATH))
+
+
 def cached_messages_bundle(messages_path: Path) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """(messages df, conversation catalog, display-name map) cached on file signature.
+    """(messages df, conversation catalog, display-name map), kept until the
+    export or Contacts changes. When only Contacts changed, the export is not
+    read again: the names are worked out over the frame already held.
     Concurrent cold callers wait for the first loader instead of each parsing
     the 75MB CSV in parallel (app launch fires four endpoints at once)."""
-    sig = file_cache_signature(messages_path)
+    sig = bundle_signature(messages_path)
+    export_sig = sig[0]
     while True:
         with _ASK_CACHE_LOCK:
-            if sig and _ASK_CACHE["sig"] == sig and _ASK_CACHE["df"] is not None:
+            held = _ASK_CACHE["sig"]
+            has_export = _ASK_CACHE["df"] is not None
+            if export_sig and held == sig and has_export:
                 return _ASK_CACHE["df"], _ASK_CACHE["catalog"], _ASK_CACHE["names"]
             loading = _ASK_CACHE.get("loading")
             if loading is None or loading.is_set():
                 loading = threading.Event()
                 _ASK_CACHE["loading"] = loading
+                same_export = bool(export_sig) and has_export and held is not None and held[0] == export_sig
+                parsed = (_ASK_CACHE["df"], _ASK_CACHE["catalog"]) if same_export else None
                 break  # this thread builds; everyone else waits below
         loading.wait(timeout=180)
 
     try:
-        df = load_messages(str(messages_path))
-        if "text" not in df.columns:
-            df["text"] = ""
-        catalog = _conversation_catalog(df)
-        names: dict[str, str] = {}
-        if not catalog.empty:
-            names = dict(resolve_contact_names(catalog["chat_id"].tolist()))
-            # groups have no Contacts entry; their iMessage display name is the label
-            for _, row in catalog.iterrows():
-                cid = str(row["chat_id"])
-                display = str(row.get("display_name") or "").strip()
-                if display and not names.get(cid):
-                    names[cid] = display
+        df, catalog = parsed if parsed is not None else _parse_export(messages_path)
+        names = _conversation_names(df, catalog)
         with _ASK_CACHE_LOCK:
             _ASK_CACHE.update({"sig": sig, "df": df, "catalog": catalog, "names": names})
         return df, catalog, names
@@ -2084,7 +2399,7 @@ def _person_scope(df: pd.DataFrame, chat_ids: list[str], handles: list[str]) -> 
     cids = df["chat_id"].astype(str)
     if person_keys and "sender" in df.columns:
         sent = _canon_series(df["sender"]).isin(person_keys)
-        scope |= set(cids[sent & cids.str.startswith("chat")].unique())
+        scope |= set(cids[sent & group_chat_mask(cids)].unique())
     return df[cids.isin(scope)]
 
 
@@ -2242,7 +2557,7 @@ def ask_messages_payload(
         # its picks with the scope silently empties retrieval
         plan_ids = []
 
-    handles = [cid for cid in plan_ids if cid and not str(cid).startswith("chat")]
+    handles = [cid for cid in plan_ids if cid and not is_group_chat(str(cid))]
 
     if plan_ids:
         if person_focus and handles:
@@ -2256,10 +2571,7 @@ def ask_messages_payload(
     date_from = (plan or {}).get("date_from") or ""
     date_to = (plan or {}).get("date_to") or ""
     try:
-        if date_from:
-            df = df[df["timestamp"] >= pd.Timestamp(date_from)]
-        if date_to:
-            df = df[df["timestamp"] < pd.Timestamp(date_to) + pd.Timedelta(days=1)]
+        df = within_dates(df, date_from, date_to)
     except (ValueError, OverflowError):
         # the planner can emit impossible calendar dates; a bad date must
         # degrade to an unfiltered search, never crash the question
@@ -2598,6 +2910,9 @@ class RecallHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/memories":
             messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             send_json(self, 200, {"memories": memories_payload(messages_path)})
+        elif parsed.path == "/api/overview":
+            messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
+            send_json(self, 200, {"overview": archive_patterns(messages_path)})
         elif parsed.path == "/api/contacts":
             db_path = safe_path(query.get("dbPath"))
             messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
@@ -2609,6 +2924,7 @@ class RecallHandler(BaseHTTPRequestHandler):
                     "source": "messages",
                     "messagesPath": str(messages_path),
                     "contactNameCount": count_display_names(df),
+                    "archive": archive_summary(messages_path),
                 })
                 return
             if not path_exists(db_path):
@@ -2648,6 +2964,26 @@ class RecallHandler(BaseHTTPRequestHandler):
             send_json(self, 200, {"jobs": list_jobs()})
         elif parsed.path == "/api/reports":
             send_json(self, 200, {"reports": list_report_files()})
+        elif parsed.path == "/api/day":
+            messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
+            contact = query.get("contact", "")
+            if not contact:
+                send_json(self, 400, {"error": "A conversation is needed"})
+                return
+            try:
+                place = query.get("offset", "")
+                payload = day_payload(
+                    messages_path,
+                    contact,
+                    query.get("day", ""),
+                    around=query.get("around") or None,
+                    offset=int(place) if place != "" else None,
+                    limit=int(query.get("limit", DAY_LIMIT)),
+                )
+            except ValueError as error:
+                send_json(self, 400, {"error": str(error)})
+                return
+            send_json(self, 200, payload)
         elif parsed.path == "/api/search":
             messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             send_json(self, 200, search_messages_payload(
@@ -2669,7 +3005,7 @@ class RecallHandler(BaseHTTPRequestHandler):
                 markdown_path = report_path.with_suffix(".md")
                 if markdown_path.exists():
                     report_path = markdown_path
-            contact = query.get("contact") or report_path.stem.removeprefix("analysis_")
+            contact = query.get("contact") or report_contact(report_path)
             events_path, html_path = companion_report_paths(report_path, contact)
             payload, cached = cached_analysis_payload(
                 messages_path,
@@ -2681,15 +3017,14 @@ class RecallHandler(BaseHTTPRequestHandler):
             )
             send_json(self, 200, {"analysis": payload, "cached": cached})
         elif parsed.path == "/api/report":
-            raw_path = unquote(query.get("path", ""))
-            file_path = safe_path(raw_path)
-            if not file_path or not file_path.exists() or not ensure_under_root(file_path):
+            file_path = served_report_file(unquote(query.get("path", "")))
+            if not file_path:
                 send_json(self, 404, {"error": "Report not found"})
                 return
-            content_type = mimetypes.guess_type(str(file_path))[0] or "text/plain"
             data = file_path.read_bytes()
             self.send_response(200)
-            self.send_header("Content-Type", content_type)
+            for name, value in report_file_headers(file_path).items():
+                self.send_header(name, value)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
