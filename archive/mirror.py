@@ -6,8 +6,12 @@ valve: when a pull would remove more than a set share of the stored
 messages, it stops before it changes anything. That protects the archive
 from a database that is only half synced.
 
-Rows that the legacy export bridge loaded (guid `legacy:<ROWID>`) are not
-part of that count: the first pull from the database replaces all of them.
+Rows that the legacy export bridge loaded (guid `legacy:<ROWID>`) have no
+guid of the source, so the first pull from the database replaces all of
+them. They can not be counted one by one. The valve compares totals for
+them: when the source holds fewer rows than the bridge rows less the share,
+the pull stops in the same way. An export that reaches further back than the
+database is then not lost without a question.
 """
 
 from __future__ import annotations
@@ -64,12 +68,29 @@ def check_removal_limit(conn: sqlite3.Connection, max_removed_share: float) -> N
     Call it after note_source_guids and before the pull changes anything.
     An archive with no messages never trips it.
     """
+    _check_bridge_rows(conn, max_removed_share)
     stored = int(conn.execute(f"SELECT COUNT(*) FROM messages WHERE NOT ({_IS_LEGACY})").fetchone()[0])
     if stored == 0:
         return
     gone = int(conn.execute(f"SELECT COUNT(*) FROM messages WHERE {_GONE} AND NOT ({_IS_LEGACY})").fetchone()[0])
     if gone > max_removed_share * stored:
         raise RemovalLimitError(would_remove=gone, stored=stored, max_share=max_removed_share)
+
+
+def _check_bridge_rows(conn: sqlite3.Connection, max_removed_share: float) -> None:
+    """Raise RemovalLimitError when the source holds far fewer rows than the bridge loaded.
+
+    The pull replaces every bridge row. The rows of the source are counted
+    with their tapbacks and events, so this stops only a clear loss: the
+    source has fewer rows in all than the bridge rows less the share.
+    """
+    bridged = int(conn.execute(f"SELECT COUNT(*) FROM messages WHERE {_IS_LEGACY}").fetchone()[0])
+    if bridged == 0:
+        return
+    in_source = int(conn.execute("SELECT COUNT(*) FROM temp.source_guids").fetchone()[0])
+    lost = bridged - in_source
+    if lost > max_removed_share * bridged:
+        raise RemovalLimitError(would_remove=lost, stored=bridged, max_share=max_removed_share)
 
 
 def clear_bridge_rows(conn: sqlite3.Connection) -> int:

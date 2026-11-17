@@ -13,6 +13,7 @@ from archive import (
     INDEXED_TEXT_CHARS,
     Archive,
     ArchiveNotEmptyError,
+    RemovalLimitError,
     SourceError,
     SourceFormatError,
     import_chat_db,
@@ -635,7 +636,7 @@ class TestThePullThatFollows:
         import_legacy_csv(basic_export, archive_path)
         self.source(builder)
 
-        result = import_chat_db(source_path, archive_path)  # the default limit: bridge rows do not trip the valve
+        result = import_chat_db(source_path, archive_path)  # the default limit: five rows for six is within it
 
         assert result.mode == "full"
         assert result.counts["legacy_rows_replaced"] == 6
@@ -650,6 +651,26 @@ class TestThePullThatFollows:
             assert archive.conversation(GROUP)["message_count"] == 3  # type: ignore[index]
         assert fts_is_consistent(archive_path)
         assert totals_match_messages(archive_path)
+
+    def test_a_database_with_far_fewer_rows_than_the_bridge_loaded_trips_the_valve(
+        self, basic_export: Path, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
+        """An export can reach further back than the database. Its rows are not replaced by a few without a question."""
+        import_legacy_csv(basic_export, archive_path)
+        rowan = builder.handle(ROWAN)
+        builder.message(builder.chat(ROWAN, members=[rowan]), when=utc(2024, 3, 1, 17, 0), text="Only this", handle=rowan)
+        builder.commit()
+
+        with pytest.raises(RemovalLimitError) as refused:
+            import_chat_db(source_path, archive_path)
+
+        assert (refused.value.would_remove, refused.value.stored) == (5, 6)
+        assert scalar(archive_path, "SELECT COUNT(*) FROM messages WHERE guid LIKE 'legacy:%'") == 6
+        # the caller can switch the valve off: the archive then holds what the database holds
+        result = import_chat_db(source_path, archive_path, max_removed_share=1)
+        assert result.counts["legacy_rows_replaced"] == 6
+        with Archive.open(archive_path) as archive:
+            assert archive.summary()["messages"] == 1
 
     def test_an_incremental_run_after_the_bridge_is_a_full_pull(
         self, basic_export: Path, builder: ChatDbBuilder, source_path: Path, archive_path: Path

@@ -398,22 +398,39 @@ def test_the_route_tells_the_limit_with_its_code_and_runs_the_same_request_with_
     assert held(filled) == {"guid-one": "one"}
 
 
-def test_the_rows_that_the_bridge_loaded_are_replaced_by_the_first_pull_and_not_counted_by_the_limit(tmp_path):
+def test_the_rows_that_the_bridge_loaded_are_replaced_by_the_first_pull(tmp_path):
     export = bridged(tmp_path / "messages.csv", ["a", "b", "c", "d", "e"])
     assert sorted(held(export)) == [f"legacy:{row}" for row in range(1, 6)]
 
-    job = import_from(write_database(tmp_path / "chat.db", ["a"]), export)
+    # the database holds four of the five: within the limit, and no row has the id of a bridge row
+    job = import_from(write_database(tmp_path / "chat.db", ["a", "b", "c", "d"]), export)
 
     assert job["status"] == "completed", job["error"]
     assert job["code"] is None
+    assert held(export) == {f"guid-{text}": text for text in "abcd"}
+
+
+def test_a_database_that_holds_far_fewer_rows_than_the_bridge_loaded_is_not_imported_without_a_question(tmp_path):
+    """The export of an earlier build can reach further back than Messages does now. That history is not lost in silence."""
+    export = bridged(tmp_path / "messages.csv", ["a", "b", "c", "d", "e"])
+    before = held(export)
+
+    job = import_from(write_database(tmp_path / "chat.db", ["a"]), export)
+
+    assert (job["status"], job["code"], job["error"]) == ("failed", "removal_limit", limit_sentence(4, 5))
+    assert held(export) == before
+
+    again = import_from(write_database(tmp_path / "chat.db", ["a"]), export, allowRemoval=True)
+
+    assert again["status"] == "completed", again["error"]
     assert held(export) == {"guid-a": "a"}
 
 
 def test_after_the_first_pull_over_bridged_rows_the_limit_counts_again(tmp_path):
     export = bridged(tmp_path / "messages.csv", ["a", "b", "c", "d", "e"])
-    import_from(write_database(tmp_path / "chat.db", ["a", "b", "c"]), export)
+    import_from(write_database(tmp_path / "chat.db", ["a", "b", "c", "d", "e"]), export)
 
-    job = import_from(write_database(tmp_path / "chat.db", ["a"]), export)
+    job = import_from(write_database(tmp_path / "chat.db", ["a", "b", "c"]), export)
 
-    assert (job["status"], job["code"], job["error"]) == ("failed", "removal_limit", limit_sentence(2, 3))
-    assert sorted(held(export).values()) == ["a", "b", "c"]
+    assert (job["status"], job["code"], job["error"]) == ("failed", "removal_limit", limit_sentence(2, 5))
+    assert sorted(held(export).values()) == ["a", "b", "c", "d", "e"]
