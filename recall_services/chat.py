@@ -25,7 +25,13 @@ Rules:
   never goes to the person.
 - There is no silent keyword answer. `local_answer` runs only when the caller
   sets `use_ai=False`, and the answer then says that no AI model was used.
-- The history of the browser goes through `ChatSession.from_history`.
+- The history of the browser goes through `ChatSession.from_history`. A
+  "user" row can say in `contact` which conversation its question was asked
+  of. A row that does not say it was asked of everything, so its answer does
+  not go to a question that has a scope: the picker of the app can change
+  inside one chat.
+- A question over 8,000 characters is refused. A row of the history is cut to
+  8,000 characters.
 """
 
 from __future__ import annotations
@@ -60,7 +66,10 @@ LLMFactory = Callable[[ChatModelConfig], LLM]
 CHAT_TIMEOUT_SECONDS = 60.0
 # the browser sends the last few turns; more than this is no chat that a person had
 HISTORY_ROWS = 40
+QUESTION_CHARS = 8_000
+HISTORY_ROW_CHARS = 8_000
 EMPTY_QUESTION = "Type a question first."
+TOO_LONG = "The question is too long. Shorten it, then ask again."
 ASK_AGAIN = "then ask again."
 _ENGINE_WORDS = {
     kind.code: kind.default_message
@@ -160,9 +169,29 @@ def _payload(result: Mapping[str, Any], asked: _Asked, archive: Archive, names: 
     }
 
 
-def _session(history: object, scope: Scope) -> ChatSession:
+def _scope_of(conversation: str) -> Scope:
+    return Scope(conversations=(conversation,)) if conversation else EVERYTHING
+
+
+def _cut(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {**row, "content": str(row.get("content") or "")[:HISTORY_ROW_CHARS]}
+
+
+def _session(history: object) -> ChatSession:
+    """The earlier turns of the chat, each with the scope that its question was asked in."""
     rows = history if isinstance(history, (list, tuple)) else []
-    return ChatSession.from_history([row for row in rows if isinstance(row, Mapping)][-HISTORY_ROWS:], scope=scope)
+    session = ChatSession()
+    asked: Mapping[str, Any] | None = None
+    for row in [row for row in rows if isinstance(row, Mapping)][-HISTORY_ROWS:]:
+        if row.get("role") == "user":
+            asked = row
+        elif row.get("role") == "assistant" and asked is not None:
+            conversation = asked.get("contact")
+            scope = _scope_of(conversation) if isinstance(conversation, str) else EVERYTHING
+            for turn in ChatSession.from_history([_cut(asked), _cut(row)], scope=scope).turns:
+                session.add_turn(turn)
+            asked = None
+    return session
 
 
 def _events(
@@ -187,9 +216,7 @@ def _events(
         config = models.chat_config(model.strip() or models.default_id())
         settings = EngineConfig(model=config.model, max_output_tokens=config.max_output_tokens)
         engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock)
-        answering = engine.stream(
-            asked.question, scope=asked.scope, session=_session(history, asked.scope), cancel=cancel
-        )
+        answering = engine.stream(asked.question, scope=asked.scope, session=_session(history), cancel=cancel)
     except engine_errors.ChatEngineError as error:
         yield _failure(error.to_event(), config)
         return
@@ -222,7 +249,8 @@ def stream(
 
     `contact` is a conversation id, or "" for the whole archive. `model` is an
     id of the registry, or "" for its default. `history` is the list of
-    `{role, content}` rows that the browser keeps. `cancel` stops the model
+    `{role, content}` rows that the browser keeps; a "user" row can hold
+    `contact`, the conversation that its question was asked of. `cancel` stops the model
     call and the lookups: the question then ends with `done` and `cancelled`.
     Closing the iterator stops the model call too.
 
@@ -230,10 +258,12 @@ def stream(
     request: the last event says it.
     """
     conversation = inputs.text(contact)
-    scope = Scope(conversations=(conversation,)) if conversation else EVERYTHING
-    asked = _Asked(inputs.text(question).strip(), conversation, scope)
+    asked = _Asked(inputs.text(question).strip(), conversation, _scope_of(conversation))
     if not asked.question:
         yield {"type": "error", "code": "empty_question", "error": EMPTY_QUESTION}
+        return
+    if len(asked.question) > QUESTION_CHARS:
+        yield {"type": "error", "code": "question_too_long", "error": TOO_LONG}
         return
     answering = _events(
         asked, inputs.text(model), history, cancel, archive, names, use_ai, llm_factory or default_llm, clock

@@ -175,6 +175,62 @@ def test_the_history_of_the_browser_goes_to_the_model(archive: Archive, saved: N
     assert payload["answer"] == "It has a flat tire [1]."
 
 
+EARLIER = [
+    {"role": "user", "content": "When does the mulch come?"},
+    {"role": "assistant", "content": "The delivery of mulch is on Monday [1]."},
+]
+
+
+def with_conversation(rows: list[dict[str, Any]], conversation: str) -> list[dict[str, Any]]:
+    return [{**row, "contact": conversation} if row["role"] == "user" else row for row in rows]
+
+
+def test_an_earlier_answer_of_a_wider_chat_does_not_go_to_a_question_with_a_scope(
+    archive: Archive, saved: Names
+) -> None:
+    """The picker of the app can change inside one chat. A row that does not say its conversation was asked of everything."""
+    factory = Factory([cite(FLAT_TIRE)])
+    done(run(archive, saved, factory, contact=world.GARDEN, history=EARLIER))
+    assert "The delivery of mulch is on Monday" not in factory.sent()
+
+
+def test_an_earlier_answer_of_another_conversation_does_not_go_to_a_question_with_a_scope(
+    archive: Archive, saved: Names
+) -> None:
+    factory = Factory([cite(FLAT_TIRE)])
+    done(run(archive, saved, factory, contact=world.GARDEN, history=with_conversation(EARLIER, world.INES_PHONE)))
+    assert "The delivery of mulch is on Monday" not in factory.sent()
+
+
+def test_an_earlier_answer_of_the_same_conversation_goes_to_the_model(archive: Archive, saved: Names) -> None:
+    factory = Factory([cite(FLAT_TIRE)])
+    done(run(archive, saved, factory, contact=world.GARDEN, history=with_conversation(EARLIER, world.GARDEN)))
+    assert "The delivery of mulch is on Monday" in factory.sent()
+
+
+def test_every_earlier_answer_goes_to_a_question_of_everything(archive: Archive, saved: Names) -> None:
+    factory = Factory([cite(FLAT_TIRE)])
+    done(run(archive, saved, factory, history=with_conversation(EARLIER, world.INES_PHONE)))
+    assert "The delivery of mulch is on Monday" in factory.sent()
+
+
+def test_a_question_that_is_too_long_is_one_error_and_no_call(archive: Archive, saved: Names) -> None:
+    factory = Factory([])
+    events = run(archive, saved, factory, "why " * 5_000)
+    assert events == [
+        {"type": "error", "code": "question_too_long", "error": "The question is too long. Shorten it, then ask again."}
+    ]
+    assert factory.configs == []
+
+
+def test_a_long_row_of_the_history_is_cut(archive: Archive, saved: Names) -> None:
+    long_answer = "The delivery of mulch is on Monday. " + "filler " * 20_000 + "THE-END"
+    history = [EARLIER[0], {"role": "assistant", "content": long_answer}]
+    factory = Factory([cite(FLAT_TIRE)])
+    done(run(archive, saved, factory, history=history))
+    assert "The delivery of mulch is on Monday." in factory.sent() and "THE-END" not in factory.sent()
+
+
 def test_a_conversation_is_the_scope_and_is_never_widened(archive: Archive, saved: Names) -> None:
     def look_outside(_request: LLMRequest) -> list[Any]:
         return [call("search_messages", "s1", query="mulch")]
