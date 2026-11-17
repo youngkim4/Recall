@@ -355,10 +355,11 @@ def test_a_schema_name_is_made_safe() -> None:
 def test_build_client_turns_off_the_sdk_retries_and_sets_the_timeout(
     blocked_attempts: list[str],
 ) -> None:
+    before = len(blocked_attempts)
     client = build_client("sk-test-dummy-not-a-real-key", timeout_s=45.0)
     assert client.max_retries == 0
     assert client.timeout == 45.0
-    assert blocked_attempts == []
+    assert blocked_attempts[before:] == []
 
 
 def test_a_request_to_a_host_that_does_not_exist_is_blocked_and_wrapped(

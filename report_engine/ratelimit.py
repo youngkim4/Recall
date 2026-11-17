@@ -71,8 +71,14 @@ class TokenBudget:
             self._entries = {**self._live(), self._tickets: (self._clock(), tokens)}
         return self._tickets
 
-    def settle(self, ticket: int, tokens: int) -> None:
-        """Replace an estimate with the real number. The send time stays."""
+    def settle(self, ticket: int, tokens: int, moved_to_now: bool = False) -> None:
+        """Replace an estimate with the real number. The send time stays, unless
+        the call was sent again later: then the entry moves to the present, so
+        that it stays in the window for a full minute from the last send."""
+        if self._limit is None:
+            return
         entry = self._live().get(ticket)
-        if entry is not None:
+        if moved_to_now:
+            self._entries = {**self._entries, ticket: (self._clock(), max(0, tokens))}
+        elif entry is not None:
             self._entries = {**self._entries, ticket: (entry[0], max(0, tokens))}

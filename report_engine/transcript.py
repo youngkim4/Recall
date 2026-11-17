@@ -2,18 +2,23 @@
 
 A line is `m12 09:41 Mina: text`. References restart at m1 in every period, so
 a period's text depends only on its own messages. Speaker names come from the
-caller's labeler; a name that is empty or looks like a phone number or an
-e-mail address is replaced before it can reach a prompt.
+caller's labeler; a name that is empty or looks like a phone number, a short
+code or an e-mail address is replaced before it can reach a prompt.
+
+Every piece of outside text that goes into a prompt passes `shield`: it is
+put on one line, and anything that imitates a data frame of a prompt is
+broken with an invisible character.
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from report_engine.dates import DAY_LENGTH, parse_day
+from report_engine.dates import DAY_LENGTH, has_stamp_shape, parse_day
 from report_engine.errors import SourceError
 from report_engine.ports import Labeler
 
@@ -21,19 +26,23 @@ OWN_LABEL = "You"
 UNSAVED_LABEL = "Unsaved contact"
 MAX_LABEL_CHARS = 40
 MIN_PHONE_DIGITS = 7
-ELISION = " [...] "
-COUNT_REF = "m000"
+ELISION_MARK = "[...]"
+ELISION = f" {ELISION_MARK} "
+COUNT_REF = "m00000"
+FRAME_TAGS = ("transcript", "notes", "periods", "moments")
 TRANSCRIPT_OPEN = "<transcript>"
 TRANSCRIPT_CLOSE = "</transcript>"
 ZERO_WIDTH_SPACE = chr(0x200B)
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
-_STAMP_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2} ([01]\d|2[0-3]):[0-5]\d:[0-5]\d")
-_EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
-_REF = re.compile(r"[\[(\s]*[mM](\d{1,9})[\])\s.,;]*")
-_FRAME = re.compile(r"<(/?transcript)", re.IGNORECASE)
+_REF = re.compile(r"[\[(\s]*[mM](\d{1,9})[\])\s.,;]*", re.ASCII)
+_FRAME = re.compile(rf"<(/?(?:{'|'.join(FRAME_TAGS)}))", re.IGNORECASE)
+_SURROGATE = re.compile(f"[{chr(0xD800)}-{chr(0xDFFF)}]")
+# control characters that are not white space, and marks that take no room:
 # zero-width space, zero-width non-joiner, word joiner, byte-order mark, object replacement
-_INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u2060\ufeff\ufffc"))
+_INVISIBLE = dict.fromkeys(
+    (*range(0x00, 0x09), *range(0x0E, 0x1C), 0x7F, 0x200B, 0x200C, 0x2060, 0xFEFF, 0xFFFC)
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,26 +73,51 @@ class _Row:
     text: str
 
 
+def scrub(text: str) -> str:
+    """Repair what UTF-8 can not carry: a surrogate with no partner becomes U+FFFD."""
+    if not _SURROGATE.search(text):
+        return text
+    return text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+
+
 def squash(text: str) -> str:
     """One line: runs of white space become one space, invisible marks go."""
     return " ".join(text.translate(_INVISIBLE).split())
 
 
+def shield(text: str) -> str:
+    """Outside text made safe for a prompt: one line, and no tag of a data frame.
+    The break is a zero-width space, which quote checks ignore."""
+    return _FRAME.sub(lambda match: f"<{ZERO_WIDTH_SPACE}{match.group(1)}", squash(text))
+
+
+def frame(tag: str, body: str) -> str:
+    """A block of data in a prompt. `body` must be made of shielded text."""
+    return f"<{tag}>\n{body}\n</{tag}>"
+
+
 def looks_like_handle(name: str) -> bool:
-    """True for anything that reads as a phone number or an e-mail address."""
-    if _EMAIL.search(name):
+    """True for anything that reads as a phone number, a short code or an e-mail address."""
+    plain = unicodedata.normalize("NFKC", name)
+    if "@" in plain:
         return True
-    return sum(char.isdigit() for char in name) >= MIN_PHONE_DIGITS
+    digits = sum(char.isdigit() for char in plain)
+    if digits >= MIN_PHONE_DIGITS:
+        return True
+    return digits > 0 and not any(char.isalpha() for char in plain)
 
 
 def clean_label(raw: object) -> str:
-    flat = squash(str(raw or "")).replace(":", "")
-    return squash(flat)[:MAX_LABEL_CHARS].strip()
+    """A name on one line, with no colon and no frame tag. Not yet cut to length."""
+    return shield(shield(scrub(str(raw or ""))).replace(":", ""))
 
 
 def resolve_labels(senders: Iterable[str], labeler: Labeler) -> dict[str, str]:
     """Name every sender. Unsaved ones are numbered in order of first appearance,
-    so a sender keeps its name when later messages add new people."""
+    so a sender keeps its name when later messages add new people.
+
+    The handle check reads the whole name. Only then is the name cut to length:
+    a cut must never turn an address into something that passes."""
     names: dict[str, str] = {}
     unsaved = 0
     for sender in senders:
@@ -93,18 +127,26 @@ def resolve_labels(senders: Iterable[str], labeler: Labeler) -> dict[str, str]:
         if not name or name.casefold() == OWN_LABEL.casefold() or looks_like_handle(name):
             unsaved += 1
             name = UNSAVED_LABEL if unsaved == 1 else f"{UNSAVED_LABEL} {unsaved}"
-        names[sender] = name
+        names[sender] = name[:MAX_LABEL_CHARS].strip()
     return names
+
+
+def _own_flag(value: object, mid: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    raise SourceError(f"message {mid!r} has an is_from_me value that is not true or false")
 
 
 def _read_row(message: Mapping[str, Any], known_days: set[str]) -> _Row | None:
     try:
-        mid = str(message["id"])
+        mid = scrub(str(message["id"]))
         stamp = message["timestamp"]
-        own = bool(message["is_from_me"])
+        own = _own_flag(message["is_from_me"], mid)
     except KeyError as exc:
         raise SourceError(f"a message from the source has no {exc.args[0]!r} field") from exc
-    if not isinstance(stamp, str) or not _STAMP_SHAPE.fullmatch(stamp):
+    if not has_stamp_shape(stamp):
         raise SourceError(f"message {mid!r} has a bad timestamp")
     day = stamp[:DAY_LENGTH]
     if day not in known_days:
@@ -114,10 +156,11 @@ def _read_row(message: Mapping[str, Any], known_days: set[str]) -> _Row | None:
             raise SourceError(f"message {mid!r} has a bad timestamp") from exc
         known_days.add(day)
     raw = message.get("text")
-    text = raw if isinstance(raw, str) else "" if raw is None else str(raw)
+    text = scrub(raw if isinstance(raw, str) else "" if raw is None else str(raw))
     if not squash(text):
         return None
-    return _Row(stamp=stamp, id=mid, own=own, sender=str(message.get("sender") or ""), text=text)
+    sender = scrub(str(message.get("sender") or ""))
+    return _Row(stamp=stamp, id=mid, own=own, sender=sender, text=text)
 
 
 def build_lines(messages: Iterable[Mapping[str, Any]], labeler: Labeler) -> tuple[Line, ...]:
@@ -144,12 +187,8 @@ def day_header(day: str) -> str:
 
 
 def render_text(text: str, max_chars: int) -> str:
-    """Message text on one line. A very long message keeps its start and its end.
-
-    Text that imitates the transcript frame gets an invisible break, so a
-    message can not end the transcript early. Quote checks ignore the break.
-    """
-    flat = _FRAME.sub(lambda match: f"<{ZERO_WIDTH_SPACE}{match.group(1)}", squash(text))
+    """Message text on one line. A very long message keeps its start and its end."""
+    flat = shield(text)
     if len(flat) <= max_chars:
         return flat
     head = max_chars * 3 // 4
@@ -179,7 +218,8 @@ def render_period(lines: Sequence[Line], max_chars: int) -> Rendered:
 
 
 def render_for_count(lines: Sequence[Line], max_chars: int) -> str:
-    """Same text with one fixed reference, so a size does not depend on numbering."""
+    """Same text with one fixed reference, so a size does not depend on numbering.
+    The fixed reference is as long as the longest real one, so a size never runs low."""
     return _render(lines, max_chars, lambda _number: COUNT_REF)
 
 

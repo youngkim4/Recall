@@ -78,6 +78,8 @@ def test_report_round_trips_through_json() -> None:
         quote="see you at the harbor",
         message_ids=("11", "12"),
         quote_verified=True,
+        quote_message_id="11",
+        quote_speaker="Mina",
     )
     period = PeriodSummary(
         label="Jun 2024",

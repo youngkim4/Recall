@@ -4,8 +4,9 @@ The layout has three level-two sections, in this order: Overview (its first
 line is the scope line), Key Events, Summary. Summary is last and holds the
 four report sections under level-three headings.
 
-Text that comes from the model or from messages can not add a heading: the
-readers find sections by their `## ` markers.
+Text that comes from the model or from messages can not add a heading, a
+link or an image: the readers find sections by their `## ` markers, and a
+report must not load anything from the network when it is shown.
 """
 
 from __future__ import annotations
@@ -15,8 +16,13 @@ import re
 from report_engine.dates import DAY_LENGTH
 from report_engine.models import Moment, Report, Scope, Section
 
-_HEADING_LINE = re.compile(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$")
+_HEADING_LINE = re.compile(r"^\s{0,3}#{1,6}(?:\s+(.*?))?\s*#*\s*$")
 _SECOND_HASH = re.compile(r"(?<=#)#")
+_IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_LINK_DEFINITION = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*\S.*$")
+_HTML_TAG = re.compile(r"</?[A-Za-z][^<>]*>")
+_INLINE_ESCAPES = str.maketrans({"\\": "\\\\", "#": "\\#", "[": "\\[", "]": "\\]"})
 
 
 def scope_line(scope: Scope) -> str:
@@ -32,17 +38,33 @@ def scope_line(scope: Scope) -> str:
 
 
 def _inline(text: str) -> str:
-    """One line, with no run of hashes that could read as a section marker."""
-    return _SECOND_HASH.sub(r"\\#", " ".join(text.split()))
+    """Plain text on one line. No character in it starts a heading or a link."""
+    return " ".join(text.split()).translate(_INLINE_ESCAPES)
+
+
+def _plain_line(line: str) -> str:
+    heading = _HEADING_LINE.match(line)
+    if heading:
+        line = f"**{heading.group(1)}**" if heading.group(1) else ""
+    line = _LINK.sub(r"\1", _IMAGE.sub(r"\1", line))
+    return _HTML_TAG.sub("", line).rstrip()
+
+
+def clean_section(markdown: str) -> str:
+    """Section text with its formatting kept and its active parts removed: a
+    heading line becomes a bold line, an image or a link becomes its text, and
+    HTML tags and link definitions go."""
+    lines = (
+        _plain_line(line)
+        for line in markdown.strip().splitlines()
+        if not _LINK_DEFINITION.match(line)
+    )
+    return "\n".join(lines).strip()
 
 
 def _body(markdown: str) -> str:
-    """Section text. A heading line becomes a bold line."""
-    lines = []
-    for line in markdown.strip().splitlines():
-        match = _HEADING_LINE.match(line)
-        lines.append(f"**{match.group(1)}**" if match and match.group(1) else line.rstrip())
-    return "\n".join(lines)
+    """Cleaned section text in which no run of hashes can read as a marker."""
+    return _SECOND_HASH.sub(r"\\#", clean_section(markdown))
 
 
 def _overview(report: Report) -> list[str]:
@@ -63,14 +85,14 @@ def _overview(report: Report) -> list[str]:
 
 def _event(moment: Moment) -> list[str]:
     rows = [f"### {moment.date} - {_inline(moment.title)}", _inline(moment.detail)]
-    if moment.quote_verified and moment.quote:
+    if moment.quote:
         rows.append(f'> "{_inline(moment.quote)}"')
     rows.append(f"*Category: {moment.category}*")
     return rows + [""]
 
 
 def _section(section: Section) -> list[str]:
-    return [f"### {section.title}", _body(section.markdown), ""]
+    return [f"### {_inline(section.title)}", _body(section.markdown), ""]
 
 
 def render_markdown(report: Report) -> str:

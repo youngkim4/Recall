@@ -3,6 +3,9 @@
 Three steps, in this order: remove duplicates, apply a score floor, spread
 what is left across the periods. Nothing is added to reach a number: a quiet
 period gives no moment.
+
+A duplicate is the same event told by two periods. Two moments of one period
+are never duplicates: the model listed them as two events.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from report_engine.dates import parse_day
 from report_engine.models import Moment
 
 DUPLICATE_WINDOW_DAYS = 7
-TITLE_RATIO = 0.75
+TITLE_RATIO = 0.9
 TITLE_WORD_OVERLAP = 0.7
 
 
@@ -25,12 +28,19 @@ class _Candidate:
     moment: Moment
 
 
+@dataclass(frozen=True)
+class _Kept:
+    period: int
+    title: str
+
+
 def _title_key(title: str) -> str:
     kept = "".join(char if char.isalnum() else " " for char in title.casefold())
     return " ".join(kept.split())
 
 
 def _same_title(first: str, second: str) -> bool:
+    """The same words in any order, or the same text but for a letter or two."""
     if not first or not second:
         return False
     if first == second:
@@ -42,8 +52,9 @@ def _same_title(first: str, second: str) -> bool:
 
 
 def _without_duplicates(candidates: Sequence[_Candidate]) -> list[_Candidate]:
-    """Two moments are one event when they cite the same message, or when their
-    dates are within a week and their titles read the same. The stronger stays."""
+    """Two moments from different periods are one event when they hold the same
+    message, or when their dates are within a week and their titles read the
+    same. The stronger one stays."""
     ranked = sorted(
         candidates,
         key=lambda item: (
@@ -54,20 +65,25 @@ def _without_duplicates(candidates: Sequence[_Candidate]) -> list[_Candidate]:
         ),
     )
     kept: list[_Candidate] = []
-    titles_by_day: dict[int, list[str]] = {}
-    cited: set[str] = set()
+    titles_by_day: dict[int, list[_Kept]] = {}
+    periods_by_message: dict[str, set[int]] = {}
     for item in ranked:
         moment = item.moment
-        if any(message_id in cited for message_id in moment.message_ids):
+        if any(periods_by_message.get(mid, set()) - {item.period} for mid in moment.message_ids):
             continue
         day = parse_day(moment.date).toordinal()
         key = _title_key(moment.title)
         window = range(day - DUPLICATE_WINDOW_DAYS, day + DUPLICATE_WINDOW_DAYS + 1)
-        if any(_same_title(key, other) for near in window for other in titles_by_day.get(near, ())):
+        if any(
+            other.period != item.period and _same_title(key, other.title)
+            for near in window
+            for other in titles_by_day.get(near, ())
+        ):
             continue
         kept.append(item)
-        titles_by_day.setdefault(day, []).append(key)
-        cited.update(moment.message_ids)
+        titles_by_day.setdefault(day, []).append(_Kept(item.period, key))
+        for mid in moment.message_ids:
+            periods_by_message.setdefault(mid, set()).add(item.period)
     return kept
 
 

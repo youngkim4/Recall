@@ -48,13 +48,21 @@ def install_tiktoken(
     return asked
 
 
-def test_heuristic_counts_a_third_of_the_bytes_rounded_up() -> None:
+def test_heuristic_counts_by_class_of_character_and_by_line() -> None:
     counter = HeuristicCounter()
-    assert counter.count_many(["", "abc", "abcd", "héllo"]) == [0, 1, 2, 2]
+    # 4 letters, 1.5 digits, 4 spaces or 3 other bytes for one token; one for each mark and line
+    assert counter.count_many(["", "abcd", "abcd abcd", "12 34", "a,b", "one\ntwo"]) == [
+        0,
+        2,
+        4,
+        4,
+        3,
+        4,
+    ]
 
 
-def test_heuristic_counts_wide_characters_by_bytes() -> None:
-    assert HeuristicCounter().count_many(["가나다"]) == [3]
+def test_heuristic_counts_other_scripts_by_bytes() -> None:
+    assert HeuristicCounter().count_many(["가나다", "héllo"]) == [4, 3]
 
 
 def test_tiktoken_counter_counts_in_one_batch() -> None:

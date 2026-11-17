@@ -6,7 +6,13 @@ is dropped. A quote must be part of a cited message, or of a message within
 three days of the moment's date. A quote that is not found is cleared.
 
 A quote matches when it is equal after white space, quote marks and Unicode
-composition are evened out. Letter case must match.
+composition are evened out. Letter case must match. In scripts that put
+spaces between words, a quote can not start or end in the middle of a word:
+"ok" is not a quote from "tokens".
+
+A verified quote keeps the id of its message and the name of its writer.
+Text inside a message can claim another writer; the name comes from the
+message itself, never from the text.
 """
 
 from __future__ import annotations
@@ -18,20 +24,21 @@ from dataclasses import dataclass
 from report_engine.dates import is_day, shift_day
 from report_engine.digest import MAX_DETAIL_CHARS, MAX_QUOTE_CHARS, MAX_TITLE_CHARS, RawMoment
 from report_engine.models import CATEGORIES, Moment
-from report_engine.transcript import Line, resolve_ref, squash
+from report_engine.transcript import ELISION_MARK, Line, resolve_ref, squash
 
 QUOTE_WINDOW_DAYS = 3
 MIN_WINDOW_QUOTE_CHARS = 8
 MAX_MESSAGE_IDS = 8
+SPACED_SCRIPTS_END = 0x0530  # Latin, Greek and Cyrillic end here
 
 _SINGLE_MARKS = (0x2018, 0x2019, 0x201A, 0x201B, 0x2032)
 _DOUBLE_MARKS = (0x201C, 0x201D, 0x201E, 0x201F, 0x2033, 0xAB, 0xBB)
 _VARIATION_SELECTORS = (0xFE0E, 0xFE0F)
 _ELLIPSIS = chr(0x2026)
 _EVEN_OUT = {
-    **{code: "'" for code in _SINGLE_MARKS},
-    **{code: '"' for code in _DOUBLE_MARKS},
-    **{code: None for code in _VARIATION_SELECTORS},
+    **dict.fromkeys(_SINGLE_MARKS, "'"),
+    **dict.fromkeys(_DOUBLE_MARKS, '"'),
+    **dict.fromkeys(_VARIATION_SELECTORS),
     0x2026: "...",
 }
 _QUOTE_MARKS = frozenset("'\"") | frozenset(chr(code) for code in _SINGLE_MARKS + _DOUBLE_MARKS)
@@ -56,6 +63,50 @@ def clean_quote(quote: str) -> str:
     return text
 
 
+def quote_parts(quote: str) -> tuple[str, ...]:
+    """A quote in compare form. A long message is shown with a gap mark, and a
+    quote can span the gap: then each side must be in the message, in order."""
+    parts = (normalise(part) for part in quote.split(ELISION_MARK))
+    return tuple(part for part in parts if part)
+
+
+def _word_char(char: str) -> bool:
+    return char.isalnum() and ord(char) < SPACED_SCRIPTS_END
+
+
+def _splits_word(text: str, index: int) -> bool:
+    """True when `index` falls between two letters or digits of one word."""
+    return 0 < index < len(text) and _word_char(text[index - 1]) and _word_char(text[index])
+
+
+def _occurrences(text: str, part: str, start: int) -> Iterator[int]:
+    at = text.find(part, start)
+    while at >= 0:
+        yield at
+        at = text.find(part, at + 1)
+
+
+def holds(text: str, parts: Sequence[str]) -> bool:
+    """True when `text` holds every part in order, on word boundaries at both ends."""
+    first, last = parts[0], parts[-1]
+    for begin in _occurrences(text, first, 0):
+        if _splits_word(text, begin):
+            continue
+        cursor = begin + len(first)
+        if len(parts) == 1:
+            if not _splits_word(text, cursor):
+                return True
+            continue
+        for middle in parts[1:-1]:
+            at = text.find(middle, cursor)
+            if at < 0:
+                return False
+            cursor = at + len(middle)
+        if any(not _splits_word(text, at + len(last)) for at in _occurrences(text, last, cursor)):
+            return True
+    return False
+
+
 class MessageIndex:
     """Every line of the conversation by day, for the quote window."""
 
@@ -64,9 +115,23 @@ class MessageIndex:
         for line in lines:
             by_day.setdefault(line.day, []).append(line)
         self._by_day = {day: tuple(found) for day, found in by_day.items()}
+        self._compare_form: dict[int, str] = {}
 
     def has_day(self, day: str) -> bool:
         return day in self._by_day
+
+    def compare_form(self, line: Line) -> str:
+        """`normalise(line.text)`, worked out once for each line."""
+        key = id(line)
+        if key not in self._compare_form:
+            self._compare_form[key] = normalise(line.text)
+        return self._compare_form[key]
+
+    def _day_at(self, day: str, distance: int) -> tuple[Line, ...]:
+        try:
+            return self._by_day.get(shift_day(day, distance), ())
+        except ValueError:
+            return ()
 
     def near(self, day: str, radius: int) -> Iterator[Line]:
         """Lines within `radius` days of `day`, the nearest day first."""
@@ -74,8 +139,8 @@ class MessageIndex:
             return
         yield from self._by_day.get(day, ())
         for distance in range(1, radius + 1):
-            yield from self._by_day.get(shift_day(day, -distance), ())
-            yield from self._by_day.get(shift_day(day, distance), ())
+            yield from self._day_at(day, -distance)
+            yield from self._day_at(day, distance)
 
 
 @dataclass(frozen=True)
@@ -116,14 +181,16 @@ def _settle_date(
     return None, False
 
 
-def _find_quote(needle: str, cited: Sequence[Line], date: str, index: MessageIndex) -> Line | None:
+def _find_quote(
+    parts: Sequence[str], cited: Sequence[Line], date: str, index: MessageIndex
+) -> Line | None:
     for line in cited:
-        if needle in normalise(line.text):
+        if holds(index.compare_form(line), parts):
             return line
-    if len(needle) < MIN_WINDOW_QUOTE_CHARS:
+    if sum(len(part) for part in parts) < MIN_WINDOW_QUOTE_CHARS:
         return None
     for line in index.near(date, QUOTE_WINDOW_DAYS):
-        if needle in normalise(line.text):
+        if holds(index.compare_form(line), parts):
             return line
     return None
 
@@ -143,8 +210,8 @@ def _check_one(
         return _Outcome(None)
 
     quote = clean_quote(raw.quote)[:MAX_QUOTE_CHARS]
-    needle = normalise(quote)
-    source = _find_quote(needle, cited, date, index) if needle else None
+    parts = quote_parts(quote)
+    source = _find_quote(parts, cited, date, index) if parts else None
     ids = [line.id for line in cited]
     if source is not None and source.id not in ids:
         ids.append(source.id)
@@ -158,8 +225,10 @@ def _check_one(
         quote=quote if source is not None else "",
         message_ids=tuple(ids),
         quote_verified=source is not None,
+        quote_message_id=source.id if source is not None else "",
+        quote_speaker=source.label if source is not None else "",
     )
-    return _Outcome(moment, quote_cleared=bool(needle) and source is None, date_repaired=repaired)
+    return _Outcome(moment, quote_cleared=bool(parts) and source is None, date_repaired=repaired)
 
 
 def check_moments(

@@ -67,7 +67,6 @@ def test_a_missing_key_is_a_miss(cache_path: Path) -> None:
     cache = PeriodCache(cache_path)
     assert cache.get("nope") is None
     assert cache.get_many(["nope", "nada"]) == {}
-    assert cache.known(["nope"]) == frozenset()
 
 
 def test_put_then_get_returns_the_same_entry(cache_path: Path) -> None:
@@ -91,7 +90,6 @@ def test_get_many_returns_only_the_hits(cache_path: Path) -> None:
     put(cache, entry("a"))
     put(cache, entry("b"))
     assert set(cache.get_many(["a", "x", "b"])) == {"a", "b"}
-    assert cache.known(["a", "x", "b"]) == frozenset({"a", "b"})
 
 
 def test_get_many_handles_more_keys_than_one_query_takes(cache_path: Path) -> None:
@@ -141,7 +139,7 @@ def test_prune_removes_entries_that_were_not_used_lately(cache_path: Path) -> No
     assert set(cache.get_many(["used"], touch=True)) == {"used"}
     put(cache, entry("new"))
     assert cache.prune(unused_for_days=30) == 1
-    assert cache.known(["old", "used", "new"]) == frozenset({"used", "new"})
+    assert set(cache.get_many(["old", "used", "new"])) == {"used", "new"}
 
 
 def test_reading_without_touch_does_not_reset_the_age(cache_path: Path) -> None:
@@ -150,7 +148,6 @@ def test_reading_without_touch_does_not_reset_the_age(cache_path: Path) -> None:
     put(cache, entry("old"))
     now[0] += timedelta(days=100)
     assert cache.get("old") is not None
-    assert cache.known(["old"]) == frozenset({"old"})
     assert cache.prune(unused_for_days=30) == 1
 
 

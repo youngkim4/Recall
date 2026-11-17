@@ -102,9 +102,15 @@ def test_when_every_period_fails_there_is_no_report() -> None:
     assert caught.value.usage is not None and caught.value.usage.calls == 0
 
 
-def test_an_error_that_is_not_from_the_model_port_is_not_hidden() -> None:
-    with pytest.raises(ZeroDivisionError):
-        run(LARGE, llm=FakeLLM(fail_month("2023-01", ZeroDivisionError("bug"))))
+def test_an_unexpected_error_from_the_model_port_fails_the_period_not_the_run() -> None:
+    llm = FakeLLM(fail_month("2023-01", ZeroDivisionError("secret reply text")))
+    report = run(LARGE, llm=llm)
+    assert report.status == "partial"
+    assert report.warnings == (
+        'Period "Jan 2023" was not analysed: the model port raised ZeroDivisionError',
+    )
+    assert "secret reply text" not in report.model_dump_json()
+    assert len(llm.calls) == 5
 
 
 def reduce_with(parsed: Any, status: str = "completed", text: str | None = None) -> Any:
@@ -150,17 +156,21 @@ def test_a_reduce_call_that_fails_raises() -> None:
     assert caught.value.usage is not None and caught.value.usage.calls == 1
 
 
-def test_a_reduce_request_that_is_too_large_is_not_sent() -> None:
+def test_summaries_too_large_for_the_model_are_shortened_to_fit_and_the_report_says_so() -> None:
     def responder(call: FakeCall) -> Any:
         if call.kind == "map":
             return {"summary": "word " * 1_100, "carry_over": "", "moments": []}
         return None
 
     llm = FakeLLM(responder)
-    with pytest.raises(ReduceError) as caught:
-        run(LARGE, llm=llm, info=model_info(max_input_tokens=3_300, context_window=10_000))
-    assert llm.reduce_calls == []
-    assert "too large" in str(caught.value)
+    info = model_info(max_input_tokens=3_300, context_window=10_000, max_output_tokens=2_000)
+    report = run(LARGE, llm=llm, info=info)
+    assert report.status == "complete"
+    assert report.warnings == ("4 period summaries were shortened to fit the model's input limit.",)
+    (reduce_call,) = llm.reduce_calls
+    assert len(reduce_call.text.split()) <= 3_300
+    assert reduce_call.text.count("[...]") == 4
+    assert all(len(period.summary.split()) == 1_100 for period in report.periods)
 
 
 def test_cancel_stops_the_run_between_calls_and_keeps_what_is_done(cache_path: Path) -> None:

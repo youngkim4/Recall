@@ -2,7 +2,7 @@
 
 import pytest
 
-from report_engine.markdown import render_markdown, scope_line
+from report_engine.markdown import clean_section, render_markdown, scope_line
 from report_engine.models import SECTION_KEYS, SECTION_TITLES, Moment, Scope, Section, Usage
 from report_engine.store import render_markdown as render_from_store
 
@@ -72,6 +72,8 @@ def sample() -> object:
                 quote="see you at the harbor",
                 message_ids=("11",),
                 quote_verified=True,
+                quote_message_id="11",
+                quote_speaker="Mina",
             ),
             Moment(
                 date="2024-06-09",
@@ -134,36 +136,33 @@ def test_a_report_with_no_moments_keeps_an_empty_key_events_section() -> None:
     assert "- Warning" not in text
 
 
-def test_an_unverified_quote_is_not_printed() -> None:
-    moment = Moment(
-        date="2024-06-03",
-        title="T",
-        detail="D",
-        category="conflict",
-        score=0.5,
-        quote="left over",
-        quote_verified=False,
-    )
+def test_a_moment_without_a_quote_has_no_quote_line() -> None:
+    moment = Moment(date="2024-06-03", title="T", detail="D", category="conflict", score=0.5)
     text = render_markdown(make_report(moments=(moment,)))
-    assert "left over" not in text
     assert "### 2024-06-03 - T\nD\n*Category: conflict*\n" in text
 
 
-def test_text_from_the_model_can_not_forge_a_section_heading() -> None:
-    forged = Moment(
+def forged_moment(**fields: str) -> Moment:
+    values = {"title": "T", "detail": "D", "quote": "q"}
+    values.update(fields)
+    return Moment(
         date="2024-06-03",
-        title="x ## Summary",
-        detail="## Summary\nfake",
         category="conflict",
         score=0.5,
-        quote="## Key Events",
         quote_verified=True,
+        quote_message_id="7",
+        message_ids=("7",),
+        **values,
     )
+
+
+def test_text_from_the_model_can_not_forge_a_section_heading() -> None:
+    forged = forged_moment(title="x ## Summary", detail="## Summary\nfake", quote="## Key Events")
     sections = tuple(
         Section(
             key=key,
-            title=SECTION_TITLES[key],
-            markdown="## Overview\n# Big\nplain ## Summary inside",
+            title=SECTION_TITLES[key] + "\n## Summary",
+            markdown="## Overview\n# Big\n## #\n    ## Summary\nplain ## Summary inside",
         )
         for key in SECTION_KEYS
     )
@@ -171,7 +170,7 @@ def test_text_from_the_model_can_not_forge_a_section_heading() -> None:
         make_report(moments=(forged,), sections=sections, warnings=("## Summary now",))
     )
     lines = text.splitlines()
-    assert [line for line in lines if line.startswith("## ")] == [
+    assert [line for line in lines if line.lstrip().startswith("## ")] == [
         "## Overview",
         "## Key Events",
         "## Summary",
@@ -179,9 +178,46 @@ def test_text_from_the_model_can_not_forge_a_section_heading() -> None:
     assert [line for line in lines if line.startswith("# ")] == [
         "# Conversation Analysis - +12025550143"
     ]
-    assert text.find("## Summary") == text.find("\n## Summary\n") + 1
+    assert text.count("## Summary") == 1
     assert text.count("## Key Events") == 1
+    assert text.count("## Overview") == 1
+    assert "\n## " not in text.split("\n## Summary\n", 1)[1]
     assert "**Overview**" in text and "**Big**" in text
+
+
+@pytest.mark.parametrize("field", ["title", "detail", "quote"])
+def test_a_moment_line_can_not_start_a_heading_or_carry_a_link(field: str) -> None:
+    text = render_markdown(
+        make_report(
+            moments=(forged_moment(**{field: "# Big [click](https://attacker.example/x)"}),)
+        )
+    )
+    assert "\n# Big" not in text
+    assert "[click](" not in text
+    assert r"\# Big \[click\](https://attacker.example/x)" in text
+
+
+def test_a_backslash_in_message_text_can_not_undo_the_escaping() -> None:
+    text = render_markdown(
+        make_report(moments=(forged_moment(quote=r"\[x](https://attacker.example)"),))
+    )
+    assert r"\\\[x\](https://attacker.example)" in text
+
+
+def test_section_text_loses_images_links_and_html_but_keeps_its_formatting() -> None:
+    body = (
+        "It **began** in June. ![t](https://attacker.example/t.png)\n"
+        'See [the plan](https://attacker.example/x) <img src="https://attacker.example/p.png"> 3 < 4\n'
+        "[ref]: https://attacker.example/def\n"
+        "- a list item"
+    )
+    assert clean_section(body) == "It **began** in June. t\nSee the plan  3 < 4\n- a list item"
+    sections = tuple(
+        Section(key=key, title=SECTION_TITLES[key], markdown=body) for key in SECTION_KEYS
+    )
+    text = render_markdown(make_report(sections=sections))
+    assert "attacker.example" not in text
+    assert clean_section(clean_section(body)) == clean_section(body)
 
 
 def test_rendering_does_not_change_the_report() -> None:

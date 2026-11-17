@@ -21,6 +21,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from report_engine.cache import CacheEntry
+from report_engine.digest import DigestError, parse_digest
 from report_engine.errors import EmptyConversationError, StoreError
 from report_engine.model_info import ModelInfo
 from report_engine.models import Scope
@@ -28,7 +30,6 @@ from report_engine.options import ReportOptions
 from report_engine.plan import Plan, build_plan
 from report_engine.ports import Labeler, LLMUsage, ReportSource
 from report_engine.pricing import call_cost_usd
-from report_engine.prompts import reduce_overhead_text
 from report_engine.tokens import TokenCounter
 
 logger = logging.getLogger(__name__)
@@ -37,14 +38,13 @@ logger = logging.getLogger(__name__)
 NOTE_TOKENS = 110
 SUMMARY_TOKENS = 400
 MOMENT_TOKENS = 60
-FIGURES_TOKENS = 120
 MOMENTS_PER_PERIOD = 4
 
 
-class KnownKeys(Protocol):
+class ReadableCache(Protocol):
     """What the estimate needs from a cache."""
 
-    def known(self, keys: Sequence[str]) -> frozenset[str]: ...
+    def get_many(self, keys: Sequence[str], touch: bool = False) -> Mapping[str, CacheEntry]: ...
 
 
 @dataclass(frozen=True)
@@ -58,14 +58,25 @@ class PlannedCall:
     cached: bool = False
 
 
-def _known(cache: KnownKeys | None, keys: Sequence[str]) -> frozenset[str]:
+def _usable(entry: CacheEntry) -> bool:
+    try:
+        parse_digest(entry.payload)
+    except DigestError:
+        return False
+    return True
+
+
+def _known(cache: ReadableCache | None, keys: Sequence[str]) -> frozenset[str]:
+    """Keys whose entry a run would use. An entry that does not parse is not one:
+    the run would call the model for that period."""
     if cache is None:
         return frozenset()
     try:
-        return cache.known(keys)
+        entries = cache.get_many(keys)
     except StoreError as exc:
         logger.warning("the period cache could not be read for the estimate: %s", exc)
         return frozenset()
+    return frozenset(key for key, entry in entries.items() if _usable(entry))
 
 
 def _calls(plan: Plan, options: ReportOptions, known: frozenset[str]) -> tuple[PlannedCall, ...]:
@@ -88,8 +99,8 @@ def _calls(plan: Plan, options: ReportOptions, known: frozenset[str]) -> tuple[P
     ]
     count = len(plan.periods)
     reduce_input = (
-        plan.meter.count(reduce_overhead_text())
-        + padded(FIGURES_TOKENS)
+        limits.reduce_overhead
+        + plan.meter.count(plan.figures)
         + count * padded(SUMMARY_TOKENS)
         + min(options.max_moments, count * MOMENTS_PER_PERIOD) * padded(MOMENT_TOKENS)
     )
@@ -107,7 +118,7 @@ def planned_calls(
     conversation: str,
     scope: Scope | Mapping[str, str | None] | None,
     model_info: ModelInfo,
-    cache: KnownKeys | None,
+    cache: ReadableCache | None,
     *,
     labeler: Labeler,
     options: ReportOptions | None = None,
@@ -135,7 +146,7 @@ def estimate(
     conversation: str,
     scope: Scope | Mapping[str, str | None] | None,
     model_info: ModelInfo,
-    cache: KnownKeys | None,
+    cache: ReadableCache | None,
     *,
     labeler: Labeler,
     options: ReportOptions | None = None,

@@ -10,7 +10,8 @@ that wait is longer than the cap, the adapter gives up instead of asking
 earlier. A reply that is cut off is returned with status "incomplete" and is
 never sent again: the same request would be cut off again.
 
-No prompt or reply text is logged or put in an error.
+No prompt or reply text is logged or put in an error. An error names the HTTP
+status, the service's error code and its request id, and nothing else.
 """
 
 from __future__ import annotations
@@ -18,10 +19,12 @@ from __future__ import annotations
 import email.utils
 import json
 import logging
+import math
 import random
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC
 from typing import Any
 
 import openai
@@ -31,6 +34,7 @@ from report_engine.ports import ChatMessage, LLMResult, LLMStatus, LLMUsage
 
 logger = logging.getLogger(__name__)
 
+OFFICIAL_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_TIMEOUT_SECONDS = 300.0
 DEFAULT_MAX_RETRIES = 2
 DEFAULT_MAX_RETRY_WAIT_SECONDS = 60.0
@@ -39,7 +43,7 @@ RETRYABLE_STATUS_CODES = frozenset({408, 409, 429})
 QUOTA_ERROR_CODE = "insufficient_quota"
 DEFAULT_SCHEMA_NAME = "reply"
 MAX_SCHEMA_NAME_CHARS = 64
-MAX_ERROR_CHARS = 300
+MAX_ERROR_CHARS = 120
 
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9_-]+")
 _SECRETS = re.compile(r"\b(sk|org|proj|user)-[A-Za-z0-9_*-]+")
@@ -49,10 +53,11 @@ def build_client(
     api_key: str | None = None,
     *,
     timeout_s: float = DEFAULT_TIMEOUT_SECONDS,
-    base_url: str | None = None,
+    base_url: str = OFFICIAL_BASE_URL,
 ) -> openai.OpenAI:
     """An SDK client with its own retries off, so the adapter's are the only ones.
-    With no key given the SDK reads OPENAI_API_KEY."""
+    With no key given the SDK reads OPENAI_API_KEY. The address is always given
+    here: an OPENAI_BASE_URL in the environment can not send transcripts elsewhere."""
     return openai.OpenAI(api_key=api_key, base_url=base_url, max_retries=0, timeout=timeout_s)
 
 
@@ -85,6 +90,8 @@ def _request(
         raise ValueError(f"unsupported message role: {', '.join(unknown)}")
     if max_output_tokens <= 0:
         raise ValueError("max_output_tokens must be positive")
+    if not any(message["role"] == "user" for message in messages):
+        raise ValueError("a request needs at least one user message")
     request: dict[str, Any] = {
         "model": model,
         "input": [
@@ -147,6 +154,10 @@ def _result(response: Any, wants_json: bool, attempts: int) -> LLMResult:
         status = "incomplete"
     elif raw_status != "completed":
         status = "failed"
+        reason = getattr(getattr(response, "error", None), "code", None)
+        logger.warning(
+            "the model reply has status %s (%s)", raw_status, _scrub(str(reason or "no code"))
+        )
     elif not text and _refusal(response):
         status, text = "refused", _refusal(response)
     else:
@@ -157,27 +168,39 @@ def _result(response: Any, wants_json: bool, attempts: int) -> LLMResult:
     )
 
 
+def _seconds(value: str | None, scale: float) -> float | None:
+    """A header value as seconds. None when it is not a plain, finite number."""
+    try:
+        number = float(value) / scale if value is not None else math.nan
+    except ValueError:
+        return None
+    return max(0.0, number) if math.isfinite(number) else None
+
+
+def _seconds_until(value: str | None) -> float | None:
+    """An HTTP date as seconds from now. A date with no zone is read as UTC."""
+    if value is None:
+        return None
+    try:
+        moment = email.utils.parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return max(0.0, moment.timestamp() - time.time())
+
+
 def _retry_after(error: Exception) -> float | None:
-    """Seconds the service asks us to wait, from its headers. None when it names none."""
+    """Seconds the service asks us to wait, from its headers. None when it names none.
+    The millisecond header is the most exact; then seconds; then a date."""
     headers = getattr(getattr(error, "response", None), "headers", None)
     if headers is None:
         return None
-    millis = headers.get("retry-after-ms")
-    seconds = headers.get("retry-after")
-    try:
-        if millis is not None:
-            return max(0.0, float(millis) / 1000.0)
-        if seconds is not None:
-            return max(0.0, float(seconds))
-    except ValueError:
-        pass
-    if seconds is None:
-        return None
-    try:
-        moment = email.utils.parsedate_to_datetime(seconds)
-    except (TypeError, ValueError):
-        return None
-    return max(0.0, moment.timestamp() - time.time())
+    plain = headers.get("retry-after")
+    for found in (_seconds(headers.get("retry-after-ms"), 1000.0), _seconds(plain, 1.0)):
+        if found is not None:
+            return found
+    return _seconds_until(plain)
 
 
 def _status_code(error: Exception) -> int | None:
@@ -198,16 +221,17 @@ def _passing(error: Exception) -> bool:
 
 
 def _describe(error: Exception) -> str:
+    """What failed, from facts that can hold no prompt text: the HTTP status, the
+    service's error code and its request id. The service's own message is left out."""
     code = _status_code(error)
-    api_code = getattr(error, "code", None)
-    where = ", ".join(str(part) for part in (f"HTTP {code}" if code else None, api_code) if part)
-    message = _scrub(getattr(error, "message", "") or str(error))
-    head = (
-        f"the model service failed ({where})"
-        if where
-        else f"the model service failed ({type(error).__name__})"
-    )
-    return f"{head}: {message}" if message else head
+    facts = [
+        f"HTTP {code}" if code else type(error).__name__,
+        _scrub(str(getattr(error, "code", None) or "")),
+        _scrub(f"request {request_id}")
+        if (request_id := getattr(error, "request_id", None))
+        else "",
+    ]
+    return f"the model service failed ({', '.join(fact for fact in facts if fact)})"
 
 
 class OpenAIResponsesLLM:
@@ -260,12 +284,13 @@ class OpenAIResponsesLLM:
             except openai.OpenAIError as error:
                 wait = self._wait_before_retry(error, attempt) if _passing(error) else None
                 if wait is None or attempt == attempts:
+                    # the SDK error holds the request, and with it the prompt: it is not chained
                     raise LLMError(
                         _describe(error),
                         status_code=_status_code(error),
                         retry_after_s=_retry_after(error),
                         attempts=attempt,
-                    ) from error
+                    ) from None
                 logger.warning(
                     "model call failed (%s); attempt %d of %d, next in %.1f s",
                     type(error).__name__,

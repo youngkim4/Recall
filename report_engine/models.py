@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from report_engine.dates import DAY_LENGTH, parse_day, parse_stamp
+from report_engine.dates import DAY_LENGTH, lower_bound, parse_day, parse_stamp, upper_bound
+from report_engine.jsonsafe import jsonable
 
 SCHEMA_VERSION = 1
 
@@ -52,7 +53,10 @@ def _check_bound(value: str | None) -> str | None:
 
 
 class Scope(_Record):
-    """The dates a report covers. A day means the whole day; both ends are included."""
+    """The dates a report covers. A day means the whole day; both ends are included.
+    An unknown field is an error: a misspelled bound must not mean "all dates"."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
     since: str | None = None
     until: str | None = None
@@ -62,7 +66,8 @@ class Scope(_Record):
 
     @model_validator(mode="after")
     def _ordered(self) -> Scope:
-        if self.since and self.until and self.since[:DAY_LENGTH] > self.until[:DAY_LENGTH]:
+        low, high = lower_bound(self.since), upper_bound(self.until)
+        if low is not None and high is not None and low > high:
             raise ValueError("scope: since is after until")
         return self
 
@@ -93,7 +98,13 @@ class Section(_Record):
 
 
 class Moment(_Record):
-    """One moment. `message_ids` open the exchange; `quote` is empty unless verified."""
+    """One moment. `message_ids` open the exchange.
+
+    A quote is kept only when a message holds it. Then `quote_verified` is true,
+    `quote_message_id` is that message and `quote_speaker` is the name of the
+    person who wrote it. With no verified quote all three are empty.
+    `title`, `detail` and `quote` are plain text, not markdown.
+    """
 
     date: str
     title: str
@@ -103,12 +114,25 @@ class Moment(_Record):
     quote: str = ""
     message_ids: tuple[str, ...] = ()
     quote_verified: bool = False
+    quote_message_id: str = ""
+    quote_speaker: str = ""
 
     @field_validator("date")
     @classmethod
     def _date_is_a_day(cls, value: str) -> str:
         parse_day(value)
         return value
+
+    @model_validator(mode="after")
+    def _quote_has_a_source(self) -> Moment:
+        if self.quote_verified:
+            if not self.quote.strip() or not self.quote_message_id:
+                raise ValueError("a verified quote needs its text and the id of its message")
+            if self.quote_message_id not in self.message_ids:
+                raise ValueError("the message of a quote must be one of message_ids")
+        elif self.quote or self.quote_message_id or self.quote_speaker:
+            raise ValueError("a quote that is not verified must be cleared")
+        return self
 
 
 class PeriodSummary(_Record):
@@ -125,6 +149,12 @@ class PeriodSummary(_Record):
     from_cache: bool = False
     error: str | None = None
     message_count: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _days_in_order(self) -> PeriodSummary:
+        if parse_day(self.first_day) > parse_day(self.last_day):
+            raise ValueError("first_day is after last_day")
+        return self
 
 
 class Report(_Record):
@@ -144,9 +174,17 @@ class Report(_Record):
 
     @field_validator("created_at")
     @classmethod
-    def _created_at_is_iso(cls, value: str) -> str:
-        datetime.fromisoformat(value)
-        return value
+    def _created_at_in_utc(cls, value: str) -> str:
+        """One instant, always written in UTC, so that text order is time order."""
+        moment = datetime.fromisoformat(value)
+        if moment.tzinfo is None:
+            raise ValueError("created_at needs a UTC offset")
+        return moment.astimezone(UTC).isoformat(timespec="seconds")
+
+    @field_validator("stats", mode="before")
+    @classmethod
+    def _stats_as_json(cls, value: Any) -> Any:
+        return jsonable(value) if isinstance(value, dict) else value
 
     @model_validator(mode="after")
     def _fixed_sections(self) -> Report:

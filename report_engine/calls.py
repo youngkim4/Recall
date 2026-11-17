@@ -6,6 +6,7 @@ budget is honoured, and the real usage of the reply is counted.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -17,6 +18,8 @@ from report_engine.ports import LLM, ChatMessage, LLMResult, LLMUsage
 from report_engine.pricing import call_cost_usd
 from report_engine.ratelimit import TokenBudget
 
+logger = logging.getLogger(__name__)
+
 MAX_SLEEP_SLICE_SECONDS = 1.0
 
 Emit = Callable[[ProgressEvent], None]
@@ -25,6 +28,16 @@ Emit = Callable[[ProgressEvent], None]
 def usage_of(model_info: ModelInfo, usage: LLMUsage) -> Usage:
     """One call's real usage with its real cost."""
     input_tokens = max(0, int(usage.input_tokens))
+    if min(usage.input_tokens, usage.cached_input_tokens, usage.output_tokens) < 0 or (
+        usage.cached_input_tokens > usage.input_tokens
+    ):
+        logger.warning(
+            "the model port reported usage that can not be true (input %s, cached %s, output %s); "
+            "it is clamped",
+            usage.input_tokens,
+            usage.cached_input_tokens,
+            usage.output_tokens,
+        )
     return Usage(
         input_tokens=input_tokens,
         cached_input_tokens=min(max(0, int(usage.cached_input_tokens)), input_tokens),
@@ -89,7 +102,8 @@ class Caller:
         waiting: ProgressEvent,
         starting: ProgressEvent,
     ) -> LLMResult:
-        """One request. Raises ReportCancelled before sending, LLMError when the port fails."""
+        """One request. Raises ReportCancelled before sending, LLMError when the port
+        fails in any way."""
         self.check_cancel()
         reserved = input_estimate + max_output_tokens
         self._wait_for_budget(reserved, waiting)
@@ -104,12 +118,20 @@ class Caller:
             )
         except LLMError as exc:
             # the request went out, maybe more than once; keep its room taken
-            self._budget.settle(ticket, reserved * max(1, exc.attempts))
+            attempts = max(1, exc.attempts)
+            self._budget.settle(ticket, reserved * attempts, moved_to_now=attempts > 1)
             raise
+        except Exception as exc:
+            # the port is foreign code: its error fails this call, not the run.
+            # Only the type is named; a message could hold prompt or reply text.
+            logger.warning("the model port raised %s", type(exc).__name__)
+            raise LLMError(f"the model port raised {type(exc).__name__}") from exc
         spent = usage_of(self._model_info, result.usage)
         extra_attempts = max(1, result.attempts) - 1
         self._budget.settle(
-            ticket, spent.input_tokens + spent.output_tokens + reserved * extra_attempts
+            ticket,
+            spent.input_tokens + spent.output_tokens + reserved * extra_attempts,
+            moved_to_now=extra_attempts > 0,
         )
         self._usage = self._usage.plus(spent)
         return result

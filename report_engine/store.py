@@ -37,6 +37,8 @@ logger = logging.getLogger(__name__)
 REPORT_SUFFIX = ".json"
 FOLDER_PREFIX_CHARS = 40
 FOLDER_HASH_CHARS = 10
+PRIVATE_FILE_MODE = 0o600
+PRIVATE_FOLDER_MODE = 0o700
 _SAFE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}")
 
 
@@ -76,12 +78,23 @@ def _fsync_folder(folder: Path) -> None:
         os.close(handle)
 
 
+def _make_folder(folder: Path) -> None:
+    """Reports hold private text: a new folder is for its owner only."""
+    folder.mkdir(mode=PRIVATE_FOLDER_MODE, parents=True, exist_ok=True)
+
+
 def _write_temp(folder: Path, name: str, text: str) -> Path:
+    """Write a finished, synced file under a temporary name. Leaves nothing on failure."""
     temp = folder / f".{name}.{secrets.token_hex(4)}.tmp"
-    with open(temp, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(text)
-        handle.flush()
-        os.fsync(handle.fileno())
+    handle = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, PRIVATE_FILE_MODE)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
     return temp
 
 
@@ -89,7 +102,7 @@ def write_text_atomic(path: str | os.PathLike[str], text: str) -> Path:
     """Write a text file in one step. An existing file is replaced."""
     target = Path(path)
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
+        _make_folder(target.parent)
         temp = _write_temp(target.parent, target.name, text)
     except OSError as exc:
         raise StoreError(f"can not write {target.name}: {exc}") from exc
@@ -113,9 +126,23 @@ def _publish_new(temp: Path, target: Path) -> None:
         ) from exc
     except OSError:
         pass  # no hard links on this file system
-    if target.exists():
-        raise StoreError(f"report {target.stem} already exists; a run never overwrites one")
-    os.replace(temp, target)
+    _claim_name(target)
+    try:
+        os.replace(temp, target)
+    except OSError:
+        target.unlink(missing_ok=True)
+        raise
+
+
+def _claim_name(target: Path) -> None:
+    """Take the final name with an empty file that only one writer can create.
+    The finished file then replaces it in one step."""
+    try:
+        os.close(os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, PRIVATE_FILE_MODE))
+    except FileExistsError as exc:
+        raise StoreError(
+            f"report {target.stem} already exists; a run never overwrites one"
+        ) from exc
 
 
 def _read(path: Path) -> Report:
@@ -129,6 +156,14 @@ def _read(path: Path) -> Report:
             f"(schema {report.schema_version}; this build reads up to {SCHEMA_VERSION})"
         )
     return report
+
+
+def _report_files(folder: Path) -> list[Path]:
+    try:
+        return sorted(folder.glob(f"[!.]*{REPORT_SUFFIX}"))
+    except OSError as exc:
+        logger.warning("a report folder can not be listed: %s", exc)
+        return []
 
 
 def _entry(report: Report, path: Path) -> ReportEntry:
@@ -165,7 +200,7 @@ class ReportStore:
             raise StoreError(f"report {report.id} already exists; a run never overwrites one")
         text = report.model_dump_json(indent=2) + "\n"
         try:
-            target.parent.mkdir(parents=True, exist_ok=True)
+            _make_folder(target.parent)
             temp = _write_temp(target.parent, target.name, text)
         except OSError as exc:
             raise StoreError(f"can not write report {report.id}: {exc}") from exc
@@ -180,28 +215,33 @@ class ReportStore:
 
     def list_reports(self, conversation: str | None = None) -> list[ReportEntry]:
         """Saved runs, the newest first. A file that can not be read is skipped and logged."""
-        if conversation is not None:
-            folders = [self._folder(conversation)]
-        elif self._root.is_dir():
-            folders = sorted(path for path in self._root.iterdir() if path.is_dir())
-        else:
-            folders = []
+        folders = [self._folder(conversation)] if conversation is not None else self._folders()
         entries: list[ReportEntry] = []
         for folder in folders:
-            if not folder.is_dir():
-                continue
-            for path in folder.glob(f"[!.]*{REPORT_SUFFIX}"):
+            for path in _report_files(folder):
                 try:
                     entries.append(_entry(_read(path), path))
                 except StoreError as exc:
                     logger.warning("skipped a report file: %s", exc)
         return sorted(entries, key=lambda entry: (entry.created_at, entry.id), reverse=True)
 
+    def _folders(self) -> list[Path]:
+        try:
+            return sorted(path for path in self._root.iterdir() if path.is_dir())
+        except OSError as exc:
+            if self._root.exists():
+                logger.warning("the report folder can not be listed: %s", exc)
+            return []
+
     def load_report(self, conversation: str, report_id: str) -> Report:
         path = self._path(conversation, report_id)
         if not path.is_file():
             raise ReportNotFound(f"no report {report_id} for this conversation")
-        return _read(path)
+        report = _read(path)
+        if report.id != report_id or report.conversation != conversation:
+            # a file system that ignores letter case can hand back another report's file
+            raise ReportNotFound(f"no report {report_id} for this conversation")
+        return report
 
     def latest_report(self, conversation: str) -> Report | None:
         entries = self.list_reports(conversation)

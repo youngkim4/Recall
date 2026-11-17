@@ -321,11 +321,13 @@ def test_the_reduce_call_sees_figures_summaries_and_moments_but_no_transcript() 
     text = llm.reduce_calls[0].text
     assert "Messages with text: 720" in text
     for period in report.periods:
-        assert period.label in text
-        assert period.summary in text
+        assert (
+            f"[{period.label} | {period.first_day} to {period.last_day}] {period.summary}" in text
+        )
     for moment in report.moments:
         assert moment.title in text
-        assert f'Quote: "{moment.quote}"' in text
+        assert f'quote by {moment.quote_speaker}: "{moment.quote}"' in text
+        assert moment.quote_speaker in {"Mina", "You"}
     assert llm.reduce_calls[0].transcript == ""
 
 

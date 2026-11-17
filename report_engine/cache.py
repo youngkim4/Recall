@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 CACHE_SCHEMA_VERSION = 1
 BUSY_TIMEOUT_S = 10.0
+PRIVATE_FILE_MODE = 0o600
+PRIVATE_FOLDER_MODE = 0o700
 QUERY_CHUNK = 500
 
 _CREATE = """
@@ -89,7 +91,7 @@ class PeriodCache:
         self._path = Path(path)
         self._now = now
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.parent.mkdir(mode=PRIVATE_FOLDER_MODE, parents=True, exist_ok=True)
         except OSError as exc:
             raise StoreError(f"can not create the cache folder: {exc}") from exc
         with self._open() as conn:
@@ -101,6 +103,14 @@ class PeriodCache:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(_CREATE)
             conn.execute(f"PRAGMA user_version = {CACHE_SCHEMA_VERSION}")
+        self._keep_private()
+
+    def _keep_private(self) -> None:
+        """The file holds summaries and quotes: it is for its owner only."""
+        try:
+            os.chmod(self._path, PRIVATE_FILE_MODE)
+        except OSError as exc:
+            logger.warning("the period cache file could not be made private: %s", exc)
 
     @contextmanager
     def _open(self) -> Iterator[sqlite3.Connection]:
@@ -119,18 +129,10 @@ class PeriodCache:
     def _stamp(self) -> str:
         return self._now().astimezone(UTC).isoformat(timespec="seconds")
 
-    def known(self, keys: Sequence[str]) -> frozenset[str]:
-        """Which of these keys have an entry. Reads no payload."""
-        found: set[str] = set()
-        with self._open() as conn:
-            for chunk in _chunks(list(keys)):
-                marks = ",".join("?" * len(chunk))
-                rows = conn.execute(f"SELECT key FROM period_results WHERE key IN ({marks})", chunk)
-                found.update(row[0] for row in rows)
-        return frozenset(found)
-
     def get_many(self, keys: Sequence[str], touch: bool = False) -> dict[str, CacheEntry]:
-        """Entries for the keys that have one. `touch` marks them as used now."""
+        """Entries for the keys that have one. `touch` marks them as used now.
+        Marking and the removal of broken entries are housekeeping: when they
+        fail, the entries that were read are still returned."""
         rows: list[tuple[Any, ...]] = []
         with self._open() as conn:
             for chunk in _chunks(list(keys)):
@@ -148,10 +150,13 @@ class PeriodCache:
                 broken.append(row[0])
             else:
                 entries[entry.key] = entry
-        if broken:
-            self._delete(broken)
-        if touch and entries:
-            self._touch(list(entries))
+        try:
+            if broken:
+                self._delete(broken)
+            if touch and entries:
+                self._touch(list(entries))
+        except StoreError as exc:
+            logger.warning("period cache housekeeping failed: %s", exc)
         return entries
 
     def get(self, key: str) -> CacheEntry | None:

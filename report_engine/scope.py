@@ -4,32 +4,34 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from report_engine.dates import DAY_LENGTH
+from pydantic import ValidationError
+
+from report_engine.dates import lower_bound, upper_bound
+from report_engine.errors import ConfigError
 from report_engine.models import Scope
 
-DAY_START = " 00:00:00"
-DAY_END = " 23:59:59"
+__all__ = ["coerce_scope", "in_bounds", "inclusive_bounds", "lower_bound", "upper_bound"]
 
 
 def coerce_scope(value: Scope | Mapping[str, str | None] | None) -> Scope:
-    """Accept a Scope, a mapping with since/until, or None for all dates."""
+    """Accept a Scope, a mapping with since/until, or None for all dates.
+    Anything else is a ConfigError: a scope that is not understood must not
+    turn into "all dates"."""
     if value is None:
         return Scope()
     if isinstance(value, Scope):
         return value
-    return Scope.model_validate(dict(value))
-
-
-def lower_bound(since: str | None) -> str | None:
-    if since is None:
-        return None
-    return since + DAY_START if len(since) == DAY_LENGTH else since
-
-
-def upper_bound(until: str | None) -> str | None:
-    if until is None:
-        return None
-    return until + DAY_END if len(until) == DAY_LENGTH else until
+    if not isinstance(value, Mapping):
+        raise ConfigError(
+            f"scope must be a mapping with since and until, not {type(value).__name__}"
+        )
+    try:
+        return Scope.model_validate(dict(value))
+    except ValidationError as exc:
+        problems = "; ".join(
+            f"{'.'.join(map(str, item['loc'])) or 'scope'}: {item['msg']}" for item in exc.errors()
+        )
+        raise ConfigError(f"scope is not valid: {problems}") from exc
 
 
 def inclusive_bounds(scope: Scope) -> tuple[str | None, str | None]:

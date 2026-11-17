@@ -170,3 +170,39 @@ def test_importing_the_package_loads_no_heavy_or_private_module() -> None:
         timeout=60,
     )
     assert done.stdout.strip() == ""
+
+
+def test_the_socket_guard_blocks_every_way_out(blocked_attempts: list[str]) -> None:
+    """Hosts under .invalid never resolve, and 192.0.2.0/24 is reserved for
+    documentation: even without the guard these would reach nobody."""
+    import socket
+
+    from .conftest import OutboundNetworkBlocked
+
+    before = len(blocked_attempts)
+    with pytest.raises(OutboundNetworkBlocked):
+        socket.getaddrinfo("lookup.invalid", 443)
+    with pytest.raises(OutboundNetworkBlocked):
+        socket.gethostbyname("byname.invalid")
+    with pytest.raises(OutboundNetworkBlocked):
+        socket.create_connection(("192.0.2.1", 9), timeout=1)
+    with (
+        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as datagram,
+        pytest.raises(OutboundNetworkBlocked),
+    ):
+        datagram.sendto(b"x", ("192.0.2.1", 9))
+    assert blocked_attempts[before:] == [
+        "lookup.invalid",
+        "byname.invalid",
+        "192.0.2.1",
+        "192.0.2.1",
+    ]
+    assert socket.getaddrinfo("localhost", 80)
+
+
+def test_no_setting_in_the_environment_can_redirect_a_client() -> None:
+    import os
+
+    assert os.environ["OPENAI_API_KEY"].startswith("sk-test-dummy")
+    for name in ("OPENAI_BASE_URL", "HTTPS_PROXY", "https_proxy", "ALL_PROXY"):
+        assert name not in os.environ

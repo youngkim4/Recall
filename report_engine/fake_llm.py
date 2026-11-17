@@ -21,7 +21,8 @@ from report_engine.transcript import TRANSCRIPT_CLOSE, TRANSCRIPT_OPEN
 
 _DAY = re.compile(r"^--- (\d{4}-\d{2}-\d{2}) \w+ ---$")
 _LINE = re.compile(r"^(m\d+) (\d{2}:\d{2}) ([^:]+): (.*)$")
-_NOTE = re.compile(r"^- (.+?): (.*)$")
+NOTES_OPEN = "<notes>"
+NOTES_CLOSE = "</notes>"
 
 
 @dataclass(frozen=True)
@@ -83,12 +84,14 @@ class FakeCall:
     @property
     def notes(self) -> tuple[tuple[str, str], ...]:
         """Notes from earlier periods as (period label, text), oldest first."""
-        head = self.messages[-1]["content"].split(TRANSCRIPT_OPEN, 1)[0] if self.messages else ""
-        return tuple(
-            (match.group(1), match.group(2))
-            for match in (_NOTE.match(row) for row in head.splitlines())
-            if match
+        user = self.messages[-1]["content"] if self.messages else ""
+        start, end = user.find(NOTES_OPEN), user.find(NOTES_CLOSE)
+        if start < 0 or end < start:
+            return ()
+        rows = (
+            row.partition(": ") for row in user[start + len(NOTES_OPEN) : end].strip().splitlines()
         )
+        return tuple((label, text) for label, found, text in rows if found)
 
     @property
     def first_day(self) -> str:

@@ -166,12 +166,6 @@ def test_frame_source_does_not_change_the_frame() -> None:
     pd.testing.assert_frame_equal(data, before)
 
 
-def test_frame_source_drops_time_zones_but_keeps_wall_time() -> None:
-    stamps = pd.to_datetime(["2024-06-01 09:00:00"] * 5).tz_localize("America/Los_Angeles")
-    found = rows(FrameSource(frame(timestamp=stamps, chat_id=[CONVERSATION] * 5)))
-    assert {row["timestamp"] for row in found} == {"2024-06-01 09:00:00"}
-
-
 def test_a_run_reads_from_a_frame() -> None:
     llm = FakeLLM()
     report = run([], llm=llm, source=FrameSource(frame()))

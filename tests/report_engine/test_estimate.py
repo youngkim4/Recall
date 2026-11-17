@@ -176,7 +176,7 @@ def test_a_cache_that_can_not_be_read_counts_as_empty(caplog: pytest.LogCaptureF
     from report_engine.errors import StoreError
 
     class Broken:
-        def known(self, keys: Any) -> frozenset:
+        def get_many(self, keys: Any, touch: bool = False) -> dict:
             raise StoreError("disk is not there")
 
     with caplog.at_level("WARNING"):

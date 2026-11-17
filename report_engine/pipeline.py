@@ -17,8 +17,7 @@ from typing import Any
 
 from report_engine.calls import Caller, Emit
 from report_engine.control import CancelToken, ProgressCallback, ProgressEvent, Runtime
-from report_engine.errors import AllPeriodsFailed, ReduceError
-from report_engine.figures import conversation_figures
+from report_engine.errors import AllPeriodsFailed, ReduceError, ReportEngineError, RunError
 from report_engine.jsonsafe import jsonable
 from report_engine.map_step import MapResult, PeriodOutcome, PeriodStore, map_periods
 from report_engine.model_info import ModelInfo
@@ -58,10 +57,10 @@ def _counted(count: int, one: str, many: str) -> list[str]:
     return [f"1 {one}" if count == 1 else f"{count} {many}"]
 
 
-def _check_warnings(checks: list[Checked]) -> list[str]:
+def _check_warnings(checks: list[Checked], skipped: int) -> list[str]:
     cleared = sum(check.quotes_cleared for check in checks)
     repaired = sum(check.dates_repaired for check in checks)
-    dropped = sum(check.dropped for check in checks)
+    dropped = sum(check.dropped for check in checks) + skipped
     return [
         *_counted(
             cleared,
@@ -111,7 +110,68 @@ def _summaries(plan: Plan, mapped: MapResult) -> tuple[tuple[PeriodSummary, ...]
     summaries = tuple(
         _summary(outcome, check) for outcome, check in zip(mapped.outcomes, checks, strict=True)
     )
-    return summaries, _check_warnings([check for check in checks if check is not None])
+    skipped = sum(outcome.digest.skipped for outcome in mapped.outcomes if outcome.digest)
+    return summaries, _check_warnings([check for check in checks if check is not None], skipped)
+
+
+def _after_prepare(
+    *,
+    plan: Plan,
+    caller: Caller,
+    cache: PeriodStore | None,
+    model_info: ModelInfo,
+    conversation: str,
+    options: ReportOptions,
+    stats: dict[str, Any],
+    clock: Runtime,
+    emit: Emit,
+) -> Report:
+    """Map, check, select, reduce and put the report together."""
+    total = len(plan.periods)
+    mapped = map_periods(
+        plan=plan,
+        caller=caller,
+        cache=cache,
+        model_info=model_info,
+        conversation=conversation,
+        notes_budget=options.carry_over_token_budget,
+        emit=emit,
+    )
+    failures = [_failure_warning(outcome) for outcome in mapped.outcomes if outcome.digest is None]
+    if len(failures) == total:
+        raise AllPeriodsFailed(
+            f"no period could be analysed; the first failure: {failures[0]}", usage=caller.usage
+        )
+
+    periods, check_warnings = _summaries(plan, mapped)
+    moments = select_moments(
+        [period.moments for period in periods],
+        score_floor=options.score_floor,
+        max_moments=options.max_moments,
+    )
+    try:
+        reduced = write_sections(plan=plan, caller=caller, periods=periods, moments=moments)
+    except ReduceError as exc:
+        exc.usage = caller.usage
+        emit(ProgressEvent(step="reduce", state="failed", total=total))
+        raise
+    emit(ProgressEvent(step="reduce", state="done", total=total))
+
+    created = clock.now()
+    return Report(
+        id=clock.new_id(created),
+        conversation=conversation,
+        scope=plan.scope,
+        model=model_info.id,
+        created_at=created.astimezone(UTC).isoformat(timespec="seconds"),
+        status="partial" if failures else "complete",
+        warnings=(*failures, *mapped.warnings, *check_warnings, *reduced.warnings),
+        sections=reduced.sections,
+        moments=moments,
+        periods=periods,
+        usage=caller.usage,
+        stats=stats,
+    )
 
 
 def run_report(
@@ -130,11 +190,15 @@ def run_report(
     cancel: CancelToken | None = None,
     runtime: Runtime | None = None,
 ) -> Report:
-    """Run one report. Raises EmptyConversationError, ConfigError, SourceError,
-    ReportCancelled, AllPeriodsFailed or ReduceError; a returned Report always
-    has all four sections."""
+    """Run one report. A returned Report always has all four sections.
+
+    Before any model call it can raise EmptyConversationError, ConfigError or
+    SourceError. After that it raises only RunError and its kinds
+    (ReportCancelled, AllPeriodsFailed, ReduceError), each with the `usage` of
+    the run so far. Period results that were paid for stay in the cache."""
     chosen = options or ReportOptions()
     clock = runtime or Runtime()
+    safe_stats = jsonable(dict(stats or {}))
     emit = _emitter(on_progress)
     caller = Caller(
         llm=llm,
@@ -156,58 +220,25 @@ def run_report(
         options=chosen,
         counter=counter,
     )
-    total = len(plan.periods)
-    emit(ProgressEvent(step="prepare", state="done", total=total))
+    emit(ProgressEvent(step="prepare", state="done", total=len(plan.periods)))
 
-    mapped = map_periods(
-        plan=plan,
-        caller=caller,
-        cache=cache,
-        model_info=model_info,
-        conversation=conversation,
-        notes_budget=chosen.carry_over_token_budget,
-        emit=emit,
-    )
-    failures = [_failure_warning(outcome) for outcome in mapped.outcomes if outcome.digest is None]
-    if len(failures) == total:
-        raise AllPeriodsFailed(
-            f"no period could be analysed; the first failure: {failures[0]}", usage=caller.usage
-        )
-
-    periods, check_warnings = _summaries(plan, mapped)
-    moments = select_moments(
-        [period.moments for period in periods],
-        score_floor=chosen.score_floor,
-        max_moments=chosen.max_moments,
-    )
     try:
-        sections = write_sections(
+        report = _after_prepare(
             plan=plan,
             caller=caller,
-            labels=sorted({line.label for line in plan.lines}),
-            figures=conversation_figures(plan.lines),
-            periods=periods,
-            moments=moments,
+            cache=cache,
+            model_info=model_info,
+            conversation=conversation,
+            options=chosen,
+            stats=safe_stats,
+            clock=clock,
+            emit=emit,
         )
-    except ReduceError as exc:
-        exc.usage = caller.usage
+    except ReportEngineError:
         raise
-    emit(ProgressEvent(step="reduce", state="done", total=total))
-
-    created = clock.now()
-    report = Report(
-        id=clock.new_id(created),
-        conversation=conversation,
-        scope=plan.scope,
-        model=model_info.id,
-        created_at=created.astimezone(UTC).isoformat(timespec="seconds"),
-        status="partial" if failures else "complete",
-        warnings=(*failures, *mapped.warnings, *check_warnings),
-        sections=sections,
-        moments=moments,
-        periods=periods,
-        usage=caller.usage,
-        stats=jsonable(dict(stats or {})),
-    )
-    emit(ProgressEvent(step="done", state="done", total=total))
+    except Exception as exc:
+        raise RunError(
+            f"the run stopped on an unexpected error: {type(exc).__name__}", usage=caller.usage
+        ) from exc
+    emit(ProgressEvent(step="done", state="done", total=len(plan.periods)))
     return report

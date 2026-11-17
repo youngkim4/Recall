@@ -1,7 +1,10 @@
 """Ports: what the engine needs from the outside, and nothing more.
 
-The engine never opens a database, a CSV file or a network connection itself.
-A caller gives it a message source, a labeler and a model.
+The engine opens no database and no CSV file, and it calls no model service
+itself. A caller gives it a message source, a labeler and a model.
+
+One part can reach the network: the tokenizer library fetches its vocabulary
+file the first time it is used on a machine. See `tokens`.
 """
 
 from __future__ import annotations

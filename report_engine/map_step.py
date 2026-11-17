@@ -21,7 +21,14 @@ from report_engine.model_info import ModelInfo
 from report_engine.models import Usage
 from report_engine.plan import Plan, PlannedPeriod
 from report_engine.ports import LLMResult, LLMUsage
-from report_engine.prompts import MAP_PROMPT_VERSION, MAP_SCHEMA, Note, map_messages, notes_block
+from report_engine.prompts import (
+    MAP_PROMPT_VERSION,
+    MAP_SCHEMA,
+    Note,
+    map_messages,
+    note_line,
+    notes_block,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +241,7 @@ def map_periods(
         outcomes.append(outcome)
         if outcome.digest is not None and outcome.digest.carry_over:
             note = (planned.period.label, outcome.digest.carry_over)
-            notes.append(_SizedNote(note, plan.meter.count(f"- {note[0]}: {note[1]}")))
+            notes.append(_SizedNote(note, plan.meter.count(note_line(note))))
     if unsaved:
         many = len(unsaved)
         warnings.append(

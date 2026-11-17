@@ -12,14 +12,22 @@ from dataclasses import dataclass
 from report_engine.cache import period_key
 from report_engine.chunking import Period, line_sizer, measure_days, plan_periods
 from report_engine.errors import ConfigError, EmptyConversationError
+from report_engine.figures import conversation_figures
 from report_engine.model_info import ModelInfo
 from report_engine.models import Scope
 from report_engine.options import ReportOptions
 from report_engine.ports import Labeler, ReportSource
-from report_engine.prompts import MAP_PROMPT_VERSION, map_overhead_text
+from report_engine.prompts import (
+    MAP_PROMPT_VERSION,
+    map_overhead_text,
+    notes_frame_text,
+    reduce_overhead_text,
+)
 from report_engine.scope import coerce_scope
 from report_engine.tokens import TokenCounter, TokenMeter, meter_for
 from report_engine.transcript import Line, build_lines, render_period
+
+MIN_PERIOD_LINE_TOKENS = 60
 
 
 @dataclass(frozen=True)
@@ -32,6 +40,7 @@ class Limits:
     reduce_max_output: int
     map_input_cap: int
     reduce_input_cap: int
+    reduce_overhead: int
 
 
 @dataclass(frozen=True)
@@ -49,11 +58,16 @@ class PlannedPeriod:
 
 @dataclass(frozen=True)
 class Plan:
+    """`names` are all speakers of the conversation; `figures` is the block of
+    exact numbers that the reduce step reads."""
+
     scope: Scope
     lines: tuple[Line, ...]
     periods: tuple[PlannedPeriod, ...]
     meter: TokenMeter
     limits: Limits
+    names: tuple[str, ...]
+    figures: str
 
 
 def _input_cap(model_info: ModelInfo, max_output: int) -> int:
@@ -65,26 +79,46 @@ def _input_cap(model_info: ModelInfo, max_output: int) -> int:
     return min(caps)
 
 
-def resolve_limits(model_info: ModelInfo, options: ReportOptions, meter: TokenMeter) -> Limits:
+def resolve_limits(
+    model_info: ModelInfo, options: ReportOptions, meter: TokenMeter, names: Sequence[str]
+) -> Limits:
+    """Limits for one conversation. A map request is the transcript, the fixed
+    prompt text, the speaker names and the notes: the transcript budget is what
+    is left of the input cap when the other three are at their largest."""
     map_out = min(options.map_max_output_tokens, model_info.max_output_tokens)
     reduce_out = min(options.reduce_max_output_tokens, model_info.max_output_tokens)
-    overhead = meter.count(map_overhead_text())
+    map_text, notes_text, reduce_text, name_text = meter.count_many(
+        [map_overhead_text(), notes_frame_text(), reduce_overhead_text(), ", ".join(names)]
+    )
     map_cap = _input_cap(model_info, map_out)
     reduce_cap = _input_cap(model_info, reduce_out)
-    room = map_cap - overhead - options.carry_over_token_budget
-    if room <= 0 or reduce_cap <= 0:
+    room = map_cap - map_text - name_text - notes_text - options.carry_over_token_budget
+    if room <= 0:
         raise ConfigError(
             f"model {model_info.id} leaves no room for a period: input cap {map_cap} tokens, "
-            f"prompt {overhead}, notes {options.carry_over_token_budget}"
+            f"prompt {map_text + name_text + notes_text}, notes {options.carry_over_token_budget}"
         )
     return Limits(
         transcript_budget=min(options.period_token_budget, room),
-        map_overhead=overhead,
+        map_overhead=map_text,
         map_max_output=map_out,
         reduce_max_output=reduce_out,
         map_input_cap=map_cap,
         reduce_input_cap=reduce_cap,
+        reduce_overhead=reduce_text + name_text,
     )
+
+
+def _check_reduce_fits(limits: Limits, figure_tokens: int, periods: int, model_id: str) -> None:
+    """The reduce request holds one line for each period. When even the shortest
+    lines can not fit, say so before a single call is paid for."""
+    least = limits.reduce_overhead + figure_tokens + periods * MIN_PERIOD_LINE_TOKENS
+    if least > limits.reduce_input_cap:
+        raise ConfigError(
+            f"model {model_id} leaves no room to write the report from {periods} periods: "
+            f"the request needs {least} tokens at least, the limit is {limits.reduce_input_cap}. "
+            "Use a smaller reduce_max_output_tokens or a larger period_token_budget."
+        )
 
 
 def _planned_periods(
@@ -128,11 +162,14 @@ def build_plan(
     if not lines:
         raise EmptyConversationError("no message with text in this conversation and scope")
     meter = meter_for(model_info, counter, options.tokenizer_mismatch_margin)
-    limits = resolve_limits(model_info, options, meter)
+    names = tuple(sorted({line.label for line in lines}))
+    limits = resolve_limits(model_info, options, meter, names)
     days = measure_days(lines, meter, options.max_message_chars)
     periods = plan_periods(
         days, limits.transcript_budget, line_sizer(lines, meter, options.max_message_chars)
     )
+    figures = conversation_figures(lines)
+    _check_reduce_fits(limits, meter.count(figures), len(periods), model_info.id)
     return Plan(
         scope=wanted,
         lines=lines,
@@ -141,4 +178,6 @@ def build_plan(
         ),
         meter=meter,
         limits=limits,
+        names=names,
+        figures=figures,
     )

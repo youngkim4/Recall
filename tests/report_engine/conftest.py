@@ -9,6 +9,19 @@ reach a model provider. Loopback stays open for local test servers.
 import os
 
 os.environ["OPENAI_API_KEY"] = "sk-test-dummy-not-a-real-key"
+# nothing in the environment may point a client at another address or at a proxy
+for _name in (
+    "OPENAI_BASE_URL",
+    "OPENAI_ORG_ID",
+    "OPENAI_PROJECT_ID",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+):
+    os.environ.pop(_name, None)
 
 import ipaddress  # noqa: E402
 import socket  # noqa: E402
@@ -27,6 +40,9 @@ BLOCKED_ATTEMPTS: list[str] = []
 _real_connect = socket.socket.connect
 _real_connect_ex = socket.socket.connect_ex
 _real_getaddrinfo = socket.getaddrinfo
+_real_gethostbyname = socket.gethostbyname
+_real_gethostbyname_ex = socket.gethostbyname_ex
+_real_sendto = socket.socket.sendto
 
 
 def _is_loopback_host(host: Any) -> bool:
@@ -69,6 +85,24 @@ def _guarded_getaddrinfo(host: Any, *args: Any, **kwargs: Any) -> Any:
     return _real_getaddrinfo(host, *args, **kwargs)
 
 
+def _guarded_name_lookup(real: Any) -> Any:
+    def lookup(host: Any, *args: Any, **kwargs: Any) -> Any:
+        if not _is_loopback_host(host):
+            BLOCKED_ATTEMPTS.append(str(host))
+            raise OutboundNetworkBlocked(f"name lookup blocked in tests: {host!r}")
+        return real(host, *args, **kwargs)
+
+    return lookup
+
+
+def _guarded_sendto(self: socket.socket, data: Any, *args: Any) -> Any:
+    _check(self, args[-1] if args else None)
+    return _real_sendto(self, data, *args)
+
+
+socket.gethostbyname = _guarded_name_lookup(_real_gethostbyname)  # type: ignore[assignment]
+socket.gethostbyname_ex = _guarded_name_lookup(_real_gethostbyname_ex)  # type: ignore[assignment]
+socket.socket.sendto = _guarded_sendto  # type: ignore[method-assign,assignment]
 socket.socket.connect = _guarded_connect  # type: ignore[method-assign]
 socket.socket.connect_ex = _guarded_connect_ex  # type: ignore[method-assign]
 socket.getaddrinfo = _guarded_getaddrinfo  # type: ignore[assignment]

@@ -51,7 +51,15 @@ def test_two_moments_that_cite_the_same_message_are_one_event() -> None:
 
 def test_between_equal_scores_the_one_with_a_verified_quote_stays() -> None:
     plain = moment("2024-01-10", "First kiss", 0.8)
-    quoted = moment("2024-01-10", "First kiss", 0.8, quote="finally", quote_verified=True)
+    quoted = moment(
+        "2024-01-10",
+        "First kiss",
+        0.8,
+        quote="finally",
+        quote_verified=True,
+        quote_message_id="9",
+        message_ids=("9",),
+    )
     assert pick([plain], [quoted]) == (quoted,)
 
 

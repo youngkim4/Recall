@@ -92,7 +92,11 @@ def test_a_period_too_large_for_the_model_is_not_sent() -> None:
         message(3, "2024-06-01 09:02:00", "small end"),
     ]
     llm = FakeLLM()
-    report = run(messages, llm=llm, info=model_info(max_input_tokens=700, context_window=10_000))
+    report = run(
+        messages,
+        llm=llm,
+        info=model_info(max_input_tokens=700, context_window=10_000, max_output_tokens=2_000),
+    )
     assert [period.label for period in report.periods] == [
         "2024-06-01 part 1",
         "2024-06-01 part 2",

@@ -10,7 +10,8 @@ Rows whose `kind` is `system` are skipped.
 
 The archive takes `since` and `until` as days. Whether its `until` day is
 included is not relied on: the adapter asks for one day more and applies the
-exact bounds itself.
+exact bounds itself. A row that breaks the contract is a SourceError, not a
+guess.
 """
 
 from __future__ import annotations
@@ -20,10 +21,10 @@ import os
 from collections.abc import Iterator, Mapping
 from typing import Any
 
-from report_engine.dates import DAY_LENGTH, shift_day
+from report_engine.dates import DAY_LENGTH, has_stamp_shape, lower_bound, shift_day, upper_bound
 from report_engine.errors import SourceError
 from report_engine.ports import SourceMessage
-from report_engine.scope import in_bounds, lower_bound, upper_bound
+from report_engine.scope import in_bounds
 
 SYSTEM_KIND = "system"
 ARCHIVE_MODULES = ("archive.queries", "archive")
@@ -46,17 +47,40 @@ def _archive_class() -> Any:
     )
 
 
+def _flag(value: object, row_id: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    raise SourceError(f"archive row {row_id!r} has an is_from_me value that is not true or false")
+
+
 def _message(row: Mapping[str, Any]) -> SourceMessage:
     try:
-        return {
-            "id": str(row["id"]),
-            "timestamp": str(row["timestamp"]),
-            "is_from_me": bool(row["is_from_me"]),
-            "sender": str(row.get("sender") or ""),
-            "text": str(row.get("text") or ""),
-        }
+        row_id, stamp, own = row["id"], row["timestamp"], row["is_from_me"]
     except KeyError as exc:
         raise SourceError(f"an archive row has no {exc.args[0]!r} field") from exc
+    if row_id is None:
+        raise SourceError("an archive row has no id")
+    if not has_stamp_shape(stamp):
+        raise SourceError(f"archive row {row_id!r} has a timestamp that is not YYYY-MM-DD HH:MM:SS")
+    return {
+        "id": str(row_id),
+        "timestamp": stamp,
+        "is_from_me": _flag(own, row_id),
+        "sender": str(row.get("sender") or ""),
+        "text": str(row.get("text") or ""),
+    }
+
+
+def _day_after(until: str | None) -> str | None:
+    """The day after `until`, to ask the archive for. None at the end of the calendar."""
+    if until is None:
+        return None
+    try:
+        return shift_day(until[:DAY_LENGTH], 1)
+    except ValueError:
+        return None
 
 
 class ArchiveSource:
@@ -90,7 +114,7 @@ class ArchiveSource:
         rows = self._archive.iter_messages(
             conversation,
             since=since[:DAY_LENGTH] if since else None,
-            until=shift_day(until[:DAY_LENGTH], 1) if until else None,
+            until=_day_after(until),
         )
         for row in rows:
             if row.get("kind") == SYSTEM_KIND:
