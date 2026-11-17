@@ -2,15 +2,18 @@
 
 A reader gives a frame with all of its columns, also when there is nothing to
 give. It opens the database to read and nothing else: a path with no file
-makes no file, and what is still in the -wal file is read. An error is the one
-sqlite3 raises, with no text of a query in it.
+makes no file, a copy gets no file beside it, and what is still in the -wal
+file is read. An error is the one sqlite3 raises, with no text of a query in
+it.
 """
+import os
 import shutil
 import sqlite3
 
 import pandas as pd
 import pytest
 
+import setup_status
 import ui_server
 from conversation import load_attachments, load_reactions
 from parse_imessage import (
@@ -18,10 +21,10 @@ from parse_imessage import (
     extract_messages,
     extract_reactions,
     list_contacts,
-    open_read_only,
     read_frame,
     search_contacts,
 )
+from setup_status import open_read_only
 from tests.invented_db import GROUP, apple_archive, fill, messages_db
 
 MESSAGE_COLUMNS = [
@@ -166,6 +169,111 @@ def test_a_path_that_is_not_whole_is_read_from_the_folder_in_use(tmp_path, monke
     assert list(extract_messages("chat.db")["text"]) == ["one"]
 
 
+def copy_made_alone(path, texts):
+    """A database in WAL mode with no file beside it: what a copy of chat.db alone is."""
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        fill(conn, texts)
+    finally:
+        conn.close()
+    assert [found.name for found in path.parent.iterdir()] == [path.name]
+    return path
+
+
+def addresses_asked_for(monkeypatch):
+    """Each address that sqlite3 is asked to open from now on."""
+    asked = []
+    connect = sqlite3.connect
+
+    def note_and_connect(address, *args, **kwargs):
+        asked.append(str(address))
+        return connect(address, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", note_and_connect)
+    return asked
+
+
+@pytest.mark.parametrize("reader", READERS)
+def test_a_copy_with_no_wal_beside_it_gets_no_file_beside_it(tmp_path, reader):
+    db = copy_made_alone(tmp_path / "chat.db", ["one", "two"])
+    before = db.read_bytes()
+
+    READERS[reader](str(db))
+
+    assert [path.name for path in tmp_path.iterdir()] == ["chat.db"]
+    assert db.read_bytes() == before
+
+
+def test_a_copy_made_alone_is_read_whole(tmp_path):
+    db = copy_made_alone(tmp_path / "chat.db", ["one", "two"])
+
+    messages, attachments, reactions = read_all(db)
+
+    assert set(messages["text"]) == {"one", "two"}
+    assert (len(attachments), len(reactions)) == (1, 1)
+
+
+def test_a_copy_in_a_folder_that_cannot_be_written_to_is_read(tmp_path):
+    folder = tmp_path / "closed"
+    folder.mkdir()
+    db = copy_made_alone(folder / "chat.db", ["one", "two"])
+    folder.chmod(0o555)
+    try:
+        if os.access(folder, os.W_OK):
+            pytest.skip("this user writes to any folder")
+        texts = set(extract_messages(str(db))["text"])
+    finally:
+        folder.chmod(0o755)
+
+    assert texts == {"one", "two"}
+
+
+def test_a_copy_is_opened_as_a_file_that_does_not_change_only_with_no_wal_beside_it(tmp_path, monkeypatch):
+    alone = copy_made_alone(tmp_path / "chat.db", ["one"])
+    asked = addresses_asked_for(monkeypatch)
+
+    extract_messages(str(alone))
+    (tmp_path / "chat.db-wal").write_bytes(b"")
+    extract_messages(str(alone))
+
+    assert ["immutable=1" in address for address in asked] == [True, False]
+
+
+def test_the_database_of_messages_is_never_opened_as_a_file_that_does_not_change(tmp_path, monkeypatch):
+    # Messages can write to it at any moment, also when no -wal file is there yet
+    home = tmp_path.resolve() / "Messages"
+    home.mkdir()
+    monkeypatch.setattr(setup_status, "LIVE_MESSAGES_DIR", home)
+    live = copy_made_alone(home / "chat.db", ["one"])
+    asked = addresses_asked_for(monkeypatch)
+
+    extract_messages(str(live))
+
+    assert len(asked) == 1 and "mode=ro" in asked[0] and "immutable" not in asked[0]
+
+
+def test_a_path_through_a_link_and_back_is_the_file_the_system_means(tmp_path):
+    (tmp_path / "deep" / "inner").mkdir(parents=True)
+    (tmp_path / "side").mkdir()
+    messages_db(tmp_path / "deep" / "chat.db", ["the one the path means"])
+    (tmp_path / "side" / "link").symlink_to(tmp_path / "deep" / "inner")
+
+    # "side/link/.." is "deep", not "side"
+    texts = list(extract_messages(str(tmp_path / "side" / "link" / ".." / "chat.db"))["text"])
+
+    assert texts == ["the one the path means"]
+
+
+def test_a_path_that_is_not_whole_makes_no_file_where_there_is_none(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(sqlite3.OperationalError):
+        extract_messages("ghost.db")
+
+    assert list(tmp_path.iterdir()) == []
+
+
 def tables_in_the_file_alone(path, folder):
     """How many tables the database file holds without its -wal file."""
     folder.mkdir()
@@ -234,6 +342,18 @@ def test_an_error_holds_no_text_of_the_query(tmp_path, reader):
         READERS[reader](str(no_tables))
 
     assert "no such table" in str(stopped.value)
+    assert "SELECT" not in str(stopped.value)
+
+
+@pytest.mark.parametrize("reader", READERS)
+def test_a_file_that_is_no_database_gives_an_error_with_no_text_of_the_query(tmp_path, reader):
+    not_a_database = tmp_path / "chat.db"
+    not_a_database.write_bytes(b"this is not a database, and it is long enough to be read as a page " * 40)
+
+    with pytest.raises(sqlite3.DatabaseError) as stopped:
+        READERS[reader](str(not_a_database))
+
+    assert "not a database" in str(stopped.value)
     assert "SELECT" not in str(stopped.value)
 
 

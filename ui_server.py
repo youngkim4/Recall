@@ -77,7 +77,7 @@ from group_names import derive_group_names
 from group_people import group_speakers
 from message_text import ATTACHMENT_PLACEHOLDER, attachment_label, clip_text, display_text
 from openai_client import _call_openai, _call_openai_stream
-from parse_imessage import extract_attachments, extract_messages, extract_reactions, list_contacts, open_read_only
+from parse_imessage import extract_attachments, extract_messages, extract_reactions, list_contacts
 from retrieval_planner import build_catalog, plan_retrieval
 from safe_html import story_html
 import semantic_index as sem
@@ -88,7 +88,7 @@ from recall_paths import (
     DEFAULT_MESSAGES_CSV,
     ensure_data_dirs,
 )
-from setup_status import LIVE_CHAT_DB, DbProbe, derive_state, probe_database
+from setup_status import LIVE_CHAT_DB, DbProbe, derive_state, open_read_only, probe_database
 
 ROOT = Path(__file__).resolve().parent
 UI_DIR = ROOT / "ui"

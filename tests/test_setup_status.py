@@ -102,6 +102,47 @@ def test_a_missing_file_beside_the_messages_folder_is_a_missing_copy(tmp_path, m
     assert (probe.status, probe.kind) == ("missing", "copy")
 
 
+def test_the_messages_folder_is_known_through_a_link(tmp_path, monkeypatch):
+    real = tmp_path.resolve() / "real" / "Messages"
+    real.mkdir(parents=True)
+    make_messages_db(real / "chat.db", rows=1)
+    linked = tmp_path / "home"
+    linked.symlink_to(tmp_path / "real")
+    monkeypatch.setattr(setup_status, "LIVE_MESSAGES_DIR", linked / "Messages")
+
+    assert probe_database(real / "chat.db").kind == "live"
+    assert probe_database(linked / "Messages" / "chat.db").kind == "live"
+
+
+def test_a_path_is_looked_at_as_the_file_it_means(tmp_path, monkeypatch):
+    library = tmp_path.resolve() / "Library"
+    (library / "Messages" / "Archive").mkdir(parents=True)
+    monkeypatch.setattr(setup_status, "LIVE_MESSAGES_DIR", library / "Messages")
+
+    # the text of this path starts like the folder of Messages, and the file it means is outside it
+    assert setup_status.in_messages_folder(library / "Messages" / ".." / "elsewhere.db") is False
+    assert setup_status.in_messages_folder(library / "Messages" / "Archive" / ".." / "chat.db") is True
+
+
+def test_a_path_that_no_system_can_hold_is_a_copy_that_could_not_be_read():
+    probe = probe_database("bad\0name.db")
+
+    assert (probe.kind, probe.status) == ("copy", "error")
+
+
+def test_a_copy_made_alone_gets_no_file_beside_it_from_the_probe(tmp_path):
+    db = tmp_path / "chat.db"
+    conn = sqlite3.connect(db)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.close()
+    make_messages_db(db, rows=4)
+
+    probe = probe_database(db, deep=True)
+
+    assert (probe.status, probe.approx_messages) == ("readable", 4)
+    assert [path.name for path in tmp_path.iterdir()] == ["chat.db"]
+
+
 def test_derive_state_matrix():
     def db(status):
         return DbProbe(status=status, kind="copy", path="x")

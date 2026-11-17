@@ -19,15 +19,15 @@ Notes:
 """
 import argparse
 import logging
-import os
 import pathlib
 import re
 import sqlite3
 import sys
-from typing import Optional, Union
-from urllib.parse import quote
+from typing import Optional
 
 import pandas as pd
+
+from setup_status import open_read_only
 
 logger = logging.getLogger(__name__)
 
@@ -46,18 +46,6 @@ def imessage_timestamp_sql(column: str) -> str:
         f"END"
     )
     return f"datetime(({seconds_expr}) + strftime('%s','2001-01-01'), 'unixepoch', 'localtime')"
-
-
-def open_read_only(db_path: Union[str, os.PathLike], timeout: float = 5.0) -> sqlite3.Connection:
-    """Open a database to read it, and for nothing else.
-
-    A path that holds no file makes no file: sqlite3.connect(path) would make
-    an empty one. The path goes into the address quoted, so a "?", a "#" or a
-    "%" in a name is part of the name. The database is not opened as one that
-    cannot change: what Messages has written to the -wal file is read too.
-    """
-    whole = os.path.abspath(os.fspath(db_path))
-    return sqlite3.connect(f"file://{quote(whole)}?mode=ro", uri=True, timeout=timeout)
 
 
 def read_frame(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> pd.DataFrame:
