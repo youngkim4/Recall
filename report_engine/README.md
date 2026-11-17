@@ -72,7 +72,7 @@ Different values give different periods and different cache keys.
 
 ### Source
 
-A message is a dict: `id` (str), `timestamp` (`YYYY-MM-DD HH:MM:SS`, local time, no zone), `is_from_me` (`True`, `False`, `1` or `0`), `sender` (str), `text` (str).
+A message is a dict: `id` (str, not empty), `timestamp` (`YYYY-MM-DD HH:MM:SS`, local time, no zone), `is_from_me` (`True`, `False`, `1` or `0`), `sender` (str), `text` (str).
 A message that does not have this shape stops the run with `SourceError` before any model call.
 
 `since` and `until` are days (`YYYY-MM-DD`) or full timestamps. Both ends are included. A day means the whole day.
@@ -94,6 +94,8 @@ The engine replaces a name with `Unsaved contact` when the name:
 - has digits and no letter (a short code).
 
 The check reads the full name. After the check, the name is cut to 40 characters.
+When the cut makes the names of two people equal, the later name gets a number.
+Two senders with the same full name are one person and have one name.
 The conversation id never goes into a prompt.
 
 In a one-to-one chat the source can give an empty sender. Return the contact's name for the empty sender.
@@ -157,6 +159,7 @@ The engine keeps room for the fixed prompt text, the speaker names and the notes
 ## Cache
 
 The key of a period is a hash of four things: the prompt version, the model id, the speaker names in the period, and the period transcript.
+The prompt version is a hash of the map prompt text and of its reply schema. A change to the prompt stops the use of old entries.
 
 The key does not hold the notes from earlier periods. A change in an old period does not run the later periods again.
 The key does not hold the reasoning effort. To force a new run, call `PeriodCache.clear()`.
@@ -185,7 +188,7 @@ A `Moment` has `date`, `title`, `detail`, `category`, `score`, `quote`, `message
 - When `quote_verified` is false, `quote`, `quote_message_id` and `quote_speaker` are empty.
 - `title`, `detail` and `quote` are plain text. Escape them when you put them into HTML.
 
-Section `markdown` has no heading, link, image or HTML tag. The engine removes them from the model reply.
+Section `markdown` has no heading, link, image or HTML tag. The engine removes them from the model reply, also when they are nested.
 
 A `PeriodSummary` has `label`, `first_day`, `last_day`, `summary`, `carry_over`, `moments`, `usage`, `cache_key`, `from_cache`, `error`, `message_count`.
 For a period from the cache, `usage` is the cost of the call that made the entry. `report.usage` counts only the calls of this run.
@@ -253,6 +256,7 @@ When the encoding is not the tokenizer family of the model, each count is multip
 `tiktoken` gets its vocabulary file from the network the first time it runs on a machine.
 To stay offline, set `TIKTOKEN_CACHE_DIR` to a folder that has the file, or give `run_report` and `estimate` a `counter`.
 
+For each run the engine writes the tokenizer and the margin to the log (`report_engine.plan`, level INFO).
 When no vocabulary file can load, the engine counts by class of character and writes a warning to the log.
 This count is 1.0 to 1.5 times the `o200k_base` count on chat text in the languages that were measured.
 The engine does not load a tokenizer at import time.
