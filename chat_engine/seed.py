@@ -23,6 +23,7 @@ SEED_HITS = 8
 SEED_RADIUS = 3
 SEED_NAMES = 6
 _MAX_UNITS = 12
+_MAX_WORD = 40
 _BOOSTED = 8
 _LIST_TOKENS = 700
 
@@ -57,8 +58,11 @@ def _is_year(token: str) -> bool:
 
 
 def _worth_a_search(token: str) -> bool:
-    """Drop years and very short words. A short word with a digit or in another script stays."""
-    if _is_year(token):
+    """Drop years, very short words and runs too long to be a word.
+
+    A short word with a digit or in another script stays.
+    """
+    if _is_year(token) or len(token) > _MAX_WORD:
         return False
     if len(token) >= 3:
         return True
