@@ -1,5 +1,5 @@
 import { useId, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { stepIndex } from '../../lib/roving'
+import { scrollToShow, stepIndex } from '../../lib/roving'
 import type { PickerOption } from '../../lib/scope'
 import { usePanel } from '../../lib/usePanel'
 import { CheckIcon, ChevronDownIcon, SearchIcon } from '../Icons'
@@ -43,7 +43,7 @@ export function ListPicker({
       )
       setActive(chosen)
       input.current?.focus()
-      requestAnimationFrame(() => list.current?.children[chosen]?.scrollIntoView({ block: 'center' }))
+      requestAnimationFrame(() => reveal(chosen, 'center'))
     },
   })
 
@@ -53,9 +53,27 @@ export function ListPicker({
     return needle ? options.filter((option) => option.label.toLowerCase().includes(needle)) : options
   }, [options, query])
 
+  // Brings a row into view by moving the list alone. Asking the row to scroll
+  // itself into view would move every box around it that can scroll. A panel
+  // still growing into place is drawn smaller than it is laid out, so what it
+  // measures on the screen is brought back to its own size first.
+  function reveal(index: number, how: 'nearest' | 'center') {
+    const box = list.current
+    const row = box?.children[index]
+    if (!box || !row) return
+    const frame = box.getBoundingClientRect()
+    const spot = row.getBoundingClientRect()
+    const drawnAt = frame.width / box.offsetWidth || 1
+    box.scrollTop = scrollToShow(
+      { top: box.scrollTop, height: box.clientHeight },
+      { top: (spot.top - frame.top) / drawnAt + box.scrollTop, height: spot.height / drawnAt },
+      how,
+    )
+  }
+
   function show(index: number) {
     setActive(index)
-    list.current?.children[index]?.scrollIntoView({ block: 'nearest' })
+    reveal(index, 'nearest')
   }
 
   function choose(option: PickerOption | undefined) {

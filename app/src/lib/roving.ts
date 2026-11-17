@@ -26,3 +26,27 @@ export function rovingKeyDown(event: KeyboardEvent<HTMLElement>) {
   event.preventDefault()
   items[next]?.focus()
 }
+
+// The one day of a month that Tab stops on: the first of the wanted days that
+// the month holds, kept inside the conversation. With none of them it is the
+// month's first day that the conversation holds, or in the month the
+// conversation ends in, its last day. A month always has such a day.
+export function tabStopIn(month: string, wanted: Array<string | null | undefined>, first: string, last: string) {
+  const held = (day: string) => (day < first ? first : day > last ? last : day)
+  const inMonth = wanted.find((day): day is string => Boolean(day?.startsWith(month)))
+  if (inMonth) return held(inMonth)
+  return month === last.slice(0, 7) ? last : held(`${month}-01`)
+}
+
+type Span = { top: number; height: number }
+
+// How far down a list has to be scrolled for one of its rows to be in view.
+// `view` is what the list shows now and `row` is where the row lies in the
+// whole list. 'nearest' moves no further than it must, and not at all for a
+// row in view; 'center' puts the row in the middle.
+export function scrollToShow(view: Span, row: Span, how: 'nearest' | 'center') {
+  if (how === 'center') return Math.max(0, row.top - (view.height - row.height) / 2)
+  if (row.top < view.top) return row.top
+  const end = row.top + row.height
+  return end > view.top + view.height ? end - view.height : view.top
+}

@@ -13,6 +13,7 @@ import {
 import { formatDate, formatDateRange, formatLongMonth, plural } from '../../lib/format'
 import { WEEK_ORDER, WEEK_START, weekdayName } from '../../lib/locale'
 import { shiftMonth } from '../../lib/months'
+import { tabStopIn } from '../../lib/roving'
 import { usePanel } from '../../lib/usePanel'
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from '../Icons'
 import { CalendarMonth } from './CalendarMonth'
@@ -87,9 +88,8 @@ export function DateRange({ since, until, daily, onChange }: DateRangeProps) {
   const chosen = since || until ? { since: since || first, until: until || last } : null
   const draft = anchor ? orderDays(anchor, hover ?? anchor) : null
   const shown = draft ?? chosen
-  const inView = (day: string | null | undefined) => (day && day.startsWith(view) ? day : null)
-  const tabStop =
-    inView(hover) ?? inView(anchor) ?? inView(chosen?.until) ?? (view === last.slice(0, 7) ? last : `${view}-01` < first ? first : `${view}-01`)
+  // dates kept from another conversation can end outside this one, where no day takes the focus
+  const tabStop = tabStopIn(view, [hover, anchor, chosen?.until], first, last)
   const readout = draft
     ? {
         name: draft.since === draft.until ? formatDate(draft.since) : formatDateRange(draft.since, draft.until),

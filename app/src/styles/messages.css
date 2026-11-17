@@ -115,7 +115,9 @@
     color: var(--text-3);
   }
 
-  .stamp:first-child {
+  /* only the first line of a whole thread has nothing above it to stand clear of */
+  .thread > .stamp:first-child,
+  .thread > .thread-item:first-child > .stamp {
     margin-top: 0;
   }
 
