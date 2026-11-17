@@ -850,15 +850,17 @@ SETUP_MARKER_LOCK = threading.Lock()
 
 
 def read_setup_marker() -> dict:
-    """How far setup got. A path picked in an earlier setup is not kept: a
-    pick is for the one import it was made for."""
+    """How far setup got: the three things that can be recorded, each true or
+    false. A path picked in an earlier setup is not kept: a pick is for the
+    one import it was made for. A value that an earlier build wrote as text
+    or as a number says nothing."""
     try:
         marker = json.loads(SETUP_MARKER_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     if not isinstance(marker, dict):
         return {}
-    return {key: value for key, value in marker.items() if key != "pickedDbPath"}
+    return {key: marker[key] for key in SETUP_MARKER_KEYS if isinstance(marker.get(key), bool)}
 
 
 def setup_marker_updates(payload) -> dict:
@@ -885,6 +887,15 @@ def write_setup_marker(updates: dict) -> dict:
         tmp.write_text(json.dumps(marker, indent=1), encoding="utf-8")
         os.replace(tmp, SETUP_MARKER_PATH)
         return marker
+
+
+def access_to_messages(probe: DbProbe) -> str:
+    """Whether macOS lets this app read Messages: granted, denied, or missing when there is no database."""
+    if probe.status == "fda_blocked":
+        return "denied"
+    if probe.status == "missing":
+        return "missing"
+    return "granted"
 
 
 def setup_status_payload(db_path: Path | None, messages_path: Path, deep: bool = False) -> dict:
@@ -3280,21 +3291,11 @@ class RecallHandler(BaseHTTPRequestHandler):
             messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             send_json(self, 200, {"firstWords": first_words_payload(messages_path)})
         elif parsed.path == "/api/permissions/fulldisk":
-            # the onboarding wizard polls this while the user flips Full Disk
-            # Access; probing the live chat.db is the only reliable signal
-            live_db = Path("~/Library/Messages/chat.db").expanduser()
-            status = "missing"
-            if live_db.exists():
-                try:
-                    conn = open_read_only(live_db)
-                    try:
-                        conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
-                    finally:
-                        conn.close()
-                    status = "granted"
-                except sqlite3.OperationalError:
-                    status = "denied"
-            send_json(self, 200, {"status": status, "dbPath": str(live_db)})
+            # the same check that the guide uses: it tells a database that macOS hides from one that is not there
+            send_json(self, 200, {
+                "status": access_to_messages(probe_database(LIVE_CHAT_DB)),
+                "dbPath": str(LIVE_CHAT_DB),
+            })
         elif parsed.path == "/api/semantic":
             messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
             status = sem.index_status(SEMANTIC_DIR, file_cache_signature(messages_path))

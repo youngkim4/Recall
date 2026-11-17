@@ -10,7 +10,7 @@ import threading
 import pytest
 
 import ui_server
-from tests.loopback import post
+from tests.loopback import fetch, post
 
 
 @pytest.mark.parametrize("said, recorded", [
@@ -28,6 +28,23 @@ def test_setup_takes_only_true_and_false(said, recorded):
 @pytest.mark.parametrize("body", [[], ["completed"], "completed", 7, None, True])
 def test_a_body_that_is_not_a_record_records_nothing(body):
     assert ui_server.setup_marker_updates(body) == {}
+
+
+def test_a_record_written_by_an_earlier_build_is_read_as_true_and_false_only(marker):
+    marker.parent.mkdir()
+    kept = {"completed": "false", "skipped": 1, "firstWordsShown": True, "pickedDbPath": "/somewhere/chat.db", "other": True}
+    marker.write_text(json.dumps(kept), encoding="utf-8")
+
+    assert ui_server.read_setup_marker() == {"firstWordsShown": True}
+
+
+def test_text_that_says_false_does_not_finish_setup(server, marker):
+    marker.parent.mkdir()
+    marker.write_text(json.dumps({"completed": "false"}), encoding="utf-8")
+
+    _, _, body = fetch(server, "/api/defaults")
+
+    assert json.loads(body)["setupCompleted"] is False
 
 
 def test_two_records_made_at_once_are_both_kept(marker, monkeypatch):
