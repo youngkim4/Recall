@@ -7,7 +7,7 @@ end and on every cache key.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from report_engine.cache import period_key
 from report_engine.chunking import Period, line_sizer, measure_days, plan_periods
@@ -36,11 +36,15 @@ class Limits:
 
 @dataclass(frozen=True)
 class PlannedPeriod:
+    """One period ready to send. `request_tokens` is the request without notes:
+    the transcript, the fixed prompt text and the speaker names."""
+
     period: Period
     lines: tuple[Line, ...]
     transcript: str
     labels: tuple[str, ...]
     key: str
+    request_tokens: int
 
 
 @dataclass(frozen=True)
@@ -83,15 +87,27 @@ def resolve_limits(model_info: ModelInfo, options: ReportOptions, meter: TokenMe
     )
 
 
-def _planned(period: Period, lines: tuple[Line, ...], model_id: str, max_chars: int) -> PlannedPeriod:
-    own = lines[period.start : period.stop]
-    rendered = render_period(own, max_chars)
-    return PlannedPeriod(
-        period=period,
-        lines=own,
-        transcript=rendered.text,
-        labels=rendered.labels,
-        key=period_key(MAP_PROMPT_VERSION, model_id, rendered.labels, rendered.text),
+def _planned_periods(
+    periods: Sequence[Period],
+    lines: tuple[Line, ...],
+    model_id: str,
+    max_chars: int,
+    meter: TokenMeter,
+    overhead: int,
+) -> tuple[PlannedPeriod, ...]:
+    sliced = [lines[period.start : period.stop] for period in periods]
+    rendered = [render_period(own, max_chars) for own in sliced]
+    name_tokens = meter.count_many([", ".join(item.labels) for item in rendered])
+    return tuple(
+        PlannedPeriod(
+            period=period,
+            lines=own,
+            transcript=item.text,
+            labels=item.labels,
+            key=period_key(MAP_PROMPT_VERSION, model_id, item.labels, item.text),
+            request_tokens=period.tokens + overhead + names,
+        )
+        for period, own, item, names in zip(periods, sliced, rendered, name_tokens)
     )
 
 
@@ -120,8 +136,8 @@ def build_plan(
     return Plan(
         scope=wanted,
         lines=lines,
-        periods=tuple(
-            _planned(period, lines, model_info.id, options.max_message_chars) for period in periods
+        periods=_planned_periods(
+            periods, lines, model_info.id, options.max_message_chars, meter, limits.map_overhead
         ),
         meter=meter,
         limits=limits,

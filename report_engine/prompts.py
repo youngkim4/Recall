@@ -156,6 +156,13 @@ def map_overhead_text() -> str:
     return MAP_SYSTEM + "\n" + map_user_text("", (), ())
 
 
+def reduce_overhead_text() -> str:
+    """Everything in a reduce request but the figures, summaries and moments, for sizing."""
+    return "\n".join(
+        message["content"] for message in reduce_messages(labels=(), figures="", periods=(), moments=())
+    )
+
+
 def _period_block(period: PeriodSummary) -> str:
     head = f"## {period.label} ({period.first_day} to {period.last_day})"
     if period.error is not None:

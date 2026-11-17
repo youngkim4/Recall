@@ -126,7 +126,7 @@ def _run_period(
 ) -> PeriodOutcome:
     """Call the model for one period. A failure comes back as an outcome, not an error."""
     limits = plan.limits
-    estimate = planned.period.tokens + limits.map_overhead + plan.meter.count(notes_block(notes))
+    estimate = planned.request_tokens + plan.meter.count(notes_block(notes))
     if estimate > limits.map_input_cap:
         reason = f"the period is too large for the model ({estimate} tokens, the limit is {limits.map_input_cap})"
         return PeriodOutcome(planned=planned, digest=None, error=reason)
