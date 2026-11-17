@@ -149,8 +149,9 @@ def test_very_long_message_is_cut_with_a_note() -> None:
     archive = FakeArchive([make_message("h1", "+15550000009", "2024-01-01 10:00:00", huge)])
     bench = Bench(archive=archive, limits=Limits(max_message_chars=400, result_tokens=3000))
     outcome = bench.run("search_messages", query="needle")
-    assert "needle" in outcome.text
-    assert "[cut: " in outcome.text and "characters before]" in outcome.text
+    assert "a number ending in 0009: start word word" in outcome.text
+    assert "needle end  <<< match" in outcome.text
+    assert outcome.text.count("[cut: ") == 1 and "characters]" in outcome.text
 
 
 def test_result_is_cut_at_the_token_budget_and_says_so() -> None:

@@ -106,3 +106,29 @@ def test_scope_rejects_bad_days() -> None:
         Scope(since="2024-13-40")
     with pytest.raises(ValueError):
         Scope(since="2024-05-01", until="2024-04-01")
+
+
+def test_reference_with_thousands_of_digits_is_no_reference() -> None:
+    assert normalize_ref("m" + "9" * 5000) == ""
+    assert ConversationAliases().resolve("c" + "9" * 5000) is None
+    assert normalize_ref("m123456789") == "m123456789"
+
+
+def test_rollback_ignores_a_mark_that_is_out_of_range() -> None:
+    registry = EvidenceRegistry()
+    registry.add(_message("a"))
+    registry.add(_message("b"))
+    registry.rollback(-1)
+    registry.rollback(99)
+    assert len(registry) == 2
+    registry.rollback(1)
+    assert len(registry) == 1 and registry.add(_message("b")) == "m2"
+
+
+def test_scope_takes_one_conversation_id_as_text() -> None:
+    assert Scope(conversations="chat123").conversations == ("chat123",)
+
+
+def test_scope_with_days_does_not_allow_a_message_with_no_time() -> None:
+    assert not Scope(until="2024-12-31").allows_time("")
+    assert Scope().allows_time("")

@@ -27,7 +27,8 @@ class Scope:
     until: Optional[str] = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "conversations", tuple(str(c) for c in self.conversations))
+        given = (self.conversations,) if isinstance(self.conversations, str) else self.conversations
+        object.__setattr__(self, "conversations", tuple(str(c) for c in given))
         object.__setattr__(self, "since", parse_day(self.since))
         object.__setattr__(self, "until", parse_day(self.until))
         if self.since and self.until and self.since > self.until:
@@ -42,7 +43,9 @@ class Scope:
 
     def allows_time(self, timestamp: str) -> bool:
         day = str(timestamp or "")[:10]
-        if self.since and day < self.since:
+        if not (self.since or self.until):
+            return True
+        if not day or (self.since and day < self.since):
             return False
         return not (self.until and day > self.until)
 

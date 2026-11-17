@@ -1,20 +1,27 @@
 """Compact text the model reads: message lines, conversation titles, budgets.
 
 Every line carries a reference from the evidence registry. People appear by
-label only. Long text is cut with a note that says how much is missing.
+label only. A long message is cut: the start stays, and a note says how much
+is missing. A whole result never goes past its token budget.
 """
 
 from __future__ import annotations
 
+import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Mapping, Optional, Sequence
 
-from .labeler import UNKNOWN_MASK
+from .handles import UNKNOWN_MASK
 from .ports import ChatArchive, Conversation, Labeler, Message
 from .registry import ConversationAliases, EvidenceRegistry
 
 OWNER = "You"
+MIN_MESSAGE_CHARS = 200
+_READ_AHEAD = 4  # source characters read for each character that can be shown
+_NUMBER_AT_END_RE = re.compile(r"[\d\s+().\-]+$")
+_NUMBER_AT_START_RE = re.compile(r"^[\d\s+().\-]+")
+_MIME_RE = re.compile(r"^[a-z0-9.+\-]+/[a-z0-9.+\-]+$")
 _MEDIA = {
     "image": {"heic", "jpg", "jpeg", "png", "gif", "webp", "tiff", "bmp"},
     "video": {"mov", "mp4", "m4v", "avi"},
@@ -22,6 +29,8 @@ _MEDIA = {
     "contact card": {"vcf"},
     "pdf": {"pdf"},
 }
+
+Redact = Callable[[str], str]
 
 
 def estimate_tokens(text: str) -> int:
@@ -36,36 +45,62 @@ class Limits:
     count_tokens: Callable[[str], int] = estimate_tokens
 
 
-def clip_text(text: str, max_chars: int, focus: Optional[int] = None) -> str:
-    """Whitespace collapsed; cut to `max_chars` around `focus`, with a note."""
+def _piece(source: str, start: int, end: int, redact: Optional[Redact]) -> str:
+    """source[start:end] with numbers masked and whitespace collapsed.
+
+    A number that the slice cuts in two is dropped at that edge: half a number
+    is never shown.
+    """
+    piece = source[max(0, start):end]
+    if start > 0:
+        piece = _NUMBER_AT_START_RE.sub("", piece)
+    if end < len(source):
+        piece = _NUMBER_AT_END_RE.sub("", piece)
+    return " ".join((redact(piece) if redact else piece).split())
+
+
+def clip_text(
+    text: str, max_chars: int, focus: Optional[int] = None, redact: Optional[Redact] = None
+) -> str:
+    """The text with whitespace collapsed, cut to `max_chars` with a note.
+
+    The start is kept. When `focus` (a match) lies past the start, the part
+    around it is shown too. `redact` runs before any cut. The work is bounded
+    for a text of any size.
+    """
+    cap = max(1, int(max_chars))
     source = str(text or "")
-    flat = " ".join(source.split())
-    if len(flat) <= max_chars:
-        return flat
-    start = 0
-    if focus is not None and focus > 0:
-        centre = len(" ".join(source[:focus].split()))
-        start = max(0, min(centre - max_chars // 4, len(flat) - max_chars))
-    end = start + max_chars
-    before = f"[cut: {start} characters before] " if start else ""
-    after = f" [cut: {len(flat) - end} more characters]" if end < len(flat) else ""
-    return f"{before}{flat[start:end]}{after}"
+    head = _piece(source, 0, cap * _READ_AHEAD, redact)
+    if len(source) <= cap * _READ_AHEAD and len(head) <= cap:
+        return head
+    window = max(MIN_MESSAGE_CHARS // 2, (cap * 2) // 5)
+    if focus is None or focus <= cap or window >= cap:
+        shown = head[:cap]
+        return f"{shown} [cut: {max(1, len(source) - len(shown)):,} more characters]"
+    start = max(0, focus - window // 3)
+    near = _piece(source, start, start + window * _READ_AHEAD, redact)[:window]
+    first = head[:cap - window]
+    skipped = max(1, start - len(first))
+    rest = len(source) - start - len(near)
+    tail = f" [cut: {rest:,} more characters]" if rest > 0 else ""
+    return f"{first} [cut: {skipped:,} characters] {near}{tail}"
 
 
 def _attachment_kind(name: str) -> str:
     """ "image", "video", ... from a mime type or a file name. Never the name itself."""
     lowered = str(name or "").lower().strip()
-    if "/" in lowered and " " not in lowered:
+    extension = lowered.rsplit(".", 1)[-1] if "." in lowered else ""
+    for kind, extensions in _MEDIA.items():
+        if extension in extensions:
+            return kind
+    if _MIME_RE.match(lowered):
         major, _, minor = lowered.partition("/")
         if major in ("image", "video", "audio"):
             return major
         if "vcard" in minor:
             return "contact card"
-        return "pdf" if minor == "pdf" else "file"
-    extension = lowered.rsplit(".", 1)[-1] if "." in lowered else ""
-    for kind, extensions in _MEDIA.items():
-        if extension in extensions:
-            return kind
+        if minor == "pdf":
+            return "pdf"
     return "file"
 
 
@@ -78,11 +113,13 @@ def _attachment_note(attachments: Sequence[str]) -> str:
     return f"[{word}: {', '.join(parts)}]"
 
 
-def message_body(message: Message, limits: Limits, focus: Optional[int] = None) -> str:
+def message_body(
+    message: Message, limits: Limits, focus: Optional[int] = None, redact: Optional[Redact] = None
+) -> str:
     if message.get("unsent"):
         return "[unsent message]"
     parts = []
-    text = clip_text(message.get("text") or "", limits.max_message_chars, focus)
+    text = clip_text(message.get("text") or "", limits.max_message_chars, focus, redact)
     if text:
         parts.append(f"[system] {text}" if message.get("kind") == "system" else text)
     note = _attachment_note(message.get("attachments") or [])
@@ -122,6 +159,9 @@ class ConversationBook:
     def labels(self) -> list[str]:
         """Every label given so far."""
         return list(self._labels.values())
+
+    def redact(self, text: str) -> str:
+        return self._labeler.redact(text)
 
     def alias(self, conversation_id: str) -> str:
         return self._aliases.alias(str(conversation_id))
@@ -169,13 +209,14 @@ def render_block(
         if stamp[:10] != day:
             day = stamp[:10]
             lines.append(day)
+        speaker = book.speaker(message)  # first: the labeler learns the handle before the text is masked
         ref = registry.add(message)
-        body = message_body(message, limits, (focus or {}).get(str(message["id"])))
+        body = message_body(message, limits, (focus or {}).get(str(message["id"])), book.redact)
         reply = registry.ref_of(str(message.get("reply_to") or ""))
         note = f" (reply to {reply})" if reply else ""
         mark = marks.get(str(message["id"]))
         tail = f"  <<< {mark}" if mark else ""
-        lines.append(f"{ref} {stamp[11:16]} {book.speaker(message)}: {body}{note}{tail}")
+        lines.append(f"{ref} {stamp[11:16]} {speaker}: {body}{note}{tail}")
     return lines
 
 
@@ -202,6 +243,38 @@ class ResultWriter:
         return "\n".join(self._parts)
 
 
+def _shorter(limits: Limits, cap: int) -> Limits:
+    return replace(limits, max_message_chars=cap)
+
+
+def add_block(
+    writer: ResultWriter,
+    messages: Sequence[Message],
+    *,
+    book: ConversationBook,
+    registry: EvidenceRegistry,
+    limits: Limits,
+    marks: Mapping[str, str],
+    focus: Optional[Mapping[str, int]] = None,
+) -> bool:
+    """Add one exchange to a result. When it does not fit, cut its messages shorter and try again.
+
+    False when it does not fit at all. Then nothing is added and nothing is registered.
+    """
+    cap = limits.max_message_chars
+    while True:
+        mark = registry.checkpoint()
+        lines = render_block(
+            messages, book=book, registry=registry, limits=_shorter(limits, cap), marks=marks, focus=focus
+        )
+        if writer.add("\n" + "\n".join(lines)):
+            return True
+        registry.rollback(mark)
+        if cap <= MIN_MESSAGE_CHARS:
+            return False
+        cap = max(MIN_MESSAGE_CHARS, cap // 2)
+
+
 def fit_messages(
     messages: Sequence[Message],
     *,
@@ -216,17 +289,23 @@ def fit_messages(
 ) -> tuple[ResultWriter, list[Message]]:
     """Render messages under a header; drop messages until the text fits the budget.
 
-    Only the messages that are shown stay in the registry. One message is always shown.
+    Only the messages that are shown stay in the registry. One message is
+    always shown: when it alone is too long, it is cut shorter.
     """
     kept = list(messages)
+    cap = limits.max_message_chars
     while True:
         writer = ResultWriter(budget, limits.count_tokens)
         writer.add(header(len(kept)), force=True)
         mark = registry.checkpoint()
-        lines = render_block(kept, book=book, registry=registry, limits=limits, marks=marks)
+        lines = render_block(kept, book=book, registry=registry, limits=_shorter(limits, cap), marks=marks)
         block = "\n".join(lines if titled else lines[1:])
-        if writer.fits(block) or len(kept) <= 1:
+        if writer.fits(block) or (len(kept) <= 1 and cap <= MIN_MESSAGE_CHARS):
             writer.add(block, force=True)
             return writer, kept
         registry.rollback(mark)
-        kept = drop(kept)
+        if len(kept) > 1:
+            fewer = drop(kept)
+            kept = fewer if 0 < len(fewer) < len(kept) else kept[:-1]
+        else:
+            cap = max(MIN_MESSAGE_CHARS, cap // 2)

@@ -12,8 +12,8 @@ from typing import Any, Iterable, Mapping, Optional
 
 from .ports import Message
 
-_REF_RE = re.compile(r"^\[?\s*m0*(\d+)\s*\]?$", re.IGNORECASE)
-_ALIAS_RE = re.compile(r"^\[?\s*c0*(\d+)\s*\]?$", re.IGNORECASE)
+_REF_RE = re.compile(r"^\[?\s*m0*(\d{1,9})\s*\]?$", re.IGNORECASE)
+_ALIAS_RE = re.compile(r"^\[?\s*c0*(\d{1,9})\s*\]?$", re.IGNORECASE)
 
 
 def normalize_ref(value: object) -> str:
@@ -49,6 +49,9 @@ class EvidenceRegistry:
         return len(self._by_ref)
 
     def rollback(self, mark: int) -> None:
+        """Forget every message added after `mark`. A mark out of range changes nothing."""
+        if not 0 <= mark <= len(self._by_ref):
+            return
         for ref in list(self._by_ref)[mark:]:
             message = self._by_ref.pop(ref)
             self._ref_by_id.pop(str(message["id"]), None)
