@@ -181,6 +181,8 @@ New messages change only the last period. A period that is closed does not chang
 
 The budget is also limited by the model. One request must fit `max_input_tokens`, the context window and one minute of `tokens_per_minute`.
 The engine keeps room for the fixed prompt text, the speaker names and the notes.
+The room for the names is taken in steps (16, 32, 64 tokens and so on). When the model and not the option sets the budget, a new speaker moves the period ends only when the names go over a step.
+Before the first call the engine checks that the reduce request can fit, with the real size of the shortest line of each period.
 
 No period is larger than its budget. A message that is larger than a period is cut until it fits (see "Long messages").
 Each size is the size of a text with the line break that follows it, and the header of each day is counted. So the size of a period is never less than the size of the text that is sent.
@@ -207,7 +209,7 @@ An export can hold text that nobody typed, and one such row can be megabytes lon
 - The cut is made one time, when the messages are read. The period sizes, the transcripts and the estimate all use the cut text.
 - The cap counts characters. Text can hold a token in every character, so a line can still be larger than a small period. Such a line is cut again until it fits.
 - The quote check reads the whole message, not the cut text.
-- The report has a warning with the number of messages that were cut.
+- The report has a warning with the number of messages that were cut: `2 long messages were cut to fit: the model did not read all of each.`
 - The map prompt tells the model what the mark means.
 
 ## Cache
@@ -256,6 +258,7 @@ For a period from the cache, `usage` is the cost of the call that made the entry
 - A reference such as `m12` maps to a message of the period. A reference that does not exist is ignored.
 - A date must be a day of the period. A wrong date moves to the earliest cited day. A moment with no usable date is dropped.
 - A quote must be part of a cited message, or of a message within three days of the moment's date. A quote of fewer than 8 characters must be in a cited message.
+- A quote is one run of words of one message. The mark `[...]` at the end of a quote is taken off: a model can copy it from a line that was cut. A mark inside a quote makes the quote not found: `A [...] B` is two places put together.
 - Two texts match when they are equal after white space, quote marks and Unicode composition are made the same. Letter case must match.
 - In Latin, Greek and Cyrillic text a quote cannot start or end in the middle of a word. `ok` is not a quote from `tokens`.
 - A quote that is not found is cleared. The report gets a warning with the count.
@@ -269,6 +272,7 @@ For a period from the cache, `usage` is the cost of the call that made the entry
 3. It takes the best moment of each period, then the second best of each period, until `max_moments`.
 
 A quiet period gives no moment. The engine adds nothing to fill the list.
+A period gives 8 moments at most. More are dropped, and a warning gives the count.
 
 ## Prompt safety
 
@@ -276,7 +280,8 @@ All text from messages, names, summaries and notes is data in a prompt.
 
 - Each piece is put on one line.
 - Each block of data is in a frame: `<transcript>`, `<notes>`, `<periods>`, `<moments>`.
-- Text that contains a frame tag gets an invisible character in the tag. It cannot close a frame.
+- Text that contains a frame tag gets an invisible character in the tag. It cannot close a frame. A `|` in a field becomes `/` first, so that no tag is made after the check.
+- Text of a model reply that UTF-8 cannot carry (half of an emoji escape) is repaired before it is used.
 - The prompts tell the model not to follow instructions inside the data.
 
 ## Failures
@@ -285,7 +290,8 @@ All text from messages, names, summaries and notes is data in a prompt.
 |-------|--------|
 | A period fails | The report is `partial`. A warning names the period. |
 | All periods fail | `AllPeriodsFailed`. No report. |
-| The summaries are too large for the model | The engine shortens them for the reduce call. A warning gives the count. |
+| The summaries are too large for the model | The engine shortens them for the reduce call, down to the mark `[...]` alone when nothing else can go. A warning gives the count. |
+| A report or a cache entry holds text that cannot be written | `StoreError` from `ReportStore.save`, `write_text_atomic` or `PeriodCache.put`. |
 | A message is longer than the cap | The model reads its start. A warning gives the count. |
 | The reduce reply is empty, cut off or has an empty section | `ReduceError`. No report. |
 | The cancel token is set | `ReportCancelled`. No report. |
@@ -388,7 +394,7 @@ This package does not change the server. The wiring step must do these things.
    4. Until the Reports page reads JSON, write the markdown file: `write_text_atomic(out_dir / f"analysis_{sanitize_filename(contact)}.md", render_markdown(report))`.
 4. Write `events_timeline_*.csv` from `report.moments` (columns `date`, `title`, `detail`, `category`, `score`, `quote`): `build_analysis_payload` reads the events from that file. The engine does not write it. When a report has no moment, remove the older events file, as `CONTRACTS.md` says.
 5. Send `ProgressEvent` to the job progress. Keep one `CancelToken` for each job and add a route that calls `cancel()`.
-6. Catch `RunError`, `EmptyConversationError`, `ConfigError` and `SourceError`. All of them are kinds of `ReportEngineError`. After the first model call a run ends only with a `RunError`. Record `error.usage` of a `RunError`. Show `report.warnings` when `status` is `partial`.
+6. Catch `RunError`, `EmptyConversationError`, `ConfigError` and `SourceError`. All of them are kinds of `ReportEngineError`. After the first model call a run ends only with a `RunError`. Record `error.usage` of a `RunError`. Show `report.warnings` always: a `complete` report can have warnings too (messages that were cut, quotes that were not found, summaries that were shortened). Catch `StoreError` from `ReportStore.save` and `write_text_atomic`.
 7. In `preview_payload`, replace `estimate_cost` with `estimate`. Give it the same labeler as the run.
 8. Serve the JSON to the Reports page: the list from `list_reports`, one report from `load_report(...).model_dump(mode="json")`.
 9. Give `since` and `until` as days. The engine includes the whole `until` day, as `within_dates` in `conversation.py` does at `ab20b5e`. The server at `212614a` compared against midnight and dropped that day.
