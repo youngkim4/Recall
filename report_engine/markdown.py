@@ -22,6 +22,8 @@ _IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
 _LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _LINK_DEFINITION = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*\S.*$")
 _HTML_TAG = re.compile(r"</?[A-Za-z][^<>]*>")
+MAX_CLEAN_PASSES = 30
+_NO_BRACKETS = str.maketrans("", "", "<>[]")
 _INLINE_ESCAPES = str.maketrans({"\\": "\\\\", "#": "\\#", "[": "\\[", "]": "\\]"})
 
 
@@ -42,24 +44,42 @@ def _inline(text: str) -> str:
     return " ".join(text.split()).translate(_INLINE_ESCAPES)
 
 
-def _plain_line(line: str) -> str:
-    heading = _HEADING_LINE.match(line)
-    if heading:
-        line = f"**{heading.group(1)}**" if heading.group(1) else ""
-    line = _LINK.sub(r"\1", _IMAGE.sub(r"\1", line))
-    return _HTML_TAG.sub("", line).rstrip()
+def _strip_markup(line: str) -> str:
+    """Take images, links and tags out of one line. Taking one out can uncover
+    another, so this repeats until nothing changes. A line that still changes
+    after many passes loses every bracket."""
+    for _ in range(MAX_CLEAN_PASSES):
+        cleaned = _HTML_TAG.sub("", _LINK.sub(r"\1", _IMAGE.sub(r"\1", line)))
+        if cleaned == line:
+            return line
+        line = cleaned
+    return line.translate(_NO_BRACKETS)
+
+
+def _clean_once(markdown: str) -> str:
+    lines: list[str] = []
+    for raw in markdown.strip().splitlines():
+        line = _strip_markup(raw)
+        if _LINK_DEFINITION.match(line):
+            continue
+        heading = _HEADING_LINE.match(line)
+        if heading:
+            line = f"**{heading.group(1)}**" if heading.group(1) else ""
+        lines.append(line.rstrip())
+    return "\n".join(lines).strip()
 
 
 def clean_section(markdown: str) -> str:
     """Section text with its formatting kept and its active parts removed: a
     heading line becomes a bold line, an image or a link becomes its text, and
-    HTML tags and link definitions go."""
-    lines = (
-        _plain_line(line)
-        for line in markdown.strip().splitlines()
-        if not _LINK_DEFINITION.match(line)
-    )
-    return "\n".join(lines).strip()
+    HTML tags and link definitions go. Cleaning the result again changes
+    nothing: no nesting of tags or links leaves one behind."""
+    for _ in range(MAX_CLEAN_PASSES):
+        cleaned = _clean_once(markdown)
+        if cleaned == markdown:
+            return cleaned
+        markdown = cleaned
+    return _clean_once(markdown.translate(_NO_BRACKETS))
 
 
 def _body(markdown: str) -> str:

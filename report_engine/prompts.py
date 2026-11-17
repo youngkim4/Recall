@@ -1,14 +1,17 @@
 """Prompt text and reply schemas for the two steps.
 
 The map prompt is a function of the speaker names, the transcript and the
-notes from earlier periods. Bump MAP_PROMPT_VERSION whenever the map text or
-MAP_SCHEMA changes: the version is part of the cache key.
+notes from earlier periods. MAP_PROMPT_VERSION is a hash of the map text and
+of MAP_SCHEMA, and it is part of the cache key: a change to the prompt, here
+or through a constant from another module, stops the reuse of old results.
 
 No prompt holds a conversation id or a raw sender. Names come from the labeler.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Sequence
 from typing import Any
 
@@ -17,7 +20,6 @@ from report_engine.models import CATEGORIES, SECTION_KEYS, Moment, PeriodSummary
 from report_engine.ports import ChatMessage
 from report_engine.transcript import frame, shield
 
-MAP_PROMPT_VERSION = "map-2026-11-16"
 MAP_SCHEMA_NAME = "period_digest"
 REDUCE_SCHEMA_NAME = "report_sections"
 
@@ -133,6 +135,9 @@ NOTES_INTRO = (
     "They are background only. Do not report them again."
 )
 NO_MOMENTS = "There are no moments. Do not invent any."
+MOMENTS_INTRO = (
+    "Moments, oldest first, one on each line: date | category | score | quote | title | detail."
+)
 FAILED_PERIOD = "This period could not be analysed. Do not guess what happened in it."
 NO_QUOTE = "no quote"
 
@@ -213,19 +218,11 @@ def reduce_messages(
     periods: Sequence[PeriodSummary],
     moments: Sequence[Moment],
 ) -> list[ChatMessage]:
-    period_text = frame("periods", "\n".join(period_line(period) for period in periods))
-    moment_text = (
-        "Moments, oldest first, one on each line: date | category | score | quote | title | detail.\n"
-        + frame("moments", "\n".join(moment_line(moment) for moment in moments))
-        if moments
-        else NO_MOMENTS
-    )
-    user = (
-        f"People in this history: {', '.join(labels)}.\n\n"
-        f"Figures, counted from the messages:\n{figures}\n\n"
-        f"Period summaries, oldest first, one period on each line:\n{period_text}\n\n"
-        f"{moment_text}\n\n"
-        f"{REDUCE_TASK}"
+    user = _reduce_user_text(
+        labels,
+        figures,
+        "\n".join(period_line(period) for period in periods),
+        "\n".join(moment_line(moment) for moment in moments) if moments else None,
     )
     return [
         {"role": "system", "content": REDUCE_SYSTEM},
@@ -233,9 +230,41 @@ def reduce_messages(
     ]
 
 
+def _reduce_user_text(
+    labels: Sequence[str], figures: str, period_lines: str, moment_lines: str | None
+) -> str:
+    moment_text = (
+        NO_MOMENTS if moment_lines is None else f"{MOMENTS_INTRO}\n{frame('moments', moment_lines)}"
+    )
+    return (
+        f"People in this history: {', '.join(labels)}.\n\n"
+        f"Figures, counted from the messages:\n{figures}\n\n"
+        f"Period summaries, oldest first, one period on each line:\n{frame('periods', period_lines)}\n\n"
+        f"{moment_text}\n\n"
+        f"{REDUCE_TASK}"
+    )
+
+
+def reduce_fixed_text(labels: Sequence[str], figures: str, with_moments: bool) -> str:
+    """The reduce request with no period line and no moment line, for sizing. It
+    is made by the same code that makes the request, so the two can not differ."""
+    user = _reduce_user_text(labels, figures, "", "" if with_moments else None)
+    return f"{REDUCE_SYSTEM}\n{user}"
+
+
 def reduce_overhead_text() -> str:
     """Everything in a reduce request but the names, figures, summaries and moments, for sizing."""
-    return "\n".join(
-        message["content"]
-        for message in reduce_messages(labels=(), figures="", periods=(), moments=())
+    return reduce_fixed_text((), "", with_moments=True)
+
+
+def map_prompt_version() -> str:
+    """A name for the map prompt that changes when its text or its schema changes."""
+    material = json.dumps(
+        [MAP_SYSTEM, map_user_text("", (), ()), notes_frame_text(), MAP_SCHEMA],
+        sort_keys=True,
+        ensure_ascii=False,
     )
+    return f"map-{hashlib.sha256(material.encode('utf-8')).hexdigest()[:16]}"
+
+
+MAP_PROMPT_VERSION = map_prompt_version()

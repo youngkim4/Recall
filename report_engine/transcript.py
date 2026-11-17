@@ -43,17 +43,21 @@ _SURROGATE = re.compile(f"[{chr(0xD800)}-{chr(0xDFFF)}]")
 _INVISIBLE = dict.fromkeys(
     (*range(0x00, 0x09), *range(0x0E, 0x1C), 0x7F, 0x200B, 0x200C, 0x2060, 0xFEFF, 0xFFFC)
 )
+_HAS_INVISIBLE = re.compile("[" + "".join(re.escape(chr(code)) for code in _INVISIBLE) + "]")
 
 
 @dataclass(frozen=True, slots=True)
 class Line:
-    """One message with text. `text` is kept as stored, for quote checks."""
+    """One message with text. `text` is kept as stored, for quote checks. `flat`
+    is the same text as a prompt shows it: on one line and shielded. It is
+    worked out once, when the line is built."""
 
     id: str
     day: str
     clock: str
     label: str
     text: str
+    flat: str = ""
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,7 @@ class _Row:
     own: bool
     sender: str
     text: str
+    flat: str
 
 
 def scrub(text: str) -> str:
@@ -82,7 +87,9 @@ def scrub(text: str) -> str:
 
 def squash(text: str) -> str:
     """One line: runs of white space become one space, invisible marks go."""
-    return " ".join(text.translate(_INVISIBLE).split())
+    if _HAS_INVISIBLE.search(text):
+        text = text.translate(_INVISIBLE)
+    return " ".join(text.split())
 
 
 def shield(text: str) -> str:
@@ -118,7 +125,9 @@ def resolve_labels(senders: Iterable[str], labeler: Labeler) -> dict[str, str]:
 
     The handle check reads the whole name. Only then is the name cut to length:
     a cut must never turn an address into something that passes."""
+    # `taken` maps each label in use to the full name behind it
     names: dict[str, str] = {}
+    taken: dict[str, str] = {}
     unsaved = 0
     for sender in senders:
         if sender in names:
@@ -127,8 +136,22 @@ def resolve_labels(senders: Iterable[str], labeler: Labeler) -> dict[str, str]:
         if not name or name.casefold() == OWN_LABEL.casefold() or looks_like_handle(name):
             unsaved += 1
             name = UNSAVED_LABEL if unsaved == 1 else f"{UNSAVED_LABEL} {unsaved}"
-        names[sender] = name[:MAX_LABEL_CHARS].strip()
+        names[sender] = _cut_label(name, taken)
     return names
+
+
+def _cut_label(name: str, taken: dict[str, str]) -> str:
+    """The name cut to length. Two senders with one full name are one person and
+    share the label. When the cut alone makes two names equal, the later one
+    gets a number, so two people never read as one."""
+    label = name[:MAX_LABEL_CHARS].strip()
+    number = 1
+    while taken.get(label, name) != name:
+        number += 1
+        suffix = f" {number}"
+        label = name[: MAX_LABEL_CHARS - len(suffix)].strip() + suffix
+    taken[label] = name
+    return label
 
 
 def _own_flag(value: object, mid: str) -> bool:
@@ -146,6 +169,8 @@ def _read_row(message: Mapping[str, Any], known_days: set[str]) -> _Row | None:
         own = _own_flag(message["is_from_me"], mid)
     except KeyError as exc:
         raise SourceError(f"a message from the source has no {exc.args[0]!r} field") from exc
+    if not mid.strip():
+        raise SourceError("a message from the source has an empty id")
     if not has_stamp_shape(stamp):
         raise SourceError(f"message {mid!r} has a bad timestamp")
     day = stamp[:DAY_LENGTH]
@@ -157,10 +182,11 @@ def _read_row(message: Mapping[str, Any], known_days: set[str]) -> _Row | None:
         known_days.add(day)
     raw = message.get("text")
     text = scrub(raw if isinstance(raw, str) else "" if raw is None else str(raw))
-    if not squash(text):
+    flat = shield(text)
+    if not flat:
         return None
     sender = scrub(str(message.get("sender") or ""))
-    return _Row(stamp=stamp, id=mid, own=own, sender=sender, text=text)
+    return _Row(stamp=stamp, id=mid, own=own, sender=sender, text=text, flat=flat)
 
 
 def build_lines(messages: Iterable[Mapping[str, Any]], labeler: Labeler) -> tuple[Line, ...]:
@@ -177,6 +203,7 @@ def build_lines(messages: Iterable[Mapping[str, Any]], labeler: Labeler) -> tupl
             clock=row.stamp[11:16],
             label=OWN_LABEL if row.own else names[row.sender],
             text=row.text,
+            flat=row.flat,
         )
         for row in rows
     )
@@ -186,9 +213,8 @@ def day_header(day: str) -> str:
     return f"--- {day} {WEEKDAYS[parse_day(day).weekday()]} ---"
 
 
-def render_text(text: str, max_chars: int) -> str:
-    """Message text on one line. A very long message keeps its start and its end."""
-    flat = shield(text)
+def _capped(flat: str, max_chars: int) -> str:
+    """A very long message keeps its start and its end."""
     if len(flat) <= max_chars:
         return flat
     head = max_chars * 3 // 4
@@ -197,7 +223,7 @@ def render_text(text: str, max_chars: int) -> str:
 
 
 def render_line(ref: str, line: Line, max_chars: int) -> str:
-    return f"{ref} {line.clock} {line.label}: {render_text(line.text, max_chars)}"
+    return f"{ref} {line.clock} {line.label}: {_capped(line.flat or shield(line.text), max_chars)}"
 
 
 def _render(lines: Sequence[Line], max_chars: int, ref_for: Callable[[int], str]) -> str:

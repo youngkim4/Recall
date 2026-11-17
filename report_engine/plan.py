@@ -6,6 +6,7 @@ end and on every cache key.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -26,6 +27,8 @@ from report_engine.prompts import (
 from report_engine.scope import coerce_scope
 from report_engine.tokens import TokenCounter, TokenMeter, meter_for
 from report_engine.transcript import Line, build_lines, render_period
+
+logger = logging.getLogger(__name__)
 
 MIN_PERIOD_LINE_TOKENS = 60
 
@@ -170,6 +173,15 @@ def build_plan(
     )
     figures = conversation_figures(lines)
     _check_reduce_fits(limits, meter.count(figures), len(periods), model_info.id)
+    logger.info(
+        "%d line%s in %d period%s of at most %d tokens, counted with %s",
+        len(lines),
+        "" if len(lines) == 1 else "s",
+        len(periods),
+        "" if len(periods) == 1 else "s",
+        limits.transcript_budget,
+        meter.describe(),
+    )
     return Plan(
         scope=wanted,
         lines=lines,

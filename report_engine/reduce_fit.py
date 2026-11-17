@@ -25,10 +25,12 @@ CUT_SAFETY = 0.9
 
 @dataclass(frozen=True)
 class Fitted:
-    """The lines that go into the request, and how many were changed to fit."""
+    """The lines that go into the request, their size when each line is counted
+    on its own, and how many were changed to fit."""
 
     periods: tuple[PeriodSummary, ...]
     moments: tuple[Moment, ...]
+    tokens: int
     shortened: int = 0
     left_out: int = 0
 
@@ -49,14 +51,19 @@ def _shorten(period: PeriodSummary, target: int, meter: TokenMeter) -> PeriodSum
     """The same period with its summary cut until its line is no larger than `target`."""
     text = shield(period.summary)
     cut = period
-    size = meter.count(period_line(cut))
+    size = _line_sizes([period_line(cut)], meter)[0]
     for _ in range(MAX_CUTS):
         if size <= target or not text:
             break
         text = text[: int(len(text) * target / size * CUT_SAFETY)].rstrip()
         cut = period.model_copy(update={"summary": f"{text} {ELISION_MARK}"})
-        size = meter.count(period_line(cut))
+        size = _line_sizes([period_line(cut)], meter)[0]
     return cut
+
+
+def _line_sizes(lines: Sequence[str], meter: TokenMeter) -> list[int]:
+    """Each line with its line break, as it stands in the request."""
+    return meter.count_many([f"{line}\n" for line in lines])
 
 
 def _weakest_first(moments: Sequence[Moment]) -> list[int]:
@@ -71,10 +78,11 @@ def fit_reduce(
 ) -> Fitted:
     """Period and moment lines that fit `room` tokens. Raises ReduceError when
     even the shortest lines do not fit."""
-    period_sizes = meter.count_many([period_line(period) for period in periods])
-    moment_sizes = meter.count_many([moment_line(moment) for moment in moments])
-    if sum(period_sizes) + sum(moment_sizes) <= room:
-        return Fitted(tuple(periods), tuple(moments))
+    period_sizes = _line_sizes([period_line(period) for period in periods], meter)
+    moment_sizes = _line_sizes([moment_line(moment) for moment in moments], meter)
+    uncut = sum(period_sizes) + sum(moment_sizes)
+    if uncut <= room:
+        return Fitted(tuple(periods), tuple(moments), tokens=uncut)
 
     cap = max(MIN_PERIOD_LINE_TOKENS, _allowance(period_sizes, room - sum(moment_sizes)))
     fitted_periods = tuple(
@@ -82,7 +90,7 @@ def fit_reduce(
         for period, size in zip(periods, period_sizes, strict=True)
     )
     shortened = sum(new is not old for new, old in zip(fitted_periods, periods, strict=True))
-    total = sum(meter.count_many([period_line(period) for period in fitted_periods])) + sum(
+    total = sum(_line_sizes([period_line(period) for period in fitted_periods], meter)) + sum(
         moment_sizes
     )
 
@@ -98,4 +106,4 @@ def fit_reduce(
             f"periods after shortening, and room for {room}"
         )
     kept = tuple(moment for index, moment in enumerate(moments) if index not in left_out)
-    return Fitted(fitted_periods, kept, shortened=shortened, left_out=len(left_out))
+    return Fitted(fitted_periods, kept, tokens=total, shortened=shortened, left_out=len(left_out))
