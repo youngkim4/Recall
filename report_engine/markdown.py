@@ -24,6 +24,11 @@ U+0003 out. A cut or a removal next to a backslash can take the guard off the
 mark after it. So the text of a report has nothing that is cut or removed: no
 run of one mark longer than 15, no more than two empty lines in a row, and no
 control character but a tab and a line break.
+
+The server also drops what is past its length limit for a story. A cut there
+can leave a line of `=` under a line of text. So a section has a cap, counted
+on the text as the report holds it, and the four sections together are far
+shorter than that limit.
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ import re
 from report_engine.dates import DAY_LENGTH
 from report_engine.errors import StoreError
 from report_engine.models import Moment, Report, Scope, Section
+from report_engine.transcript import word_cut
 
 # what can stand before the text of a line: indent, quote marks, list marks, and
 # the colon of a definition list
@@ -51,11 +57,18 @@ _EMPTY_LINES = re.compile(r"\n{4,}")
 # Control characters that are not a tab or a line break go. U+001F is white
 # space to Python and becomes a space.
 _CONTROLS: dict[int, str | None] = {
-    **dict.fromkeys(
-        (*range(0x00, 0x09), *range(0x0E, 0x1C), *range(0x7F, 0x85), *range(0x86, 0xA0))
-    ),
+    **dict.fromkeys((*range(0x09), *range(0x0E, 0x1C), *range(0x7F, 0x85), *range(0x86, 0xA0))),
     0x1F: " ",
 }
+# The prompt asks for 450 words at most in a section, which is about 3,000
+# characters. The server reads 60,000 characters of a story (commit 3563549):
+# four sections at the cap are about half of that.
+MAX_SECTION_CHARS = 8_000
+# the mark of a cut as section text holds it: each bracket has its backslash
+SECTION_CUT_MARK = "\\[...\\]"
+# a cut goes back to the start of a word, but not farther than this
+LONGEST_WORD_CHARS = 64
+_CUT_TAIL = "\\ \t\n"
 # a link or an image of the plain kind: words with no bracket, an address with no space
 _PLAIN_LINK = re.compile(r'(?<!\\)!?\[([^\[\]\\]*)\]\([^()\s]*(?:\s+"[^"()]*")?\)')
 _LINK_DEFINITION = re.compile(r"^\s{0,3}\[[^\[\]]*\]:")
@@ -148,16 +161,22 @@ def _escape_brackets(line: str) -> str:
     return "".join(parts)
 
 
+def _guarded(line: str) -> str:
+    """One line with its heading taken away, its runs cut, and a backslash
+    before each mark that needs one. The runs are cut after the heading step,
+    which can add marks. The steps after that add one backslash to a run at
+    most, so the line has no run that the server cuts."""
+    short = _short_runs(_without_heading(line))
+    return _escape_brackets(_SECOND_HASH.sub(r"\\#", short)).rstrip()
+
+
 def _clean_once(markdown: str) -> str:
-    """One pass. The runs are cut after the heading step, which can add marks,
-    and before the bracket step, which adds at most one backslash to a run:
-    the result of one pass has no run that the server cuts."""
     lines: list[str] = []
     for raw in markdown.translate(_CONTROLS).strip().splitlines():
         line = _strip_markup(raw)
         if _LINK_DEFINITION.match(line) or _UNDERLINE.match(line):
             continue
-        lines.append(_escape_brackets(_short_runs(_without_heading(line))).rstrip())
+        lines.append(_guarded(line))
     return _EMPTY_LINES.sub("\n\n\n", "\n".join(lines).strip())
 
 
@@ -169,11 +188,13 @@ def clean_section(markdown: str) -> str:
       gets a backslash before it, and a line of only `=` or `-` goes.
     - A tag goes. A link or an image of the plain kind becomes its words.
     - A run of one mark keeps 15 of them, and a run of empty lines keeps two.
+    - A `#` that follows a `#` gets a backslash, so no run of hashes reads as
+      the marker of a part of the report file.
     - Every `[` and `]` that is left gets a backslash, so no other form of a
       link or an image can be read from the text.
 
     Cleaning the result again changes nothing, and the cuts that the server
-    makes before it renders a story change nothing in it. The time is in
+    makes in a run or in empty lines change nothing in it. The time is in
     proportion to the length of the text."""
     for _ in range(MAX_CLEAN_PASSES):
         cleaned = _clean_once(markdown)
@@ -183,9 +204,28 @@ def clean_section(markdown: str) -> str:
     return _clean_once(markdown.translate(_NO_BRACKETS))
 
 
-def _body(markdown: str) -> str:
-    """Cleaned section text in which no run of hashes can read as a marker."""
-    return _SECOND_HASH.sub(r"\\#", clean_section(markdown))
+def _cut_at_word(cleaned: str, room: int) -> str:
+    """The start of cleaned text, `room` characters at most. The cut goes back
+    to the start of a word. A word longer than any real one is cut inside.
+    No backslash stays at the end: the mark that it stood before is gone."""
+    start = word_cut(cleaned, room)
+    if room - len(start) > LONGEST_WORD_CHARS:
+        start = cleaned[:room]
+    return start.rstrip(_CUT_TAIL)
+
+
+def fit_section(markdown: str) -> tuple[str, bool]:
+    """The text of a section as a report holds it, and whether it was cut.
+
+    The text is cleaned first. The cap counts the cleaned text, because the
+    cleaning can make a text twice as long. A text over the cap keeps its
+    start and ends with the mark of a cut. The result is clean text: cleaning
+    it or fitting it again changes nothing."""
+    cleaned = clean_section(markdown)
+    if len(cleaned) <= MAX_SECTION_CHARS:
+        return cleaned, False
+    start = _cut_at_word(cleaned, MAX_SECTION_CHARS - len(SECTION_CUT_MARK) - 1)
+    return f"{start} {SECTION_CUT_MARK}".lstrip(), True
 
 
 def _overview(report: Report) -> list[str]:
@@ -198,8 +238,10 @@ def _overview(report: Report) -> list[str]:
         f"- Status: {report.status}",
         f"- Periods: {len(report.periods):,}",
         f"- Moments: {len(report.moments):,}",
-        f"- Cost: ${usage.cost_usd:.4f} ({usage.input_tokens:,} input tokens, "
-        f"{usage.output_tokens:,} output tokens)",
+        (
+            f"- Cost: ${usage.cost_usd:.4f} ({usage.input_tokens:,} input tokens, "
+            f"{usage.output_tokens:,} output tokens)"
+        ),
     ]
     return rows + [f"- Warning: {_inline(warning)}" for warning in report.warnings]
 
@@ -214,7 +256,9 @@ def _event(moment: Moment) -> list[str]:
 
 
 def _section(section: Section) -> list[str]:
-    return [f"### {_inline(section.title)}", _body(section.markdown), ""]
+    """A section from `run_report` is written as it is. One that was made by
+    hand is cleaned and cut here, so the story of any report fits the server."""
+    return [f"### {_inline(section.title)}", fit_section(section.markdown)[0], ""]
 
 
 def _first_line(conversation: str) -> str:

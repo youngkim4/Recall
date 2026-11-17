@@ -46,6 +46,10 @@ def with_bodies(body: str, **fields: Any) -> Any:
     return make_report(sections=sections, **fields)
 
 
+def test_the_reader_of_the_heading_gives_no_name_for_an_empty_file() -> None:
+    assert report_contact("") == ""
+
+
 @pytest.mark.parametrize(
     "conversation",
     [

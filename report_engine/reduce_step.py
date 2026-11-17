@@ -7,10 +7,10 @@ error: the run ends with no report.
 When the summaries and moments are too large for the model, they are cut to
 fit before the call, and the report gets a warning that says so.
 
-A section has a cap on its length. A longer one keeps its start, and the
-report gets a warning. The cap keeps the four sections far below the length
-at which the server cuts a story, and it bounds the time that the server
-needs to render them.
+A section has a cap on its length, counted on the text as the report holds
+it. A longer one keeps its start, and the report gets a warning. The cap
+keeps the four sections far below the length at which the server cuts a
+story.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from report_engine.calls import Caller
 from report_engine.control import ProgressEvent
 from report_engine.errors import LLMError, ReduceError
 from report_engine.map_step import STATUS_REASONS
-from report_engine.markdown import clean_section
+from report_engine.markdown import MAX_SECTION_CHARS, fit_section
 from report_engine.models import (
     SECTION_KEYS,
     SECTION_TITLES,
@@ -35,14 +35,10 @@ from report_engine.plan import Plan
 from report_engine.ports import ChatMessage, LLMResult
 from report_engine.prompts import REDUCE_SCHEMA, reduce_fixed_text, reduce_messages
 from report_engine.reduce_fit import Fitted, fit_reduce
-from report_engine.transcript import MARK_ROOM, cut_start, scrub
+from report_engine.transcript import scrub
 
 MAX_FIT_ROUNDS = 6
 FIT_SLACK_TOKENS = 8
-# The prompt asks for 450 words at most in a section, which is about 3,000
-# characters. The cleaning can put a backslash before a character, so a
-# section in a report file is at most twice as long as the cap.
-MAX_SECTION_CHARS = 12_000
 
 
 @dataclass(frozen=True)
@@ -52,16 +48,13 @@ class Reduced:
 
 
 def _read_section(key: SectionKey, text: object) -> tuple[Section, bool]:
-    """One section of a reply, and whether it was cut to the cap. A section
-    that is too long keeps its start and gets the mark of a cut. The cut comes
-    before the cleaning, so the cleaning never reads more than the cap."""
-    plain = scrub(text).strip() if isinstance(text, str) else ""
-    long = len(plain) > MAX_SECTION_CHARS
-    kept = cut_start(plain, MAX_SECTION_CHARS - MARK_ROOM) if long else plain
-    cleaned = clean_section(kept)
-    if not cleaned:
+    """One section of a reply, and whether it was cut to the cap. The text is
+    cleaned first: a section with no text after the cleaning is an error,
+    however long the reply was."""
+    kept, cut = fit_section(scrub(text)) if isinstance(text, str) else ("", False)
+    if not kept:
         raise ReduceError(f"the reduce step gave no report: section {key!r} is empty")
-    return Section(key=key, title=SECTION_TITLES[key], markdown=cleaned), long
+    return Section(key=key, title=SECTION_TITLES[key], markdown=kept), cut
 
 
 def parse_sections(result: LLMResult) -> tuple[tuple[Section, ...], int]:
@@ -76,21 +69,16 @@ def parse_sections(result: LLMResult) -> tuple[tuple[Section, ...], int]:
     if not isinstance(parsed, Mapping):
         raise ReduceError("the reduce step gave no report: the reply is empty or not a JSON object")
     read = [_read_section(key, parsed.get(key)) for key in SECTION_KEYS]
-    return tuple(section for section, _long in read), sum(long for _section, long in read)
+    return tuple(section for section, _cut in read), sum(cut for _section, cut in read)
 
 
 def _length_warnings(cut: int) -> tuple[str, ...]:
     if not cut:
         return ()
+    limit = f"{MAX_SECTION_CHARS:,} characters"
     if cut == 1:
-        return (
-            f"1 section was longer than {MAX_SECTION_CHARS:,} characters. "
-            "The report has only its start.",
-        )
-    return (
-        f"{cut} sections were longer than {MAX_SECTION_CHARS:,} characters. "
-        "The report has only the start of each.",
-    )
+        return (f"1 section was longer than {limit}. The report has only its start.",)
+    return (f"{cut} sections were longer than {limit}. The report has only the start of each.",)
 
 
 def _fit_warnings(fitted: Fitted) -> tuple[str, ...]:

@@ -20,8 +20,8 @@ from .test_models import report as make_report
 
 TITLES = [SECTION_TITLES[key] for key in SECTION_KEYS]
 STX, ETX = "\x02", "\x03"
-LAUGH = "\U0001f602"
-ACCENT = "́"
+LAUGH = chr(0x1F602)
+ACCENT = chr(0x0301)  # an accent that stands on the letter before it
 MARKS = [BACKSLASH, *"[]#!*-=><()`~|+.:\"'&/", LAUGH, ACCENT]
 RUN_LENGTHS = [15, 16, 17, 18, 40, 1_000]
 CONTROL_CODES = [code for code in range(0xA0) if unicodedata.category(chr(code)) == "Cc"]
@@ -136,6 +136,17 @@ def test_no_control_character_is_left_in_section_text(code: int) -> None:
     assert "a" not in page.tags
     assert clean_section(cleaned) == cleaned
     assert cleaned.startswith("one") and cleaned.endswith("now")
+
+
+@pytest.mark.parametrize("code", [0x2028, 0x2029])
+def test_a_line_or_paragraph_separator_is_a_line_break(code: int) -> None:
+    """Python splits a text at U+2028 and U+2029. The renderer does not: for
+    it the `#` after one is in the middle of a line. The engine writes a line
+    break, so the two agree."""
+    mark = chr(code)
+    cleaned = clean_section(f"one{mark}# Injected{mark}Title{mark}====={mark}two")
+    assert cleaned == "one\n**Injected**\nTitle\ntwo"
+    assert headings_of(story_html_steps(cleaned)).found == []
 
 
 def test_text_around_a_removed_character_is_kept() -> None:
