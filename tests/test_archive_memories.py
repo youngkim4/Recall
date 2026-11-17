@@ -268,11 +268,6 @@ def test_the_summary_leaves_out_a_message_that_no_conversation_holds(tmp_path, s
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="archive_patterns counts the whole frame, and the frame holds the messages that no conversation holds: "
-    "the months, the days and the hours of the Overview add up to more than its count of messages",
-)
 def test_the_patterns_add_up_to_the_count_of_the_summary(tmp_path, saved_names):
     csv = loaded(tmp_path / "messages.csv", NO_CONVERSATION)
 
@@ -306,11 +301,6 @@ def test_a_moment_counts_every_message_of_its_day(tmp_path, saved_names, server)
     assert moment["preview"] == "a line long enough to be worth quoting back"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="memories_payload tests a text for words with strip(), and the frame of the archive gives a picture "
-    "with no words the text U+FFFC: a day of pictures only is given as a moment with an empty quote",
-)
 def test_a_day_with_no_words_is_not_a_moment(tmp_path, saved_names):
     csv = loaded(tmp_path / "messages.csv", [
         row(AVERY, "2024-11-16 09:00:00", PLACEHOLDER, attachments=PHOTO),

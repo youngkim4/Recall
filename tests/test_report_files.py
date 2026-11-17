@@ -4,6 +4,7 @@ from urllib.parse import quote
 import pytest
 
 import ui_server
+from tests.export_kit import archives, contacts_cache, loaded, row  # noqa: F401
 from tests.loopback import fetch
 from ui_server import report_file_headers, served_report_file
 
@@ -159,30 +160,11 @@ def test_the_name_of_a_report_is_read_as_it_was_sent(data_dir, server):
     assert body == report.read_bytes()
 
 
-def test_a_report_is_opened_by_the_name_it_was_sent_with(data_dir, server, tmp_path, monkeypatch):
-    import pandas as pd
-
-    from local_store import get_cache_entry, set_cache_entry
-
-    store = tmp_path / "store.sqlite3"
-    monkeypatch.setattr(ui_server, "get_cache_entry", lambda namespace, key: get_cache_entry(namespace, key, store))
-    monkeypatch.setattr(
-        ui_server,
-        "set_cache_entry",
-        lambda namespace, key, value, metadata=None, limit=None: set_cache_entry(
-            namespace, key, value, metadata=metadata, path=store, limit=limit,
-        ),
+def test_a_report_is_opened_by_the_name_it_was_sent_with(data_dir, server, archives, contacts_cache):
+    messages = loaded(
+        data_dir / "messages.csv",
+        [row("+15550000001", "2025-01-01 09:00:00", "hello", from_me=1), row("+15550000001", "2025-01-02 09:00:00", "hi")],
     )
-    monkeypatch.setattr(ui_server, "resolve_contact_names", lambda handles, **_: {})
-    messages = data_dir / "messages.csv"
-    pd.DataFrame({
-        "message_id": [1, 2],
-        "timestamp": ["2025-01-01 09:00:00", "2025-01-02 09:00:00"],
-        "sender": ["+15550000001", "+15550000001"],
-        "text": ["hello", "hi"],
-        "chat_id": ["+15550000001", "+15550000001"],
-        "is_from_me": [1, 0],
-    }).to_csv(messages, index=False)
     report = write(data_dir / "out" / "analysis_100%41.md", "# Conversation Analysis - +15550000001\n\n## Summary\nThe right story.\n")
     write(data_dir / "out" / "analysis_100A.md", "# Conversation Analysis - +15550000001\n\n## Summary\nAnother story.\n")
 

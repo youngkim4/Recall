@@ -87,8 +87,6 @@ from recall_services.unreadable import (  # noqa: F401 - the words of an import,
     ARCHIVE_KEPT,
     DatabaseBusy,
     ImportStopped,
-    archive_note,
-    closed_to_recall,
     reading_stopped,
     why_unreadable,
 )
@@ -203,15 +201,37 @@ class BadRequest(ValueError):
     """A request that cannot be read. The route answers 400 with the sentence."""
 
 
+# no request of the app comes near this size
+MAX_BODY_BYTES = 2_000_000
+SERVER_FAULT = "Recall could not answer. The log of the server says why."
+BAD_ARCHIVE_FILE = "The archive file that was named cannot be used."
+
+
 def parse_body(handler) -> dict:
     try:
         length = int(handler.headers.get("Content-Length", "0") or 0)
         if length <= 0:
             return {}
+        if length > MAX_BODY_BYTES:
+            raise BadRequest("The request is too large.")
         return json.loads(handler.rfile.read(length).decode("utf-8"))
-    except ValueError as exc:
-        # a length that is no number, bytes that are not UTF-8, text that is not JSON
+    except (ValueError, RecursionError) as exc:
+        # a length that is no number, bytes that are not UTF-8, text that is not JSON, JSON nested too deep
+        if isinstance(exc, BadRequest):
+            raise
         raise BadRequest("The request body must be JSON.") from exc
+
+
+def server_fault(where: str) -> dict:
+    """The answer to a request that failed in a way nobody planned for.
+
+    What was raised goes to the log of the server. It can hold a path or the
+    text of a query, so it does not go to the page.
+    """
+    with contextlib.suppress(Exception):
+        print(f"[server] {where} failed", file=sys.__stderr__)
+        traceback.print_exc(file=sys.__stderr__)
+    return {"error": SERVER_FAULT, "code": "server_error"}
 
 
 def safe_path(value: str, default: Path = None) -> Path:
@@ -231,10 +251,6 @@ def ensure_under(path: Path, base: Path) -> bool:
         return True
     except ValueError:
         return False
-
-
-def path_exists(path: Path) -> bool:
-    return bool(path and path.exists())
 
 
 def selected_static_root() -> Path:
@@ -322,8 +338,13 @@ NO_ARCHIVE = "There is no archive yet. Open the setup guide to read your message
 NOT_AN_ARCHIVE = "The archive file could not be opened. Open the setup guide and update the archive."
 ALREADY_RUNNING = "An import is already running. Wait until it ends."
 NO_EXPORT_TO_LOAD = "This archive has no earlier export to load."
-# an export that could not be loaded, by archive file: the state of the export then, and what was said
-BRIDGE_FAILED: dict[str, tuple[tuple | None, str]] = {}
+# A load of an export that did not end well, by archive file: the state of
+# the export then, what was said, and until when that holds (None: until the
+# export changes). A request does not start the load again while this holds.
+BRIDGE_FAILED: dict[str, tuple[tuple | None, str, float | None]] = {}
+# another writer has the archive: the load is tried again after this long
+BRIDGE_RETRY_SECONDS = 15.0
+EXPORT_NOT_LOADED = "The earlier export could not be loaded into the archive."
 
 
 class ArchiveNotReady(Exception):
@@ -355,8 +376,22 @@ def contact_records() -> list | None:
 
 
 def named_archive(payload_or_query: dict) -> Path:
-    """The archive file that a request names, or the one of the app."""
-    return safe_path(payload_or_query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
+    """The archive file that a request names, or the one of the app.
+
+    Raises BadRequest for a name that is not text, that no system can hold,
+    or that names no file (a folder root).
+    """
+    named = payload_or_query.get("messagesPath")
+    if named is not None and not isinstance(named, str):
+        raise BadRequest(BAD_ARCHIVE_FILE)
+    try:
+        path = safe_path(named, DEFAULT_MESSAGES_CSV)
+        usable = bool(path.name) and "\x00" not in str(path)
+    except (OSError, ValueError, RuntimeError):
+        usable = False
+    if not usable:
+        raise BadRequest(BAD_ARCHIVE_FILE)
+    return path
 
 
 def export_holds_rows(export: Path | None) -> bool:
@@ -390,12 +425,11 @@ def holds_messages(messages_path: Path | None) -> bool:
     cannot be looked at is not written over from a copy.
     """
     try:
-        summary = places.state_for(messages_path).archive().summary()
+        return holds_rows(places.state_for(messages_path).archive())
     except ArchiveNotFoundError:
         return export_holds_rows(places.export_for(messages_path))
     except (ArchiveError, sqlite3.Error):
         return True
-    return bool(summary["messages"] or summary["messages_without_conversation"])
 
 
 def database_for(action: str, payload: dict) -> Path | None:
@@ -439,19 +473,36 @@ def unfinished_import() -> dict | None:
         return job_copy(running[0]) if running else None
 
 
-def archive_for(messages_path: Path | None) -> tuple[ArchiveState, Archive]:
+def archive_for(messages_path: Path | None, wait_for_import: bool = True) -> tuple[ArchiveState, Archive]:
     """The archive that a request reads, with its state. Raises ArchiveNotReady when there is none to read.
 
     When there is no archive and an export of an earlier build is there, the
-    load of that export is started here, and the request is told to wait.
+    load of that export is started here, and the request is told to wait. A
+    request also waits while a first import fills an archive that holds
+    nothing yet. An import that counts what it wrote does not wait for itself
+    (`wait_for_import=False`).
     """
     state = places.state_for(messages_path)
     try:
-        return state, state.archive()
+        archive = state.archive()
     except ArchiveNotFoundError:
         raise why_no_archive(messages_path, state) from None
-    except (ArchiveError, sqlite3.Error) as exc:
+    except (ArchiveError, sqlite3.Error, OSError, ValueError) as exc:
+        with contextlib.suppress(Exception):
+            print(f"[archive] the archive could not be opened: {type(exc).__name__}", file=sys.__stderr__)
         raise ArchiveNotReady(NOT_AN_ARCHIVE, 500, "archive_failed") from exc
+    filling = unfinished_import() if wait_for_import else None
+    if filling and not holds_rows(archive):
+        # A first import writes into the archive file itself. Until it ends there is
+        # nothing to show: the request waits for the import, as it waits for a load.
+        raise ArchiveNotReady(BUILDING, 503, "archive_building", filling)
+    return state, archive
+
+
+def holds_rows(archive: Archive) -> bool:
+    """True when the archive holds a message that a screen can show, or one in no conversation."""
+    summary = archive.summary()
+    return bool(summary["messages"] or summary["messages_without_conversation"])
 
 
 def why_no_archive(messages_path: Path | None, state: ArchiveState) -> ArchiveNotReady:
@@ -462,14 +513,29 @@ def why_no_archive(messages_path: Path | None, state: ArchiveState) -> ArchiveNo
         if running:
             return ArchiveNotReady(BUILDING, 503, "archive_building", running)
         return ArchiveNotReady(NO_ARCHIVE, 400, "no_archive")
-    failed = BRIDGE_FAILED.get(str(state.path))
-    if failed and failed[0] == file_cache_signature(export):
-        return ArchiveNotReady(failed[1], 500, "archive_failed")
+    failed = bridge_failure(state, export)
+    if failed:
+        return ArchiveNotReady(failed, 500, "archive_failed")
     try:
         job = create_job("bridge", {"messagesPath": str(messages_path or DEFAULT_MESSAGES_CSV)})
     except JobRefused:
         job = unfinished_import()
     return ArchiveNotReady(BUILDING, 503, "archive_building", job)
+
+
+def bridge_failure(state: ArchiveState, export: Path) -> str:
+    """What the last load of this export said when it did not end well, or "" when a load can be tried."""
+    failed = BRIDGE_FAILED.get(str(state.path))
+    if not failed or failed[0] != file_cache_signature(export):
+        return ""
+    if failed[2] is not None and time.monotonic() >= failed[2]:
+        return ""
+    return failed[1]
+
+
+def note_bridge_failure(state: ArchiveState, export: Path, sentence: str, again_after: float | None = None) -> None:
+    until = None if again_after is None else time.monotonic() + again_after
+    BRIDGE_FAILED[str(state.path)] = (file_cache_signature(export), sentence, until)
 
 
 def load_export_at_start() -> None:
@@ -492,11 +558,17 @@ def load_export(job_id: str, payload: dict) -> dict:
         raise ImportStopped(NO_EXPORT_TO_LOAD)
     update_job(job_id, progress={"step": 1, "of": 2, "label": "Reading your earlier export"})
     append_log(job_id, "Loading the earlier export into the archive")
-    answer = state.ensure_from_export(export, contacts=contact_records())
+    try:
+        answer = state.ensure_from_export(export, contacts=contact_records())
+    except Exception:
+        # whatever stopped the load, the next request does not start it again for the same export
+        note_bridge_failure(state, export, EXPORT_NOT_LOADED)
+        raise
     if answer.status in ("busy", "failed", "cancelled", "no_export"):
-        if answer.status == "failed":
-            BRIDGE_FAILED[str(state.path)] = (file_cache_signature(export), answer.reason)
-        raise ImportStopped(answer.reason or "The export could not be loaded.")
+        said = answer.reason or EXPORT_NOT_LOADED
+        # a busy archive is tried again after a moment; any other end holds until the export changes
+        note_bridge_failure(state, export, said, BRIDGE_RETRY_SECONDS if answer.status == "busy" else None)
+        raise ImportStopped(said)
     BRIDGE_FAILED.pop(str(state.path), None)
     update_job(job_id, progress={"step": 2, "of": 2, "label": "Getting your archive ready"})
     if answer.changed:
@@ -508,12 +580,16 @@ def load_export(job_id: str, payload: dict) -> dict:
 def pull_into_archive(action: str, payload: dict) -> PullDone:
     """One update: a full pull of the database into the archive. Raises ImportStopped when the archive did not change.
 
-    `database_for` names the database. The limit on what a pull removes is
-    lifted only when the request says so (`allowRemoval`).
+    `database_for` names the database. The limit on what a pull removes
+    guards an archive that holds a message. Only a request that says so
+    (`allowRemoval`) lifts it.
     """
     db_path = database_for(action, payload)
-    state = places.state_for(named_archive(payload))
-    limit = 1.0 if payload.get("allowRemoval") is True else DEFAULT_MAX_REMOVED_SHARE
+    place = named_archive(payload)
+    state = places.state_for(place)
+    # An archive that holds no message has nothing that a pull can lose: the limit guards an update only.
+    guarded = payload.get("allowRemoval") is not True and holds_messages(place)
+    limit = DEFAULT_MAX_REMOVED_SHARE if guarded else 1.0
     outcome = state.pull_from_messages(db_path, contact_records(), max_removed_share=limit)
     if isinstance(outcome, PullDone):
         # the archive is written: nothing after this is a reason to say that the import failed
@@ -569,6 +645,9 @@ def check_request(action, payload: dict) -> None:
         raise JobRefused(f"Unknown job action: {action}", 400)
     usable_path(payload.get("messagesPath"), "the archive")
     usable_path(payload.get("outDir"), "the reports folder")
+    for name in ("contact", "model", "since", "until"):
+        if payload.get(name) is not None and not isinstance(payload.get(name), str):
+            raise JobRefused(f"{name} must be text.", 400)
     if action == "setup_import":
         usable_path(payload.get("dbPath"), "the copy")
         if not isinstance(payload.get("includeContacts", True), bool):
@@ -659,6 +738,9 @@ class _JobStreamRouter(io.TextIOBase):
         self._writers: dict[int, JobWriter] = {}
         self._lock = threading.Lock()
 
+    # the threads that answer requests: what they print is never a line of a job
+    answering: set[int] = set()
+
     def register(self, writer: JobWriter):
         with self._lock:
             self._writers[threading.get_ident()] = writer
@@ -669,8 +751,9 @@ class _JobStreamRouter(io.TextIOBase):
 
     def _target(self):
         with self._lock:
-            writer = self._writers.get(threading.get_ident())
-            if writer is None and len(self._writers) == 1:
+            mine = threading.get_ident()
+            writer = self._writers.get(mine)
+            if writer is None and len(self._writers) == 1 and mine not in self.answering:
                 writer = next(iter(self._writers.values()))
         return writer or self._fallback
 
@@ -796,6 +879,18 @@ def run_job(job_id: str, action: str, payload: dict):
 WRITTEN_NOT_COUNTED = "The archive is written. Recall could not read it back to count it."
 
 
+JOB_FAILED = "The job failed. The log of the server says why."
+REPORT_NOT_OPENED = "The report is written. Recall could not open it. Look for it in Reports."
+
+
+class JobStopped(Exception):
+    """A job that stops for a reason told to the reader in one plain sentence. `code` is a fixed word for the client."""
+
+    def __init__(self, sentence: str, code: str = "") -> None:
+        super().__init__(sentence)
+        self.code = code
+
+
 def report_places(out_dir: Path) -> report_service.ReportPlaces:
     """Where a report run writes: the reports folder that the request names, and the notes in the data folder."""
     usual = report_service.default_places()
@@ -808,7 +903,7 @@ def write_report(job_id: str, payload: dict) -> dict:
     _state, archive = archive_for(messages_path)
     contact = payload.get("contact")
     if not contact or not isinstance(contact, str):
-        raise ValueError("Select a conversation before you start a report.")
+        raise JobStopped("Select a conversation before you start a report.", "bad_request")
     model = str(payload.get("model") or models.default_id())
     since, until = payload.get("since") or None, payload.get("until") or None
     out_dir = safe_path(payload.get("outDir"), OUT_DIR)
@@ -820,20 +915,40 @@ def write_report(job_id: str, payload: dict) -> dict:
             append_log(job_id, update["log"])
 
     append_log(job_id, f"Writing a report with {model}")
-    done = report_service.run(
-        contact, model, since, until, told, None, archive=archive, names=saved_names(), places=report_places(out_dir)
-    )
-    analysis, _ = cached_analysis_payload(
-        messages_path,
-        contact,
-        model,
-        since=since,
-        until=until,
-        report_path=str(done.report_path),
-        events_path=str(done.events_path) if done.events_path else None,
-        html_path=None,
-    )
-    return {**done.as_dict(), "analysis": analysis, "reports": list_report_files()}
+    try:
+        done = report_service.run(
+            contact, model, since, until, told, None, archive=archive, names=saved_names(), places=report_places(out_dir)
+        )
+    except ValueError as exc:
+        # a day that is no day, a first day after the last: the service says it in one sentence
+        raise JobStopped(str(exc), "bad_request") from exc
+    return {**done.as_dict(), **opened_report(job_id, messages_path, contact, model, since, until, done)}
+
+
+def opened_report(job_id: str, messages_path: Path, contact: str, model: str, since, until, done) -> dict:
+    """The written report as the Reports page opens it, and the list of reports.
+
+    The report is written: a failure here is a warning, not a failed job.
+    """
+    try:
+        analysis, _ = cached_analysis_payload(
+            messages_path,
+            contact,
+            model,
+            since=since,
+            until=until,
+            report_path=str(done.report_path),
+            events_path=str(done.events_path) if done.events_path else None,
+            html_path=None,
+        )
+        return {"analysis": analysis, "reports": list_report_files()}
+    except Exception:  # noqa: BLE001 - the report is on disk, so the run did its work
+        append_log(job_id, REPORT_NOT_OPENED)
+        with contextlib.suppress(Exception):
+            traceback.print_exc(file=sys.__stderr__)
+        with contextlib.suppress(Exception):
+            return {"analysis": None, "reports": list_report_files(), "warning": REPORT_NOT_OPENED}
+        return {"analysis": None, "reports": [], "warning": REPORT_NOT_OPENED}
 
 
 def names_from_contacts(job_id: str) -> bool:
@@ -895,7 +1010,7 @@ def do_job(job_id: str, action: str, payload: dict) -> dict:
 
 
 # a failure that is one plain sentence for the reader, with a fixed word for the client
-TOLD_IN_A_SENTENCE = (ImportStopped, report_service.ReportFailure, ModelChoiceError, ArchiveNotReady)
+TOLD_IN_A_SENTENCE = (ImportStopped, JobStopped, report_service.ReportFailure, ModelChoiceError, ArchiveNotReady, BadRequest)
 
 
 def work_job(job_id: str, action: str, payload: dict):
@@ -916,10 +1031,13 @@ def work_job(job_id: str, action: str, payload: dict):
             writer.flush()
             if exc.__cause__ is not None:
                 traceback.print_exception(exc, file=sys.__stderr__)
-    except Exception as exc:
-        writer.flush()
-        append_log(job_id, traceback.format_exc())
-        update_job(job_id, status="failed", error=str(exc))
+    except Exception:
+        # Nobody planned for this failure. What was raised can hold a path or
+        # the text of a query: it goes to the log of the server, not to the page.
+        update_job(job_id, status="failed", error=JOB_FAILED, code="job_failed")
+        with contextlib.suppress(Exception):
+            writer.flush()
+            traceback.print_exc(file=sys.__stderr__)
     finally:
         _JOB_STDOUT.unregister()
         _JOB_STDERR.unregister()
@@ -1089,10 +1207,6 @@ def preview_payload(messages_path: Path, contact: str, model: str, since=None, u
         "daily": daily,
         "recentMessages": [recent_message_payload(row, in_group, sender_names) for _, row in recent.iterrows()],
     }
-
-
-def companion_data_path(messages_path: Path, suffix: str) -> Path:
-    return messages_path.with_name(messages_path.stem + suffix)
 
 
 def preview_cache_key(messages_path: Path, contact: str, model: str, since=None, until=None) -> tuple:
@@ -1548,11 +1662,11 @@ def bundle_or_none(messages_path: Path):
         return None
 
 
-def archive_summary(messages_path: Path) -> dict:
+def archive_summary(messages_path: Path, wait_for_import: bool = True) -> dict:
     """Size and span of the whole archive. The conversation list is capped, so
     totals come from here and never from adding up that list."""
     try:
-        _state, archive = archive_for(messages_path)
+        _state, archive = archive_for(messages_path, wait_for_import)
     except ArchiveNotReady as waiting:
         if waiting.code != "no_archive":
             raise
@@ -1570,7 +1684,8 @@ def what_the_archive_holds(messages_path: Path) -> dict:
     One count is used everywhere: a message in no conversation is shown
     nowhere in the app, so it is not counted here either (archive_summary).
     """
-    summary = archive_summary(messages_path)
+    # the import that asks this is the one that filled the archive: it does not wait for itself
+    summary = archive_summary(messages_path, wait_for_import=False)
     first, last = summary["firstMessage"], summary["lastMessage"]
     return {
         "messages": summary["messages"],
@@ -1584,11 +1699,12 @@ def archive_patterns(messages_path: Path) -> dict:
     """The shape of the whole archive, for the Overview: messages by month in
     both voices, by day, and by hour of each weekday. Worked out once for one
     content of the archive."""
+    # the signature first: a frame is never kept under a signature that is newer than it
+    sig = archive_signature(places.state_for(messages_path))
     bundle = bundle_or_none(messages_path)
     if bundle is None:
         nothing = pd.DataFrame({"timestamp": pd.to_datetime([])})
         return {"monthly": [], "daily": day_totals(nothing), "rhythm": hour_by_weekday(nothing)}
-    sig = archive_signature(places.state_for(messages_path))
     # held while it is worked out: requests that arrive together wait for one answer
     with _PATTERNS_LOCK:
         if _PATTERNS_CACHE["sig"] == sig:
@@ -1607,7 +1723,7 @@ def count_display_names(df: pd.DataFrame) -> int:
 
 def list_jobs() -> list[dict]:
     with JOBS_LOCK:
-        jobs = [dict(job) for job in JOBS.values()]
+        jobs = [job_copy(job) for job in JOBS.values()]
     return sorted(jobs, key=lambda job: str(job.get("updatedAt", "")), reverse=True)
 
 
@@ -1665,11 +1781,11 @@ def _conversation_catalog(df: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
-# Ask-pipeline cache: the messages CSV is ~75MB / 760k rows; re-parsing it (plus the
-# catalog groupby and full contact-name resolution) on every question costs seconds
-# before any model call. Keyed on the file signature so refreshes invalidate it.
+# The frame of the archive, the rollup of its conversations and their names,
+# for the figures: reading every message again for each request costs seconds.
+# Keyed by bundle_signature, so an update and a change of names both renew it.
 _ASK_CACHE_LOCK = threading.Lock()
-_ASK_CACHE: dict = {"sig": None, "df": None, "catalog": None, "names": None}
+_ASK_CACHE: dict = {"sig": None, "df": None, "catalog": None, "names": None, "loading": None}
 
 FIRST_WORDS_QUOTE_LIMIT = 280
 # a quoted memory reads best as a sentence or two
@@ -1703,10 +1819,10 @@ def first_words_payload(messages_path: Path, limit: int = 5) -> dict:
     resolved contact name, and named contacts win unless almost nothing is
     named yet (fresh machine before the Contacts step)."""
     empty = {"entries": [], "signature": "", "totals": {"messages": 0, "people": 0}}
+    sig = "|".join(str(part) for part in places.state_for(messages_path).file_mark())
     bundle = bundle_or_none(messages_path)
     if bundle is None:
         return empty
-    sig = "|".join(str(part) for part in places.state_for(messages_path).file_mark())
     df, catalog, names = bundle
     if df.empty or catalog.empty or "timestamp" not in df.columns:
         return empty
@@ -1868,7 +1984,8 @@ def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> di
     if not past_today.empty:
         day_years = past_today["timestamp"].dt.year
         day_cids = cids[past_today.index]
-        worded = past_today["text"].fillna("").astype(str).str.strip().ne("")
+        # words as the screen shows them: the mark of an attachment is no word
+        worded = past_today["text"].map(display_text).ne("")
         # A day is counted in full, the way the day view and the calendar count
         # it. It is a moment only when someone wrote words on it.
         per_day = (
@@ -1952,7 +2069,9 @@ def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> di
 
 def _parse_archive(state: ArchiveState) -> tuple[pd.DataFrame, pd.DataFrame]:
     """The archive as the frame that the figures read, and the rollup of its conversations."""
-    df = frame_service.messages_frame(state)
+    whole = frame_service.messages_frame(state)
+    # A message in no conversation is shown nowhere in the app: no figure counts it.
+    df = whole[whole["chat_id"].notna()]
     return df, _conversation_catalog(df)
 
 
@@ -2111,14 +2230,27 @@ def contacts_from_database(query: dict) -> tuple[int, dict]:
     }
 
 
+_QUERY_IN_A_LOG_LINE = re.compile(r"\?\S*")
+
+
 class RecallHandler(BaseHTTPRequestHandler):
     server_version = "RecallUI/1.0"
 
     def log_message(self, format, *args):
-        sys.__stderr__.write(
-            "%s - - [%s] %s\n"
-            % (self.address_string(), self.log_date_time_string(), format % args)
-        )
+        # The query of a request holds handles and search words. The log is a
+        # file that the reader is pointed to: it gets the path and no query.
+        line = _QUERY_IN_A_LOG_LINE.sub("", format % args)
+        sys.__stderr__.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), line))
+
+    @contextlib.contextmanager
+    def answering(self):
+        """Mark this thread as one that answers a request, so nothing it prints becomes a line of a job."""
+        mine = threading.get_ident()
+        _JobStreamRouter.answering.add(mine)
+        try:
+            yield
+        finally:
+            _JobStreamRouter.answering.discard(mine)
 
     def do_OPTIONS(self):
         # no CORS grant: the UI is same-origin, so a preflight can only come
@@ -2128,6 +2260,14 @@ class RecallHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        with self.answering():
+            self.answer_get()
+
+    def do_POST(self):
+        with self.answering():
+            self.answer_post()
+
+    def answer_get(self):
         parsed = urlparse(self.path)
         try:
             if parsed.path.startswith("/api/"):
@@ -2137,10 +2277,12 @@ class RecallHandler(BaseHTTPRequestHandler):
                 self.handle_api_get(parsed)
             else:
                 self.serve_static(parsed.path)
+        except BadRequest as exc:
+            send_json(self, 400, {"error": str(exc)})
         except ArchiveNotReady as waiting:
             send_json(self, waiting.status, waiting.body())
-        except Exception as exc:
-            send_json(self, 500, {"error": str(exc)})
+        except Exception:
+            send_json(self, 500, server_fault(f"GET {parsed.path}"))
 
     def do_HEAD(self):
         parsed = urlparse(self.path)
@@ -2149,10 +2291,10 @@ class RecallHandler(BaseHTTPRequestHandler):
                 send_json(self, 405, {"error": "Method not allowed"})
             else:
                 self.serve_static(parsed.path, head_only=True)
-        except Exception as exc:
-            send_json(self, 500, {"error": str(exc)})
+        except Exception:
+            send_json(self, 500, server_fault(f"HEAD {parsed.path}"))
 
-    def do_POST(self):
+    def answer_post(self):
         parsed = urlparse(self.path)
         try:
             if not is_local_api_request(self):
@@ -2197,8 +2339,8 @@ class RecallHandler(BaseHTTPRequestHandler):
             send_json(self, 400, {"error": str(exc)})
         except ArchiveNotReady as waiting:
             send_json(self, waiting.status, waiting.body())
-        except Exception as exc:
-            send_json(self, 500, {"error": str(exc)})
+        except Exception:
+            send_json(self, 500, server_fault(f"POST {parsed.path}"))
 
     def body_object(self) -> dict:
         """The body of a request as a record. Any other JSON value is refused."""
@@ -2210,7 +2352,12 @@ class RecallHandler(BaseHTTPRequestHandler):
     def handle_ask_stream(self, payload: dict):
         """Server-sent events for a chat question: status lines, the words of
         the answer as the model writes them, then the whole answer or one
-        plain sentence that says why there is none."""
+        plain sentence that says why there is none.
+
+        A request that cannot be answered at all (no archive, a bad archive
+        file) is refused before the stream starts, as on every other route."""
+        _state, archive = archive_for(named_archive(payload))
+        asked = ask_arguments(payload)
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -2221,10 +2368,8 @@ class RecallHandler(BaseHTTPRequestHandler):
             self.wfile.write(frame.encode("utf-8"))
             self.wfile.flush()
 
-        asked = ask_arguments(payload)
         with asking(ask_id(payload)) as token:
             try:
-                _state, archive = archive_for(named_archive(payload))
                 events = chat_service.stream(
                     asked["question"],
                     asked["contact"],
@@ -2241,12 +2386,14 @@ class RecallHandler(BaseHTTPRequestHandler):
                 finally:
                     # closing the events stops the model call
                     events.close()
-            except ArchiveNotReady as waiting:
-                with contextlib.suppress(OSError):
-                    write_event({"type": "error", **waiting.body()})
             except OSError:
                 # the reader left or stopped the question: nothing is left to tell, and the model call ends
                 token.cancel()
+            except Exception:
+                # the stream is open: the fault is told as its last event, not as a second answer
+                token.cancel()
+                with contextlib.suppress(OSError):
+                    write_event({"type": "error", **server_fault("POST /api/ask/stream")})
 
     def handle_api_get(self, parsed):
         query = {k: v[0] for k, v in parse_qs(parsed.query).items()}
@@ -2267,12 +2414,11 @@ class RecallHandler(BaseHTTPRequestHandler):
             db_param = query.get("dbPath")
             send_json(self, 200, setup_status_payload(
                 safe_path(db_param) if db_param else None,
-                safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV),
+                named_archive(query),
                 deep=str(query.get("deep", "0")).lower() in {"1", "true", "yes"},
             ))
         elif parsed.path == "/api/first-words":
-            messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
-            send_json(self, 200, {"firstWords": first_words_payload(messages_path)})
+            send_json(self, 200, {"firstWords": first_words_payload(named_archive(query))})
         elif parsed.path == "/api/permissions/fulldisk":
             # the same check that the guide uses: it tells a database that macOS hides from one that is not there
             send_json(self, 200, {
@@ -2280,11 +2426,9 @@ class RecallHandler(BaseHTTPRequestHandler):
                 "dbPath": str(LIVE_CHAT_DB),
             })
         elif parsed.path == "/api/memories":
-            messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
-            send_json(self, 200, {"memories": memories_payload(messages_path)})
+            send_json(self, 200, {"memories": memories_payload(named_archive(query))})
         elif parsed.path == "/api/overview":
-            messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
-            send_json(self, 200, {"overview": archive_patterns(messages_path)})
+            send_json(self, 200, {"overview": archive_patterns(named_archive(query))})
         elif parsed.path == "/api/contacts":
             try:
                 status, answer = contacts_answer(query)
@@ -2293,13 +2437,18 @@ class RecallHandler(BaseHTTPRequestHandler):
                 return
             send_json(self, status, answer)
         elif parsed.path == "/api/preview":
-            payload, cached = cached_preview_payload(
-                named_archive(query),
-                query.get("contact", ""),
-                query.get("model") or models.default_id(),
-                since=query.get("since"),
-                until=query.get("until"),
-            )
+            try:
+                payload, cached = cached_preview_payload(
+                    named_archive(query),
+                    query.get("contact", ""),
+                    query.get("model") or models.default_id(),
+                    since=query.get("since"),
+                    until=query.get("until"),
+                )
+            except ValueError as error:
+                # no message in these dates, a day that is no day: a fault of the request, in one sentence
+                send_json(self, 400, {"error": str(error)})
+                return
             payload = dict(payload)
             payload["cached"] = cached
             send_json(self, 200, payload)
@@ -2351,8 +2500,9 @@ class RecallHandler(BaseHTTPRequestHandler):
             send_json(self, 200, payload)
         elif parsed.path == "/api/analysis":
             messages_path = named_archive(query)
-            report_path = safe_path(query.get("reportPath", ""))
-            if not report_path or not report_path.exists() or not ensure_under_root(report_path):
+            # only a report file is opened as a report: the same test as for /api/report
+            report_path = served_report_file(query.get("reportPath", ""))
+            if not report_path:
                 send_json(self, 404, {"error": "Report not found"})
                 return
             if report_path.suffix.lower() == ".html":

@@ -119,6 +119,36 @@ def test_the_report_opens_again_from_its_file_with_the_same_moments(desk, server
     assert [file["kind"] for file in opened["files"]] == ["md", "csv"]
 
 
+def test_a_report_that_is_written_and_cannot_be_opened_is_a_warning_and_not_a_failed_job(desk, monkeypatch):
+    """The report is on disk when the run ends. What fails after that does not make the run a failed one."""
+
+    def fails(*_args, **_more):
+        raise RuntimeError("SELECT text FROM message")
+
+    monkeypatch.setattr(ui_server, "cached_analysis_payload", fails)
+    job = run(asked(desk))
+    assert (job["status"], job["error"]) == ("completed", None)
+    result = job["result"]
+    assert result["analysis"] is None and result["warning"] == ui_server.REPORT_NOT_OPENED
+    assert [report["path"] for report in result["reports"]] == [result["reportPath"]]
+    assert ui_server.REPORT_NOT_OPENED in lines(job) and not any("SELECT" in line for line in lines(job))
+
+
+@pytest.mark.parametrize("more", [{"since": "2023-02-30"}, {"since": "2023-03-01", "until": "2023-02-01"}])
+def test_a_day_that_is_no_day_fails_the_job_in_one_sentence(desk, more):
+    job = run(asked(desk, **more))
+    assert job["status"] == "failed" and job["code"] == "bad_request"
+    assert job["error"].endswith(".") or "2023-02-30" in job["error"]
+    assert not any("Traceback" in line for line in lines(job)) and desk.llm.calls == []
+
+
+@pytest.mark.parametrize("name", ["contact", "model", "since", "until"])
+def test_a_request_for_a_report_with_a_value_that_is_no_text_makes_no_job(desk, name):
+    with pytest.raises(ui_server.JobRefused, match=f"{name} must be text.") as refused:
+        ui_server.create_job("analyze", asked(desk, **{name: 5}))
+    assert refused.value.status == 400
+
+
 def test_with_no_key_the_job_fails_in_one_plain_sentence(desk, tmp_path, monkeypatch):
     monkeypatch.undo()  # the real model port of the service
     monkeypatch.delenv(keys.KEY_NAME, raising=False)

@@ -479,15 +479,6 @@ def test_with_no_export_a_request_beside_a_first_import_is_told_to_wait(tmp_path
     assert listed() == [(running, "queued")]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "product fault: a first pull writes into the archive file itself, so a request during it reads an archive "
-        "with no message (archive_for gives it, /api/contacts answers 200 with an empty list) and is not told to "
-        "wait with 503 archive_building; only the moment before the file is made is covered (why_no_archive)"
-    ),
-)
 def test_a_request_during_a_first_import_is_told_to_wait_for_it(messages_home, tmp_path, monkeypatch):
     from archive import importer, source
     from tests.archive_kit import write_database

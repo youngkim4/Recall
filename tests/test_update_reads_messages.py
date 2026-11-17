@@ -132,15 +132,6 @@ def test_a_first_setup_reads_the_copy_it_names(messages_home, tmp_path, there):
     assert texts(target) == ["from the copy"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "product fault: `holds_messages` and the removal limit do not count the same rows. An archive whose only "
-        "row is an event of a group holds no message, so a first setup can name a copy; the pull then stops with "
-        "'This database lacks 1 of the 1 messages in the archive', code removal_limit"
-    ),
-)
 def test_a_first_setup_from_a_copy_runs_when_the_only_row_of_the_archive_is_an_event_of_a_group(messages_home, tmp_path):
     from tests.recall_services.state_data import write_database_of_events
 

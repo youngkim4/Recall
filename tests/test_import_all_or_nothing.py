@@ -355,15 +355,6 @@ def test_an_update_from_a_database_with_no_message_to_keep_leaves_the_archive(fi
     assert unchanged(filled, before)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "product fault: a first import of a database whose rows hold no message to keep ends as completed "
-        "with 0 messages and leaves an archive file with nothing in it; CONTRACTS.md says that a database "
-        "with no message to keep is not imported"
-    ),
-)
 def test_a_first_import_of_a_database_with_no_message_to_keep_makes_no_archive(tmp_path):
     target = tmp_path / "new" / "archive.sqlite3"
 

@@ -110,11 +110,6 @@ def test_the_signature_of_first_words_changes_with_the_archive(tmp_path):
     assert after and after != before
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="first_words_payload counts the rows of the frame, and the frame holds the messages that no "
-    "conversation holds: totals.messages is more than the count that the Overview and the import give",
-)
 def test_first_words_count_the_messages_that_the_overview_counts(tmp_path):
     csv = loaded(tmp_path / "messages.csv", [
         row(MOM, "2020-01-01 09:00:00", "first hello"),
