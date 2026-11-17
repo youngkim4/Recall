@@ -37,3 +37,30 @@ def test_unit_matches_word_phrase_and_prefix() -> None:
 def test_unit_matches_ignores_diacritics() -> None:
     assert unit_matches("apartamento", "o apartaménto é ótimo")
     assert unit_matches("otimo", "o apartamento é ótimo")
+
+
+def test_words_keep_the_marks_that_belong_to_them() -> None:
+    assert words("हिन्दी सीखो") == [fold("हिन्दी"), fold("सीखो")]
+    assert len(words("สวัสดี")) == 1
+    decomposed = "école"
+    assert words(decomposed) == ["ecole"]
+    assert words("école") == ["ecole"]
+    assert unit_matches("ecole", decomposed)
+    assert not unit_matches("हिन्दी", "ह न द")
+
+
+def test_variation_selectors_and_keycaps_are_not_part_of_a_word() -> None:
+    assert words("1️⃣ ok") == ["1", "ok"]
+    assert words("love️ you") == ["love", "you"]
+
+
+def test_fold_is_the_same_for_ascii_and_other_text() -> None:
+    assert fold("HELLO") == "hello"
+    assert fold("İstanbul") == "istanbul"
+    assert fold("ＡＢＣ") == "abc"
+    assert fold("") == ""
+
+
+def test_a_phrase_of_one_word_is_that_word() -> None:
+    assert query_units('"lease" lease*') == ["lease", "lease*"]
+    assert query_units('"lease" lease') == ["lease"]

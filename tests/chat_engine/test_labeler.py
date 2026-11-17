@@ -1,8 +1,10 @@
+import time
+
+from chat_engine.handles import Phone, handle_spans, is_mask, parse_phone, same_phone
 from chat_engine.labeler import (
     EMAIL_MASK,
     UNKNOWN_MASK,
     MaskingLabeler,
-    handle_key,
     handle_kind,
     looks_like_handle,
     mask_handle,
@@ -29,16 +31,36 @@ def _conversation(**fields: object) -> dict:
     return {**base, **fields}
 
 
-def test_handle_kind_and_key() -> None:
+def test_handle_kind() -> None:
     assert handle_kind("+1 (720) 555-0199") == "phone"
     assert handle_kind("tel:+17205550199") == "phone"
     assert handle_kind("Mailto:RK.Unsaved@Example.org") == "email"
     assert handle_kind("chat8812345") == "other"
     assert handle_kind("Maya Okafor") == "other"
-    assert handle_key("+1 (720) 555-0199") == "7205550199"
-    assert handle_key("720-555-0199") == "7205550199"
-    assert handle_key("RK.Unsaved@Example.org") == "rk.unsaved@example.org"
-    assert handle_key("Maya Okafor") == ""
+    assert handle_kind("262966") == "short_code"
+    assert handle_kind("") == "other"
+
+
+def test_one_number_in_many_spellings_is_the_same_number() -> None:
+    usa = parse_phone("+1 (720) 555-0199")
+    assert usa == Phone("17205550199", True)
+    assert same_phone(usa, parse_phone("720-555-0199"))
+    assert same_phone(usa, parse_phone("17205550199"))
+    assert same_phone(parse_phone("+351912345678"), parse_phone("912 345 678"))
+    assert same_phone(parse_phone("+33612345678"), parse_phone("06 12 34 56 78"))
+    assert not same_phone(usa, parse_phone("+44 720 555 0199"))
+    assert not same_phone(usa, parse_phone("720-555-0198"))
+    assert not same_phone(usa, parse_phone("555-0199"))
+    assert parse_phone("Maya") is None and parse_phone("262966") is None
+
+
+def test_chat_guid_prefixes_are_understood() -> None:
+    assert handle_kind("iMessage;-;+14155550123") == "phone"
+    assert handle_kind("SMS;-;+14155550123") == "phone"
+    assert handle_kind("iMessage;-;someone@example.org") == "email"
+    assert MaskingLabeler({"+14155550123": "Ann"}).sender("iMessage;-;+14155550123") == "Ann"
+    labeler = MaskingLabeler(known_handles=["iMessage;-;+17205550199"])
+    assert labeler.redact("n +17205550199") == "n a number ending in 0199"
 
 
 def test_looks_like_handle() -> None:
@@ -53,6 +75,14 @@ def test_mask_never_shows_the_handle() -> None:
     assert mask_handle(UNSAVED_EMAIL) == EMAIL_MASK
     assert mask_handle("chat8812345") == UNKNOWN_MASK
     assert mask_handle("") == UNKNOWN_MASK
+
+
+def test_short_code_is_shown_as_a_short_code() -> None:
+    assert mask_handle("262966") == "the short code 262966"
+    assert MaskingLabeler().sender("262966") == "the short code 262966"
+    assert is_mask("the short code 262966") and is_mask("a number ending in 0199") and is_mask(EMAIL_MASK)
+    assert not is_mask("Maya Okafor")
+    assert MaskingLabeler(known_handles=["262966"]).redact("text STOP to 262966") == "text STOP to 262966"
 
 
 def test_saved_name_is_used_as_it_is() -> None:
@@ -151,3 +181,63 @@ def test_redact_empty_and_plain_text() -> None:
     labeler = MaskingLabeler(known_handles=[UNSAVED_PHONE])
     assert labeler.redact("") == ""
     assert labeler.redact("see you at eight") == "see you at eight"
+
+
+def test_two_unsaved_numbers_in_one_run_are_both_masked() -> None:
+    labeler = MaskingLabeler(known_handles=["+14155550123", "+14155550124"])
+    both = "a number ending in 0123 a number ending in 0124"
+    assert labeler.redact("call 4155550123 4155550124 now") == f"call {both} now"
+    assert labeler.redact("415 555 0123 415 555 0124") == both
+    assert labeler.redact("4155550123-4155550124") == "a number ending in 0123-a number ending in 0124"
+    assert labeler.redact("+1 415 555 0123, +1 (415) 555-0124") == "a number ending in 0123, a number ending in 0124"
+
+
+def test_national_spelling_of_an_international_number_is_masked() -> None:
+    assert MaskingLabeler(known_handles=["+351912345678"]).redact("912 345 678") == "a number ending in 5678"
+    assert MaskingLabeler(known_handles=["+33612345678"]).redact("06 12 34 56 78") == "a number ending in 5678"
+    assert MaskingLabeler(known_handles=["+34612345678"]).redact("tel 612 34 56 78.") == "tel a number ending in 5678."
+    assert MaskingLabeler(known_handles=["07205550199"]).redact("7205550199") == "a number ending in 0199"
+
+
+def test_saved_name_is_found_by_any_spelling_of_the_number() -> None:
+    labeler = MaskingLabeler({"+351912345678": "Inês Duarte"})
+    assert labeler.sender("912345678") == "Inês Duarte"
+    assert labeler.sender("+351 912 345 678") == "Inês Duarte"
+    assert labeler.redact("ligue 912 345 678") == "ligue 912 345 678"
+
+
+def test_same_ending_in_two_countries_is_two_people() -> None:
+    labeler = MaskingLabeler({"+14155550123": "Ann"}, ["+444155550123"])
+    assert labeler.sender("+444155550123") == "a number ending in 0123"
+    assert labeler.sender("+14155550123") == "Ann"
+    assert labeler.redact("uk +444155550123 now") == "uk a number ending in 0123 now"
+    assert labeler.redact("Ann is +1 415 555 0123") == "Ann is +1 415 555 0123"
+    assert labeler.redact("Ann is 415 555 0123") == "Ann is 415 555 0123"
+
+
+def test_archive_names_that_hold_a_handle_are_scrubbed() -> None:
+    labeler = MaskingLabeler()
+    group = _conversation(id="chat1", is_group=True, name="Dinner call +1 415 555 0123", members=[])
+    assert labeler.conversation(group) == "Dinner call a number ending in 0123"
+    mail = _conversation(id="chat2", is_group=True, name="bob@example.com and friends", members=[])
+    assert labeler.conversation(mail) == "an unsaved email contact and friends"
+    direct = _conversation(id="+14155550123", name="Chris 415-555-0123", members=["+14155550123"])
+    assert labeler.conversation(direct) == "Chris a number ending in 0123"
+    plain = _conversation(id="chat3", is_group=True, name="Flat 24, since 2019", members=[])
+    assert labeler.conversation(plain) == "Flat 24, since 2019"
+
+
+def test_redact_is_fast_on_long_runs_with_no_handle() -> None:
+    labeler = MaskingLabeler(known_handles=["a@b.com", "+17205550199"])
+    started = time.perf_counter()
+    labeler.redact("a" * 50_000)
+    labeler.redact("1 " * 25_000)
+    labeler.redact("1-" * 25_000)
+    handle_spans("a" * 50_000)
+    assert time.perf_counter() - started < 1.5
+
+
+def test_email_addresses_are_matched_whole() -> None:
+    labeler = MaskingLabeler(known_handles=["rk.unsaved@example.org"])
+    assert labeler.redact("mail RK.Unsaved@example.org.") == f"mail {EMAIL_MASK}."
+    assert labeler.redact("xrk.unsaved@example.org") == "xrk.unsaved@example.org"
