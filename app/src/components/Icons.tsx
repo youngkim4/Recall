@@ -1,131 +1,263 @@
+import type { ReactNode } from 'react'
+
+// One icon set, drawn at its render size: a 16px grid with a 1.5px stroke,
+// round caps and joins. Line centers sit on quarter pixels so edges land on
+// whole or half pixels. Navigation icons also have a filled form, used for
+// the selected item; its silhouette matches the outline's outer edge so the
+// swap does not shift. Color always comes from the surrounding text.
+
 type IconProps = {
   className?: string
 }
 
-// Hand-drawn line icon set — single weight, rounded, softly organic
-// (stroke styling comes from .nav-icon / .button-icon in App.css)
+type NavIconProps = IconProps & {
+  filled?: boolean
+}
 
-export function RecallMark({ className }: IconProps) {
+function Line({
+  className = 'icon',
+  width = 1.5,
+  children,
+}: IconProps & { width?: number; children: ReactNode }) {
   return (
-    <svg className={className} viewBox="0 0 64 64" role="img" aria-label="Recall">
-      <rect x="4" y="4" width="56" height="56" rx="16" fill="currentColor" opacity="0.08" />
+    <svg
+      className={className}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={width}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  )
+}
+
+function Solid({ className = 'icon', children }: IconProps & { children: ReactNode }) {
+  return (
+    <svg className={className} viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      {children}
+    </svg>
+  )
+}
+
+/* ---- navigation ---- */
+
+export function HomeIcon({ className, filled }: NavIconProps) {
+  if (filled) {
+    return (
+      <Solid className={className}>
+        <path d="M7.52 2.06a.75.75 0 0 1 .96 0l5.25 4.5a.75.75 0 0 1 .27.57v5.12a2.25 2.25 0 0 1-2.25 2.25H10v-3.75a.75.75 0 0 0-.75-.75h-2.5a.75.75 0 0 0-.75.75v3.75H4.25A2.25 2.25 0 0 1 2 12.25V7.13a.75.75 0 0 1 .27-.57l5.25-4.5Z" />
+      </Solid>
+    )
+  }
+  return (
+    <Line className={className}>
+      <path d="M2.75 7.25 8 2.75l5.25 4.5v5a1.5 1.5 0 0 1-1.5 1.5h-7.5a1.5 1.5 0 0 1-1.5-1.5v-5Z" />
+      <path d="M6.75 13.5v-2.75h2.5v2.75" />
+    </Line>
+  )
+}
+
+const CHAT_PATH =
+  'M8 2.75c-3.18 0-5.75 2.13-5.75 4.75 0 1.2.54 2.3 1.43 3.13-.1.74-.42 1.48-.93 2.1-.17.2 0 .52.27.5 1.2-.1 2.25-.5 3.06-1.03.6.03 1.25.05 1.92.05 3.18 0 5.75-2.13 5.75-4.75S11.18 2.75 8 2.75Z'
+
+export function ChatIcon({ className, filled }: NavIconProps) {
+  return (
+    <Line className={className}>
+      <path d={CHAT_PATH} fill={filled ? 'currentColor' : 'none'} />
+    </Line>
+  )
+}
+
+export function AnalyzeIcon({ className, filled }: NavIconProps) {
+  if (filled) {
+    return (
+      <Solid className={className}>
+        <rect x="2.5" y="8.25" width="3" height="5.75" rx="1" />
+        <rect x="6.5" y="2" width="3" height="12" rx="1" />
+        <rect x="10.5" y="5.25" width="3" height="8.75" rx="1" />
+      </Solid>
+    )
+  }
+  return (
+    <Line className={className}>
+      <path d="M4 13.25V9M8 13.25V2.75M12 13.25V6" />
+    </Line>
+  )
+}
+
+export function SearchIcon({ className, filled }: NavIconProps) {
+  return (
+    <Line className={className} width={filled ? 2 : 1.5}>
+      <circle cx="7.25" cy="7.25" r="4.5" />
+      <path d="m10.75 10.75 2.5 2.5" />
+    </Line>
+  )
+}
+
+export function ReportIcon({ className, filled }: NavIconProps) {
+  if (filled) {
+    return (
+      <Solid className={className}>
+        <path
+          fillRule="evenodd"
+          d="M4.75 1.5h4.6a.75.75 0 0 1 .53.22l3.4 3.4a.75.75 0 0 1 .22.53v6.6a2.25 2.25 0 0 1-2.25 2.25h-6.5a2.25 2.25 0 0 1-2.25-2.25v-8.5A2.25 2.25 0 0 1 4.75 1.5Zm.75 6.13h5a.63.63 0 0 1 0 1.25h-5a.63.63 0 0 1 0-1.25Zm0 2.5h3.25a.63.63 0 0 1 0 1.25H5.5a.63.63 0 0 1 0-1.25Z"
+        />
+      </Solid>
+    )
+  }
+  return (
+    <Line className={className}>
+      <path d="M4.75 2.25h4.6l3.4 3.4v6.6a1.5 1.5 0 0 1-1.5 1.5h-6.5a1.5 1.5 0 0 1-1.5-1.5v-8.5a1.5 1.5 0 0 1 1.5-1.5Z" />
+      <path d="M5.75 8.25h4.5M5.75 10.75h2.75" />
+    </Line>
+  )
+}
+
+export function JobsIcon({ className, filled }: NavIconProps) {
+  if (filled) {
+    return (
+      <Solid className={className}>
+        <path
+          fillRule="evenodd"
+          d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm.63 3.25a.63.63 0 0 0-1.25 0V8c0 .2.09.38.25.5l2 1.5a.63.63 0 0 0 .75-1L8.63 7.69V4.75Z"
+        />
+      </Solid>
+    )
+  }
+  return (
+    <Line className={className}>
+      <circle cx="8" cy="8" r="5.75" />
+      <path d="M8 4.75V8l2 1.5" />
+    </Line>
+  )
+}
+
+export function SettingsIcon({ className, filled }: NavIconProps) {
+  return (
+    <Line className={className}>
+      <path d="M2.75 5h4.5M10.75 5h2.5M2.75 11h2M8.25 11h5" />
+      <circle cx="9" cy="5" r="1.75" fill={filled ? 'currentColor' : 'none'} />
+      <circle cx="6.5" cy="11" r="1.75" fill={filled ? 'currentColor' : 'none'} />
+    </Line>
+  )
+}
+
+/* ---- controls ---- */
+
+export function SidebarIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <rect x="2.25" y="3.25" width="11.5" height="9.5" rx="2" />
+      <path d="M6.25 3.5v9" />
+    </Line>
+  )
+}
+
+export function PlusIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <path d="M8 3.25v9.5M3.25 8h9.5" />
+    </Line>
+  )
+}
+
+export function CloseIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <path d="m4.25 4.25 7.5 7.5m0-7.5-7.5 7.5" />
+    </Line>
+  )
+}
+
+export function PauseIcon({ className }: IconProps) {
+  return (
+    <Solid className={className}>
+      <rect x="4" y="3.25" width="2.75" height="9.5" rx="0.75" />
+      <rect x="9.25" y="3.25" width="2.75" height="9.5" rx="0.75" />
+    </Solid>
+  )
+}
+
+export function PlayIcon({ className }: IconProps) {
+  return (
+    <Solid className={className}>
+      <path d="M5 3.9a.75.75 0 0 1 1.14-.64l6.7 4.1a.75.75 0 0 1 0 1.28l-6.7 4.1A.75.75 0 0 1 5 12.1V3.9Z" />
+    </Solid>
+  )
+}
+
+// standalone and emphasized, so it carries a heavier stroke than inline icons
+export function ArrowUpIcon({ className }: IconProps) {
+  return (
+    <Line className={className} width={2}>
+      <path d="M8 12.75v-9.5M4.25 7 8 3.25 11.75 7" />
+    </Line>
+  )
+}
+
+export function ChevronDownIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <path d="m4.25 6.25 3.75 3.75 3.75-3.75" />
+    </Line>
+  )
+}
+
+export function ChevronLeftIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <path d="M9.75 4.25 6 8l3.75 3.75" />
+    </Line>
+  )
+}
+
+export function ChevronRightIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <path d="m6.25 4.25 3.75 3.75-3.75 3.75" />
+    </Line>
+  )
+}
+
+export function CheckIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <path d="m3.25 8.5 3 3 6.5-7" />
+    </Line>
+  )
+}
+
+// a photo or GIF someone sent
+export function ImageIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <rect x="2.25" y="3.25" width="11.5" height="9.5" rx="2" />
+      <circle cx="5.75" cy="6.5" r="0.75" />
+      <path d="m2.75 11.5 3-3 2.25 2.25 1.75-1.75 3.5 3.5" />
+    </Line>
+  )
+}
+
+// any other attachment
+export function PaperclipIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <path d="m13.75 7.5-5.4 5.4a3.5 3.5 0 0 1-4.95-4.95l5.4-5.4a2.33 2.33 0 0 1 3.3 3.3l-5.4 5.4a1.17 1.17 0 0 1-1.65-1.65l5-5" />
+    </Line>
+  )
+}
+
+export function BookmarkIcon({ className, filled }: NavIconProps) {
+  return (
+    <Line className={className}>
       <path
-        d="M18 16h18.4c5.4 0 9.6 1.4 12.6 4.2 3 2.7 4.5 6.3 4.5 10.8 0 3.8-1.1 7-3.4 9.5-2 2.3-4.8 3.8-8.2 4.6L53 54H42.6L33 46h-5.4v8H18V16Zm9.6 8.4V38h8.2c2.7 0 4.8-.6 6.3-1.8 1.4-1.2 2.2-2.9 2.2-5.1s-.7-3.9-2.2-5c-1.5-1.1-3.6-1.7-6.3-1.7h-8.2Z"
-        fill="currentColor"
+        d="M4.75 2.25h6.5a1 1 0 0 1 1 1v10.5L8 10.75l-4.25 3V3.25a1 1 0 0 1 1-1Z"
+        fill={filled ? 'currentColor' : 'none'}
       />
-      <path d="M34.2 44.4h8.7L53 54H43.2l-9-9.6Z" fill="var(--accent)" />
-    </svg>
-  )
-}
-
-export function MessageIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M5 11.5C5 7.9 8.1 5 12 5s7 2.9 7 6.5-3.1 6.5-7 6.5c-1 0-1.9-.2-2.8-.5-1 .7-2.3 1.2-3.2 1.3.5-.8.8-1.7.7-2.4C5.7 14.2 5 12.9 5 11.5Z" />
-      <path d="M9 10.8h6" />
-      <path d="M9 13.2h3.6" />
-    </svg>
-  )
-}
-
-export function LayersIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 4.6 4.6 8.2 12 11.8l7.4-3.6L12 4.6Z" />
-      <path d="M4.8 11.9 12 15.5l7.2-3.6" />
-      <path d="M4.8 15.4 12 19l7.2-3.6" />
-    </svg>
-  )
-}
-
-export function HomeIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4.6 11 12 4.8 19.4 11" />
-      <path d="M6.6 9.6V19h10.8V9.6" />
-      <path d="M10 19v-4.5c0-.6.4-1 1-1h2c.6 0 1 .4 1 1V19" />
-    </svg>
-  )
-}
-
-export function CompassIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 4.6c4.1 0 7.4 3.3 7.4 7.4S16.1 19.4 12 19.4 4.6 16.1 4.6 12 7.9 4.6 12 4.6Z" />
-      <path d="M15 9 13.2 13.2 9 15l1.8-4.2L15 9Z" />
-    </svg>
-  )
-}
-
-export function ClockIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 4.6c4.1 0 7.4 3.3 7.4 7.4S16.1 19.4 12 19.4 4.6 16.1 4.6 12 7.9 4.6 12 4.6Z" />
-      <path d="M12 7.9V12l2.9 1.7" />
-    </svg>
-  )
-}
-
-export function CalendarIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M5.4 6.6c0-.4.3-.6.6-.6h12c.3 0 .6.2.6.6v11.8c0 .4-.3.6-.6.6H6c-.3 0-.6-.2-.6-.6V6.6Z" />
-      <path d="M8.2 3.8v3.4" />
-      <path d="M15.8 3.8v3.4" />
-      <path d="M5.4 9.8h13.2" />
-    </svg>
-  )
-}
-
-export function FileIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M6.8 4.8c0-.2.2-.4.4-.4h6.1L18 8.7v10c0 .2-.2.4-.4.4H7.2c-.2 0-.4-.2-.4-.4V4.8Z" />
-      <path d="M13 4.6v3.7c0 .3.2.5.5.5h3.5" />
-      <path d="M9.2 13h5.6" />
-      <path d="M9.2 15.6h4" />
-    </svg>
-  )
-}
-
-export function SettingsIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M4 7.5h7" />
-      <path d="M15 7.5h5" />
-      <path d="M13 5.5a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z" />
-      <path d="M4 12h9" />
-      <path d="M17 12h3" />
-      <path d="M15 10a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z" />
-      <path d="M4 16.5h4" />
-      <path d="M12 16.5h8" />
-      <path d="M10 14.5a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z" />
-    </svg>
-  )
-}
-
-export function SearchIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M11 4.6a6.4 6.4 0 1 1 0 12.8 6.4 6.4 0 0 1 0-12.8Z" />
-      <path d="m15.8 15.8 3.8 3.8" />
-    </svg>
-  )
-}
-
-export function SparkIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 4c.5 4.3 1.7 5.5 6 6-4.3.5-5.5 1.7-6 6-.5-4.3-1.7-5.5-6-6 4.3-.5 5.5-1.7 6-6Z" />
-    </svg>
-  )
-}
-
-export function PanelLeftIcon({ className }: IconProps) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
-      <rect x="4" y="5" width="16" height="14" rx="2.6" />
-      <path d="M9.4 5.2v13.6" />
-    </svg>
+    </Line>
   )
 }
