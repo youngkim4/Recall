@@ -7,6 +7,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import threading
@@ -309,6 +310,11 @@ def companion_report_paths(report_path: Path, contact: str) -> tuple[Path | None
 ARCHIVE_KEPT = "The archive was not changed."
 
 
+def archive_note(archive_there: bool) -> str:
+    """What a failed import says of the archive: it is as it was, when there was one."""
+    return f" {ARCHIVE_KEPT}" if archive_there else ""
+
+
 def database_for(action: str, payload: dict) -> Path | None:
     """The database a job reads, if it reads one.
 
@@ -373,19 +379,124 @@ def why_unreadable(probe: DbProbe) -> Exception | None:
     return ValueError(f"{what} {ARCHIVE_KEPT}")
 
 
+def archive_files(messages_path: Path) -> tuple[Path, Path, Path]:
+    """The three files of an archive, in the order an import moves them in.
+
+    The messages go in last. The archive is known by its messages file, so
+    when that one is new the other two already are.
+    """
+    return (
+        companion_data_path(messages_path, "_attachments.csv"),
+        companion_data_path(messages_path, "_reactions.csv"),
+        messages_path,
+    )
+
+
+def staging_path(target: Path) -> Path:
+    """Where a new file is written before it moves to its place."""
+    return target.with_name(f"{target.stem}.tmp-export{target.suffix}")
+
+
+def earlier_path(target: Path) -> Path:
+    """Where the file that was at a place is kept while the new files move in."""
+    return target.with_name(f"{target.stem}.before-update{target.suffix}")
+
+
+def discard(paths) -> None:
+    """Remove files that an import made for its own use. One that cannot be removed is left."""
+    for path in paths:
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+
+
+def keep_earlier(target: Path) -> bool:
+    """Keep the file at `target` under its earlier name. False when no file is there.
+
+    The earlier name is a second name for the same file where the volume can
+    do that, and a copy where it cannot.
+    """
+    earlier = earlier_path(target)
+    discard([earlier])
+    try:
+        os.link(target, earlier)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        shutil.copy2(target, earlier)
+    return True
+
+
+def restored(target: Path, had_earlier: bool) -> bool:
+    """Put one place back as it was before the import. False when that fails."""
+    try:
+        if had_earlier:
+            os.replace(earlier_path(target), target)
+        else:
+            target.unlink(missing_ok=True)
+    except OSError:
+        return False
+    return True
+
+
+class ArchiveInParts(Exception):
+    """An import stopped part way, and an earlier file could not be put back."""
+
+
+def move_in(targets: tuple[Path, ...]) -> None:
+    """Move each new file to its place, or leave every place as it was.
+
+    The files that were there are first kept beside their places, as one
+    earlier generation. Then each new file takes its place in one step, so a
+    place never stands empty and a request served meanwhile reads a whole
+    file. When a move fails, the files moved so far are put back from the
+    earlier generation, the last one first.
+    """
+    moved: list[tuple[Path, bool]] = []
+    stuck: list[Path] = []
+    try:
+        had_earlier = {target: keep_earlier(target) for target in targets}
+        for target in targets:
+            os.replace(staging_path(target), target)
+            moved.append((target, had_earlier[target]))
+    except BaseException as stopped:
+        stuck = [target for target, earlier in reversed(moved) if not restored(target, earlier)]
+        if stuck:
+            raise ArchiveInParts(
+                "The import stopped part way, and the earlier files could not be put back. "
+                f"They are in {targets[-1].parent}, with .before-update in their names."
+            ) from stopped
+        raise
+    finally:
+        # an earlier file that could not be put back is the only copy of what it holds
+        discard(earlier_path(target) for target in targets if target not in stuck)
+
+
+def write_archive(frames: tuple[pd.DataFrame, ...], messages_path: Path) -> None:
+    """Write the files of the archive, all of them or none. `frames` are in the order of archive_files."""
+    targets = archive_files(messages_path)
+    try:
+        messages_path.parent.mkdir(parents=True, exist_ok=True)
+        for target, frame in zip(targets, frames):
+            frame.to_csv(staging_path(target), index=False)
+        move_in(targets)
+    finally:
+        discard(staging_path(target) for target in targets)
+
+
 def export_database(db_path: Path, messages_path: Path) -> dict:
     """Write the archive from one database: messages, attachments, reactions.
 
     Nothing is merged in from a second source, so the archive holds what the
-    database holds. All three are read before a file is written, and each file
-    is written beside its place and moved in whole: a failure leaves the
-    archive as it was, and a request served meanwhile reads a complete file.
+    database holds. All three are read before a file is written. The files are
+    then written beside their places and moved in (move_in): a failure at any
+    step leaves the three files as they were.
 
     All three files are written each time. A database with no attachments or
     no reactions gives a file with only its header, so no figure of an earlier
     archive stays beside new messages. A database with no message to keep is
     not imported: the archive would be empty.
     """
+    archive_there = path_exists(messages_path)
     probe = probe_database(db_path)
     stopped = why_unreadable(probe)
     if stopped:
@@ -401,26 +512,13 @@ def export_database(db_path: Path, messages_path: Path) -> dict:
     if messages.empty:
         raise ValueError(f"{no_messages(probe)} {ARCHIVE_KEPT}")
 
-    # The messages go in last. The archive is known by its messages file, so
-    # when that one is new the other two already are.
-    files = (
-        (messages_path.with_name(f"{messages_path.stem}_attachments.csv"), attachments),
-        (messages_path.with_name(f"{messages_path.stem}_reactions.csv"), reactions),
-        (messages_path, messages),
-    )
-    staged = [
-        (target.with_name(f"{target.stem}.tmp-export{target.suffix}"), target, frame)
-        for target, frame in files
-    ]
-    messages_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        for staging, _, frame in staged:
-            frame.to_csv(staging, index=False)
-        for staging, target, _ in staged:
-            os.replace(staging, target)
-    finally:
-        for staging, _, _ in staged:
-            staging.unlink(missing_ok=True)
+        write_archive((attachments, reactions, messages), messages_path)
+    except OSError as exc:
+        reason = exc.strerror or "the files could not be written"
+        raise OSError(
+            f"The archive could not be written to {messages_path.parent}: {reason}.{archive_note(archive_there)}"
+        ) from exc
 
     return {
         "messages": len(messages),
