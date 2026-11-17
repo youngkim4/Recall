@@ -254,4 +254,9 @@
   .hit:has(.hit-open:active) {
     background: var(--fill-active);
   }
+
+  /* the message whose day is open, in any list of found messages */
+  .hit[data-picked] {
+    background: var(--fill-active);
+  }
 }

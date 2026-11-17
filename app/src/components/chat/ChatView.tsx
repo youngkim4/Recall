@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { chatStore } from '../../lib/chatStore'
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { bookmarkId } from '../../lib/bookmarks'
+import { chatStore, type ChatMessage } from '../../lib/chatStore'
+import { contactTitle, conversationName } from '../../lib/conversations'
 import { scopeChoices } from '../../lib/scope'
-import type { Contact, Defaults } from '../../types'
+import { useMediaQuery } from '../../lib/useMediaQuery'
+import type { Contact, Defaults, SearchResult } from '../../types'
 import { ChevronLeftIcon } from '../Icons'
+import { DaySheet } from '../ui/DaySheet'
+import { ChatCites } from './ChatCites'
 import { ChatList } from './ChatList'
 import { ChatThread } from './ChatThread'
 import { Composer } from './Composer'
@@ -16,6 +21,11 @@ type ChatViewProps = {
   // opens the guide that builds the archive
   onOpenSetup: () => void
 }
+
+// a window this wide has room for the cited messages beside the thread
+const ROOM_BESIDE = '(min-width: 80rem)'
+
+const citedBy = (message: ChatMessage) => message.response?.citations ?? []
 
 const starterPrompts = [
   'What changed between us over time?',
@@ -42,6 +52,12 @@ export function ChatView({
   const [openedAt, setOpenedAt] = useState(() => Date.now())
   // in a narrow window only one of the two panes shows
   const [pane, setPane] = useState<'list' | 'detail'>('detail')
+  // the answer whose cited messages the reader asked for, and how many answers cited anything then
+  const [chosen, setChosen] = useState<{ id: string; among: number } | null>(null)
+  // the cited message whose day is open
+  const [opened, setOpened] = useState<SearchResult | null>(null)
+  const citesId = useId()
+  const roomBeside = useMediaQuery(ROOM_BESIDE)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
 
@@ -57,6 +73,13 @@ export function ChatView({
   const isStreaming = isPending && messages.some((message) => message.streaming)
   const hasArchive = Boolean(defaults?.messagesPath && defaults.hasMessages)
   const isEmpty = messages.length === 0
+
+  // Beside the thread stand the messages of the newest answer that cites any.
+  // The reader's choice of another answer holds until a new one arrives.
+  const citing = messages.filter((message) => message.role === 'assistant' && citedBy(message).length > 0)
+  const asked = chosen && chosen.among === citing.length ? citing.find((message) => message.id === chosen.id) : undefined
+  const beside = roomBeside ? (asked ?? citing[citing.length - 1] ?? null) : null
+  const openedContact = opened ? contacts.find((contact) => contact.chat_id === opened.chatId) : undefined
 
   // the composer's scope follows the chat that is open
   if (activeChatId !== scopeChatId) {
@@ -113,79 +136,109 @@ export function ChatView({
     })
   }
 
-  function openCitation(chatId: string) {
-    const contact = contacts.find((item) => item.chat_id === chatId)
-    if (contact) onSelectContact(contact)
-  }
-
   return (
-    <div className="split chat" data-pane={pane}>
-      <ChatList chats={chats} activeChatId={activeChatId} onOpen={openChat} onNew={newChat} />
-      <div className="divider" />
+    <>
+      <div className="split chat" data-pane={pane} data-cites={beside ? '' : undefined}>
+        <ChatList chats={chats} activeChatId={activeChatId} onOpen={openChat} onNew={newChat} />
+        <div className="divider" />
 
-      <section className={`pane chat-pane${isEmpty ? ' is-empty' : ''}`} aria-label="Chat">
-        <button type="button" className="pane-back btn quiet" onClick={() => setPane('list')}>
-          <ChevronLeftIcon />
-          Chats
-        </button>
-        <div className="chat-scroll" ref={scrollRef}>
-          {isEmpty ? (
-            <h2 key={activeChatId} className="chat-start arrive">
-              What do you want to remember?
-            </h2>
-          ) : (
-            <ChatThread
-              key={activeChatId}
-              messages={messages}
-              openedAt={openedAt}
-              waiting={isPending && !isStreaming}
-              waitingStatus={pendingStatus}
-              onOpenCitation={openCitation}
-            />
-          )}
-        </div>
-
-        <div className="chat-dock">
-          {error ? (
-            <p className="notice bad" role="alert">
-              {error}
-            </p>
-          ) : null}
-          <Composer
-            inputRef={inputRef}
-            draft={draft}
-            canSend={hasArchive && Boolean(draft.trim()) && !isPending}
-            disabled={Boolean(defaults) && !hasArchive}
-            scope={scope}
-            scopeOptions={scopeOptions}
-            model={model}
-            models={defaults?.models ?? []}
-            onDraftChange={setDraft}
-            onScopeChange={setScope}
-            onModelChange={onModelChange}
-            onSubmit={() => submit()}
-          />
-        </div>
-
-        {isEmpty && defaults && !hasArchive ? (
-          <div className="chat-setup">
-            <p>No messages imported yet</p>
-            <button type="button" className="btn" onClick={onOpenSetup}>
-              Build your archive
-            </button>
+        <section className={`pane chat-pane${isEmpty ? ' is-empty' : ''}`} aria-label="Chat">
+          <button type="button" className="pane-back btn quiet" onClick={() => setPane('list')}>
+            <ChevronLeftIcon />
+            Chats
+          </button>
+          <div className="chat-scroll" ref={scrollRef}>
+            {isEmpty ? (
+              <h2 key={activeChatId} className="chat-start arrive">
+                What do you want to remember?
+              </h2>
+            ) : (
+              <ChatThread
+                key={activeChatId}
+                messages={messages}
+                openedAt={openedAt}
+                waiting={isPending && !isStreaming}
+                waitingStatus={pendingStatus}
+                beside={beside ? { paneId: citesId, answerId: beside.id } : null}
+                onShowCited={(id) => setChosen({ id, among: citing.length })}
+                openKey={opened ? bookmarkId(opened) : ''}
+                onOpenCitation={setOpened}
+              />
+            )}
           </div>
-        ) : isEmpty ? (
-          <ul className="rows prompts" role="list" aria-label="Example questions">
-            {starterPrompts.map((prompt) => (
-              <li key={prompt}>
-                <button type="button" className="row" onClick={() => submit(prompt)}>
-                  {prompt}
-                </button>
-              </li>
-            ))}
-          </ul>
+
+          <div className="chat-dock">
+            {error ? (
+              <p className="notice bad" role="alert">
+                {error}
+              </p>
+            ) : null}
+            <Composer
+              inputRef={inputRef}
+              draft={draft}
+              canSend={hasArchive && Boolean(draft.trim()) && !isPending}
+              disabled={Boolean(defaults) && !hasArchive}
+              scope={scope}
+              scopeOptions={scopeOptions}
+              model={model}
+              models={defaults?.models ?? []}
+              onDraftChange={setDraft}
+              onScopeChange={setScope}
+              onModelChange={onModelChange}
+              onSubmit={() => submit()}
+            />
+          </div>
+
+          {isEmpty && defaults && !hasArchive ? (
+            <div className="chat-setup">
+              <p>No messages imported yet</p>
+              <button type="button" className="btn" onClick={onOpenSetup}>
+                Build your archive
+              </button>
+            </div>
+          ) : isEmpty ? (
+            <ul className="rows prompts" role="list" aria-label="Example questions">
+              {starterPrompts.map((prompt) => (
+                <li key={prompt}>
+                  <button type="button" className="row" onClick={() => submit(prompt)}>
+                    {prompt}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+
+        {beside ? (
+          <>
+            <div className="divider" />
+            <ChatCites
+              id={citesId}
+              answerId={beside.id}
+              citations={citedBy(beside)}
+              openKey={opened ? bookmarkId(opened) : ''}
+              onOpen={setOpened}
+            />
+          </>
         ) : null}
-      </section>
-    </div>
+      </div>
+
+      {/* a cited message opens on its day, over the chat; the sheet is not one of the panes */}
+      {opened ? (
+        <DaySheet
+          key={bookmarkId(opened)}
+          messagesPath={defaults?.messagesPath ?? ''}
+          chatId={opened.chatId}
+          title={openedContact ? contactTitle(openedContact) : conversationName(opened.displayName, opened.chatId)}
+          day={opened.timestamp.slice(0, 10)}
+          at={opened.timestamp}
+          pickedId={opened.messageId}
+          onOpenConversation={() =>
+            onSelectContact(openedContact ?? { chat_id: opened.chatId, display_name: opened.displayName })
+          }
+          onClose={() => setOpened(null)}
+        />
+      ) : null}
+    </>
   )
 }

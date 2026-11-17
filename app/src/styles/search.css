@@ -54,11 +54,6 @@
     gap: 1px;
   }
 
-  /* the match whose day is open */
-  .hit[data-picked] {
-    background: var(--fill-active);
-  }
-
   /* ---- the day beside the matches: whose conversation it is, the day, and
      its messages, which scroll under the two lines above them ---- */
   .search-day {

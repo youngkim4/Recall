@@ -1,4 +1,5 @@
-/* Chat: saved chats on the left, the conversation and its composer on the right. */
+/* Chat: saved chats on the left, the conversation and its composer beside
+   them, and in a wide window the messages an answer cites on the right. */
 
 @layer views {
   .split.chat {
@@ -86,8 +87,10 @@
   }
 
   /* ---- conversation ---- */
+  /* what is in the pane can ask how wide the pane is */
   .chat-pane {
     --chat-w: 40rem;
+    container: chat / inline-size;
   }
 
   .chat-scroll {
@@ -99,10 +102,12 @@
     mask-image: linear-gradient(to bottom, #000 calc(100% - var(--s-6)), transparent);
   }
 
+  /* the column widens over the time the cited messages take to open beside it */
   .chat-column {
     display: grid;
     max-width: var(--chat-w);
     margin: 0 auto;
+    transition: max-width var(--dur-long) var(--ease-out);
   }
 
   /* a question sits close to its answer and well clear of the one before */
@@ -207,6 +212,80 @@
     }
   }
 
+  /* ---- cited messages beside the thread ----
+     In a wide window the messages an answer cites have a pane of their own
+     on the right, so the thread, the composer and what was cited fill the
+     workspace between them. */
+  .split.chat[data-cites] {
+    grid-template-columns: var(--list-w) 1px minmax(0, 1fr) 1px auto;
+  }
+
+  /* with the pane beside it the thread takes a wider column of what is left */
+  .split.chat[data-cites] .chat-pane {
+    --chat-w: 46rem;
+  }
+
+  /* The pane opens from the right edge: its width grows from nothing while
+     the thread moves over. What is in it keeps its full width the whole
+     time, so no line in it is set twice on the way. */
+  .chat-cites {
+    --cites-w: clamp(20rem, 30cqi, 26rem);
+    width: var(--cites-w);
+    overflow: hidden;
+    transition:
+      width var(--dur-long) var(--ease-out),
+      opacity var(--dur-short) ease;
+
+    @starting-style {
+      width: 0;
+      opacity: 0;
+    }
+  }
+
+  .chat-cites > * {
+    width: var(--cites-w);
+  }
+
+  /* a row's fill starts 8px from the pane's edge, so its number stands on the 16px line */
+  .chat-cites-list {
+    display: grid;
+    gap: 1px;
+  }
+
+  /* Under an answer, the control that puts its cited messages in the pane.
+     It has the words and the place of the disclosure it stands in for. The
+     one pressed is the answer whose messages the pane shows. */
+  .cites-show {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-1);
+    height: var(--control-h);
+    margin: var(--s-2) 0 0 calc(var(--s-3) * -1);
+    padding: 0 var(--s-2) 0 var(--s-3);
+    border-radius: var(--r-md);
+    font-weight: var(--w-medium);
+    color: var(--text-2);
+    transition:
+      background-color var(--dur-micro) ease,
+      color var(--dur-micro) ease;
+  }
+
+  .cites-show .icon {
+    color: var(--text-3);
+  }
+
+  .cites-show[aria-pressed='true'] {
+    background: var(--fill-active);
+    color: var(--text);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .cites-show:hover:not([aria-pressed='true']) {
+      background: var(--fill-hover);
+      color: var(--text);
+    }
+  }
+
   .chat-waiting {
     display: flex;
     align-items: center;
@@ -253,6 +332,15 @@
     }
   }
 
+  /* Between the list and the cited messages the thread can be as narrow as a
+     phone. It then takes the edge that a narrow window gives it, 16px in. */
+  @container chat (max-width: 36rem) {
+    .split.chat[data-cites] .chat-scroll,
+    .split.chat[data-cites] .chat-dock {
+      padding-inline: var(--s-4);
+    }
+  }
+
   /* an error above the composer starts on the composer's text edge */
   .chat-dock > .notice {
     padding-inline: var(--s-5);
@@ -273,6 +361,13 @@
 
   .composer:focus-within {
     box-shadow: var(--shadow-raised-hover);
+  }
+
+  /* it keeps the thread's width, and changes it in step with the thread */
+  .chat-dock > .composer {
+    transition:
+      box-shadow var(--dur-micro) ease,
+      max-width var(--dur-long) var(--ease-out);
   }
 
   /* 12px inside the 8px padding puts the text on the picker labels' edge;
