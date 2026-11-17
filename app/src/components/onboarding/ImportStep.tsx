@@ -1,6 +1,6 @@
 import { formatNumber, plural } from '../../lib/format'
 import { lastLog } from '../../lib/jobs'
-import { failedHeading, type ImportView } from '../../lib/setupGuide'
+import { failedImport, type ImportView } from '../../lib/setupGuide'
 import type { Job, SetupStatus } from '../../types'
 import { ImportProgress } from './ImportProgress'
 
@@ -16,6 +16,8 @@ type ImportStepProps = {
   starting: boolean
   onStart: () => void
   onRetry: () => void
+  // starts the same import again, and lets it take out the messages that Messages no longer holds
+  onAllowRemoval: () => void
   onBack: () => void
 }
 
@@ -37,28 +39,37 @@ function sizeOf(db: SetupStatus['db']) {
 
 // Before, during and after the import: what will be read, how far it has got,
 // or why it stopped.
-export function ImportStep({ view, status, job, rerun, starting, onStart, onRetry, onBack }: ImportStepProps) {
+export function ImportStep({ view, status, job, rerun, starting, onStart, onRetry, onAllowRemoval, onBack }: ImportStepProps) {
   // a copy is read only because it was chosen in this guide, and the reader is told what that does
   const fromCopy = status.db.kind === 'copy'
   // Back gives a copy up. An update that reads Messages itself has only the app to go back to.
   const wayBack = rerun && !fromCopy ? 'Not now' : 'Back'
 
   if (view === 'failed') {
+    const failed = failedImport(job, rerun)
+    const goesOn = failed.action === 'allow_removal'
     return (
       <>
-        <h1>{failedHeading({ id: job?.id ?? '' }, rerun)}</h1>
+        <h1>{failed.heading}</h1>
         {/* the reason says whether the archive was changed, where the server knows */}
-        {job?.error ? (
+        {failed.reason ? (
           <p className="notice bad" role="alert">
-            {job.error}
+            {failed.reason}
           </p>
         ) : null}
-        <p className="setup-lead">Messages and its database are as they were.</p>
+        <p className="setup-lead">{failed.note}</p>
         <div className="setup-actions">
-          <button type="button" className="btn primary lg" onClick={onRetry}>
-            Try again
+          {/* going on takes messages out of the archive, so that button does not stand out */}
+          <button
+            type="button"
+            className={goesOn ? 'btn lg' : 'btn primary lg'}
+            disabled={starting}
+            onClick={goesOn ? onAllowRemoval : onRetry}
+          >
+            {starting ? <span className="spinner" /> : null}
+            {failed.actionLabel}
           </button>
-          <button type="button" className="btn quiet lg" onClick={onBack}>
+          <button type="button" className="btn quiet lg" disabled={starting} onClick={onBack}>
             {wayBack}
           </button>
         </div>

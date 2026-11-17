@@ -114,12 +114,20 @@ export function offersCopy(rerun: boolean) {
 // What the guide asks the server for when it starts an import. The archive
 // file is the one that the app reads; with none set, the server writes its
 // own. A database is named only when a copy was chosen in a first setup.
-export function importRequest(input: { archivePath: string; copyPath: string; rerun: boolean }) {
-  return {
+// allowRemoval is sent only when the reader said to go on past the limit on
+// removed messages; without the key the server keeps the limit.
+export function importRequest(input: { archivePath: string; copyPath: string; rerun: boolean; allowRemoval?: boolean }): {
+  messagesPath: string | undefined
+  dbPath: string | undefined
+  includeContacts: boolean
+  allowRemoval?: true
+} {
+  const request = {
     messagesPath: input.archivePath.trim() || undefined,
     dbPath: (offersCopy(input.rerun) && input.copyPath) || undefined,
     includeContacts: true,
   }
+  return input.allowRemoval ? { ...request, allowRemoval: true } : request
 }
 
 // Why a copy cannot be used, or '' when it can.
@@ -154,6 +162,36 @@ export function notStartedJob(error: unknown, rerun: boolean): Job {
 
 export function failedHeading(job: Pick<Job, 'id'>, rerun: boolean) {
   return `The ${called(rerun)} did not ${job.id ? 'finish' : 'start'}`
+}
+
+// the code of an update that Messages lacks too many of the stored messages for
+const REMOVAL_LIMIT = 'removal_limit'
+
+// What the failed step shows: the heading, what the server said, one plain
+// line under it, and the way on.
+export type FailedImport = {
+  heading: string
+  // the sentence of the server; '' when it gave none
+  reason: string
+  note: string
+  // 'retry' looks at Messages again before the next try. 'allow_removal'
+  // starts the same request again and lets the messages go.
+  action: 'retry' | 'allow_removal'
+  actionLabel: string
+}
+
+// An update that would take more messages out of the archive than the limit
+// allows changes nothing and fails with its own code. The reader is told
+// what going on does, and can go on. Every other failure offers another try.
+export function failedImport(job: Pick<Job, 'id' | 'error' | 'code'> | null, rerun: boolean): FailedImport {
+  const overLimit = job?.code === REMOVAL_LIMIT
+  return {
+    heading: failedHeading({ id: job?.id ?? '' }, rerun),
+    reason: job?.error || '',
+    note: overLimit ? 'Updating removes those messages from the archive too.' : 'Messages and its database are as they were.',
+    action: overLimit ? 'allow_removal' : 'retry',
+    actionLabel: overLimit ? 'Update anyway' : 'Try again',
+  }
 }
 
 // What is said when the server stops answering about an import. After an

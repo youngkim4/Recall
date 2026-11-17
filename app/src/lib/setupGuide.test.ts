@@ -4,6 +4,7 @@ import type { Job, SetupDbStatus, SetupState, SetupStatus } from '../types.ts'
 import {
   canImport,
   failedHeading,
+  failedImport,
   foundTheSame,
   frameStep,
   guideStep,
@@ -228,6 +229,23 @@ test('an update names no copy: it reads Messages on this Mac', () => {
   assert.deepEqual(JSON.parse(JSON.stringify(request)), { messagesPath: '/elsewhere/mine.csv', includeContacts: true })
 })
 
+test('the limit on removed messages holds unless the reader lets them go', () => {
+  const held = importRequest({ archivePath: '/elsewhere/mine.csv', copyPath: '', rerun: true })
+  const allowed = importRequest({ archivePath: '/elsewhere/mine.csv', copyPath: '', rerun: true, allowRemoval: true })
+
+  // the key is sent only as true: without it the server keeps the limit
+  assert.equal('allowRemoval' in JSON.parse(JSON.stringify(held)), false)
+  assert.equal('allowRemoval' in JSON.parse(JSON.stringify(importRequest({ archivePath: '', copyPath: '', rerun: true, allowRemoval: false }))), false)
+  assert.deepEqual(JSON.parse(JSON.stringify(allowed)), { messagesPath: '/elsewhere/mine.csv', includeContacts: true, allowRemoval: true })
+})
+
+test('the request that lets messages go is the same request in every other way', () => {
+  const first = importRequest({ archivePath: ' /elsewhere/mine.csv ', copyPath: '/copies/chat.db', rerun: false })
+  const again = importRequest({ archivePath: ' /elsewhere/mine.csv ', copyPath: '/copies/chat.db', rerun: false, allowRemoval: true })
+
+  assert.deepEqual(again, { ...first, allowRemoval: true })
+})
+
 test('a copy that can be imported has nothing against it', () => {
   assert.equal(whyNotThisCopy('readable'), '')
   assert.equal(whyNotThisCopy('locked'), '')
@@ -269,6 +287,51 @@ test('an import that was never made did not start; one that was made did not fin
   assert.equal(failedHeading(never, false), 'The import did not start')
   assert.equal(failedHeading(job({ status: 'failed' }), true), 'The update did not finish')
   assert.equal(failedHeading(job({ status: 'failed' }), false), 'The import did not finish')
+})
+
+test('an import that failed shows what the server said, and a way to try again', () => {
+  const failed = job({ status: 'failed', error: 'The Messages database could not be read.', code: 'db_unreadable' })
+
+  assert.deepEqual(failedImport(failed, true), {
+    heading: 'The update did not finish',
+    reason: 'The Messages database could not be read.',
+    note: 'Messages and its database are as they were.',
+    action: 'retry',
+    actionLabel: 'Try again',
+  })
+  assert.equal(failedImport(failed, false).heading, 'The import did not finish')
+})
+
+test('an update that would remove too many messages can be made anyway', () => {
+  const sentence = 'Messages no longer holds 1,240 of the messages in the archive. That is more than the limit, so nothing was changed.'
+  const refused = job({ status: 'failed', error: sentence, code: 'removal_limit' })
+
+  assert.deepEqual(failedImport(refused, true), {
+    heading: 'The update did not finish',
+    // the numbers are in the sentence of the server
+    reason: sentence,
+    note: 'Updating removes those messages from the archive too.',
+    action: 'allow_removal',
+    actionLabel: 'Update anyway',
+  })
+})
+
+test('only the limit on removed messages offers to go on anyway', () => {
+  assert.equal(failedImport(job({ status: 'failed', code: 'archive_error' }), true).action, 'retry')
+  assert.equal(failedImport(job({ status: 'failed' }), true).action, 'retry')
+  // an import that was refused before it was made has no code
+  assert.equal(failedImport(notStartedJob(new Error('An import is already running.'), true), true).action, 'retry')
+})
+
+test('a failure with nothing known of it still has its heading and its way on', () => {
+  assert.deepEqual(failedImport(null, false), {
+    heading: 'The import did not start',
+    reason: '',
+    note: 'Messages and its database are as they were.',
+    action: 'retry',
+    actionLabel: 'Try again',
+  })
+  assert.equal(failedImport(job({ status: 'failed', error: null }), true).reason, '')
 })
 
 test('an update that was interrupted is called an update, and says what to do', () => {

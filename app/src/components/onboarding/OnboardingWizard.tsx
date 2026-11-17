@@ -223,12 +223,13 @@ export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, o
     if (path) await validatePath(path)
   }, [validatePath])
 
-  const startImport = useCallback(async () => {
+  // allowRemoval: the reader read how many messages the update removes, and said to go on
+  const startImport = useCallback(async (allowRemoval = false) => {
     if (asked.current) return
     asked.current = true
     setStarting(true)
     try {
-      const request = importRequest({ archivePath: messagesPath, copyPath: picked?.path ?? '', rerun })
+      const request = importRequest({ archivePath: messagesPath, copyPath: picked?.path ?? '', rerun, allowRemoval })
       const { job: created } = await recallApi.createSetupImportJob(request)
       follow(created)
     } catch (error) {
@@ -339,6 +340,7 @@ export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, o
           starting={starting}
           onStart={() => void startImport()}
           onRetry={retryImport}
+          onAllowRemoval={() => void startImport(true)}
           onBack={back}
         />
       )}
