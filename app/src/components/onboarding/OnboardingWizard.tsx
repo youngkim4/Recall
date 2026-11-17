@@ -1,22 +1,25 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { recallApi } from '../../lib/api'
 import { recallBridge } from '../../lib/bridge'
 import type { Job, SetupImportResult, SetupStatus } from '../../types'
-import {
-  DbProblemStep,
-  DoneStep,
-  ImportStep,
-  NoMessagesStep,
-  OnboardingFrame,
-  PermissionStep,
-  WelcomeStep,
-} from './OnboardingSteps'
+import { ImportStep } from './ImportStep'
+import { SetupFrame } from './SetupFrame'
+import { DbProblemStep, DoneStep, NoMessagesStep, PermissionStep, WelcomeStep } from './SetupSteps'
 
 // The wizard is a pure function of server state: no stored step index, every
 // entry (cold boot, relaunch after FDA, re-run from Settings) re-derives its
 // phase from a fresh /api/setup/status. That is what makes relaunch-resume free.
 
 type Phase = 'welcome' | 'permission' | 'no_messages' | 'db_problem' | 'import' | 'done'
+
+// this many unanswered questions in a row, and the import is taken to be lost
+const LOST_AFTER_MISSES = 4
+
+// A marker of how far setup got. One that fails to save changes nothing now:
+// the same thing is worked out again from the files at the next launch.
+function markSetup(fields: Parameters<typeof recallApi.setupComplete>[0]) {
+  recallApi.setupComplete(fields).catch(() => undefined)
+}
 
 type Props = {
   initialStatus: SetupStatus
@@ -47,7 +50,8 @@ function frameStep(phase: Phase): number {
 }
 
 export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onSkip }: Props) {
-  const [phase, setPhase] = useState<Phase>('welcome')
+  // an update has no welcome to read: it opens on what there is to do
+  const [phase, setPhase] = useState<Phase>(() => (rerun ? phaseForStatus(initialStatus) : 'welcome'))
   const [status, setStatus] = useState<SetupStatus>(initialStatus)
   const [pickedDbPath, setPickedDbPath] = useState(initialStatus.setup?.pickedDbPath || '')
   const [pickBusy, setPickBusy] = useState(false)
@@ -56,6 +60,8 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
   const [result, setResult] = useState<SetupImportResult | null>(null)
   const [returnedFromSettings, setReturnedFromSettings] = useState(false)
   const [recheckCount, setRecheckCount] = useState(0)
+  // System Settings was opened from here; coming back to the window means something only then
+  const wentToSettings = useRef(false)
 
   const probe = useCallback(
     async (deep = false): Promise<SetupStatus | null> => {
@@ -91,7 +97,7 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
     }
     const interval = window.setInterval(tick, 1500)
     const onActive = () => {
-      setReturnedFromSettings(true)
+      if (wentToSettings.current) setReturnedFromSettings(true)
       void tick()
     }
     window.addEventListener('recall:becameActive', onActive)
@@ -104,45 +110,53 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
     }
   }, [phase, probe])
 
-  // import job polling
+  // The import is asked about until it ends. One unanswered question is not
+  // an ending; several in a row mean the server was restarted, and jobs are
+  // kept in memory, so the files are looked at instead.
+  const watched = job?.id && (job.status === 'queued' || job.status === 'running') ? job.id : ''
   useEffect(() => {
-    if (!job?.id || (job.status !== 'queued' && job.status !== 'running')) return
+    if (!watched) return
     let stopped = false
-    const interval = window.setInterval(async () => {
+    let asking = false
+    let misses = 0
+    const interrupted = () =>
+      setJob((current) => (current ? { ...current, status: 'failed', error: 'The import was interrupted.' } : current))
+    const ask = async () => {
+      if (asking) return
+      asking = true
       try {
-        const { job: next } = await recallApi.job(job.id)
+        const { job: next } = await recallApi.job(watched)
         if (stopped) return
+        misses = 0
         setJob(next)
         if (next.status === 'completed') {
           setResult((next.result || null) as SetupImportResult | null)
-          void recallApi.setupComplete({ completed: true })
+          markSetup({ completed: true })
           setPhase('done')
         }
       } catch {
-        // jobs are in-memory; a restarted server means re-deriving from disk
-        const next = await probe()
+        misses += 1
+        if (stopped || misses < LOST_AFTER_MISSES) return
+        // An update starts with an archive already there, so the file being
+        // there says nothing about this run; only a first import can be read that way.
+        const next = rerun ? null : await probe()
         if (stopped) return
         if (next?.export.exists) {
-          void recallApi.setupComplete({ completed: true })
+          markSetup({ completed: true })
           setPhase('done')
         } else {
-          setJob((current) =>
-            current
-              ? {
-                  ...current,
-                  status: 'failed',
-                  error: 'The import was interrupted. Nothing was changed — try again.',
-                }
-              : current,
-          )
+          interrupted()
         }
+      } finally {
+        asking = false
       }
-    }, 800)
+    }
+    const interval = window.setInterval(() => void ask(), 800)
     return () => {
       stopped = true
       window.clearInterval(interval)
     }
-  }, [job, probe])
+  }, [watched, probe, rerun])
 
   const start = useCallback(() => {
     const next = phaseForStatus(status)
@@ -158,21 +172,19 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
       if (next.db.status === 'readable') {
         setPickedDbPath(path)
         setStatus(next)
-        void recallApi.setupComplete({ pickedDbPath: path })
+        markSetup({ pickedDbPath: path })
         setPhase('import')
       } else if (next.db.status === 'empty') {
-        setPickError('That database is there, but empty.')
+        setPickError('That database has nothing in it.')
       } else if (next.db.status === 'fda_blocked') {
         setPickError(
-          'macOS blocked that folder. Approve the prompt it showed, or move the file to your home folder and choose it again.',
+          'macOS blocked that folder. Allow it in the prompt macOS showed, or move the file to your home folder and choose it again.',
         )
       } else {
-        setPickError(
-          'That file isn’t a Messages database. Choose chat.db itself — not chat.db-wal or chat.db-shm.',
-        )
+        setPickError('That file is not a Messages database. Choose chat.db, not chat.db-wal or chat.db-shm.')
       }
     } catch {
-      setPickError('Could not check that file. Try again.')
+      setPickError('That file could not be checked.')
     } finally {
       setPickBusy(false)
     }
@@ -199,7 +211,7 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
         createdAt: '',
         updatedAt: '',
         logs: [],
-        error: error instanceof Error ? error.message : 'Could not start the import.',
+        error: error instanceof Error ? error.message : 'The import could not be started.',
       })
     }
   }, [pickedDbPath])
@@ -216,7 +228,7 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
   }, [probe])
 
   const skip = useCallback(() => {
-    void recallApi.setupComplete({ skipped: true })
+    markSetup({ skipped: true })
     onSkip()
   }, [onSkip])
 
@@ -227,15 +239,18 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
   const importBlocked = Boolean(job && (job.status === 'queued' || job.status === 'running'))
 
   return (
-    <OnboardingFrame step={frameStep(phase)}>
+    <SetupFrame step={rerun ? null : frameStep(phase)} phase={phase}>
       {phase === 'welcome' ? (
-        <WelcomeStep rerun={rerun} onStart={start} onSkip={skip} />
+        <WelcomeStep onStart={start} onSkip={skip} />
       ) : phase === 'permission' ? (
         <PermissionStep
           returnedFromSettings={returnedFromSettings}
           pickBusy={pickBusy}
           pickError={pickError}
-          onOpenSettings={() => recallBridge.openFullDiskAccess()}
+          onOpenSettings={() => {
+            wentToSettings.current = true
+            recallBridge.openFullDiskAccess()
+          }}
           onRelaunch={() => {
             if (!importBlocked) recallBridge.relaunch()
           }}
@@ -272,11 +287,12 @@ export function OnboardingWizard({ initialStatus, rerun = false, onFinished, onS
           rerun={rerun}
           onStart={() => void startImport()}
           onRetry={retryImport}
-          onBack={() => setPhase('welcome')}
+          // an update was opened from the app, and leaving it goes back there
+          onBack={rerun ? onSkip : () => setPhase('welcome')}
         />
       ) : (
         <DoneStep result={result} rerun={rerun} onFinish={finish} />
       )}
-    </OnboardingFrame>
+    </SetupFrame>
   )
 }
