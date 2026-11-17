@@ -6,6 +6,13 @@ import type { DayMessages, SearchResult } from '../types'
 // how many more messages of a long day one press brings
 export const PART = 200
 
+// The day a message was sent, "YYYY-MM-DD", from its time as the server
+// writes it. Null for a message with no time, or with one that is not a
+// date: such a message is in no day, and has no day to open.
+export function dayOfMessage(timestamp: string | null | undefined) {
+  return typeof timestamp === 'string' && /^\d{4}-\d{2}-\d{2}/.test(timestamp) ? timestamp.slice(0, 10) : null
+}
+
 export type PartAsk = { offset: number; limit: number }
 
 type Shown = Pick<DayMessages, 'offset' | 'total' | 'messages'>

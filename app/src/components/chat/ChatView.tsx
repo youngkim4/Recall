@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } fro
 import { bookmarkId } from '../../lib/bookmarks'
 import { chatStore, type ChatMessage } from '../../lib/chatStore'
 import { contactTitle, conversationName } from '../../lib/conversations'
+import { dayOfMessage } from '../../lib/dayParts'
 import { scopeChoices } from '../../lib/scope'
 import { useMediaQuery } from '../../lib/useMediaQuery'
 import type { Contact, Defaults, SearchResult } from '../../types'
@@ -80,6 +81,18 @@ export function ChatView({
   const asked = chosen && chosen.among === citing.length ? citing.find((message) => message.id === chosen.id) : undefined
   const beside = roomBeside ? (asked ?? citing[citing.length - 1] ?? null) : null
   const openedContact = opened ? contacts.find((contact) => contact.chat_id === opened.chatId) : undefined
+  const openedDay = opened ? dayOfMessage(opened.timestamp) : null
+
+  // A cited message opens on its day. One the export gives no time for is in
+  // no day, so it opens its conversation.
+  function openCited(citation: SearchResult) {
+    if (dayOfMessage(citation.timestamp)) {
+      setOpened(citation)
+      return
+    }
+    const contact = contacts.find((item) => item.chat_id === citation.chatId)
+    onSelectContact(contact ?? { chat_id: citation.chatId, display_name: citation.displayName })
+  }
 
   // the composer's scope follows the chat that is open
   if (activeChatId !== scopeChatId) {
@@ -162,7 +175,7 @@ export function ChatView({
                 beside={beside ? { paneId: citesId, answerId: beside.id } : null}
                 onShowCited={(id) => setChosen({ id, among: citing.length })}
                 openKey={opened ? bookmarkId(opened) : ''}
-                onOpenCitation={setOpened}
+                onOpenCitation={openCited}
               />
             )}
           </div>
@@ -217,20 +230,20 @@ export function ChatView({
               answerId={beside.id}
               citations={citedBy(beside)}
               openKey={opened ? bookmarkId(opened) : ''}
-              onOpen={setOpened}
+              onOpen={openCited}
             />
           </>
         ) : null}
       </div>
 
       {/* a cited message opens on its day, over the chat; the sheet is not one of the panes */}
-      {opened ? (
+      {opened && openedDay ? (
         <DaySheet
           key={bookmarkId(opened)}
           messagesPath={defaults?.messagesPath ?? ''}
           chatId={opened.chatId}
           title={openedContact ? contactTitle(openedContact) : conversationName(opened.displayName, opened.chatId)}
-          day={opened.timestamp.slice(0, 10)}
+          day={openedDay}
           at={opened.timestamp}
           pickedId={opened.messageId}
           onOpenConversation={() =>

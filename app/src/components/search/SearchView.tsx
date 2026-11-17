@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FocusEvent, type KeyboardEve
 import { recallApi } from '../../lib/api'
 import { bookmarkId, readBookmarks, toggleBookmark } from '../../lib/bookmarks'
 import { contactTitle, conversationName } from '../../lib/conversations'
+import { dayOfMessage } from '../../lib/dayParts'
 import { formatNumber, plural } from '../../lib/format'
 import { rovingKeyDown } from '../../lib/roving'
 import { scopeChoices } from '../../lib/scope'
@@ -80,6 +81,8 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
   const current = shown.find((message) => bookmarkId(message) === pickedId) ?? shown[0] ?? null
   const currentId = current ? bookmarkId(current) : ''
   const currentContact = current ? contacts.find((contact) => contact.chat_id === current.chatId) : undefined
+  // a message the export gives no time for is in no day
+  const currentDay = current ? dayOfMessage(current.timestamp) : null
 
   function open(message: SearchResult) {
     onSelectContact(
@@ -245,15 +248,21 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
                 Open conversation
               </button>
             </header>
-            <DayReader
-              key={currentId}
-              messagesPath={messagesPath}
-              chatId={current.chatId}
-              day={current.timestamp.slice(0, 10)}
-              at={current.timestamp}
-              pickedId={current.messageId}
-              label="Messages of this day"
-            />
+            {currentDay ? (
+              <DayReader
+                key={currentId}
+                messagesPath={messagesPath}
+                chatId={current.chatId}
+                day={currentDay}
+                at={current.timestamp}
+                pickedId={current.messageId}
+                label="Messages of this day"
+              />
+            ) : (
+              <div className="pane-empty">
+                <p>This message has no date</p>
+              </div>
+            )}
           </>
         ) : (
           <div className="pane-empty">

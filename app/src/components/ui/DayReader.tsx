@@ -35,7 +35,8 @@ const nameOf = (day: string) =>
 function threadOf(value: DayMessages, group: boolean): ThreadMessage[] {
   return value.messages.map((message, index) => ({
     key: message.messageId || `${message.timestamp}-${value.offset + index}`,
-    timestamp: message.timestamp,
+    // a message of a day has a time: the day was found by it
+    timestamp: message.timestamp ?? '',
     text: message.text,
     attachment: message.attachment || undefined,
     fromMe: message.isFromMe === null || message.isFromMe === undefined ? null : isOutbound(message),

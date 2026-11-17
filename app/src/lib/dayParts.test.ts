@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { DayMessages, SearchResult } from '../types.ts'
-import { joinPart, partToAsk, quotedIndex } from './dayParts.ts'
+import { dayOfMessage, joinPart, partToAsk, quotedIndex } from './dayParts.ts'
 
 const message = (place: number): SearchResult => ({
   messageId: `m${place}`,
@@ -106,4 +106,17 @@ test('a moment that quotes nothing, or a message the day does not hold, picks no
 
   assert.equal(quotedIndex(day, null, null), -1)
   assert.equal(quotedIndex(day, 'gone', '2024-11-16 23:00:00'), -1)
+})
+
+test('the day of a message is the first ten letters of its time', () => {
+  assert.equal(dayOfMessage('2024-05-01 10:01:00'), '2024-05-01')
+  assert.equal(dayOfMessage('2024-05-01'), '2024-05-01')
+})
+
+test('a message with no time, or with a time that is not a date, is in no day', () => {
+  assert.equal(dayOfMessage(null), null)
+  assert.equal(dayOfMessage(undefined), null)
+  assert.equal(dayOfMessage(''), null)
+  assert.equal(dayOfMessage('yesterday'), null)
+  assert.equal(dayOfMessage('NaT'), null)
 })

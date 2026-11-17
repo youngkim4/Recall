@@ -213,7 +213,8 @@ export type SearchResult = {
   chatId: string
   displayName?: string
   senderName?: string
-  timestamp: string
+  // null for a message the export gives no readable time for
+  timestamp: string | null
   sender?: string
   text: string
   attachment?: string

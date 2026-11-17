@@ -65,6 +65,12 @@
     grid-row: 1 / -1;
   }
 
+  /* under a name, the words take the room the day would have had */
+  .search-day > .search-day-head + .pane-empty {
+    grid-row: auto;
+    min-height: 0;
+  }
+
   /* where a window shows one pane at a time, the list in view hides the day;
      said here because the grid above would bring it back */
   @container workspace (max-width: 40rem) {
