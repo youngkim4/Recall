@@ -415,13 +415,30 @@ def test_contacts_that_are_read_are_not_said_to_be_skipped(filled, tmp_path, mon
     assert "Contacts could not be read" not in said(job)
 
 
-def test_a_job_of_another_kind_keeps_its_trace(filled):
-    # this is not a reason that an import gives, so the job says where it came from
+JOB_FAILED = "The job failed. The log of the server says why."
+
+
+@pytest.mark.parametrize("action", ["setup_import", "export"])
+def test_a_fault_that_nobody_planned_for_is_told_without_its_words(filled, tmp_path, monkeypatch, capfd, action):
+    # this is not a reason that an import gives: the reader is pointed to the log, and the trace is there
+    put_in_messages(write_database(tmp_path / "chat.db", ["one", "two", "three", "four"]))
+    raised = RuntimeError(f"a fault with {QUERY} in it")
+    monkeypatch.setattr(ui_server, "pull_into_archive", raising(raised))
+
+    job = run(action, {"messagesPath": str(filled), "includeContacts": False})
+
+    assert (job["status"], job["error"], job["code"]) == ("failed", JOB_FAILED, "job_failed")
+    assert plain(job, raised)
+    logged = capfd.readouterr().err
+    assert "Traceback" in logged and QUERY in logged
+    assert len(held(filled)) == 3
+
+
+def test_a_report_with_no_conversation_is_told_in_a_plain_sentence(filled):
     job = run("analyze", {"messagesPath": str(filled)})
 
-    assert job["status"] == "failed"
-    assert job["error"] == "Select a conversation before you start a report."
-    assert "Traceback" in said(job)
+    assert (job["status"], job["error"]) == ("failed", "Select a conversation before you start a report.")
+    assert plain(job)
 
 
 def test_a_copy_for_an_archive_that_holds_messages_is_refused_in_a_plain_sentence(filled, tmp_path):

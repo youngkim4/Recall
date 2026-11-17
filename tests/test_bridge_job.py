@@ -361,6 +361,24 @@ def test_an_export_that_changed_and_still_cannot_be_loaded_fails_once_more(tmp_p
     assert listed() == [("bridge", "failed"), ("bridge", "failed")]
 
 
+def test_a_load_that_stops_in_a_way_nobody_planned_for_is_not_started_again(export, monkeypatch, capfd):
+    def stop(*_args, **_more):
+        raise RuntimeError("a fault with SELECT text FROM messages in it")
+
+    monkeypatch.setattr(ui_server.ArchiveState, "ensure_from_export", stop)
+
+    job = ended(not_ready(export).job["id"])
+    after = not_ready(export)
+
+    assert job["status"] == "failed"
+    assert not any(word in said(job) for word in NOT_PLAIN)
+    assert (after.status, after.code) == (500, "archive_failed")
+    assert not any(word in str(after) for word in NOT_PLAIN)
+    assert listed() == [("bridge", "failed")]
+    # what was raised is in the log of the server
+    assert "SELECT text FROM messages" in capfd.readouterr().err
+
+
 def test_a_load_that_fails_leaves_the_archive_that_an_earlier_load_made(export):
     run("bridge", {"messagesPath": str(export)})
     before = picture(export.with_suffix(".sqlite3"))
