@@ -289,7 +289,7 @@ def test_an_archive_that_can_not_be_read_is_a_failure_in_plain_words(desk: Desk)
     [
         (ConfigError("no room"), "too_large"),
         (ReportSourceError("the source raised ArchiveError"), "archive_error"),
-        (StoreError("can not write"), "not_saved"),
+        (StoreError("can not write"), "cache_unreadable"),
         (RunError("an error in the engine"), "run_failed"),
         (ReportEngineError("anything else"), "run_failed"),
     ],

@@ -87,7 +87,12 @@ def failure_of(error: ReportEngineError, last: LLMError | None, provider: str, m
             "archive_error", "The messages of this conversation could not be read. No report was written."
         )
     if isinstance(error, StoreError):
-        return ReportFailure("not_saved", "The report was written but could not be saved. Run the report again.", usage)
+        # the engine writes only its notes of the parts that it read: the report itself is saved by the caller
+        return ReportFailure(
+            "cache_unreadable",
+            "What earlier report runs read could not be read or kept. No report was written.",
+            usage,
+        )
     if isinstance(error, ReportCancelled):
         return ReportFailure("cancelled", "The report was stopped. What was read is kept for the next run.", usage)
     told = _of_the_model(last, provider, model)

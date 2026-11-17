@@ -12,7 +12,15 @@
   one when the report has no moment (CONTRACTS.md "Reports");
 - removes an older `analysis_<name>.html`: the engine writes no page, and an
   older page would be shown beside the new report as its own.
-`<name>` is `sanitize_filename` of the conversation id, as today.
+`<name>` is `sanitize_filename` of the conversation id, as today. Two ids that
+differ only in other characters than letters, digits, `-`, `_` and `+` share
+one name, as today.
+
+The report file and the events file are one report: when one of them can not
+be written, the files of the older report stay as they were.
+
+`saved_report` gives the saved report of a report file, and `shown_plain` says
+whether the server shows the story of a report file as plain paragraphs.
 
 `moments_for` gives each moment what the Reports screen needs to open its
 day at the quoted message.
@@ -31,6 +39,7 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -63,7 +72,7 @@ from report_engine.archive_source import ArchiveSource
 from report_engine.estimate import planned_calls
 from report_engine.pricing import call_cost_usd
 from report_engine.store import write_text_atomic
-from report_engine.tokens import TokenCounter
+from report_engine.tokens import TokenCounter, load_counter
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +81,9 @@ EVENT_COLUMNS = ("date", "title", "detail", "category", "score", "quote")
 STORY_MARKER = "## Summary"
 SHOWN_PLAIN = "The story of this report is long and dense. The app shows it as plain paragraphs, with no chapters."
 PAGE_REMOVED = "The page of an older report was removed: this report has no page."
+PAGE_KEPT = "The page of an older report could not be removed. It is not the page of this report."
+NOT_SAVED = "The report was written but could not be saved. Run the report again."
+NOT_STARTED = "The model could not be started. No report was written."
 SAVED = "The report is saved."
 ARCHIVE_UNREADABLE = "The message archive could not be read. Update the archive, then try again."
 
@@ -141,8 +153,19 @@ class _Asked:
         return {"since": self.since, "until": self.until} if (self.since or self.until) else None
 
 
+@lru_cache(maxsize=8)
+def shared_counter(family: str) -> TokenCounter:
+    """One token counter for each tokenizer family, for the estimate and for the run.
+
+    The engine loads a counter for each call that gets none. A load can fall
+    back to a rough counter, and an estimate and a run with two counters plan
+    two sets of parts.
+    """
+    return load_counter(family)
+
+
 class _Watched:
-    """The model port of a run, with a note of its last failure. The engine says only that a part failed."""
+    """The model port of a run, with a note of the failure that its last call had. The engine says only that a part failed."""
 
     def __init__(self, inner: LLM) -> None:
         self._inner = inner
@@ -157,12 +180,14 @@ class _Watched:
         reasoning: str | None = None,
     ) -> LLMResult:
         try:
-            return self._inner.generate(
+            result = self._inner.generate(
                 messages, schema=schema, max_output_tokens=max_output_tokens, reasoning=reasoning
             )
         except LLMError as error:
             self.last = error
             raise
+        self.last = None  # a failure before a call that worked did not end the run
+        return result
 
 
 def default_llm(info: ModelInfo) -> LLM:
@@ -173,6 +198,17 @@ def default_llm(info: ModelInfo) -> LLM:
     if not key:
         raise ReportFailure("no_key", NO_KEY)
     return OpenAIResponsesLLM(build_client(key), info.id)
+
+
+def _port(factory: LLMFactory, info: ModelInfo) -> LLM:
+    """The model port of a run. A factory that fails in a way of its own is a failure with a sentence."""
+    try:
+        return factory(info)
+    except ReportFailure:
+        raise
+    except Exception as error:
+        logger.exception("the model port of a report run could not be made")
+        raise ReportFailure("run_failed", NOT_STARTED) from error
 
 
 @contextmanager
@@ -193,7 +229,7 @@ def _day(value: object) -> str | None:
     except ValueError:
         written = ""
     if written != text:
-        raise ValueError(f"Not a day: {text!r}")
+        raise ValueError(f"Not a day: {inputs.shown(text)}")
     return text
 
 
@@ -213,6 +249,44 @@ def _provider(info: ModelInfo) -> str:
     return models.provider_name(models.facts(info.id).provider)
 
 
+def _planned(
+    archive: Archive, asked: _Asked, cache_path: Path, options: ReportOptions, counter: TokenCounter | None
+) -> list[Any]:
+    """The calls of a run, without the parts that the notes of earlier runs hold. Notes that can not be read hold none."""
+
+    def plan(cache: PeriodCache | None) -> list[Any]:
+        return planned_calls(
+            ArchiveSource(archive),
+            asked.conversation,
+            asked.scope,
+            asked.info,
+            cache,
+            labeler=asked.labeler,
+            options=options,
+            counter=counter or shared_counter(asked.info.tokenizer_family),
+        )
+
+    if not cache_path.exists():
+        return plan(None)
+    try:
+        return plan(PeriodCache(cache_path))
+    except StoreError as error:
+        logger.warning("The notes of earlier report runs could not be read: %s", type(error).__name__)
+        return plan(None)
+
+
+def _notes(cache_path: Path) -> PeriodCache:
+    """The notes of earlier runs, for a run. A file that can not be opened stops the run before any call."""
+    try:
+        return PeriodCache(cache_path)
+    except StoreError as error:
+        raise ReportFailure(
+            "cache_unreadable",
+            f"The file {cache_path.name}, which holds what earlier report runs read, can not be opened. "
+            "No report was written.",
+        ) from error
+
+
 def estimate(
     contact: str,
     model: str = "",
@@ -225,27 +299,22 @@ def estimate(
     options: ReportOptions | None = None,
     counter: TokenCounter | None = None,
 ) -> dict[str, Any]:
-    """What a run that starts now would send and cost. Makes no model call and writes no file.
+    """What a run that starts now would send and cost. Makes no model call and writes no report.
 
-    A part that an earlier run read is not counted again. Raises ValueError
-    for a missing conversation or a bad day, and a ModelChoiceError for a
-    model that can not be run.
+    A part that an earlier run read is not counted again: the notes of
+    earlier runs are opened when that file is there. When they can not be
+    read, every part is counted.
+
+    Raises ValueError for a missing conversation or a bad day, a
+    ModelChoiceError for a model that can not be run, and ReportFailure
+    (`too_large`, `archive_error`) when the conversation can not be planned.
     """
     chosen = options or ReportOptions()
     cache_path = (places or default_places()).cache_path
     with _archive_faults():
         asked = _asked(contact, model, since, until, archive, names)
         try:
-            calls = planned_calls(
-                ArchiveSource(archive),
-                asked.conversation,
-                asked.scope,
-                asked.info,
-                PeriodCache(cache_path) if cache_path.exists() else None,
-                labeler=asked.labeler,
-                options=chosen,
-                counter=counter,
-            )
+            calls = _planned(archive, asked, cache_path, chosen, counter)
         except ReportEngineError as error:
             raise failure_of(error, None, _provider(asked.info), asked.info.id) from error
         within = {"conversations": [asked.conversation], "since": asked.since, "until": asked.until}
@@ -279,44 +348,102 @@ def story_of(report_text: str) -> str:
     return report_text[start:].strip() if start >= 0 else ""
 
 
-def _shown_plain(report_text: str) -> bool:
+def shown_plain(report_text: str) -> bool:
+    """True when the server shows the story of this report file as plain paragraphs: `story_html` does not render it."""
     return safe_html.story_work(safe_html.prepared(story_of(report_text))) > safe_html.STORY_WORK_LIMIT
 
 
-def _write_events(path: Path, report: Report) -> Path | None:
-    """The events file that the server reads, or no file when the report has no moment."""
+def saved_report(contact: str, report_text: str, places: ReportPlaces | None = None) -> Report | None:
+    """The saved report that a report file shows, or None.
+
+    The file holds no id. A saved report of the conversation is the one of
+    the file when the file is its rendering, letter for letter. A report of
+    the older kind has no saved report.
+    """
+    conversation = inputs.text(contact)
+    if not conversation.strip():
+        return None
+    store = ReportStore((places or default_places()).store_dir)
+    try:
+        for entry in store.list_reports(conversation):
+            held = store.load_report(conversation, entry.id)
+            if render_markdown(held) == report_text:
+                return held
+    except StoreError as error:
+        logger.warning("The saved reports could not be read: %s", type(error).__name__)
+    return None
+
+
+def _events_text(report: Report) -> str | None:
+    """The events file that the server reads, or None when the report has no moment."""
     if not report.moments:
-        _remove(path)
         return None
     lines = io.StringIO(newline="")
     writer = csv.writer(lines, lineterminator="\n")
     writer.writerow(EVENT_COLUMNS)
     for moment in report.moments:
         writer.writerow([moment.date, moment.title, moment.detail, moment.category, moment.score, moment.quote])
-    return write_text_atomic(path, lines.getvalue())
+    return lines.getvalue()
 
 
-def _remove(path: Path) -> bool:
-    """Remove a file of an older report. True when there was one. The new report is written either way."""
+def _read(path: Path) -> str | None:
+    try:
+        with path.open(encoding="utf-8", newline="") as handle:
+            return handle.read()
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as error:
+        raise StoreError(f"an older file can not be read: {path.name}") from error
+
+
+def _put(path: Path, text: str | None) -> Path | None:
+    """Make a file hold a text, or be gone for None. Raises StoreError when it can not."""
+    if text is not None:
+        return write_text_atomic(path, text)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as error:
+        raise StoreError(f"an older file can not be removed: {path.name}") from error
+    return None
+
+
+def _put_back(path: Path, text: str | None) -> None:
+    try:
+        _put(path, text)
+    except (StoreError, OSError) as error:
+        logger.warning("A file of the older report could not be put back (%s): %s", path.name, type(error).__name__)
+
+
+def _remove_page(path: Path) -> str | None:
+    """Remove the page of an older report. The sentence for the log, or None when there was no page."""
     try:
         path.unlink()
     except FileNotFoundError:
-        return False
-    except OSError as exc:
-        logger.warning("A file of an older report could not be removed (%s): %s", path.name, type(exc).__name__)
-        return False
-    return True
+        return None
+    except OSError as error:
+        logger.warning("The page of an older report could not be removed (%s): %s", path.name, type(error).__name__)
+        return PAGE_KEPT
+    return PAGE_REMOVED
 
 
 def _write(report: Report, places: ReportPlaces, teller: Teller) -> ReportRun:
+    """Save the report, then make the two files that the server reads hold it. They change together or not at all."""
     name = sanitize_filename(report.conversation)
-    text = render_markdown(report)
+    report_path = places.out_dir / f"analysis_{name}.md"
+    events_path = places.out_dir / f"events_timeline_{name}.csv"
+    text, events_text = render_markdown(report), _events_text(report)
+    older_events = _read(events_path)
     json_path = ReportStore(places.store_dir).save(report)
-    report_path = write_text_atomic(places.out_dir / f"analysis_{name}.md", text)
-    events_path = _write_events(places.out_dir / f"events_timeline_{name}.csv", report)
-    if _remove(places.out_dir / f"analysis_{name}.html"):
-        teller.tell(log=PAGE_REMOVED)
-    return ReportRun(report, report_path, events_path, json_path, _shown_plain(text))
+    try:
+        written_events = _put(events_path, events_text)
+        write_text_atomic(report_path, text)  # last: the server finds a report by this file
+    except (StoreError, OSError):
+        _put_back(events_path, older_events)
+        raise
+    said = _remove_page(places.out_dir / f"analysis_{name}.html")
+    if said:
+        teller.tell(log=said)
+    return ReportRun(report, report_path, written_events, json_path, shown_plain(text))
 
 
 def run(
@@ -349,7 +476,8 @@ def run(
     with _archive_faults():
         asked = _asked(contact, model, since, until, archive, names)
         figures = archive.stats(asked.conversation, since=asked.since, until=asked.until)
-    watched = _Watched((llm_factory or default_llm)(asked.info))
+    notes = _notes(where.cache_path)
+    watched = _Watched(_port(llm_factory or default_llm, asked.info))
     try:
         report = run_report(
             source=ArchiveSource(archive),
@@ -358,10 +486,10 @@ def run(
             llm=watched,
             model_info=asked.info,
             labeler=asked.labeler,
-            cache=PeriodCache(where.cache_path),
+            cache=notes,
             stats=figures,
             options=options,
-            counter=counter,
+            counter=counter or shared_counter(asked.info.tokenizer_family),
             on_progress=teller.engine_event,
             cancel=cancel,
             runtime=runtime,
@@ -370,12 +498,8 @@ def run(
         raise failure_of(error, watched.last, _provider(asked.info), asked.info.id) from error
     try:
         done = _write(report, where, teller)
-    except StoreError as error:
-        raise ReportFailure(
-            "not_saved",
-            "The report was written but could not be saved. Run the report again.",
-            report.usage.model_dump(mode="json"),
-        ) from error
+    except (StoreError, OSError) as error:
+        raise ReportFailure("not_saved", NOT_SAVED, report.usage.model_dump(mode="json")) from error
     for warning in done.warnings:
         teller.tell(log=f"Note: {warning}")
     if done.shown_plain:
