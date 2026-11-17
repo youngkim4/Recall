@@ -119,17 +119,36 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 ## Interface
 
 - The interface needs `light-dark()` colors and the `popover` attribute (Safari 17.5). `app/src/main.tsx` checks for both and shows a message if one is missing.
-- A view asks for the width of the block that holds it, not for the width of the window. The blocks are `workspace`, `detail` and `half` (container queries).
+- A view asks for the width of the block that holds it, not for the width of the window (container queries). The blocks of a view are `workspace`, `detail`, `half`, `report-pane` and `chat`. A part that fits itself to its own width has its own block: `ranked`, `activity`, `days`, `hours`.
 - One left edge: the title in the strip is 16px in. A page or a pane that fills its width starts on the same 16px. A column that sits in the middle has gutters of 32px or more.
 - A page has one of two limits in `app/src/styles/tokens.css`:
-  - `--page-max` is one column to read. Settings uses it.
-  - `--page-wide` is a page of columns. `.page.wide` fills the workspace up to this limit when the workspace is 64rem or wider. Overview and Jobs use it.
-- In a wide workspace no screen keeps its content in one narrow column with the rest empty. A screen is a page of rows (Overview, Jobs) or panes that fill the width (Chat, Analyze, Search, Reports).
-- The Overview is rows. The cards of a row have one height and end on one line.
-  - The first row and the row of tiles use the same gap, so the middle of the page is one line.
-  - The list of the busiest conversations shows the rows that fit beside the moments. `useRowsThatFit` reads `--fit` on the card; the style sheet sets it where the height of the card comes from outside.
-  - The row of the two heat maps is cut so that a day and an hour have the same size. The cut in `overview.css` and the cell sizes in `charts.css` use the same numbers: 53 weeks, 24 hours, gaps of 2px, 2rem of weekday names.
+  - `--page-max` is one column to read. A page keeps it while the workspace is narrower than 64rem.
+  - `--page-wide` is a page of columns. `.page.wide` fills the workspace up to this limit when the workspace is 64rem or wider. Overview and Settings use it.
+- In a wide workspace no screen keeps its content in one narrow column with the rest empty. A screen is a page of columns (Overview, Settings) or panes that fill the width (Chat, Analyze, Search, Reports, Jobs).
+- The pages are open. A part of a page stands on the ground of the page. Space and hairlines set the parts apart. A card does not.
+  - One block is 32px (`--s-8`) from the next block. The first block is 32px below the title strip.
+  - `.section.ruled` in `shell.css` puts a hairline over a section. The heading is one band of 44px: 12px, a line of 20px, 12px. The people of a group (`analyze.css`) and the blocks of a report (`reports.css`) repeat this band. Change the three together.
+  - `.rows.ruled` in `lists.css` puts a hairline over each row, the first row also. A row is the same band of 44px.
+  - Words keep 12px above and below them in a band, on one line or on more. A control of 32px keeps 6px.
+  - Figures in a row have vertical hairlines between them. The first figure has no space before it. The last figure has no space after it. The tiles of the Overview, the figures of a report, the figures of a job and the facts of Analyze obey this rule.
+  - Two columns are 40px (`--s-10`) apart. A figure keeps 20px on each side of its hairline. Thus the hairline in the middle of four figures is on the center of the gap between the two columns below it.
+  - Two columns of a row end on one line. If one column ends with an open list and the other ends with a card, the last row of the list has a hairline below it.
+  - Only an object is a card: the moments of the Overview, the latest messages of Analyze, the chapters of a report, the log of a job.
+- The Overview is rows of sections.
+  - The list of the busiest conversations shows the rows that fit beside the moments. `useRowsThatFit` reads `--fit` on the box of the list. The style sheet sets `--fit` where the height of the box comes from outside. `rowsThatFit` in `app/src/lib/fit.ts` shows one more row if each row is then 5% shorter at most.
+  - The row of the two heat maps is cut so that a day and an hour have the same size. The cut in `overview.css` and the cell sizes in `charts.css` use the same numbers: 53 weeks, 24 hours, gaps of 2px, 2rem of weekday names for each map, 2.5rem between the maps.
+- A chart of the two voices that has a `heading` puts the heading, the day or month that is picked out, and the two totals in one band (`VoicesOverTime`, `VoicesSkeleton`). The day or month is `.readout-when` between the heading and `.readout`. It takes only the space that is left, so a pick does not move the totals to a second line. The rules for `.section-head > .readout` and `.section-head > .readout-when` in `charts.css` need this structure.
+- A row of Settings with no value has an empty `.setting-value`. In a narrow workspace `settings.css` reads `:empty` to keep the label and the control on one line. Do not put a space or a comment in that element.
+- A placeholder has the structure and the classes of the content that replaces it. Thus no block moves when the content arrives.
+  - `MomentsSkeleton` has the number of rows and the height that the list of moments had last. `app/src/lib/keptShape.ts` keeps these two numbers in the browser under `recall.shape.<name>`.
+  - WARNING: `keptShape.ts` keeps numbers only. Do not keep a name or the text of a message there.
+  - The cover and the figures of `ReportPageSkeleton` have the same classes, line for line, as the cover and the figures of `ReportPage`.
+  - Where the size of the content is not known before it arrives, the placeholder is about that size. The blocks of a report under its figures are such a case.
 - Code that scrolls a list from screen rectangles divides by the drawn scale (the width of the rectangle over `offsetWidth`). A panel that is opening is drawn smaller than its layout.
+- A card in a page has the fill of the page. Its edge is the ring of `--shadow-raised`. This is the same in light and in dark.
+  - `--bg-card` is the fill of a card in a page. A mark that must look cut out of a card uses `--bg-card` too.
+  - `--bg-raised` is the lighter fill. Only a control (button, field, composer) and a layer that floats (popover, sheet, undo bar) use it.
+  - In dark, `--ring` is firmer than `--line`, so the edge of a card leads the hairlines in it.
 - A pane with nothing to show puts its words in the middle with `.pane-empty` in `app/src/styles/shell.css`.
 - Each distance in a motion is multiplied by `--travel` in `app/src/styles/base.css`. Reduce Motion sets `--travel` to 0.
 - Use one motion for each kind of change:
