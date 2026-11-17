@@ -4,12 +4,9 @@ The archive has its own decoder of attributedBody (archive/typedstream.py).
 The exporter has the decoder of parse_imessage.py, which the decoder fix
 corrected. scripts/verify_archive_import.py compares the two on a database.
 
-tests/archive/test_verify_script.py::test_prints_the_expected_numbers was
-written before the decoder fix. It expects the lengths that the old decoder
-gave, so it fails on the joined branch. The first test here holds the numbers
-that the script prints now, for the same nine fixtures and a database built
-the same way. It takes the place of that stale expectation on the joined
-branch until the owner of that file updates it.
+The first test here holds the numbers that the script prints after the decoder
+fix, for the nine fixtures of tests/archive/test_verify_script.py and a
+database built the same way. That test expects the same numbers.
 """
 
 from __future__ import annotations
@@ -113,17 +110,17 @@ def test_the_script_prints_the_numbers_of_the_joined_branch(source: Path) -> Non
     assert found[f"{CHECK} / read by structure"] == 9
     assert found[f"{CHECK} / read by marker scan"] == 0
     assert found[f"{CHECK} / not readable"] == 0
-    # the decoder check: the stale test expects 1, 0 / 3, 3 / 2, 2 for the two lines after `rows`
+    # the decoder check: before the decoder fix the two lines after `rows` were 1, 0 / 3, 3 / 2, 2
     assert found[f"{CHECK} / under 128 bytes, rows"] == 4
     assert found[f"{CHECK} / under 128 bytes, legacy length differs"] == 0
     # `tab_and_spaces`: the script trims the text as the old decoder did. The decoder of today does not trim.
-    assert found[f"{CHECK} / under 128 bytes, differs after the same cleanup"] == 1
+    assert found[f"{CHECK} / under 128 bytes, differs after the old cleanup"] == 1
     assert found[f"{CHECK} / 128 to 255 bytes, rows"] == 3
     assert found[f"{CHECK} / 128 to 255 bytes, legacy length differs"] == 0
-    assert found[f"{CHECK} / 128 to 255 bytes, differs after the same cleanup"] == 0
+    assert found[f"{CHECK} / 128 to 255 bytes, differs after the old cleanup"] == 0
     assert found[f"{CHECK} / 256 bytes and more, rows"] == 2
     assert found[f"{CHECK} / 256 bytes and more, legacy length differs"] == 0
-    assert found[f"{CHECK} / 256 bytes and more, differs after the same cleanup"] == 0
+    assert found[f"{CHECK} / 256 bytes and more, differs after the old cleanup"] == 0
 
 
 def test_the_script_names_no_text_of_the_database(source: Path) -> None:

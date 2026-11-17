@@ -44,7 +44,12 @@ def bucket_of(byte_length: int) -> str:
 
 
 def legacy_cleanup(text: str) -> str:
-    """The cleanup that the old decoder applies to its result."""
+    """The cleanup that the old decoder applied to its result before it was corrected.
+
+    The old decoder does not trim now, and it keeps invisible characters. So a
+    row in `differs after the old cleanup` is not a row that the two decoders
+    read in two ways: `legacy length differs` counts those rows.
+    """
     return "".join(char for char in text if char.isprintable() or char in "\n\t ").strip()
 
 
@@ -89,7 +94,7 @@ def check_decoders(db_path: Path, work_dir: Path) -> Counter[str]:
                     continue
                 old_length = len(legacy(row.body) or "")
                 counts[f"{bucket}, legacy length differs"] += int(old_length != len(text))
-                counts[f"{bucket}, differs after the same cleanup"] += int(old_length != len(legacy_cleanup(text)))
+                counts[f"{bucket}, differs after the old cleanup"] += int(old_length != len(legacy_cleanup(text)))
     return counts
 
 
@@ -118,7 +123,7 @@ def check_lines(counts: Counter[str]) -> list[tuple[str, float]]:
     names = ["legacy decoder loaded", "rows checked", "read by structure", "read by marker scan", "not readable"]
     for bucket in BUCKETS:
         names.extend(
-            f"{bucket}, {what}" for what in ("rows", "legacy length differs", "differs after the same cleanup")
+            f"{bucket}, {what}" for what in ("rows", "legacy length differs", "differs after the old cleanup")
         )
     return [(name, counts[name]) for name in names]
 

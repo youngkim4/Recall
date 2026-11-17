@@ -74,19 +74,22 @@ def test_prints_the_expected_numbers(source: Path) -> None:
     assert found["import / blobs not readable"] == 0
     assert found["import / rows not stored, empty"] == 1
     check = "decoder check (rows whose text is only in the blob)"
+    assert found[f"{check} / legacy decoder loaded"] == 1
     assert found[f"{check} / rows checked"] == 9
     assert found[f"{check} / read by structure"] == 9
     assert found[f"{check} / read by marker scan"] == 0
     assert found[f"{check} / not readable"] == 0
+    # the two decoders give the same length for each row: the old one reads long texts in full now
     assert found[f"{check} / under 128 bytes, rows"] == 4
-    assert found[f"{check} / under 128 bytes, legacy length differs"] == 1
-    assert found[f"{check} / under 128 bytes, differs after the same cleanup"] == 0
+    assert found[f"{check} / under 128 bytes, legacy length differs"] == 0
+    # `tab_and_spaces`: the script trims the text as the old decoder did before. That decoder does not trim now.
+    assert found[f"{check} / under 128 bytes, differs after the old cleanup"] == 1
     assert found[f"{check} / 128 to 255 bytes, rows"] == 3
-    assert found[f"{check} / 128 to 255 bytes, legacy length differs"] == 3
-    assert found[f"{check} / 128 to 255 bytes, differs after the same cleanup"] == 3
+    assert found[f"{check} / 128 to 255 bytes, legacy length differs"] == 0
+    assert found[f"{check} / 128 to 255 bytes, differs after the old cleanup"] == 0
     assert found[f"{check} / 256 bytes and more, rows"] == 2
-    assert found[f"{check} / 256 bytes and more, legacy length differs"] == 2
-    assert found[f"{check} / 256 bytes and more, differs after the same cleanup"] == 2
+    assert found[f"{check} / 256 bytes and more, legacy length differs"] == 0
+    assert found[f"{check} / 256 bytes and more, differs after the old cleanup"] == 0
 
 
 def test_output_is_numbers_only(source: Path) -> None:
