@@ -191,7 +191,7 @@ def test_a_path_picked_in_an_earlier_setup_is_not_kept(marker):
 
 
 def test_setup_records_how_far_it_got_and_no_path():
-    said = {"completed": 1, "skipped": 0, "pickedDbPath": "/somewhere/chat.db", "other": True}
+    said = {"completed": True, "skipped": False, "pickedDbPath": "/somewhere/chat.db", "other": True}
 
     assert ui_server.setup_marker_updates(said) == {"completed": True, "skipped": False}
 

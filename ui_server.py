@@ -522,6 +522,9 @@ _JOB_STDERR = _JobStreamRouter(sys.stderr)
 
 
 SETUP_MARKER_PATH = SAVES_DIR / "setup.json"
+SETUP_MARKER_KEYS = ("completed", "skipped", "firstWordsShown")
+# the record is read, changed and written by one request at a time
+SETUP_MARKER_LOCK = threading.Lock()
 
 
 def read_setup_marker() -> dict:
@@ -536,20 +539,30 @@ def read_setup_marker() -> dict:
     return {key: value for key, value in marker.items() if key != "pickedDbPath"}
 
 
-def setup_marker_updates(payload: dict) -> dict:
-    """What the client may record about setup: how far it got, and no path."""
-    return {key: bool(payload[key]) for key in ("completed", "skipped", "firstWordsShown") if key in payload}
+def setup_marker_updates(payload) -> dict:
+    """What the client may record about setup: how far it got, and no path.
+
+    Only true and false are taken. Text such as "false" says nothing, and a
+    body that is not a record records nothing.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    return {key: payload[key] for key in SETUP_MARKER_KEYS if isinstance(payload.get(key), bool)}
 
 
 def write_setup_marker(updates: dict) -> dict:
     """Persist onboarding state server-side: WKWebView localStorage can be
-    cleared while saves/ survives. Atomic so a crash never corrupts it."""
-    marker = {**read_setup_marker(), **updates}
-    SAVES_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SETUP_MARKER_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(marker, indent=1), encoding="utf-8")
-    os.replace(tmp, SETUP_MARKER_PATH)
-    return marker
+    cleared while saves/ survives. Atomic so a crash never corrupts it. With
+    nothing to record, nothing is written."""
+    with SETUP_MARKER_LOCK:
+        marker = {**read_setup_marker(), **updates}
+        if not updates:
+            return marker
+        SAVES_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = SETUP_MARKER_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(marker, indent=1), encoding="utf-8")
+        os.replace(tmp, SETUP_MARKER_PATH)
+        return marker
 
 
 def setup_status_payload(db_path: Path | None, messages_path: Path, deep: bool = False) -> dict:
