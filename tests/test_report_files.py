@@ -1,11 +1,10 @@
 """Tests for how a saved report file is handed to the browser."""
-import http.client
-import threading
 from urllib.parse import quote
 
 import pytest
 
 import ui_server
+from tests.loopback import fetch
 from ui_server import report_file_headers, served_report_file
 
 
@@ -115,30 +114,6 @@ def test_a_report_that_is_text_is_served_as_text(data_dir):
     # with the type fixed and sniffing off, neither can be read as a page
     assert markdown["Content-Type"] == "text/markdown; charset=utf-8"
     assert timeline["Content-Type"] == "text/csv; charset=utf-8"
-
-
-@pytest.fixture
-def server(data_dir):
-    try:
-        httpd = ui_server.LoopbackHTTPServer(("127.0.0.1", 0), ui_server.RecallHandler)
-    except OSError as exc:
-        pytest.skip(f"no loopback socket here: {exc}")
-    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    thread.start()
-    yield httpd
-    httpd.shutdown()
-    httpd.server_close()
-    thread.join(timeout=5)
-
-
-def fetch(server, path):
-    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
-    try:
-        connection.request("GET", path)
-        response = connection.getresponse()
-        return response.status, dict(response.getheaders()), response.read()
-    finally:
-        connection.close()
 
 
 def test_the_server_sends_an_html_report_sandboxed(data_dir, server):

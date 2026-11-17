@@ -1421,7 +1421,7 @@ def day_payload(
     df, _, names = cached_messages_bundle(messages_path)
     # this conversation and no other: an id is never matched in part here
     conv = df[df["chat_id"].astype(str) == str(contact)]
-    window = day_window(conv, day, around=around, limit=max(1, min(int(limit or DAY_LIMIT), 400)), offset=offset)
+    window = day_window(conv, day, around=around, limit=limit, offset=offset)
     rows = window.rows
     # in a group, who wrote each message
     in_group = is_group_chat(contact) and "sender" in rows.columns
@@ -2969,6 +2969,9 @@ class RecallHandler(BaseHTTPRequestHandler):
             contact = query.get("contact", "")
             if not contact:
                 send_json(self, 400, {"error": "A conversation is needed"})
+                return
+            if not path_exists(messages_path):
+                send_json(self, 400, {"error": f"Messages CSV not found: {messages_path}"})
                 return
             try:
                 place = query.get("offset", "")

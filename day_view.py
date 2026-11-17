@@ -8,8 +8,9 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-# how many messages of a day are given at once
+# how many messages of a day are given at once, and the most that can be asked for
 DAY_LIMIT = 200
+DAY_LIMIT_MAX = 400
 _DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
@@ -39,6 +40,26 @@ def _day_of(stamp) -> str | None:
     return None if pd.isna(stamp) else str(stamp)[:10]
 
 
+def _size_of(limit: int) -> int:
+    """How many messages one answer holds. Fewer than one is not a part of a
+    day; more than the largest part is the largest part."""
+    size = int(limit)
+    if size < 1:
+        raise ValueError(f"Not a number of messages: {limit!r}")
+    return min(size, DAY_LIMIT_MAX)
+
+
+def _before(stamps: pd.Series, around: str) -> int:
+    """How many of the stamps come before the time in `around`. A zone in it
+    is dropped: every time in an export is the time on the clock."""
+    at = pd.to_datetime(around, errors="coerce")
+    if pd.isna(at):
+        return 0
+    if at.tzinfo is not None:
+        at = at.tz_localize(None)
+    return int((stamps < at).sum())
+
+
 def day_window(
     conv: pd.DataFrame,
     day: str,
@@ -46,26 +67,27 @@ def day_window(
     limit: int = DAY_LIMIT,
     offset: int | None = None,
 ) -> DayWindow:
-    """The messages of one day, oldest first. A day longer than the limit is
-    given in part: from `offset` when one is named, else around the time in
-    `around`, else from its start. The part never runs past either end."""
+    """The messages of one day, oldest first. Messages sent at the same time
+    keep the order they have in `conv`; one with no readable time is in no day.
+
+    A day longer than the limit is given in part. With `offset`, the part
+    starts at that place and is not moved: a reader who asks for what follows
+    the rows they hold gets those rows and no others, and a place past the end
+    gives none. Without it, the part is a whole window around the time in
+    `around`, or from the start of the day, and never runs past either end."""
     start = _start_of(day)
     end = start + pd.Timedelta(days=1)
+    size = _size_of(limit)
     ordered = conv.sort_values("timestamp", kind="stable")
     stamps = ordered["timestamp"]
     of_day = ordered[(stamps >= start) & (stamps < end)]
     total = int(len(of_day))
-    size = max(1, int(limit))
 
     if offset is not None:
-        begin = int(offset)
-    elif around:
-        at = pd.to_datetime(around, errors="coerce")
-        before_it = 0 if pd.isna(at) else int((of_day["timestamp"] < at).sum())
-        begin = before_it - size // 2
+        begin = max(0, min(int(offset), total))
     else:
-        begin = 0
-    begin = max(0, min(begin, total - size))
+        wanted = _before(of_day["timestamp"], around) - size // 2 if around else 0
+        begin = max(0, min(wanted, total - size))
 
     return DayWindow(
         day=str(start.date()),

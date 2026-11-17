@@ -1,7 +1,5 @@
-import os
 import sqlite3
-import tempfile
-from pathlib import Path
+import threading
 
 import pandas as pd
 import pytest
@@ -23,6 +21,23 @@ def fresh_bundle_cache():
     yield
     with ui_server._ASK_CACHE_LOCK:
         ui_server._ASK_CACHE.update(blank)
+
+
+@pytest.fixture
+def server():
+    """The app's own request handler on a loopback port, for a test of a route."""
+    import ui_server
+
+    try:
+        httpd = ui_server.LoopbackHTTPServer(("127.0.0.1", 0), ui_server.RecallHandler)
+    except OSError as exc:
+        pytest.skip(f"no loopback socket here: {exc}")
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield httpd
+    httpd.shutdown()
+    httpd.server_close()
+    thread.join(timeout=5)
 
 
 @pytest.fixture
