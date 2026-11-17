@@ -72,18 +72,22 @@ def _strip_markup(line: str) -> str:
     return line.translate(_NO_BRACKETS)
 
 
+def _without_heading(line: str) -> str:
+    """A heading line as a bold line. Any other line that starts with `#`, also
+    after a quote or list mark, gets a backslash before the `#`."""
+    heading = _HEADING_LINE.match(line)
+    if heading is None:
+        return _LEADING_HASH.sub(r"\1\\#", line)
+    return f"**{heading.group(1)}**" if heading.group(1) else ""
+
+
 def _clean_once(markdown: str) -> str:
     lines: list[str] = []
     for raw in markdown.strip().splitlines():
         line = _strip_markup(raw)
         if _LINK_DEFINITION.match(line) or _UNDERLINE.match(line):
             continue
-        heading = _HEADING_LINE.match(line)
-        if heading:
-            line = f"**{heading.group(1)}**" if heading.group(1) else ""
-        else:
-            line = _LEADING_HASH.sub(r"\1\\#", line)
-        lines.append(line.rstrip())
+        lines.append(_without_heading(line).rstrip())
     return "\n".join(lines).strip()
 
 
