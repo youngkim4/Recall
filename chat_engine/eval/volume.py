@@ -1,9 +1,11 @@
 """Run the chat tools on a message export at full volume and print numbers.
 
     python -m chat_engine.eval.volume PATH_TO_messages.csv
+    python -m chat_engine.eval.volume --invented 565821
 
-It reads the file, builds a `FrameArchive`, runs every tool and three whole
-questions with the scripted model, and prints latency and result sizes.
+It reads the file (or makes an invented export of that many rows), builds a
+`FrameArchive`, runs every tool and three whole questions with the scripted
+model, and prints latency and result sizes.
 
 It prints numbers and fixed labels only: no message text, no name, no handle.
 It writes no file. It blocks the network before it reads the file. It calls
@@ -37,6 +39,7 @@ from ..scope import Scope
 from ..session import ChatSession
 from ..tools import ToolBox
 from .volume_cases import Case, Picks, browse_cases, figure_cases, pick, search_cases
+from .volume_data import invented_export
 
 _REF_LINE_RE = re.compile(r"^(m\d+) ", re.MULTILINE)
 _REACTION_START_RE = r'(?:Loved|Liked|Disliked|Laughed at|Emphasized|Questioned) [“"]'
@@ -117,22 +120,22 @@ def _row(found: Measured, budget: int) -> str:
 # --- the archive ------------------------------------------------------------
 
 
-def _read(path: str) -> tuple[FrameArchive, int, int, float, float]:
-    """The archive, the rows of the file, the rows that start as a reaction phrase, and two timings."""
-    frame, read_ms = _timed(lambda: read_export(path))
+def _read(path: str, invented: int) -> tuple[FrameArchive, int, int, float, float]:
+    """The archive, the rows of the export, the rows that start as a reaction phrase, and two timings."""
+    frame, read_ms = _timed(lambda: invented_export(invented) if invented else read_export(path))
     starts = int(frame["text"].str.match(_REACTION_START_RE).sum()) if "text" in frame.columns else 0
     archive, build_ms = _timed(lambda: FrameArchive(frame))
     return archive, len(frame), starts, read_ms, build_ms
 
 
-def load(path: str, out: Out) -> FrameArchive:
-    out(f"file: {os.path.getsize(path):,} bytes")
-    archive, rows, starts, read_ms, build_ms = _read(path)
+def load(path: str, invented: int, out: Out) -> FrameArchive:
+    out("export: invented, made-up text only" if invented else f"file: {os.path.getsize(path):,} bytes")
+    archive, rows, starts, read_ms, build_ms = _read(path, invented)
     dropped = archive.dropped
     lengths = archive.text_lengths()
     summary = archive.summary()
     out(f"rows in the file: {rows:,}")
-    out(f"read the file: {read_ms:,.0f} ms; build the archive: {build_ms:,.0f} ms")
+    out(f"read (or make) the export: {read_ms:,.0f} ms; build the archive: {build_ms:,.0f} ms")
     out(f"messages: {summary['messages']:,}; conversations: {summary['conversations']:,}")
     out(
         f"rows left out: reaction phrases {dropped['reactions']:,}, unreadable rows {dropped['bad_rows']:,}, "
@@ -290,13 +293,16 @@ def run_questions(archive: FrameArchive, picks: Picks, config: EngineConfig, out
 
 def main(argv: Optional[Sequence[str]] = None, out: Out = print) -> int:
     parser = argparse.ArgumentParser(prog="chat_engine.eval.volume", description=(__doc__ or "").split("\n\n")[0])
-    parser.add_argument("path", help="the export file (messages.csv)")
+    parser.add_argument("path", nargs="?", default="", help="the export file (messages.csv)")
+    parser.add_argument("--invented", type=int, default=0, metavar="ROWS", help="use an invented export of ROWS rows")
     parser.add_argument("--repeat", type=int, default=3, help="runs of each lookup")
     arguments = parser.parse_args(argv)
+    if bool(arguments.path) == (arguments.invented > 0):
+        parser.error("give the export file, or --invented ROWS")
     block_network()
     warnings.simplefilter("ignore")  # a warning can quote a value of the file
     try:
-        archive = load(arguments.path, out)
+        archive = load(arguments.path, arguments.invented, out)
         picks = pick(archive)
     except Exception as error:  # only the type: the text of an error can hold a row of the file
         out(f"could not read the export: {type(error).__name__}")

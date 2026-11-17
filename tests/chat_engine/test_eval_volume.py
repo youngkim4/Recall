@@ -84,7 +84,11 @@ def test_a_file_that_is_not_an_export_is_reported_by_the_type_of_the_error_only(
 def test_the_run_blocks_the_network_first(export: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     order: list[str] = []
     monkeypatch.setattr(volume, "block_network", lambda: order.append("block"))
-    monkeypatch.setattr(volume, "load", lambda path, out: order.append("load") or (_ for _ in ()).throw(ValueError()))
+    def load(_path: str, _invented: int, _out: object) -> None:
+        order.append("load")
+        raise ValueError
+
+    monkeypatch.setattr(volume, "load", load)
     assert volume.main([str(export)], out=lambda line: None) == 1
     assert order == ["block", "load"]
 
@@ -99,3 +103,33 @@ def test_block_network_stops_every_way_out() -> None:
         socket.socket().connect(("127.0.0.1", 9))
     with pytest.raises(RuntimeError):
         socket.getaddrinfo("example.com", 443)
+
+
+def test_an_invented_export_has_the_shape_of_a_real_one() -> None:
+    from chat_engine.eval.volume_data import invented_export
+    from chat_engine.frame_archive import FrameArchive
+    from tests.chat_engine.frames import COLUMNS
+
+    frame = invented_export(4_000)
+    assert list(frame.columns) == COLUMNS and len(frame) == 4_000
+    assert frame.equals(invented_export(4_000))
+    archive = FrameArchive(frame)
+    dropped = archive.dropped
+    assert 60 < dropped["reactions"] < 200 and dropped["bad_rows"] == 0 and dropped["duplicates"] == 0
+    assert archive.attachment_only > 40
+    lengths = archive.text_lengths()
+    assert int((lengths >= 100_000).sum()) >= 8 and int(lengths.max()) > 2_000_000
+    listed = archive.conversations()
+    assert len(listed) == 10 and any(c["is_group"] for c in listed)
+    assert listed[0]["message_count"] > 5 * listed[-1]["message_count"]
+
+
+def test_the_run_takes_an_invented_export_and_needs_one_source() -> None:
+    lines: list[str] = []
+    assert volume.main(["--invented", "3000", "--repeat", "1"], out=lines.append) == 0
+    assert lines[0] == "export: invented, made-up text only" and "rows in the file: 3,000" in lines[1]
+    assert "failed: 0; over the budget: 0" in lines[-2]
+    with pytest.raises(SystemExit):
+        volume.main([], out=lines.append)
+    with pytest.raises(SystemExit):
+        volume.main(["some.csv", "--invented", "10"], out=lines.append)
