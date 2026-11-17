@@ -185,7 +185,6 @@ async function loadDefaults() {
   state.defaults = data;
   state.reports = reports;
   state.contactNamesSummary = data.contactNames || null;
-  $("#dbPath").value = data.dbPath || "";
   $("#messagesPath").value = data.messagesPath || "";
   renderModels(data.models || [], data.defaultModel);
   renderReports(reports);
@@ -208,17 +207,15 @@ function renderModels(models, selected) {
 
 async function loadContacts(options = {}) {
   const silent = Boolean(options.silent);
-  const dbPath = $("#dbPath").value.trim();
   const messagesPath = $("#messagesPath").value.trim();
-  if (!messagesPath && !dbPath) {
-    if (!silent) showToast("Open Advanced and enter a Messages CSV or chat.db path first.");
+  if (!messagesPath) {
+    if (!silent) showToast("Open Advanced and enter a Messages CSV path first.");
     return;
   }
   if (!silent) setButtonLoading("#loadContactsBtn", true, "Loading");
   try {
     const params = new URLSearchParams({ limit: "80" });
-    if (messagesPath) params.set("messagesPath", messagesPath);
-    if (dbPath) params.set("dbPath", dbPath);
+    params.set("messagesPath", messagesPath);
     const data = await api(`/api/contacts?${params.toString()}`);
     state.contacts = data.contacts || [];
     state.selectedContact = null;
@@ -508,9 +505,10 @@ async function startJob(action) {
     return;
   }
 
+  // The server reads Messages itself for an export, and a report is written
+  // from the archive as it is: the request names no database.
   const payload = {
     action,
-    dbPath: $("#dbPath").value.trim(),
     messagesPath: $("#messagesPath").value.trim(),
     outDir: state.defaults?.outDir,
     contact: state.selectedContact?.chat_id,
@@ -518,14 +516,13 @@ async function startJob(action) {
     since: $("#sinceInput").value,
     until: $("#untilInput").value,
     html: $("#htmlToggle").checked,
-    extractFirst: action === "export" ? true : $("#extractToggle").checked,
   };
 
   try {
     state.reportReady = false;
     state.analysis = null;
     state.resultTab = "story";
-    if (action === "export" || payload.extractFirst) {
+    if (action === "export") {
       state.analysisCache.clear();
       state.analysisRequests.clear();
     }
