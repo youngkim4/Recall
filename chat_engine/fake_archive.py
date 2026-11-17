@@ -17,6 +17,7 @@ from .textnorm import query_units
 _TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 _GROUP_KEY_LENGTH = {"day": 10, "month": 7, "year": 4}
 _GROUPS = (*_GROUP_KEY_LENGTH, "weekday_hour", "conversation", "sender")
+NO_SENDER = "unknown"  # the count key of a received message that has no handle; "" is only the owner
 
 
 def make_message(
@@ -337,7 +338,7 @@ def _group_key(message: Message, group_by: str) -> str:
     if group_by == "conversation":
         return message["conversation"]
     if group_by == "sender":
-        return message["sender"]
+        return message["sender"] or ("" if message["is_from_me"] else NO_SENDER)
     raise ValueError(f"unknown group_by: {group_by}")
 
 

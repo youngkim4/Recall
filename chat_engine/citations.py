@@ -4,8 +4,9 @@ The model cites messages as [m3]. The reader sees [1], [2], ... in the order
 the answer first uses them. The work is done on the stream, so the text shown
 while it arrives is the text of the final answer.
 
-A number in brackets without the "m", such as [3], is read as [m3]: the reader
-takes every number in brackets for a citation, so none may pass unchecked.
+A number in brackets without the "m", such as [3], is not a reference: it
+can be a year, a list item, or text of a message. The reader takes every
+number in square brackets for a citation, so it is shown as (3).
 """
 
 from __future__ import annotations
@@ -20,14 +21,17 @@ _ONE = rf"m?\d+(?:\s*{_DASH}\s*m?\d+)?"
 _BETWEEN = r"(?:\s*(?:[,;&]|and)\s*|\s+|(?=m))"  # never empty before a digit: one run of digits is one number
 _MARKER_RE = re.compile(rf"(?P<space>[ \t]*)\[(?P<body>[^\[\]\n]{{1,{_MAX_MARKER}}})\]")
 _BODY_RE = re.compile(rf"^\s*{_ONE}(?:{_BETWEEN}{_ONE})*\s*$", re.IGNORECASE)
-_PIECE_RE = re.compile(rf"m?(\d+)(?:\s*{_DASH}\s*m?(\d+))?", re.IGNORECASE)
+_PIECE_RE = re.compile(rf"(m?)(\d+)(?:\s*{_DASH}\s*m?(\d+))?", re.IGNORECASE)
 
 
 def _expand(body: str) -> list[str]:
+    """The references in a marker. A number without "m" is not one."""
     refs: list[str] = []
     for match in _PIECE_RE.finditer(body):
-        start = int(match.group(1))
-        end = int(match.group(2)) if match.group(2) else start
+        if not match.group(1):
+            continue
+        start = int(match.group(2))
+        end = int(match.group(3)) if match.group(3) else start
         numbers = range(start, end + 1) if 0 < end - start <= _MAX_RANGE else (start, end)
         refs.extend(f"m{number}" for number in numbers)
     return list(dict.fromkeys(refs))
@@ -83,8 +87,11 @@ class CitationStream:
         body = match.group("body")
         if not _BODY_RE.match(body):
             return match.group(0)
+        refs = _expand(body)
+        if not refs:
+            return f"{match.group('space')}({body.strip()})"
         numbers = []
-        for ref in _expand(body):
+        for ref in refs:
             if self._known(ref):
                 numbers.append(self._number(ref))
             elif ref not in self._unknown:

@@ -26,7 +26,7 @@ from .ports import (
     Usage,
 )
 from .prompt import LIMIT_NOTE, question_block, scope_line, system_prompt, timezone_label
-from .render import Limits, ResultWriter, render_block
+from .render import Limits, ResultWriter, add_block, time_key
 from .result import build_payload
 from .scope import Scope
 from .seed import plan_seed
@@ -40,7 +40,8 @@ _CARRIED_TOKENS = 1200
 _REPEATED = "Same lookup as before: its result is above. Try a different lookup, or answer."
 _SKIPPED = "Lookup skipped: the limit on lookups for this question is reached."
 _LOOKING = "Looking at more messages"
-_LEFT_OUT = "[This earlier answer is left out: it was written for a scope the user has changed since.]"
+_LEFT_OUT = "[This earlier answer is left out: it was written for another scope than this question has.]"
+_TOO_MANY = "Lookup skipped: one step runs at most {limit} lookups. Ask for it in the next step if you still need it."
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ class TurnSettings:
     model: str
     max_output_tokens: int
     max_steps: int
+    max_calls_per_step: int
     result_tokens: int
     total_tool_tokens: int
     history_tokens: int
@@ -124,25 +126,45 @@ class QuestionTurn:
     # --- the turn ---
 
     def events(self) -> Generator[Event, None, None]:
+        """The events of the question.
+
+        A question that does not finish (cancelled, failed, or closed by the
+        caller) leaves the session as it was: the messages and the aliases
+        that it added are forgotten, so a later answer cannot cite them.
+        """
+        registry, aliases = self._session.registry, self._session.aliases
+        marks = registry.checkpoint(), aliases.checkpoint()
+        finished = False
+        try:
+            reply = yield from self._answer_steps()
+            done = self._done(reply)
+            finished = not reply.cancelled
+            yield done
+        finally:
+            if not finished:
+                registry.rollback(marks[0])
+                aliases.rollback(marks[1])
+
+    def _answer_steps(self) -> Generator[Event, None, Reply]:
+        """The lookups and the model calls. After a cancel, nothing more is read from the archive."""
         if self._cancel.cancelled:
-            yield self._done(Reply(cancelled=True))
-            return
+            return Reply(cancelled=True)
         yield status("Reading your archive")
+        if self._cancel.cancelled:
+            return Reply(cancelled=True)
         summary = self._box.guard(self._archive.summary)
         lookups = yield from self._seed()
         if self._cancel.cancelled:
-            yield self._done(Reply(cancelled=True))
-            return
+            return Reply(cancelled=True)
         self._transcript = self._box.guard(lambda: self._opening(summary, lookups))
-        reply = yield from self._loop()
-        yield self._done(reply)
+        return (yield from self._loop())
 
     def _seed(self) -> Generator[Event, None, list[tuple[str, str]]]:
         lookups: list[tuple[str, str]] = []
         for seed in plan_seed(self._box, self._question):
+            yield status(seed.prepared.status)
             if self._cancel.cancelled:
                 break
-            yield status(seed.prepared.status)
             outcome = seed.prepared.run(self._allowance())
             self._record(seed.tool, outcome, seeded=True)
             lookups.append((seed.label, outcome.text))
@@ -265,6 +287,8 @@ class QuestionTurn:
         )
         if reply.streamed:
             yield status(_LOOKING, reset=True)  # the text shown so far was not the answer
+        limit = self._settings.max_calls_per_step
+        ran = 0
         for call in reply.calls:
             if self._cancel.cancelled:
                 return
@@ -275,6 +299,10 @@ class QuestionTurn:
             if self._left < MIN_RESULT_TOKENS:
                 self._answer(call, _SKIPPED)
                 continue
+            if ran >= limit:
+                self._answer(call, _TOO_MANY.format(limit=limit))
+                continue
+            ran += 1
             prepared = self._box.prepare(call.name, call.arguments)
             if prepared.status:
                 yield status(prepared.status)
@@ -335,23 +363,29 @@ class QuestionTurn:
         return list(reversed(kept))
 
     def _carried(self, turns: list[Turn]) -> str:
-        """Messages the earlier answers cited, still inside the scope."""
+        """Messages the earlier answers cited, still inside the scope. The newest turn comes first.
+
+        A block that does not fit is cut shorter. A block that still does not
+        fit is left out, and the next one is tried.
+        """
         context = self._box.context
-        refs = dict.fromkeys(ref for turn in turns for ref in turn.cited)
-        found = [self._session.registry.get(ref) for ref in refs]
-        by_conversation: dict[str, list[Message]] = {}
-        for message in found:
-            if message is not None and context.allows(message):
-                by_conversation.setdefault(str(message["conversation"]), []).append(message)
+        registry = self._session.registry
         writer = ResultWriter(_CARRIED_TOKENS, self._settings.count_tokens)
-        for messages in by_conversation.values():
-            ordered = sorted(messages, key=lambda m: (str(m.get("timestamp") or ""), m.get("sent_at") or 0))
-            block = render_block(
-                ordered, book=context.book, registry=self._session.registry, limits=self._limits, marks={}
-            )
-            if not writer.add("\n".join(block)):
-                break
-        return self._labeler.redact(writer.text())
+        seen: set[str] = set()
+        for turn in reversed(turns):
+            by_conversation: dict[str, list[Message]] = {}
+            for ref in turn.cited:
+                message = registry.get(ref)
+                if message is None or ref in seen or not context.allows(message):
+                    continue
+                seen.add(ref)
+                by_conversation.setdefault(str(message["conversation"]), []).append(message)
+            for messages in by_conversation.values():
+                add_block(
+                    writer, sorted(messages, key=time_key), book=context.book, registry=registry,
+                    limits=self._limits, marks={},
+                )
+        return self._labeler.redact(writer.text().strip())
 
     # --- the result ---
 
@@ -366,7 +400,6 @@ class QuestionTurn:
             unknown=reply.unknown,
             registry=self._session.registry,
             book=context.book,
-            questions=[self._question, *self._session.questions()],
             redact=self._labeler.redact,
             allowed=context.allows,
             text_cap=self._settings.max_message_chars,

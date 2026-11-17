@@ -10,16 +10,21 @@ this module finds the place itself:
 3. It walks to the edge that was asked for, then back until it has enough.
 
 Every walk has a limit. When the limit stops it, the result says so.
+
+An archive that can read a conversation in order (`iter_messages`) does not
+need the walk for the first messages, and is the way out when a walk stops.
 """
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass
+from itertools import islice
 from typing import Optional
 
 from .ports import ChatArchive, Message, MessagePage
-from .textnorm import words
+from .render import time_key
+from .textnorm import surface_words
 
 PAGE = 200
 MAX_HOPS = 60
@@ -84,7 +89,7 @@ class _Walk:
 
     def probe(self, sample: list[Message], edge: str, period: _Period) -> Optional[Message]:
         """A message near the wanted edge: the oldest (or newest) hit of a frequent word."""
-        counts = Counter(token for message in sample for token in set(words(message.get("text") or "")))
+        counts = Counter(token for message in sample for token in set(surface_words(message.get("text") or "")))
         best: Optional[Message] = None
         for token, _ in counts.most_common(_PROBES):
             result = self._archive.search(
@@ -107,6 +112,25 @@ def browse(
     max_hops: int = MAX_HOPS,
 ) -> Browsed:
     """The first (`edge="oldest"`) or last messages of a conversation or of a period in it."""
+    reader = getattr(archive, "iter_messages", None)
+    if callable(reader) and edge == "oldest":
+        return Browsed(tuple(islice(reader(conversation_id, since=since, until=until), max(0, limit))), True)
+    found = _walk_to(archive, conversation_id, edge, limit, since, until, max_hops)
+    if callable(reader) and not (found.anchored and found.reached_edge):
+        rows = reader(conversation_id, since=since, until=until)
+        return Browsed(tuple(deque(rows, maxlen=max(1, limit))), True)
+    return found
+
+
+def _walk_to(
+    archive: ChatArchive,
+    conversation_id: str,
+    edge: str,
+    limit: int,
+    since: Optional[str],
+    until: Optional[str],
+    max_hops: int,
+) -> Browsed:
     walk = _Walk(archive, conversation_id, max_hops)
     period = _Period(since, until)
     toward, away = (OLDER, NEWER) if edge == "oldest" else (NEWER, OLDER)
@@ -117,8 +141,12 @@ def browse(
         anchor = walk.probe(page["messages"], edge, period)
         jumped = walk.around(str(anchor["id"])) if anchor is not None else None
         page = jumped if jumped and jumped["messages"] else page
+    previous = ""
     while period.side_of(page):
         side = period.side_of(page)
+        if previous and side != previous:
+            return Browsed((), True)  # the period lies between two pages: no message is in it
+        previous = side
         if not page["has_older" if side == OLDER else "has_newer"]:
             return Browsed((), True)  # the conversation ends before the period starts
         if walk.spent:
@@ -149,8 +177,7 @@ def _day(message: Message) -> str:
 def _nearer(current: Optional[Message], candidate: Message, oldest: bool) -> Message:
     if current is None:
         return candidate
-    one = (str(candidate.get("timestamp") or ""), candidate.get("sent_at") or 0)
-    other = (str(current.get("timestamp") or ""), current.get("sent_at") or 0)
+    one, other = time_key(candidate), time_key(current)
     if oldest:
         return candidate if one < other else current
     return candidate if one > other else current

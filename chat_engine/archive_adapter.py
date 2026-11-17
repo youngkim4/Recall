@@ -11,7 +11,7 @@ default that changes in the archive cannot silently change what chat asks.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Iterator, Optional, Sequence, Union
 
 from .errors import ArchiveError
 from .ports import ArchiveSummary, Conversation, CountRow, Message, MessagePage, SearchResult
@@ -54,10 +54,16 @@ class ArchiveAdapter:
     ) -> MessagePage:
         cursors = {"around": around, "before": before, "after": after}
         given = {name: value for name, value in cursors.items() if value is not None}
-        return self._archive.messages(conversation_id, limit=limit, **given)
+        return self._archive.messages(conversation_id, limit=limit, include_system=False, **given)
+
+    def iter_messages(
+        self, conversation_id: str, *, since: Optional[str] = None, until: Optional[str] = None
+    ) -> Iterator[Message]:
+        """The messages of one conversation, oldest first. Not in the port: the engine uses it when it is there."""
+        return iter(self._archive.iter_messages(conversation_id, since=since, until=until, include_system=False))
 
     def context(self, message_id: str, *, radius: int = 6) -> list[Message]:
-        return self._archive.context(message_id, radius=radius)
+        return self._archive.context(message_id, radius=radius, include_system=False)
 
     def search(
         self,
@@ -80,6 +86,7 @@ class ArchiveAdapter:
             limit=limit,
             offset=offset,
             order=order,
+            include_system=False,
         )
 
     def count(
@@ -99,12 +106,13 @@ class ArchiveAdapter:
             from_me=from_me,
             text=text,
             group_by=group_by,
+            include_system=False,
         )
 
     def stats(
         self, conversation_id: str, *, since: Optional[str] = None, until: Optional[str] = None
     ) -> dict[str, Any]:
-        return self._archive.stats(conversation_id, since=since, until=until)
+        return self._archive.stats(conversation_id, since=since, until=until, include_system=False)
 
 
 def _archive_class() -> Any:

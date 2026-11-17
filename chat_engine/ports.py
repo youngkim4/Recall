@@ -221,6 +221,11 @@ class Labeler(Protocol):
 
     A saved name is used as it is. Anyone else is masked: the raw phone number
     or email address must never be returned.
+
+    Before any text goes to the model, the engine calls `conversation` for
+    every conversation of the archive and `sender` for every member. A
+    labeler can learn the handles there. `redact` must then mask each handle
+    of a person who is not saved, in every spelling, anywhere in a text.
     """
 
     def conversation(self, conversation: Conversation) -> str: ...

@@ -11,7 +11,8 @@ def _units(question: str, labeler: MaskingLabeler | None = None) -> list[str]:
 def test_short_words_and_years_are_not_search_words() -> None:
     assert _units("Who do I text the most?") == ["who", "text", "the", "most"]
     assert _units("did she front me 10k in 2019?") == ["did", "she", "front", "10k"]
-    assert _units("já vi o apartamento, é ótimo") == ["apartamento", "otimo"]
+    assert _units("já vi o apartamento, é ótimo") == ["apartamento", "ótimo"]
+    assert _units("학교 도서관 얘기") == ["학교", "도서관", "얘기"]
     assert _units("да, это он") == ["да", "это", "он"]
     assert _units("??") == []
 

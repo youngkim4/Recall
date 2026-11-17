@@ -302,6 +302,8 @@ def test_scope_limits_every_tool() -> None:
             assert arguments["conversation_id"] == JONAS_PHONE, (name, arguments)
         elif name == "context":
             assert arguments["message_id"] in {"j1", "j2", "j3", "j4"}, arguments
+        elif name == "conversations":  # names and handles for the labeler: no message is read
+            assert arguments == {"limit": None, "offset": 0, "order": "count"}
         else:
             pytest.fail(f"unexpected archive call {name}")
 

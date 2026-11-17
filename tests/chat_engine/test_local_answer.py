@@ -42,8 +42,10 @@ def test_local_answer_stays_inside_the_scope() -> None:
     for name, arguments in archive.calls:
         if name in {"search", "count"}:
             assert arguments["conversations"] == [JONAS_PHONE]
+        elif name == "conversations":  # names and handles for the labeler: no message is read
+            assert arguments == {"limit": None, "offset": 0, "order": "count"}
         else:
-            assert name == "conversation" and arguments["conversation_id"] == JONAS_PHONE
+            assert name == "context" and arguments["message_id"].startswith("j")
 
 
 def test_local_answer_masks_unsaved_people_and_cuts_long_text() -> None:

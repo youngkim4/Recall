@@ -258,7 +258,7 @@ def test_cancel_during_the_seeded_lookups_stops_before_the_model() -> None:
     engine, fake, _ = make_engine([say("no")])
     result = engine.ask("what did Maya say about the lease?", on_event=on_event, cancel=cancel)
     assert result["cancelled"] is True and fake.requests == []
-    assert [step["tool"] for step in result["steps"]] == ["search_messages"]
+    assert result["steps"] == []
 
 
 def test_closing_the_event_iterator_closes_the_model_stream() -> None:

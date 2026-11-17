@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
 from .directory import Entry
+from .handles import email_key, is_mask, parse_phone
 from .ports import CountRow
 from .render import OWNER, ResultWriter
 from .tool_args import ToolInputError, bool_arg, choice_arg, day_arg, int_arg, list_arg, text_arg
@@ -28,6 +29,7 @@ LIST_LIMIT_DEFAULT = 10
 LIST_LIMIT_MAX = 30
 _MEMBERS_SHOWN = 4
 _OWN_KEYS = ("", "me", "You")
+_NATIONAL_DIGITS = 10
 _WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 _PLAIN_KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 _KNOWN_FIGURES = frozenset(
@@ -154,16 +156,31 @@ def _table_lines(ctx: ToolContext, group_by: str, rows: Sequence[CountRow]) -> l
     return [_line(row, label(str(row.get("key") or ""))) for row in ordered]
 
 
+def _person_key(handle: str, label: str) -> str:
+    """One key for one person: the saved name, else the handle in one spelling.
+
+    Two people who are not saved can have the same label ("an unsaved email
+    contact"). They stay two rows.
+    """
+    if not is_mask(label):
+        return f"name:{label}"
+    phone = parse_phone(handle)
+    if phone is not None:
+        return f"phone:{phone.digits[-_NATIONAL_DIGITS:]}"
+    return f"handle:{email_key(handle)}"
+
+
 def _by_person(ctx: ToolContext, rows: Sequence[CountRow]) -> list[_Line]:
     merged: dict[str, _Line] = {}
     for row in rows:
-        key = str(row.get("key") or "")
-        one = _line(row, OWNER if key in _OWN_KEYS else ctx.labeler.sender(key))
-        known = merged.get(one.label)
-        merged[one.label] = one if known is None else _Line(
+        handle = str(row.get("key") or "")
+        one = _line(row, OWNER if handle in _OWN_KEYS else ctx.labeler.sender(handle))
+        key = "owner" if handle in _OWN_KEYS else _person_key(handle, one.label)
+        known = merged.get(key)
+        merged[key] = one if known is None else _Line(
             one.label, known.total + one.total, known.sent + one.sent, known.received + one.received
         )
-    return sorted(merged.values(), key=lambda line: -line.total)
+    return sorted(merged.values(), key=lambda line: (-line.total, line.label))
 
 
 def _shown_lines(lines: Sequence[_Line], group_by: str) -> list[_Line]:

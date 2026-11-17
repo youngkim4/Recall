@@ -4,6 +4,10 @@ A handle is a phone number, an email address or a short code. The same phone
 number has many spellings: "+351 912 345 678", "912345678", "(912) 345-678".
 Two spellings with a country code are the same number only when all digits
 are the same. Without a country code on one side, the national digits decide.
+
+In free text a number can also stand in its local form (the last seven
+digits alone), with a 0 after the country code, with digits of another
+script, and with any marks between its groups.
 """
 
 from __future__ import annotations
@@ -22,13 +26,17 @@ MIN_PHONE_DIGITS = 7
 _MIN_SHORT_CODE_DIGITS = 3
 _MAX_COUNTRY_DIGITS = 3
 _INDEX_DIGITS = 7
+_LOCAL_DIGITS = 7  # the form without an area code
+_NATIONAL_DIGITS = 10  # a number this long has a shorter local form
+_TRUNK = "0"  # written after a country code in some countries: +44 (0)7911 ...
 
 _PREFIX_RE = re.compile(r"^(?:(?:imessage|sms|rcs|tel|mailto|p|e)(?:;[-+];|:))+", re.IGNORECASE)
 _EMAIL_BODY = r"[\w.+\-]{1,64}@[\w\-]{1,63}(?:\.[\w\-]{1,63}){1,8}"
 EMAIL_RE = re.compile(rf"(?<![\w.+\-]){_EMAIL_BODY}")
 _EMAIL_ONLY_RE = re.compile(_EMAIL_BODY)
 _NUMBER_MARKS_RE = re.compile(r"^[\d\s+().\-]+$")
-PHONE_SPAN_RE = re.compile(r"(?:\+\s?)?\(?\d(?:[\s().\-]{0,3}\d){6,}")
+# digits of any script, with up to three marks between two digits: a space, a dash of any kind, a slash
+PHONE_SPAN_RE = re.compile(r"(?:\+\s?)?\(?\d(?:(?:[^\w\n]|_){0,3}\d){6,}")
 
 Value = TypeVar("Value")
 
@@ -143,6 +151,10 @@ class PhoneIndex(Generic[Value]):
                 return value
         return None
 
+    def has_ending(self, digits: str) -> bool:
+        """True when a known number ends with these digits (seven or more)."""
+        return len(digits) >= _INDEX_DIGITS and bool(self._by_ending.get(digits[-_INDEX_DIGITS:]))
+
     def ending_at(self, digits: str, end: int) -> Iterator[tuple[Phone, Value]]:
         """Known numbers whose last digits are the digits that end at `end`."""
         if end >= _INDEX_DIGITS:
@@ -190,7 +202,16 @@ def _match_start(phone: Phone, digits: str, end: int, floor: int, strict_country
         if start < floor or digits[start:end] != spelled:
             continue
         lead = digits[floor:start]
-        if strict_country and country and lead and lead != country:
+        if strict_country and country and lead and lead not in (country, country + _TRUNK):
             continue  # a "+" and another country code: a different number
         return start
+    if _is_local_form(phone, digits, end, floor):
+        return floor
     return None
+
+
+def _is_local_form(phone: Phone, digits: str, end: int, floor: int) -> bool:
+    """True when the run is the last seven digits of the number and nothing else."""
+    if len(phone.digits) < _NATIONAL_DIGITS or end != len(digits) or end - floor != _LOCAL_DIGITS:
+        return False
+    return digits[floor:end] == phone.digits[-_LOCAL_DIGITS:]

@@ -4,7 +4,6 @@ import time
 
 import pytest
 
-from chat_engine.citations import CitationStream
 from chat_engine.errors import ModelError
 from chat_engine.fake_llm import call, done, say
 from chat_engine.local_answer import local_answer
@@ -242,14 +241,6 @@ def test_many_quotes_are_checked_in_linear_time() -> None:
     assert len(quoted_spans(answer)) == 20_000
     assert unverified_quotes(answer, ["nothing here"]) == ["aaaaaaaaaaaaaaaa"]
     assert time.perf_counter() - started < 5.0
-
-
-def test_a_bare_number_in_brackets_is_read_as_a_reference() -> None:
-    stream = CitationStream(lambda ref: ref in {"m3", "m7"})
-    shown = stream.feed("Signed in March [3], renewed later [7][3]. Not known [9]. Kept [sic].")
-    shown += stream.finish()
-    assert shown == "Signed in March [1], renewed later [2][1]. Not known. Kept [sic]."
-    assert stream.order == ("m3", "m7") and stream.unknown == ("m9",)
 
 
 # --- the answer without a model -----------------------------------------------

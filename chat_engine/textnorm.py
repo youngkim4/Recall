@@ -3,6 +3,13 @@
 No stopword list and no word endings of one language. A word is a run of
 letters and digits in any script, with the marks that belong to them. Words
 are compared without case or diacritics.
+
+Two forms of a word:
+- `fold` is for comparisons inside the engine. It takes scripts apart
+  (Hangul becomes its letters, kana lose their voicing marks), so a folded
+  word must never go to the archive.
+- `surface` is the word as it was written, in lower case. This form goes
+  to the archive, which does its own matching.
 """
 
 from __future__ import annotations
@@ -10,7 +17,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from functools import lru_cache
-from typing import Optional
+from typing import Callable, Optional
 
 _QUOTED_RE = re.compile(r'"([^"]*)"')
 _MARK_SCAN_END = 0x1EA00  # the last block that holds combining marks, apart from variation selectors
@@ -63,6 +70,15 @@ def fold(text: str) -> str:
     return unicodedata.normalize("NFKD", source.casefold()).translate(_diacritics())
 
 
+def surface(word: str) -> str:
+    """A word as written: lower case, composed characters, accents kept."""
+    return unicodedata.normalize("NFC", str(word or "").lower())
+
+
+def surface_words(text: str) -> list[str]:
+    return [surface(word) for word in word_pattern().findall(str(text or ""))]
+
+
 def token_spans(text: str) -> list[Span]:
     """Each word as (start, end, folded word), offsets into `text`."""
     source = str(text or "")
@@ -74,38 +90,54 @@ def words(text: str) -> list[str]:
 
 
 def query_units(query: str) -> list[str]:
-    """Split a search query into units: word, prefix* or "quoted phrase".
+    """Split a search query into folded units: word, prefix* or "quoted phrase".
 
     Bad syntax never raises: an unbalanced quote makes its words plain words.
     A phrase of one word is that word.
     """
+    return _units(query, fold)
+
+
+def surface_units(query: str) -> list[str]:
+    """The units of a query as they were written, to send to the archive.
+
+    Two spellings that fold to the same unit are one unit: the first stays.
+    """
+    return _units(query, surface)
+
+
+def _units(query: str, form: Callable[[str], str]) -> list[str]:
     source = str(query or "")
     if source.count('"') % 2:
         source = source.replace('"', " ")
     units: list[str] = []
     cursor = 0
     for match in _QUOTED_RE.finditer(source):
-        units.extend(_bare_units(source[cursor:match.start()]))
-        phrase = words(match.group(1))
+        units.extend(_bare_units(source[cursor:match.start()], form))
+        phrase = [form(word) for word in word_pattern().findall(match.group(1))]
         if len(phrase) == 1:
             units.append(phrase[0])
         elif phrase:
             units.append('"' + " ".join(phrase) + '"')
         cursor = match.end()
-    units.extend(_bare_units(source[cursor:]))
-    return list(dict.fromkeys(units))
+    units.extend(_bare_units(source[cursor:], form))
+    first: dict[str, str] = {}
+    for unit in units:
+        first.setdefault(fold(unit), unit)
+    return list(first.values())
 
 
-def _bare_units(chunk: str) -> list[str]:
+def _bare_units(chunk: str, form: Callable[[str], str]) -> list[str]:
     units: list[str] = []
-    for _, end, token in token_spans(chunk):
-        is_prefix = chunk[end:end + 1] == "*"
-        units.append(f"{token}*" if is_prefix else token)
+    for match in word_pattern().finditer(chunk):
+        token = form(match.group())
+        units.append(f"{token}*" if chunk[match.end():match.end() + 1] == "*" else token)
     return units
 
 
 def find_unit(unit: str, spans: list[Span]) -> list[tuple[int, int]]:
-    """Character ranges where one query unit matches the tokenised text."""
+    """Character ranges where one query unit matches the tokenised text. The unit may have any spelling."""
+    unit = fold(unit)
     if unit.startswith('"'):
         return _find_phrase(unit.strip('"').split(), spans)
     if unit.endswith("*"):

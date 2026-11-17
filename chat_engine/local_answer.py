@@ -17,6 +17,7 @@ from .scope import EVERYTHING, Scope
 from .search import SearchRequest, run_search
 from .seed import question_units
 from .tool_context import ToolContext
+from .tools import ToolBox
 
 _EXCERPT_CHARS = 200
 _NO_USAGE = {
@@ -37,11 +38,17 @@ def local_answer(
     labeler: Optional[Labeler] = None,
     limit: int = 6,
 ) -> dict[str, Any]:
-    """The messages that match the words of the question best, as a plain list."""
+    """The messages that match the words of the question best, as a plain list.
+
+    Raises ArchiveError when the archive fails.
+    """
     names = labeler or MaskingLabeler()
-    registry = EvidenceRegistry()
-    limits = Limits()
-    context = ToolContext(archive, names, registry, ConversationAliases(), scope, limits)
+    box = ToolBox(archive, names, EvidenceRegistry(), ConversationAliases(), scope, Limits())
+    return box.guard(lambda: _answer(box.context, question, scope, max(1, limit)))
+
+
+def _answer(context: ToolContext, question: str, scope: Scope, limit: int) -> dict[str, Any]:
+    archive, names, registry = context.archive, context.labeler, context.registry
     context.directory()  # the labeler learns the unsaved handles here, before it reads the question
     units = question_units(question, names.redact)
     if not units:
@@ -53,7 +60,7 @@ def local_answer(
         conversations=context.conversations(None),
         since=since,
         until=until,
-        limit=max(1, limit),
+        limit=limit,
     )
     outcome = run_search(archive, request)
     words = ", ".join(outcome.used or units)
@@ -69,7 +76,7 @@ def local_answer(
     for number, found in enumerate(outcome.hits, start=1):
         refs.append(registry.add(found.message))
         lines.append(_line(context, found.message, number))
-    cited = citations(refs, registry, context.book, limits.max_message_chars)
+    cited = citations(refs, registry, context.book, context.limits.max_message_chars)
     step = f"Searched for “{request.query}”: {len(cited)} matches shown"
     return _result(names.redact("\n".join(lines)), cited, step)
 

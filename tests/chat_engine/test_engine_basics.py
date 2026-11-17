@@ -152,6 +152,8 @@ def test_scope_is_stated_and_the_seed_stays_inside_it() -> None:
             assert arguments["conversation_id"] == JONAS_PHONE
         elif name == "context":
             assert arguments["message_id"].startswith("j")
+        elif name == "conversations":  # names and handles for the labeler: no message is read
+            assert arguments == {"limit": None, "offset": 0, "order": "count"}
         else:
             assert name == "summary", name
 

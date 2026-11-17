@@ -29,6 +29,7 @@ class EngineConfig:
     """Settings of the engine. `model` and `max_output_tokens` have no default.
 
     max_steps: model calls that may use tools; one more call must answer.
+    max_calls_per_step: the most lookups one model call may start.
     result_tokens: the most one tool result may hold.
     total_tool_tokens: the most all tool results of one question may hold.
     history_tokens: the most the earlier turns of the chat may hold.
@@ -39,6 +40,7 @@ class EngineConfig:
     model: str
     max_output_tokens: int
     max_steps: int = 6
+    max_calls_per_step: int = 8
     result_tokens: int = 3000
     total_tool_tokens: int = 18000
     history_tokens: int = 6000
@@ -49,7 +51,10 @@ class EngineConfig:
     def __post_init__(self) -> None:
         if not str(self.model or "").strip():
             raise ValueError("model is required")
-        for name in ("max_output_tokens", "max_steps", "result_tokens", "total_tool_tokens", "max_message_chars"):
+        for name in (
+            "max_output_tokens", "max_steps", "max_calls_per_step", "result_tokens", "total_tool_tokens",
+            "max_message_chars",
+        ):
             if int(getattr(self, name)) < 1:
                 raise ValueError(f"{name} must be at least 1")
         if self.history_tokens < 0:
@@ -60,6 +65,7 @@ class EngineConfig:
             model=self.model,
             max_output_tokens=self.max_output_tokens,
             max_steps=self.max_steps,
+            max_calls_per_step=self.max_calls_per_step,
             result_tokens=self.result_tokens,
             total_tool_tokens=self.total_tool_tokens,
             history_tokens=self.history_tokens,

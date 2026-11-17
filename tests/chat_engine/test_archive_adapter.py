@@ -47,10 +47,10 @@ def test_adapter_passes_only_the_cursor_that_was_given() -> None:
     adapter.messages("c", before="m2", limit=5)
     adapter.messages("c", after="m3", limit=5)
     assert seen == [
-        {"limit": 5},
-        {"limit": 5, "around": "m1"},
-        {"limit": 5, "before": "m2"},
-        {"limit": 5, "after": "m3"},
+        {"limit": 5, "include_system": False},
+        {"limit": 5, "include_system": False, "around": "m1"},
+        {"limit": 5, "include_system": False, "before": "m2"},
+        {"limit": 5, "include_system": False, "after": "m3"},
     ]
 
 

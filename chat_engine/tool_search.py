@@ -8,7 +8,7 @@ from typing import Any, Mapping, Optional, Sequence
 
 from .ports import Message
 from .registry import normalize_ref
-from .render import ResultWriter, add_block, fit_messages
+from .render import ResultWriter, add_block, fit_messages, time_key
 from .search import Found, SearchOutcome, SearchRequest, run_search
 from .tool_args import ToolInputError, bool_arg, choice_arg, day_arg, int_arg, list_arg, text_arg
 from .tool_browse import prepare_browse
@@ -131,7 +131,7 @@ def _around(
     if within is not None:
         kept = [m for m in kept if _close(m, anchor, within)]
     if str(anchor["id"]) not in {str(m["id"]) for m in kept}:
-        kept = [anchor]
+        kept = sorted([*kept, anchor], key=time_key)  # the archive gave the neighbours without the message
     return Window(tuple(kept), frozenset(), {})
 
 
@@ -146,7 +146,7 @@ def _close(message: Message, anchor: Message, within: timedelta) -> bool:
 
 def _merged(first: Sequence[Message], second: Sequence[Message]) -> tuple[Message, ...]:
     by_id = {str(m["id"]): m for m in [*first, *second]}
-    return tuple(sorted(by_id.values(), key=lambda m: (str(m.get("timestamp") or ""), m.get("sent_at") or 0)))
+    return tuple(sorted(by_id.values(), key=time_key))
 
 
 def _header(ctx: ToolContext, request: SearchRequest, outcome: SearchOutcome) -> str:

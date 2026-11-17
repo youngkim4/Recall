@@ -108,6 +108,17 @@ class ConversationAliases:
     def resolve(self, alias: object) -> Optional[str]:
         return self._id_by_alias.get(normalize_alias(alias))
 
+    def checkpoint(self) -> int:
+        """A mark to roll back to when a question does not finish."""
+        return len(self._id_by_alias)
+
+    def rollback(self, mark: int) -> None:
+        """Forget every alias given after `mark`. A mark out of range changes nothing."""
+        if not 0 <= mark <= len(self._id_by_alias):
+            return
+        for alias in list(self._id_by_alias)[mark:]:
+            self._alias_by_id.pop(self._id_by_alias.pop(alias), None)
+
     def snapshot(self) -> list[str]:
         return list(self._id_by_alias.values())
 

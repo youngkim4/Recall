@@ -100,6 +100,8 @@ def test_scoped_question_never_reads_outside_the_scope() -> None:
             assert arguments["conversation_id"] == JONAS_PHONE, (name, arguments)
         elif name == "context":
             assert arguments["message_id"].startswith("j"), arguments
+        elif name == "conversations":  # names and handles for the labeler: no message is read
+            assert arguments == {"limit": None, "offset": 0, "order": "count"}
         else:
             assert name == "summary", name
 
@@ -118,12 +120,12 @@ def test_made_up_quote_is_flagged_and_a_real_one_is_not() -> None:
     assert '"yes!! the lease got signed btw" [1]' in result["answer"]
 
 
-def test_quoting_the_question_or_a_conversation_name_is_not_flagged() -> None:
+def test_a_conversation_name_in_quote_marks_is_not_flagged_but_the_question_is() -> None:
     engine, _, _ = make_engine(
-        [say('You asked about "the big lisbon reunion dinner"; nothing in "Lisbon crew" mentions it.')]
+        [say('You asked about "the big lisbon reunion dinner"; nothing in "a number ending in 0199" mentions it.')]
     )
-    result = engine.ask("was there talk of the big lisbon reunion dinner in Lisbon crew?")
-    assert result["unverified_quotes"] == []
+    result = engine.ask("was there talk of the big lisbon reunion dinner with the 0199 number?")
+    assert result["unverified_quotes"] == ["the big lisbon reunion dinner"]
 
 
 def test_citations_are_renumbered_in_order_of_use() -> None:
@@ -214,7 +216,7 @@ def test_plain_history_can_start_a_session() -> None:
             {"role": "user", "content": "unanswered"},
         ]
     )
-    assert [(turn.question, turn.answer) for turn in session.turns] == [("who is Maya?", "A friend [1].")]
+    assert [(turn.question, turn.answer) for turn in session.turns] == [("who is Maya?", "A friend.")]
     engine, fake, _ = make_engine([say("Still a friend.")])
     engine.ask("and now?", session=session)
     assert fake.requests[0].messages[1].content == "who is Maya?"

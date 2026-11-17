@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
 from .registry import ConversationAliases, EvidenceRegistry
 from .scope import EVERYTHING, Scope
+
+_SHOWN_CITATION_RE = re.compile(r"[ \t]*\[\d+\]")
 
 
 @dataclass(frozen=True)
@@ -34,9 +37,6 @@ class ChatSession:
     def add_turn(self, turn: Turn) -> None:
         self.turns = (*self.turns, turn)
 
-    def questions(self) -> list[str]:
-        return [turn.question for turn in self.turns]
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "turns": [_turn_row(turn) for turn in self.turns],
@@ -56,12 +56,14 @@ class ChatSession:
         return session
 
     @classmethod
-    def from_history(cls, history: Iterable[Mapping[str, Any]]) -> ChatSession:
+    def from_history(cls, history: Iterable[Mapping[str, Any]], scope: Scope = EVERYTHING) -> ChatSession:
         """A session from plain role/content rows. The evidence is not restored.
 
         A "user" row is a question and the "assistant" row after it is its
-        answer. Every other row is ignored. The scope of each turn is unknown,
-        so it counts as "everything".
+        answer. Every other row is ignored. `scope` is the scope the chat was
+        asked in: give it, or a question with a scope leaves the earlier
+        answers out. The numbers [1], [2] of the shown answers are removed:
+        the messages they stood for are not in the new session.
         """
         session = cls()
         question = ""
@@ -73,8 +75,9 @@ class ChatSession:
             if role == "user":
                 question = content
             elif role == "assistant":
-                if question and content:
-                    session.add_turn(Turn(question, content))
+                answer = _SHOWN_CITATION_RE.sub("", content).strip()
+                if question and answer:
+                    session.add_turn(Turn(question, answer, (), scope))
                 question = ""
         return session
 

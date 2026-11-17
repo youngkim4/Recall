@@ -13,7 +13,7 @@ from typing import Callable, Sequence
 from .directory import Directory, Entry
 from .labeler import handle_spans
 from .search import SearchRequest
-from .textnorm import words
+from .textnorm import fold, surface_words
 from .tool_context import Prepared, ToolContext
 from .tool_figures import list_entries
 from .tool_search import run_search_tool
@@ -36,7 +36,7 @@ class SeedCall:
 
 
 def question_units(question: str, redact: Callable[[str], str]) -> list[str]:
-    """Words of the question worth searching for.
+    """Words of the question worth searching for, as the user wrote them.
 
     A handle the labeler would mask is left out, so its digits never become
     search words that the model reads.
@@ -46,7 +46,10 @@ def question_units(question: str, redact: Callable[[str], str]) -> list[str]:
         span = question[start:end]
         if redact(span) != span:
             kept = kept[:start] + " " + kept[end:]
-    tokens = [t for t in dict.fromkeys(words(kept)) if _worth_a_search(t)]
+    first: dict[str, str] = {}
+    for token in surface_words(kept):
+        first.setdefault(fold(token), token)
+    tokens = [token for key, token in first.items() if _worth_a_search(key)]
     if len(tokens) > _MAX_UNITS:
         longest = set(sorted(tokens, key=len, reverse=True)[:_MAX_UNITS])
         tokens = [token for token in tokens if token in longest]

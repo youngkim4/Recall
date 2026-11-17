@@ -19,7 +19,8 @@ def _directory(scope: Scope | None = None):
     archive = tiny_archive()
     labeler = tiny_labeler()
     book = ConversationBook(archive, labeler, ConversationAliases())
-    return Directory.load(archive, labeler, book, scope or Scope()), archive
+    listed = archive.conversations(limit=None, offset=0, order="count")
+    return Directory.load(archive, book, labeler, scope or Scope(), listed), archive
 
 
 def _ids(entries) -> list[str]:
@@ -85,5 +86,4 @@ def test_scoped_directory_reads_only_the_scope() -> None:
     directory, archive = _directory(Scope(conversations=(JONAS_PHONE,)))
     assert _ids(directory.entries) == [JONAS_PHONE]
     assert directory.find("maya") == []
-    assert [name for name, _ in archive.calls] == ["conversation"]
-    assert archive.calls[0][1] == {"conversation_id": JONAS_PHONE}
+    assert [name for name, _ in archive.calls] == ["conversations"]

@@ -108,11 +108,14 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         "list_conversations",
         "Find conversations and people by name. Gives the alias (c3), the name, direct or group, message "
         "counts and the first and last day. One person can have several threads and be in groups: all "
-        "are listed. Digits match part of a phone number. Without a name it lists the conversations "
+        "are listed. Digits match the last four digits of a phone number, or the whole number. Without a "
+        "name it lists the conversations "
         "with the most messages.",
         _schema(
             {
-                "name": _nullable("string", "A name, a part of a name, or digits of a phone number."),
+                "name": _nullable(
+                    "string", "A name, a part of a name, or the last four digits of a phone number."
+                ),
                 "limit": _nullable("integer", f"Rows to show, 1 to {LIST_LIMIT_MAX}. Default 10."),
             }
         ),

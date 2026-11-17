@@ -119,15 +119,26 @@ class Directory:
         self.entries = tuple(sorted(entries, key=lambda entry: (-entry.total, entry.label)))
 
     @classmethod
-    def load(cls, archive: ChatArchive, labeler: Labeler, book: ConversationBook, scope: Scope) -> Directory:
-        """The conversations of the scope. With days, only those that have messages in the days."""
+    def load(
+        cls,
+        archive: ChatArchive,
+        book: ConversationBook,
+        labeler: Labeler,
+        scope: Scope,
+        listed: Sequence[Conversation],
+    ) -> Directory:
+        """The conversations of the scope, out of all `listed` ones.
+
+        With days, only those that have messages in the days.
+        """
         if scope.conversations:
-            found = [book.get(conversation_id) for conversation_id in scope.conversations]
+            by_id = {str(conversation["id"]): conversation for conversation in listed}
+            found = [by_id.get(cid) or book.get(cid) for cid in scope.conversations]
             conversations = [conversation for conversation in found if conversation]
         else:
-            conversations = archive.conversations(limit=None, offset=0, order="count")
-            for conversation in conversations:
-                book.put(conversation)
+            conversations = list(listed)
+        for conversation in conversations:
+            book.put(conversation)
         counted = _counts_in_days(archive, scope)
         entries = [
             _entry(conversation, labeler, book, _row_of(counted, str(conversation["id"])))

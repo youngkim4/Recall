@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
 
 from .directory import Directory
-from .ports import ChatArchive, Labeler, Message
+from .ports import ChatArchive, Conversation, Labeler, Message
 from .registry import ConversationAliases, EvidenceRegistry
 from .render import ConversationBook, Limits
 from .scope import Scope
@@ -72,10 +72,28 @@ class ToolContext:
         self.limits = limits
         self.book = ConversationBook(archive, labeler, aliases)
         self._directory: Optional[Directory] = None
+        self._listed: Optional[list[Conversation]] = None
+
+    def listed(self) -> list[Conversation]:
+        """Every conversation of the archive, whatever the scope.
+
+        The labeler sees each conversation and each member here. So it can
+        mask the handle of any person of the archive in any text, also a
+        person outside the scope. Nothing of this goes to the model.
+        """
+        if self._listed is None:
+            listed = self.archive.conversations(limit=None, offset=0, order="count")
+            for conversation in listed:
+                self.book.put(conversation)
+                self.book.label(str(conversation["id"]))
+                for handle in conversation.get("members") or []:
+                    self.labeler.sender(str(handle))
+            self._listed = listed
+        return self._listed
 
     def directory(self) -> Directory:
         if self._directory is None:
-            self._directory = Directory.load(self.archive, self.labeler, self.book, self.scope)
+            self._directory = Directory.load(self.archive, self.book, self.labeler, self.scope, self.listed())
         return self._directory
 
     # --- scope ---

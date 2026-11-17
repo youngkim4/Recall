@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from typing import Any, Optional, Sequence
 
 from .ports import ChatArchive, Message, SearchHit
-from .textnorm import find_unit, query_units, token_spans
+from .textnorm import find_unit, surface_units, token_spans
 
 MAX_FETCH = 60
 _ANY_FETCH = 40
@@ -60,7 +60,8 @@ class SearchOutcome:
 
 
 def run_search(archive: ChatArchive, request: SearchRequest) -> SearchOutcome:
-    units = query_units(request.query)[:_MAX_UNITS]
+    # the words go to the archive as they were written: a folded word is not what a message holds
+    units = surface_units(request.query)[:_MAX_UNITS]
     if request.match == "any" and len(units) > 1:
         return _search_any(archive, request, units)
     return _search_all(archive, request, units)

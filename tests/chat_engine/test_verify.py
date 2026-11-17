@@ -52,11 +52,15 @@ def test_spaces_quote_marks_and_case_are_normalised() -> None:
     assert unverified_quotes(answer, SOURCES) == []
 
 
-def test_elided_quote_is_checked_piece_by_piece() -> None:
-    good = 'She said "the lease got signed ... first of April".'
+def test_elided_quote_must_have_its_parts_in_one_source_in_order() -> None:
+    good = 'She said "don\'t worry ... it\'s covered" and "yes!! … signed btw".'
     assert unverified_quotes(good, SOURCES) == []
     bad = 'She said "the lease got signed […] and the dog ate it all".'
     assert unverified_quotes(bad, SOURCES) == ["the lease got signed […] and the dog ate it all"]
+    stitched = 'She said "the lease got signed ... first of April".'
+    assert unverified_quotes(stitched, SOURCES) == ["the lease got signed ... first of April"]
+    backwards = 'She said "it\'s covered ... don\'t worry about".'
+    assert unverified_quotes(backwards, SOURCES) == ["it's covered ... don't worry about"]
 
 
 def test_reworded_quote_is_flagged() -> None:

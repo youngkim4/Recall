@@ -19,8 +19,10 @@ from .registry import ConversationAliases, EvidenceRegistry
 OWNER = "You"
 MIN_MESSAGE_CHARS = 200
 _READ_AHEAD = 4  # source characters read for each character that can be shown
-_NUMBER_AT_END_RE = re.compile(r"[\d\s+().\-]+$")
-_NUMBER_AT_START_RE = re.compile(r"^[\d\s+().\-]+")
+_NUMBER_AT_END_RE = re.compile(r"(?:\d|[^\w\n]|_)+$")
+_NUMBER_AT_START_RE = re.compile(r"^(?:\d|[^\w\n]|_)+")
+_MAX_ADDRESS_CHARS = 320
+_ADDRESS_MARKS = "._+-@"
 _MIME_RE = re.compile(r"^[a-z0-9.+\-]+/[a-z0-9.+\-]+$")
 _MEDIA = {
     "image": {"heic", "jpg", "jpeg", "png", "gif", "webp", "tiff", "bmp"},
@@ -31,6 +33,15 @@ _MEDIA = {
 }
 
 Redact = Callable[[str], str]
+
+
+def time_key(message: Message) -> tuple[int, str]:
+    """The order of messages in time.
+
+    `sent_at` decides. The local time alone is not enough: one hour comes
+    twice in the night when summer time ends.
+    """
+    return int(message.get("sent_at") or 0), str(message.get("timestamp") or "")
 
 
 def estimate_tokens(text: str) -> int:
@@ -45,16 +56,39 @@ class Limits:
     count_tokens: Callable[[str], int] = estimate_tokens
 
 
-def _piece(source: str, start: int, end: int, redact: Optional[Redact]) -> str:
-    """source[start:end] with numbers masked and whitespace collapsed.
+def _address_at(source: str, edge: int) -> Optional[tuple[int, int]]:
+    """The run with an "@" that a cut at `edge` would split, as (start, end). None when no such run."""
+    if edge <= 0 or edge >= len(source):
+        return None
+    left = right = edge
+    while left > 0 and edge - left < _MAX_ADDRESS_CHARS and _in_address(source[left - 1]):
+        left -= 1
+    while right < len(source) and right - edge < _MAX_ADDRESS_CHARS and _in_address(source[right]):
+        right += 1
+    if edge in (left, right) or "@" not in source[left:right]:
+        return None
+    return left, right
 
-    A number that the slice cuts in two is dropped at that edge: half a number
-    is never shown.
+
+def _in_address(char: str) -> bool:
+    return char.isalnum() or char in _ADDRESS_MARKS
+
+
+def _piece(source: str, start: int, end: int, redact: Optional[Redact]) -> str:
+    """source[start:end] with handles masked and whitespace collapsed.
+
+    A number or an address that the slice cuts in two is dropped at that
+    edge: half a handle is never shown, because a mask needs the whole of it.
     """
-    piece = source[max(0, start):end]
-    if start > 0:
+    low, high = max(0, start), min(len(source), end)
+    split = _address_at(source, low)
+    low = split[1] if split else low
+    split = _address_at(source, high)
+    high = split[0] if split else high
+    piece = source[low:high] if low < high else ""
+    if low > 0:
         piece = _NUMBER_AT_START_RE.sub("", piece)
-    if end < len(source):
+    if high < len(source):
         piece = _NUMBER_AT_END_RE.sub("", piece)
     return " ".join((redact(piece) if redact else piece).split())
 
@@ -212,8 +246,8 @@ def render_block(
         speaker = book.speaker(message)  # first: the labeler learns the handle before the text is masked
         ref = registry.add(message)
         body = message_body(message, limits, (focus or {}).get(str(message["id"])), book.redact)
-        reply = registry.ref_of(str(message.get("reply_to") or ""))
-        note = f" (reply to {reply})" if reply else ""
+        thread = registry.ref_of(str(message.get("reply_to") or ""))
+        note = f" (in the thread that starts at {thread})" if thread and thread != ref else ""
         mark = marks.get(str(message["id"]))
         tail = f"  <<< {mark}" if mark else ""
         lines.append(f"{ref} {stamp[11:16]} {speaker}: {body}{note}{tail}")

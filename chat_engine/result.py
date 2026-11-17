@@ -42,13 +42,14 @@ def citations(
 def quote_sources(
     registry: EvidenceRegistry,
     book: ConversationBook,
-    questions: Sequence[str],
     redact: Callable[[str], str],
     allowed: Callable[[Message], bool],
 ) -> list[str]:
-    """Text a quote may come from: shown messages inside the scope, the user's own words, names.
+    """Text a quote may come from: shown messages inside the scope, and names.
 
     The whole stored text of a message counts, also the part a cap cut away.
+    The words of the user are no source: a question such as "did she say
+    that she hates it?" must not make "she hates it" a quote of a message.
     """
     sources: list[str] = []
     for message in registry.messages():
@@ -59,7 +60,6 @@ def quote_sources(
         masked = redact(text)
         if masked != text:
             sources.append(masked)
-    sources.extend(questions)
     sources.extend(book.labels())
     return sources
 
@@ -72,7 +72,6 @@ def build_payload(
     unknown: Sequence[str],
     registry: EvidenceRegistry,
     book: ConversationBook,
-    questions: Sequence[str],
     redact: Callable[[str], str],
     allowed: Callable[[Message], bool],
     text_cap: int,
@@ -81,7 +80,7 @@ def build_payload(
     cancelled: bool,
     truncated: bool,
 ) -> dict[str, Any]:
-    sources = quote_sources(registry, book, questions, redact, allowed)
+    sources = quote_sources(registry, book, redact, allowed)
     return {
         "answer": answer,
         "citations": citations(order, registry, book, text_cap),

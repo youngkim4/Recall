@@ -10,6 +10,7 @@ The words are the same as `contact_label` in `ui_server.py` uses.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Iterable, Mapping
 
 from .handles import (
@@ -47,6 +48,7 @@ __all__ = [
 
 _GROUP_NAMES_SHOWN = 3
 _COUNTRY_DIGITS = 3
+MIN_NATIONAL_DIGITS = 10  # a shorter run of digits is a local form: it can belong to more than one number
 
 
 def _clean_name(name: object) -> str:
@@ -108,6 +110,8 @@ class MaskingLabeler:
     def _direct_label(self, conversation: Conversation) -> str:
         handles = [str(conversation.get("id") or ""), *map(str, conversation.get("members") or [])]
         for handle in handles:
+            self._remember(handle)  # every handle, whatever the label will be: text can hold any of them
+        for handle in handles:
             name = self.saved_name(handle)
             if name:
                 return name
@@ -116,16 +120,15 @@ class MaskingLabeler:
             return self._scrub(archive_name)
         for handle in handles:
             if handle_kind(handle) != "other":
-                self._remember(handle)
                 return mask_handle(handle)
         return UNKNOWN_MASK
 
     def _group_label(self, conversation: Conversation) -> str:
+        members = [self.sender(str(handle)) for handle in conversation.get("members") or []]
         saved = self.saved_name(str(conversation.get("id") or ""))
         name = saved or self._scrub(_clean_name(conversation.get("name")))
         if name:
             return name
-        members = [self.sender(str(handle)) for handle in conversation.get("members") or []]
         if not members:
             return GROUP_MASK
         shown = members[:_GROUP_NAMES_SHOWN]
@@ -172,20 +175,31 @@ class MaskingLabeler:
     # --- redaction ---
 
     def _mask_email(self, match: re.Match[str]) -> str:
+        """Mask an unsaved address, also when a sentence goes on after it: "name@example.org.Thanks"."""
         found = match.group()
-        return EMAIL_MASK if found.lower() in self._unsaved_emails else found
+        lowered = found.lower()
+        at = lowered.find("@")
+        cut = len(lowered)
+        while cut > at:
+            if lowered[:cut] in self._unsaved_emails:
+                return EMAIL_MASK + found[cut:]
+            cut = lowered.rfind(".", 0, cut)
+        return found
 
     def _mask_phones(self, match: re.Match[str]) -> str:
         """Mask every unsaved number inside one run of digits and separators."""
         span = match.group()
-        positions = [index for index, char in enumerate(span) if char.isdigit()]
-        digits = "".join(span[index] for index in positions)
+        positions = [index for index, char in enumerate(span) if char.isdecimal()]
+        digits = "".join(str(unicodedata.decimal(span[index])) for index in positions)
         found = match_in_run(self._unsaved_phones, digits, span.lstrip().startswith("+"))
         parts: list[str] = []
         cursor = 0
         previous_end = 0
         for start, end, phone in found:
-            if self._saved_phones.get(Phone(digits[start:end], False)):
+            run = digits[start:end]
+            if self._saved_phones.get(Phone(run, False)) or (
+                len(run) < MIN_NATIONAL_DIGITS and self._saved_phones.has_ending(run)
+            ):
                 continue  # the same digits also spell a saved number
             first = _replace_from(span, positions, start, previous_end, cursor)
             parts.append(span[cursor:first])

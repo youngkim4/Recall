@@ -70,6 +70,8 @@ def run_browse(ctx: ToolContext, request: BrowseRequest, budget: int) -> ToolOut
     whole = everything and not (request.since or request.until)
 
     def header(count: int) -> str:
+        if not found.reached_edge:
+            return f"{plural(count, 'message')} near the {'start' if backwards else 'end'} of {title}:"
         note = " (all of it)" if whole and count == len(messages) else ""
         return f"{request.which.capitalize()} {plural(count, 'message')} of {title}{note}:"
 

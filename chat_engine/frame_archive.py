@@ -18,18 +18,19 @@ import os
 import re
 import threading
 from datetime import date
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Iterator, Optional, Sequence, Union
 
 import numpy as np
 import pandas as pd
 
+from .fake_archive import NO_SENDER
 from .frame_counts import GROUPS, conversation_stats, grouped_counts
 from .frame_index import Query, WordIndex, fragment_pattern, match_ranges, parse_query
 from .frame_load import Rows, is_group_id, load_rows, read_export
 from .ports import ArchiveSummary, Conversation, CountRow, Message, MessagePage, SearchResult
 from .textnorm import find_unit, token_spans
 
-DEFAULT_INDEX_CHARS = 20_000
+DEFAULT_INDEX_CHARS = 10_000  # as `archive.INDEXED_TEXT_CHARS`: search looks at the start of a very long text
 _RELEVANCE_POOL = 2_000
 _DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _NO_ROWS = np.empty(0, dtype=np.int64)
@@ -65,7 +66,8 @@ class FrameArchive:
         bounds = np.searchsorted(rows.codes[grouped], np.arange(len(rows.conversations) + 1))
         self._positions_of = [grouped[bounds[code]:bounds[code + 1]] for code in range(len(rows.conversations))]
         self._id_index = pd.Index(rows.ids)
-        self._sender_codes, self._sender_ids = pd.factorize(rows.senders)
+        nameless = (rows.senders == "") & ~rows.from_me  # received, with no handle: not the owner
+        self._sender_codes, self._sender_ids = pd.factorize(np.where(nameless, NO_SENDER, rows.senders))
         self._texts = pd.Series(rows.texts, dtype=object)
         described = sorted((self._describe(code) for code in range(len(rows.conversations))), key=lambda c: c["id"])
         self._described = {conversation["id"]: conversation for conversation in described}
@@ -137,6 +139,13 @@ class FrameArchive:
             "has_older": 0 < start < end,
             "has_newer": start < end < len(positions),
         }
+
+    def iter_messages(
+        self, conversation_id: str, *, since: Optional[str] = None, until: Optional[str] = None
+    ) -> Iterator[Message]:
+        """The messages of one conversation, oldest first. Not in the port: the engine uses it when it is there."""
+        positions = self._filter(None, [str(conversation_id)], _day_key(since), _day_key(until), None)
+        return (self._message(int(position)) for position in positions)
 
     def context(self, message_id: str, *, radius: int = 6) -> list[Message]:
         position = self._position(message_id)
