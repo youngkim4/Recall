@@ -102,7 +102,10 @@ class PeriodCache:
                 )
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(_CREATE)
-            conn.execute(f"PRAGMA user_version = {CACHE_SCHEMA_VERSION}")
+            # Only when it differs: a write changes the file, and a cache that is
+            # keyed by the state of this file (the preview of the app) would never be found again.
+            if version != CACHE_SCHEMA_VERSION:
+                conn.execute(f"PRAGMA user_version = {CACHE_SCHEMA_VERSION}")
         self._keep_private()
 
     def _keep_private(self) -> None:

@@ -196,3 +196,19 @@ def test_two_threads_can_write_at_once(cache_path: Path) -> None:
         thread.join()
     assert errors == []
     assert cache.count() == 75
+
+
+def test_opening_a_cache_that_is_there_does_not_write_to_its_file(tmp_path: Path) -> None:
+    """The app keys its saved previews by the state of this file. An estimate opens it and must not change it."""
+    path = tmp_path / "cache.sqlite3"
+    put(PeriodCache(path), entry())
+    with closing(sqlite3.connect(path)) as conn:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    before = (path.stat().st_mtime_ns, path.stat().st_size)
+
+    for _ in range(3):
+        assert PeriodCache(path).get("k1") is not None
+
+    assert (path.stat().st_mtime_ns, path.stat().st_size) == before
+    with closing(sqlite3.connect(path)) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == CACHE_SCHEMA_VERSION
