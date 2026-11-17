@@ -989,7 +989,7 @@ def work_job(job_id: str, action: str, payload: dict):
             elif action == "setup_import":
                 db_path = database_for(action, payload)
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
-                include_contacts = bool(payload.get("includeContacts", True))
+                include_contacts = payload.get("includeContacts", True) is not False
 
                 update_job(job_id, progress={"step": 1, "of": 3, "label": "Reading your Messages database"})
                 append_log(job_id, "Reading Messages" if db_path == LIVE_CHAT_DB else f"Reading the copy at {db_path}")
@@ -1001,15 +1001,23 @@ def work_job(job_id: str, action: str, payload: dict):
                     append_log(job_id, "Matching names from Contacts")
                     try:
                         export_contact_names()
-                    except Exception as exc:
+                    except Exception:
                         # names are a nicety, never a blocker -- numbers still work
                         contacts_skipped = True
-                        append_log(job_id, f"Contacts skipped: {exc}")
+                        append_log(job_id, "Contacts could not be read. Some people show as numbers.")
+                        with contextlib.suppress(Exception):
+                            traceback.print_exc(file=sys.__stderr__)
 
                 update_job(job_id, progress={"step": 3, "of": 3, "label": "Getting your archive ready"})
                 append_log(job_id, "Warming the archive")
-                df, catalog, _names = cached_messages_bundle(messages_path)
-                years = read_times(df["timestamp"]).dt.year.dropna()
+                try:
+                    df, catalog, _names = cached_messages_bundle(messages_path)
+                    years = read_times(df["timestamp"]).dt.year.dropna()
+                except Exception as exc:
+                    # the three files are in place: the reader is not told that the archive is as it was
+                    raise ImportStopped(
+                        "The archive was written, but Recall could not read it back. Try again."
+                    ) from exc
                 result = {
                     "messages": int(len(df)),
                     "conversations": int(len(catalog)),

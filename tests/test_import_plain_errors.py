@@ -169,15 +169,37 @@ def test_a_database_that_lacks_a_table_is_told_with_no_text_of_a_query(archive, 
     assert unchanged(archive)
 
 
-def test_a_failure_that_is_not_of_the_import_still_says_where_it_came_from(archive, tmp_path, monkeypatch):
-    # after the archive is written: this is not a reason an import gives, so the job keeps its trace
+def test_an_archive_that_cannot_be_read_back_is_not_said_to_be_as_it_was(archive, tmp_path, monkeypatch):
+    # the three files are written; what fails comes after them
     copy = messages_db(tmp_path / "copy.db", ["one"])
-    monkeypatch.setattr(ui_server, "cached_messages_bundle", raising(RuntimeError("the archive could not be read back")))
+    monkeypatch.setattr(ui_server, "cached_messages_bundle", raising(RuntimeError(f"a failure with {QUERY} in it")))
 
     job = import_from(copy, messages_csv(archive))
 
     assert job["status"] == "failed"
-    assert job["error"] == "the archive could not be read back"
+    assert job["error"] == "The archive was written, but Recall could not read it back. Try again."
+    assert "SELECT" not in said(job) and "Traceback" not in said(job)
+    assert not unchanged(archive)
+
+
+def test_contacts_that_cannot_be_read_are_told_in_a_plain_line(archive, tmp_path, monkeypatch):
+    copy = messages_db(tmp_path / "copy.db", ["one"])
+    monkeypatch.setattr(ui_server, "export_contact_names", raising(RuntimeError(f"a failure with {QUERY} in it")))
+
+    job = run("setup_import", {"dbPath": str(copy), "messagesPath": str(messages_csv(archive)), "includeContacts": True})
+
+    assert job["status"] == "completed", job["error"]
+    assert job["result"]["contactsSkipped"] is True
+    assert "Contacts could not be read. Some people show as numbers." in said(job)
+    assert "SELECT" not in said(job) and "Traceback" not in said(job)
+
+
+def test_a_job_of_another_kind_keeps_its_trace(archive):
+    # this is not a reason that an import gives, so the job says where it came from
+    job = run("analyze", {"messagesPath": str(messages_csv(archive))})
+
+    assert job["status"] == "failed"
+    assert job["error"] == "Select a contact before starting analysis"
     assert "Traceback" in said(job)
 
 
