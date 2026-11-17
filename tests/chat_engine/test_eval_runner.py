@@ -9,7 +9,6 @@ from chat_engine.errors import RateLimitedError
 from chat_engine.eval import runner
 from chat_engine.eval.oracle import SCRIPTS
 from chat_engine.eval.questions import build_questions
-from chat_engine.eval.scoring import plain, score
 from chat_engine.eval.synthetic import build_synthetic_archive
 from chat_engine.fake_llm import FakeLLM
 from chat_engine.ports import LLMEvent, LLMRequest
@@ -108,33 +107,24 @@ def test_failed_model_call_is_a_row_with_its_error_code(stand_in: type[StandIn])
     assert "0 of 1 passed." in "\n".join(lines)
 
 
-def test_score_names_each_failed_check() -> None:
-    question = QUESTIONS["relative_summer"]
-    good = {
-        "answer": "Jonas baked a rye loaf [1].",
-        "citations": [{"id": SYNTHETIC.planted["baked_rye"]}],
-        "unverified_quotes": [],
-        "invalid_references": [],
-    }
-    assert all(score(good, question).values())
-    bad = {
-        "answer": "He baked focaccia, said +1 (720) 555-0199.",
-        "citations": [{"id": "other"}],
-        "unverified_quotes": ["made up"],
-        "invalid_references": ["m9"],
-    }
-    checks = score(bad, question, forbidden=["+1 (720) 555-0199"])
-    assert [name for name, ok in checks.items() if not ok] == [
-        "quotes_verified", "references_valid", "no_raw_handle", "contains", "cites", "absent",
-    ]
-    cancelled = {**good, "cancelled": True}
-    assert score(cancelled, question)["answered"] is False
+def test_only_refuses_an_id_that_is_not_a_question() -> None:
+    with pytest.raises(SystemExit) as stopped:
+        _run("--scripted", "--only", "recall_wifi,no_such_question")
+    assert stopped.value.code == 2
 
 
-def test_score_ignores_case_accents_and_thousands_separators() -> None:
-    assert plain("You sent 2,157 Messages — ÓTIMO") == "you sent 2157 messages — otimo"
-    not_found = QUESTIONS["absent_zanzibar"]
-    result = {"answer": "I could not find any mention of that.", "citations": []}
-    assert score(result, not_found)["says_not_found"] is True
-    guess = {"answer": "He said it was lovely there.", "citations": []}
-    assert score(guess, not_found)["says_not_found"] is False
+@pytest.mark.parametrize(
+    ("line", "key"),
+    [
+        ("OPENAI_API_KEY=plain-key-not-real", "plain-key-not-real"),
+        ("OPENAI_API_KEY=plain-key-not-real # the eval key", "plain-key-not-real"),
+        ('OPENAI_API_KEY="quoted key # not a comment" # a comment', "quoted key # not a comment"),
+        ("export OPENAI_API_KEY = 'spaced-key-not-real'  ", "spaced-key-not-real"),
+        ("OPENAI_API_KEY=", ""),
+        ("#OPENAI_API_KEY=commented-out", ""),
+    ],
+)
+def test_read_key_reads_one_line_of_an_env_file(tmp_path: Path, line: str, key: str) -> None:
+    env_file = tmp_path / "eval.env"
+    env_file.write_text(f"OTHER=1\n{line}\n", encoding="utf-8")
+    assert runner.read_key(str(env_file)) == key

@@ -207,3 +207,19 @@ def test_system_messages_are_left_out_unless_asked_for() -> None:
     assert archive.stats("chat9")["total_messages"] == 2
     assert [c["id"] for c in archive.conversations()] == ["chat9"]
     assert archive.summary()["conversations"] == 1
+
+
+def test_a_negative_offset_reads_from_the_start() -> None:
+    archive = tiny_archive()
+    assert archive.conversations(limit=2, offset=-3) == archive.conversations(limit=2, offset=0)
+    assert archive.conversations(limit=-1) == []
+    first = archive.search("lease", limit=2, offset=-5)
+    assert first == archive.search("lease", limit=2, offset=0)
+
+
+def test_an_unknown_group_is_refused_also_when_nothing_matches() -> None:
+    archive = tiny_archive()
+    with pytest.raises(ValueError):
+        archive.count(text="zzzznothing", group_by="decade")
+    with pytest.raises(ValueError):
+        archive.count(conversations=[], group_by="decade")

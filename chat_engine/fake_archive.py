@@ -16,6 +16,7 @@ from .textnorm import query_units
 
 _TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 _GROUP_KEY_LENGTH = {"day": 10, "month": 7, "year": 4}
+_GROUPS = (*_GROUP_KEY_LENGTH, "weekday_hour", "conversation", "sender")
 
 
 def make_message(
@@ -98,8 +99,9 @@ class FakeArchive:
             rows.sort(key=lambda c: c["last_timestamp"] or "", reverse=True)
         else:
             rows.sort(key=lambda c: (-c["message_count"], c["id"]))
-        end = None if limit is None else offset + limit
-        return [_copy_conversation(c) for c in rows[offset:end]]
+        start = max(0, offset)
+        end = None if limit is None else start + max(0, limit)
+        return [_copy_conversation(c) for c in rows[start:end]]
 
     def conversation(self, conversation_id: str) -> Optional[Conversation]:
         self._record("conversation", conversation_id=conversation_id)
@@ -161,7 +163,8 @@ class FakeArchive:
             found.reverse()
         if order == "relevance":
             found.sort(key=lambda pair: -len(pair[1]))
-        page = found[offset:offset + max(0, limit)]
+        start = max(0, offset)
+        page = found[start:start + max(0, limit)]
         return {
             "total": len(found),
             "hits": [{"message": _copy(m), "ranges": [list(r) for r in ranges]} for m, ranges in page],
@@ -182,6 +185,8 @@ class FakeArchive:
             "count", conversations=_listed(conversations), since=since, until=until,
             from_me=from_me, text=text, group_by=group_by,
         )
+        if group_by is not None and group_by not in _GROUPS:
+            raise ValueError(f"unknown group_by: {group_by}")
         if text is None:
             rows = self._filtered(conversations, since, until, from_me, include_system)
         else:

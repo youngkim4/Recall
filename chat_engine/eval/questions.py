@@ -17,6 +17,7 @@ from .synthetic import SyntheticArchive
 class Expect:
     contains: tuple[str, ...] = ()  # every one must be in the answer
     any_of: tuple[tuple[str, ...], ...] = ()  # one of each group must be in the answer
+    days: tuple[str, ...] = ()  # every day "YYYY-MM-DD" must be in the answer, in any form, with its year
     cites: tuple[str, ...] = ()  # one of these message ids must be cited
     absent: tuple[str, ...] = ()  # none may be in the answer
     not_found: bool = False  # the answer must say the archive does not hold it
@@ -33,26 +34,18 @@ class Question:
     follows: str = ""  # id of the question whose chat this one continues
 
 
-def date_forms(day: str) -> tuple[str, ...]:
-    """The ways an answer may write one day."""
-    value = date.fromisoformat(day)
-    month, short = value.strftime("%B"), value.strftime("%b")
-    return (
-        day,
-        f"{month} {value.day}, {value.year}",
-        f"{value.day} {month} {value.year}",
-        f"{short} {value.day}, {value.year}",
-        f"{value.day} {short} {value.year}",
-        f"{month} {value.day}",
-    )
+def month_name(month: str) -> str:
+    """ "2023-09" gives "September"."""
+    return date.fromisoformat(f"{month}-01").strftime("%B")
 
 
 def build_questions(synthetic: SyntheticArchive) -> list[Question]:
     facts = synthetic.facts
     planted = synthetic.planted
+    top_name = synthetic.saved_names[synthetic.keys[facts["top_conversation"]]].split()[0]
     return [
         *_recall(planted),
-        *_counts(facts),
+        *_counts(facts, top_name),
         *_first_and_last(facts, planted),
         *_people(facts, planted),
         *_relative_dates(facts, planted),
@@ -81,7 +74,8 @@ def _recall(planted: Mapping[str, str]) -> list[Question]:
     ]
 
 
-def _counts(facts: Mapping[str, Any]) -> list[Question]:
+def _counts(facts: Mapping[str, Any], top_name: str) -> list[Question]:
+    busiest = facts["maya_busiest_month_2023"]
     return [
         Question(
             "count_sourdough", "count", "How many messages mention sourdough?",
@@ -93,11 +87,11 @@ def _counts(facts: Mapping[str, Any]) -> list[Question]:
         ),
         Question(
             "count_top", "count", "Who do I text the most?",
-            Expect(contains=("Priya",), tools=("count_messages",)),
+            Expect(contains=(top_name, str(facts["top_conversation_total"])), tools=("count_messages",)),
         ),
         Question(
             "count_busiest_month", "count", "Which month of 2023 had the most messages with Maya?",
-            Expect(any_of=(("September", "2023-09"),), tools=("count_messages",)),
+            Expect(any_of=((month_name(busiest), busiest),), tools=("count_messages",)),
         ),
         Question(
             "count_sent_received", "count",
@@ -111,15 +105,15 @@ def _first_and_last(facts: Mapping[str, Any], planted: Mapping[str, str]) -> lis
     return [
         Question(
             "first_sourdough", "first_last", "When did Jonas and I first talk about sourdough?",
-            Expect(any_of=(date_forms(facts["sourdough_first_day"]),), cites=(planted["sourdough_first"],)),
+            Expect(days=(facts["sourdough_first_day"],), cites=(planted["sourdough_first"],)),
         ),
         Question(
             "last_sourdough", "first_last", "When did sourdough last come up with Jonas?",
-            Expect(any_of=(date_forms(facts["sourdough_last_day"]),), cites=(planted["sourdough_last"],)),
+            Expect(days=(facts["sourdough_last_day"],), cites=(planted["sourdough_last"],)),
         ),
         Question(
             "first_message_maya", "first_last", "When did Maya and I first text each other?",
-            Expect(any_of=(date_forms(facts["maya_first_day"]),)),
+            Expect(days=(facts["maya_first_day"],)),
         ),
     ]
 
@@ -178,7 +172,7 @@ def _follow_ups(facts: Mapping[str, Any], planted: Mapping[str, str]) -> list[Qu
         Question(
             "follow_when", "follow_up", "When was that?",
             Expect(
-                any_of=(date_forms(facts["sourdough_first_day"]),),
+                days=(facts["sourdough_first_day"],),
                 cites=(planted["starter_name"], planted["sourdough_first"]),
             ),
             follows="recall_starter",
@@ -193,9 +187,13 @@ def _follow_ups(facts: Mapping[str, Any], planted: Mapping[str, str]) -> list[Qu
 
 def _not_in_the_archive() -> list[Question]:
     return [
-        Question("absent_blood", "not_in_archive", "What is Maya's blood type?", Expect(not_found=True)),
         Question(
-            "absent_zanzibar", "not_in_archive", "What did Jonas say about Zanzibar?", Expect(not_found=True)
+            "absent_blood", "not_in_archive", "What is Maya's blood type?",
+            Expect(not_found=True, tools=("search_messages",)),
+        ),
+        Question(
+            "absent_zanzibar", "not_in_archive", "What did Jonas say about Zanzibar?",
+            Expect(not_found=True, tools=("search_messages",)),
         ),
     ]
 
@@ -204,12 +202,12 @@ def _scoped(planted: Mapping[str, str]) -> list[Question]:
     return [
         Question(
             "scoped_absent", "scoped", "What did we say about the lease?",
-            Expect(not_found=True, absent=("signed", "landlord")),
+            Expect(not_found=True, absent=("signed", "landlord"), tools=("search_messages",)),
             scope=("jonas",),
         ),
         Question(
             "scoped_lease", "scoped", "When was the lease signed?",
-            Expect(any_of=(date_forms("2021-03-04"),), cites=(planted["lease_signed"],)),
+            Expect(days=("2021-03-04",), cites=(planted["lease_signed"],)),
             scope=("maya_phone",),
         ),
     ]

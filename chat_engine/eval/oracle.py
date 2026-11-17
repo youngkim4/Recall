@@ -13,6 +13,7 @@ from typing import Callable, Optional
 
 from ..fake_llm import Step, call, say
 from ..ports import LLMRequest
+from .questions import month_name
 
 _REF_RE = re.compile(r"^(m\d+) ")
 _ALIAS_RE = re.compile(r"\b(c\d+) ·")
@@ -111,6 +112,18 @@ def recall(needle: str, query: str, answer: Callable[[str, str], str], within: O
     return [first, second]
 
 
+def absent(query: str, answer: str) -> list[Step]:
+    """Search for the words. Say that the archive does not hold them only when the search finds nothing."""
+
+    def conclude(request: LLMRequest) -> list:
+        found = results(request)[-1]
+        if "no message matches" not in found:
+            raise LookupError(f"the archive holds a message for {query!r}")
+        return say(answer, chunk=24)
+
+    return [lambda request: [call("search_messages", query=query)], conclude]
+
+
 def lookup(make_calls: Callable[[str], list], answer: Callable[[list[str]], str]) -> list[Step]:
     """Two model calls: tools chosen from the question block, then the answer."""
     return [
@@ -128,7 +141,7 @@ def _quote(text: str, needle: str, lead: str, quote: str) -> str:
 
 def _busiest(table: str) -> str:
     label, total, _ = max(rows(table), key=lambda row: row[1])
-    return f"The busiest month with Maya in 2023 was {label} (September): {total} messages in both threads."
+    return f"The busiest month with Maya in 2023 was {month_name(label)}: {total} messages in both threads."
 
 
 def _volume(table: str) -> str:
@@ -310,14 +323,14 @@ SCRIPTS: dict[str, Callable[[], list[Step]]] = {
         lambda text: [call("count_messages", text="sourdough", conversations=[alias(text, "Jonas Weber · direct")])],
         lambda out: f"{number(out[0])} of them are in your thread with Jonas.",
     ),
-    "absent_blood": lambda: from_block(
-        lambda text: "The archive does not hold this. I found no message about Maya's blood type."
+    "absent_blood": lambda: absent(
+        "blood", "The archive does not hold this. I found no message about Maya's blood type."
     ),
-    "absent_zanzibar": lambda: from_block(
-        lambda text: "I found no message that mentions Zanzibar, from Jonas or from anyone else."
+    "absent_zanzibar": lambda: absent(
+        "Zanzibar", "I found no message that mentions Zanzibar, from Jonas or from anyone else."
     ),
-    "scoped_absent": lambda: from_block(
-        lambda text: "In this conversation there is no message about a lease. I searched it and found nothing."
+    "scoped_absent": lambda: absent(
+        "lease", "In this conversation there is no message about a lease. I searched it and found nothing."
     ),
     "scoped_lease": lambda: from_block(
         lambda text: _dated(text, "the lease got signed btw", "Maya told you the lease was signed on")

@@ -38,8 +38,17 @@ def read_key(path: str) -> str:
     for line in Path(path).expanduser().read_text(encoding="utf-8").splitlines():
         name, _, value = line.strip().removeprefix("export ").partition("=")
         if name.strip() == _KEY_NAME:
-            return value.strip().strip("'\"")
+            return _env_value(value)
     return ""
+
+
+def _env_value(raw: str) -> str:
+    """The value of one env line: inside its quotes, or up to a comment."""
+    value = raw.strip()
+    if value[:1] in ("'", '"'):
+        closing = value.find(value[0], 1)
+        return value[1:closing] if closing != -1 else value[1:]
+    return value.split(" #", 1)[0].strip()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -98,7 +107,11 @@ def main(argv: Optional[Sequence[str]] = None, out: Callable[[str], None] = prin
         parser.error("give --model and --max-output-tokens, or --scripted")
     synthetic = build_synthetic_archive()
     only = [name.strip() for name in arguments.only.split(",") if name.strip()]
-    questions = with_roots(build_questions(synthetic), only)
+    every = build_questions(synthetic)
+    unknown = sorted(set(only) - {question.id for question in every})
+    if unknown:
+        parser.error(f"no question has this id: {', '.join(unknown)}")
+    questions = with_roots(every, only)
     if arguments.scripted:
         config = EngineConfig(model="scripted", max_output_tokens=600, max_steps=arguments.max_steps)
         llm_for: Callable[[Question], LLM] = lambda question: FakeLLM(SCRIPTS[question.id]())  # noqa: E731
