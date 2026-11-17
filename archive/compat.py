@@ -54,7 +54,7 @@ SELECT m.guid AS message_id,
   LEFT JOIN conversations c ON c.id = m.conversation_id
   LEFT JOIN handles h ON h.id = m.sender_handle_id
  WHERE m.kind != 'system'
- ORDER BY m.sent_ns, m.id
+ ORDER BY m.sent_ns, m.source_rowid, m.id
 """
 
 

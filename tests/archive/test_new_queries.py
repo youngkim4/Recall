@@ -369,3 +369,79 @@ class TestReviewCases:
             ("laugh", ""),
             ("emphasis", ""),
         ]
+
+
+class TestOrderOfMembers:
+    A, B, C, D = "+15550100201", "+15550100202", "+15550100203", "dora@example.com"
+
+    def build(self, builder: ChatDbBuilder) -> tuple[int, dict[str, int]]:
+        handles = {name: builder.handle(name) for name in (self.C, self.A, self.D, self.B)}
+        group = builder.chat(GROUP, members=list(handles.values()))
+        written = {self.A: 1, self.B: 3, self.D: 1}  # C never writes
+        minute = 0
+        for name, count in written.items():
+            for _ in range(count):
+                builder.message(group, when=la(2024, 6, 1, 9, minute), text=f"from {name}", handle=handles[name])
+                minute += 1
+        builder.message(group, when=la(2024, 6, 1, 10), text="from the owner", from_me=True)
+        builder.commit()
+        return group, handles
+
+    def test_the_busiest_writer_is_first_then_by_handle(
+        self, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
+        self.build(builder)
+        import_chat_db(source_path, archive_path)
+
+        with Archive.open(archive_path) as opened:
+            assert opened.conversation(GROUP)["members"] == [self.B, self.A, self.D, self.C]  # type: ignore[index]
+            assert opened.conversations()[0]["members"] == [self.B, self.A, self.D, self.C]
+
+    def test_the_order_follows_a_later_pull(
+        self, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
+        group, handles = self.build(builder)
+        import_chat_db(source_path, archive_path)
+        for minute in range(5):
+            builder.message(group, when=la(2024, 6, 2, 9, minute), text="C writes now", handle=handles[self.C])
+        builder.commit()
+
+        for full in (False, True):
+            import_chat_db(source_path, archive_path, full=full)
+            with Archive.open(archive_path) as opened:
+                assert opened.conversation(GROUP)["members"] == [self.C, self.B, self.A, self.D]  # type: ignore[index]
+
+
+class TestOrderInsideOneMoment:
+    def test_messages_of_one_moment_are_in_the_order_of_the_source_rowid(
+        self, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
+        mira = builder.handle(MIRA)
+        chat = builder.chat(MIRA, members=[mira])
+        moment = la(2024, 6, 5, 12)
+        builder.message(chat, when=la(2024, 6, 5, 11), text="before", handle=mira, rowid=10)
+        builder.message(chat, when=moment, text="third of the moment", handle=mira, rowid=50)
+        builder.message(chat, when=la(2024, 6, 5, 13), text="after", handle=mira, rowid=60)
+        builder.commit()
+        import_chat_db(source_path, archive_path)
+        # rows of the same moment that the archive stores later, with lower ROWIDs
+        builder.message(chat, when=moment, text="second of the moment", handle=mira, rowid=40)
+        builder.message(chat, when=moment, text="first of the moment", handle=mira, rowid=30)
+        builder.commit()
+        import_chat_db(source_path, archive_path)
+        expected = ["before", "first of the moment", "second of the moment", "third of the moment", "after"]
+
+        with Archive.open(archive_path) as opened:
+            page = opened.messages(MIRA)["messages"]
+            assert [m["text"] for m in page] == expected
+            assert [m["text"] for m in opened.iter_messages(MIRA)] == expected
+            assert [m["text"] for m in opened.day(MIRA, "2024-06-05")["messages"]] == expected
+            assert [m["text"] for m in opened.messages(MIRA, oldest=True, limit=5)["messages"]] == expected
+            middle = page[2]["id"]
+            assert [m["text"] for m in opened.context(middle, radius=1)] == expected[1:4]
+            assert [m["text"] for m in opened.messages(MIRA, after=middle)["messages"]] == expected[3:]
+            assert [m["text"] for m in opened.messages(MIRA, before=middle)["messages"]] == expected[:2]
+            hits = opened.search("moment", order="oldest")["hits"]
+            assert [hit["message"]["text"] for hit in hits] == expected[1:4]
+            newest = opened.search("moment", order="newest")["hits"]
+            assert [hit["message"]["text"] for hit in newest] == expected[3:0:-1]

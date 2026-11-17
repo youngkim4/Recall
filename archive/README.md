@@ -162,13 +162,16 @@ The bridge loads ONE legacy export (`messages.csv` from `parse_imessage.py`) int
 - A row with a time at or before 2001-01-01 UTC has no date: reason `no_date`. The old exporter wrote that time for a row with no date.
 - A row gets the id `legacy:<ROWID>`. `message_by_source_rowid()` resolves the ROWID.
 - The export has no member list. The members of a conversation are the senders seen in it, plus the handle that names a one-to-one conversation.
-- The export does not mark tapbacks. A row whose whole text is an English tapback phrase is stored as kind `system`: it is hidden by default and is not counted. `ImportResult.counts["reaction_phrases"]` is their number. A real text of that exact form is hidden too. The phrases are:
-  - `Loved`, `Liked`, `Disliked`, `Laughed at`, `Emphasized` or `Questioned`, then quoted text, `an image`, `a movie`, `an audio message` or `an attachment`.
-  - `Removed a heart from`, `Removed a like from` and the four other removals, then the same.
-  - `Reacted`, an emoji, `to`, then quoted text.
+- The export does not mark tapbacks. It keeps only the English summary that Messages writes into a tapback row. One function holds the rule for such a text: `archive.tapbacks.is_reaction_phrase(text)`. A row whose whole text is a reaction phrase is stored as kind `system`: it is hidden by default and is not counted. `ImportResult.counts["reaction_phrases"]` is their number. The forms, where the target is text in double quotes (straight or curly), `an image`, `a movie`, `an audio message`, `an attachment` or `a contact`:
+  - `Loved`, `Liked`, `Disliked`, `Laughed at`, `Emphasized` or `Questioned`, then the target.
+  - `Removed a heart from`, `Removed a like from`, `Removed a dislike from`, `Removed a laugh from`, `Removed an exclamation from` or `Removed a question mark from`, then the target.
+  - `Reacted <emoji> to` or `Removed <emoji> from`, then text in double quotes.
+- The whole text must match, and the rule is case-sensitive. A text that starts like a reaction phrase and does not end as one (`Loved it`, `Loved "Dune" a lot`, `Loved a sticker`) is a message: it is stored as text and counted. A real text of the exact form of a phrase is hidden.
 - A row that holds only the attachment placeholder, or the `[Attachment]` label of the old exporter, is kind `attachment`.
 - A row with no `chat_id` is a message with no conversation.
-- Time stamps of the export are local with no zone. The bridge reads them in the zone of this machine. A time that the clocks repeat in autumn is read as its first pass.
+- Time stamps of the export are local with no zone. The bridge reads them in the zone of this machine.
+  - A local time that occurs two times (the clocks went back) is read as its first pass. The two passes then are one moment, and the source ROWID gives the order inside it.
+  - A local time that does not exist (the clocks went forward) is read as the time one hour later. The message then comes after the messages of that later time with a lower ROWID.
 - One ROWID two times in the file: the last row wins.
 - The two attachment lists of a row are paired by position. When their lengths differ, no attachment of that row gets a type.
 - Text is what the old exporter wrote. Text that the exporter cut or cleaned is not restored.
@@ -209,6 +212,10 @@ Each value is a plain dict that `json.dumps` accepts.
 | `unsent` | bool | |
 
 `Conversation`: `id`, `is_group`, `name` (group title or `""`), `message_count`, `sent_count`, `received_count`, `first_timestamp`, `last_timestamp`, `members` (handles), `person_id` (`None` for a group).
+
+The order of `members` is fixed: the member who wrote the most messages in that conversation is first. Members with the same number are in the order of their handle text. Members who never wrote come last, in the order of their handle text. The owner is not a member.
+
+`Message["sent_at"]` is true UTC. A difference of two `sent_at` values is elapsed time, also across a clock change.
 
 `Person`: `id`, `name`, `handles`, `conversations` (the one-to-one conversations of that person, most messages first).
 
@@ -254,7 +261,7 @@ Argument checks: a number that is not an `int` in range, or a flag that is not a
 - `around` includes the anchor. Up to `(limit - 1) // 2` older messages come before it. The rest come after it. When one side is short, the other side fills the page.
 - An unknown conversation or an unknown anchor gives an empty page with both flags `False`. `context()` gives `[]`.
 - More than one anchor raises `ValueError`.
-- The order is the send time, in nanoseconds. Messages with the same send time are in the order in which the archive first stored them.
+- The order is the send time, in nanoseconds. Messages with the same send time are in the order of their source ROWID. This order is the same in `iter_messages`, `day`, `context` and the time orders of `search`.
 
 ### Messages with no conversation
 
@@ -307,7 +314,7 @@ The source can hold a message with no row in `chat_message_join`. A real export 
 - An empty query gives `{"total": 0, "hits": []}`. A query never lists messages without a term: use `iter_messages()` for that.
 - A query is cut to 1,000 characters and 32 terms. A character that cannot be stored (a lone surrogate) is read as `?`.
 - `total` is every match. `hits` is the page.
-- `order` is `newest`, `oldest` or `relevance`.
+- `order` is `newest`, `oldest` or `relevance`. The relevance order is the rank of the full-text index, then the newest first. It is the archive's own order: it can differ from another search and it can change.
 - `ranges` are `[start, end)` offsets in Unicode code points of `message["text"]`, the same as Python string indexes. JavaScript counts UTF-16 units. Use `archive.search.utf16_ranges(text, ranges)` before ranges go to the frontend.
 
 The index splits text on spaces, punctuation, symbols and emoji. A word next to an emoji is found by the word alone. The index cannot find a word inside Chinese, Japanese, Korean or Thai text, and it does not hold emoji or punctuation. A query term with such characters, or with no letter or digit, is matched as a substring. A term that mixes letters with a symbol or an emoji (`c++`, `$5`) must match as words and as a substring. Limits of a substring term: it reads message text without the index, case matters only for A to Z, and an accent must be the same as in the text.
@@ -342,7 +349,7 @@ Differences from `ConversationStats`:
 - `avg_messages_per_day` is the average for each active day.
 - A tie goes to the earliest day and to the earliest gap, as in `compute_stats`.
 - An empty or unknown conversation gives zeros and `None`.
-- The gap is elapsed time. `compute_stats` subtracts wall-clock times. The two differ by one hour when the longest gap crosses a daylight-saving change.
+- `longest_gap_days` is elapsed time. `compute_stats` subtracts wall-clock times. The two differ by one hour (0.0417 days) when the longest gap crosses a clock change.
 
 ### reactions()
 

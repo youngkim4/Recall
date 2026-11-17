@@ -58,7 +58,10 @@ def content(archive_path: Path) -> dict[str, list[tuple[Any, ...]]]:
 def texts(archive_path: Path, kind: str | None = None) -> list[str]:
     where = "" if kind is None else "WHERE kind = ?"
     params = () if kind is None else (kind,)
-    return [row[0] for row in query(archive_path, f"SELECT text FROM messages {where} ORDER BY sent_ns, id", params)]
+    return [
+        row[0]
+        for row in query(archive_path, f"SELECT text FROM messages {where} ORDER BY sent_ns, source_rowid, id", params)
+    ]
 
 
 def runs(archive_path: Path) -> list[tuple[Any, ...]]:

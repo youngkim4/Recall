@@ -18,7 +18,7 @@ from archive import (
     import_chat_db,
     import_legacy_csv,
 )
-from archive.legacy_csv import is_tapback_phrase
+from archive.tapbacks import is_reaction_phrase
 from tests.archive.builders import ChatDbBuilder, utc
 from tests.archive.inspect_archive import content, fts_is_consistent, query, runs, scalar, totals_match_messages
 
@@ -245,7 +245,11 @@ class TestContent:
             ("Disliked an attachment", True),
             ("Removed a like from an image", True),
             (f"Reacted {chr(0x1F602)} to {CURLY_OPEN}hi{CURLY_CLOSE}", True),
+            ("Liked a contact", True),
+            (f"Removed {chr(0x1F602)} from {CURLY_OPEN}hi{CURLY_CLOSE}", True),
             ("Loved an image of you", False),
+            (f"Loved {CURLY_OPEN}Dune{CURLY_CLOSE} a lot", False),
+            ("Loved a sticker", False),
             ("Reacted badly to the news", False),
             ("Loved it", False),
             (f"I Loved {CURLY_OPEN}ok{CURLY_CLOSE}", False),
@@ -255,7 +259,7 @@ class TestContent:
         ],
     )
     def test_the_tapback_phrase_rule(self, text: str, expected: bool) -> None:
-        assert is_tapback_phrase(text) is expected
+        assert is_reaction_phrase(text) is expected
 
     def test_rows_that_cannot_be_stored_are_counted(self, export_path: Path, archive_path: Path) -> None:
         result = self.load(
@@ -462,6 +466,72 @@ class TestOddFiles:
 
         assert results == ["ok", "ok"]
         assert csv.field_size_limit() == before
+
+
+class TestClockChanges:
+    """America/Los_Angeles: on 2024-11-03 the hour from 01:00 happens two times, on 2024-03-10 02:00 to 03:00 does not exist."""
+
+    REPEATED = (
+        line(101, "2024-11-03 00:50:00", "before the hour"),
+        line(102, "2024-11-03 01:10:00", "first pass, ten past"),
+        line(103, "2024-11-03 01:40:00", "first pass, twenty to"),
+        line(104, "2024-11-03 01:10:00", "second pass, ten past"),
+        line(105, "2024-11-03 01:40:00", "second pass, twenty to"),
+        line(106, "2024-11-03 02:05:00", "after the hour"),
+    )
+
+    def texts(self, archive_path: Path) -> list[str]:
+        with Archive.open(archive_path) as archive:
+            return [message["text"] for message in archive.messages(ROWAN)["messages"]]
+
+    def test_a_time_that_occurs_twice_is_read_as_its_first_pass_and_keeps_the_rowid_order(self, tmp_path: Path) -> None:
+        orders = []
+        for name, rows in (("in-order", self.REPEATED), ("shuffled", [self.REPEATED[i] for i in (4, 0, 3, 5, 1, 2)])):
+            folder = tmp_path / name
+            folder.mkdir()
+            import_legacy_csv(write_export(folder / "messages.csv", rows), folder / "archive.sqlite3")
+            orders.append(self.texts(folder / "archive.sqlite3"))
+
+        # equal local times are one moment: inside it the source ROWID decides, not the order of the file
+        assert (
+            orders[0]
+            == orders[1]
+            == [
+                "before the hour",
+                "first pass, ten past",
+                "second pass, ten past",
+                "first pass, twenty to",
+                "second pass, twenty to",
+                "after the hour",
+            ]
+        )
+
+    def test_the_time_stamps_of_the_repeated_hour_come_back_as_they_were_written(
+        self, export_path: Path, archive_path: Path
+    ) -> None:
+        export_path.parent.mkdir()
+        import_legacy_csv(write_export(export_path, self.REPEATED), archive_path)
+
+        with Archive.open(archive_path) as archive:
+            stamps = sorted(message["timestamp"] for message in archive.messages(ROWAN)["messages"])
+        assert stamps == sorted(row["timestamp"] for row in self.REPEATED)
+
+    def test_a_time_that_does_not_exist_is_read_one_hour_later(self, export_path: Path, archive_path: Path) -> None:
+        export_path.parent.mkdir()
+        rows = [
+            line(1, "2024-03-10 01:59:00", "before the gap"),
+            line(2, "2024-03-10 02:13:00", "inside the gap"),
+            line(3, "2024-03-10 03:05:00", "after the gap"),
+        ]
+        import_legacy_csv(write_export(export_path, rows), archive_path)
+
+        with Archive.open(archive_path) as archive:
+            found = [(m["text"], m["timestamp"]) for m in archive.messages(ROWAN)["messages"]]
+        assert found == [
+            ("before the gap", "2024-03-10 01:59:00"),
+            ("after the gap", "2024-03-10 03:05:00"),
+            ("inside the gap", "2024-03-10 03:13:00"),
+        ]
 
 
 class TestRefusals:

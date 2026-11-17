@@ -233,7 +233,7 @@ def stats(
         " ORDER BY n DESC, day ASC LIMIT 1",
         params,
     ).fetchone()
-    gap = _longest_gap(conn.execute(f"SELECT m.sent_ns / {NS_PER_SECOND} {scoped} ORDER BY m.sent_ns, m.id", params))
+    gap = _longest_gap(conn.execute(f"SELECT m.sent_ns / {NS_PER_SECOND} {scoped} ORDER BY m.sent_ns", params))
     return {
         "conversation": label,
         "total_messages": int(total),

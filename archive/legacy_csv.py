@@ -10,8 +10,8 @@ What the export cannot say, and what the bridge does about it:
 - It has no member list. The members of a conversation are the senders seen
   in it, plus the handle that names a one-to-one conversation.
 - It does not mark tapbacks. A row whose whole text is a tapback phrase
-  (`Loved "..."` and the like) is stored as kind `system`: it is hidden by
-  default and is not counted as a message.
+  (archive.tapbacks.is_reaction_phrase) is stored as kind `system`: it is
+  hidden by default and is not counted as a message.
 - Its time stamps are local with no zone. They are read in the zone of this
   machine. A time that the clocks repeat in autumn is read as its first pass.
 - Its text is what the old exporter wrote. Text that the exporter cut or
@@ -23,7 +23,6 @@ from __future__ import annotations
 import csv
 import io
 import os
-import re
 import sqlite3
 import threading
 import time
@@ -41,6 +40,7 @@ from archive.people import ContactGroup, contact_groups
 from archive.records import AttachmentRow, MessageRow
 from archive.run_control import ImportResult, Progress, Run
 from archive.schema import INDEXED_TEXT_CHARS
+from archive.tapbacks import is_reaction_phrase
 from archive.timeconv import APPLE_EPOCH_UNIX, NS_PER_SECOND, local_to_unix
 
 __all__ = ["import_legacy_csv"]
@@ -63,15 +63,6 @@ COLUMNS = (
 ATTACHMENT_LABEL = "[Attachment]"  # the old exporter wrote this for a message that is only attachments
 MAX_FIELD_CHARS = 2**31 - 1  # some texts of the export are larger than the csv module's default limit
 _TRUE, _FALSE = frozenset(("1", "1.0", "true")), frozenset(("0", "0.0", "false"))
-_QUOTED = '["' + chr(0x201C) + '].*["' + chr(0x201D) + "]"  # text in straight or curly double quotes
-_TARGET = rf"(?:{_QUOTED}|an image|a movie|an audio message|an attachment)"
-# English tapback summaries, as Messages writes them into the text of a tapback row
-_TAPBACK_PHRASE = re.compile(
-    rf"(?:Loved|Liked|Disliked|Laughed at|Emphasized|Questioned) {_TARGET}"
-    rf"|Removed an? (?:heart|like|dislike|laugh|exclamation|question mark) from {_TARGET}"
-    rf"|Reacted \S{{1,16}} to {_QUOTED}",
-    re.DOTALL,
-)
 _field_limit_lock = threading.Lock()
 _field_limit_state = {"loads": 0, "kept": 0}  # loads that run now, and the limit to put back after the last one
 
@@ -85,11 +76,6 @@ class _Directory:
     services: dict[str, str] = field(default_factory=dict)
     handles: dict[str, int] = field(default_factory=dict)
     members: set[tuple[int, int]] = field(default_factory=set)
-
-
-def is_tapback_phrase(text: str) -> bool:
-    """True when the whole text is the summary that Messages writes for a tapback."""
-    return _TAPBACK_PHRASE.fullmatch(text) is not None
 
 
 @contextmanager
@@ -157,7 +143,7 @@ def _content(text: str, has_files: bool) -> tuple[str, str] | None:
     if text == ATTACHMENT_LABEL or (has_files and text.startswith(ATTACHMENT_LABEL + " ")):
         return "attachment", ""
     kept = stored_text(text)
-    if is_tapback_phrase(kept):
+    if is_reaction_phrase(kept):
         return "system", kept
     if kept.strip():
         return "text", kept

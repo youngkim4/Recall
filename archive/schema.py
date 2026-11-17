@@ -3,7 +3,10 @@
 Rules that the rest of the package relies on:
 - `messages.guid` is Apple's message guid. It is the only stable id.
 - `messages.sent_ns` is UTC unix nanoseconds and gives the order of messages.
+  Messages of one moment are in the order of their source ROWID.
   `messages.sent_at` is the same moment in UTC unix seconds.
+- `conversation_members.message_count` is the number of messages that the member
+  wrote in that conversation. It gives the order of the members.
 - `kind` is `text`, `attachment` or `system`. Tapbacks are rows of `reactions`,
   never of `messages`.
 - `messages.text` is the whole text. The full-text index holds `search_text`,
@@ -95,6 +98,7 @@ SCHEMA_V1: tuple[str, ...] = (
     CREATE TABLE conversation_members (
         conversation_id INTEGER NOT NULL REFERENCES conversations(id),
         handle_id INTEGER NOT NULL REFERENCES handles(id),
+        message_count INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (conversation_id, handle_id)
     ) STRICT, WITHOUT ROWID
     """,
@@ -123,9 +127,14 @@ SCHEMA_V1: tuple[str, ...] = (
     ) STRICT
     """,
     # One conversation in time order: pages, streams, and its figures without a table read.
-    # `id` is named on purpose: the order of messages is (sent_ns, id), and a row-value
-    # comparison on that pair needs both columns in the index key.
-    "CREATE INDEX messages_by_conversation_time ON messages(conversation_id, sent_ns, id, is_from_me, kind)",
+    # The order of messages is (sent_ns, source_rowid, id): messages of one moment stay in the
+    # order of the source. A row-value comparison on that key needs the three columns in the index.
+    # The last three columns let a count, and the count of each sender, read the index only.
+    """
+    CREATE INDEX messages_by_conversation_time ON messages(
+        conversation_id, sent_ns, source_rowid, id, is_from_me, kind, sender_handle_id
+    )
+    """,
     # Every counted message in time order: figures over the whole archive without a table read.
     # SQLite does not pick this index by itself for a query with no time range: name it with INDEXED BY.
     """

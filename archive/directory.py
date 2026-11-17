@@ -232,6 +232,7 @@ def conversation_ids(conn: sqlite3.Connection) -> list[int]:
 
 def refresh_totals(conn: sqlite3.Connection, conversation_ids: Iterable[int]) -> None:
     """Count the messages of the given conversations again. Group events are not messages."""
+    keys = sorted(set(conversation_ids))
     conn.executemany(
         """
         UPDATE conversations SET (message_count, sent_count, received_count, first_sent_ns, last_sent_ns) = (
@@ -241,5 +242,34 @@ def refresh_totals(conn: sqlite3.Connection, conversation_ids: Iterable[int]) ->
              WHERE conversation_id = ?1 AND kind != 'system'
         ) WHERE id = ?1
         """,
-        [(conversation_id,) for conversation_id in sorted(set(conversation_ids))],
+        [(conversation_id,) for conversation_id in keys],
+    )
+    for conversation_id in keys:
+        _refresh_member_counts(conn, conversation_id)
+
+
+def _refresh_member_counts(conn: sqlite3.Connection, conversation_id: int) -> None:
+    """Count the messages that each member wrote in the conversation. A count that did not change is not written."""
+    stored = dict(
+        conn.execute(
+            "SELECT handle_id, message_count FROM conversation_members WHERE conversation_id = ?", (conversation_id,)
+        )
+    )
+    if not stored:
+        return
+    written = dict(
+        conn.execute(
+            "SELECT sender_handle_id, COUNT(*) FROM messages INDEXED BY messages_by_conversation_time"
+            " WHERE conversation_id = ? AND kind != 'system' AND is_from_me = 0 AND sender_handle_id IS NOT NULL"
+            " GROUP BY sender_handle_id",
+            (conversation_id,),
+        )
+    )
+    changed = [
+        (written.get(handle_id, 0), conversation_id, handle_id)
+        for handle_id, count in stored.items()
+        if written.get(handle_id, 0) != count
+    ]
+    conn.executemany(
+        "UPDATE conversation_members SET message_count = ? WHERE conversation_id = ? AND handle_id = ?", changed
     )

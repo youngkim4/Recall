@@ -88,7 +88,7 @@ def day(
         before_anchor = int(earlier.fetchone()[0])
     begin = _first_row(total, limit, offset, before_anchor)
     found = conn.execute(
-        f"{rows.PAGED_MESSAGE_SELECT} WHERE {where} AND {in_day} ORDER BY m.sent_ns, m.id LIMIT ? OFFSET ?",
+        f"{rows.PAGED_MESSAGE_SELECT} WHERE {where} AND {in_day} ORDER BY {rows.ORDER_OLDEST} LIMIT ? OFFSET ?",
         (lower, upper, limit, begin),
     ).fetchall()
     previous = conn.execute(f"SELECT MAX(m.sent_ns) {scoped} AND m.sent_ns < ?", (lower,)).fetchone()[0]

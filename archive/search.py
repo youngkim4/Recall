@@ -19,10 +19,10 @@ from archive.search_query import ParsedQuery, ascii_lower, parse_query
 __all__ = ["parse_query", "search", "utf16_ranges"]
 
 ORDERS = ("newest", "oldest", "relevance")
-NEWEST = "m.sent_ns DESC, m.id DESC"
+NEWEST = rows.ORDER_NEWEST
 # `rank` is the bm25 score of the index, best match first. The function bm25() cannot be used
 # here: the query also has a window function, and FTS5 functions do not work across one.
-ORDER_SQL = {"newest": NEWEST, "oldest": "m.sent_ns ASC, m.id ASC", "relevance": f"messages_fts.rank, {NEWEST}"}
+ORDER_SQL = {"newest": NEWEST, "oldest": rows.ORDER_OLDEST, "relevance": f"messages_fts.rank, {NEWEST}"}
 # highlight() puts these around each match. A text that has one of them is read with the next pair.
 # U+FDD0 to U+FDEF are Unicode noncharacters: no valid text has them.
 MARKERS = (*((chr(code), chr(code + 1)) for code in range(0xFDD0, 0xFDF0, 2)), ("\x01", "\x02"))

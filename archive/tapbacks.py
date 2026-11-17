@@ -59,3 +59,33 @@ def split_target(associated_guid: str | None) -> tuple[str, int | None] | None:
     if not guid:
         return None
     return guid, (int(part) if part is not None else None)
+
+
+# The English summary that Messages writes into the text of a tapback row. The legacy export
+# keeps that text and nothing else of the tapback, so this rule is the one way to know such a row.
+_QUOTED = '["' + chr(0x201C) + '].*["' + chr(0x201D) + "]"  # text in straight or curly double quotes
+_TARGET = rf"(?:{_QUOTED}|an image|a movie|an audio message|an attachment|a contact)"
+_REACTION_PHRASE = re.compile(
+    rf"(?:Loved|Liked|Disliked|Laughed at|Emphasized|Questioned) {_TARGET}"
+    rf"|Removed an? (?:heart|like|dislike|laugh|exclamation|question mark) from {_TARGET}"
+    rf"|Reacted \S{{1,16}} to {_QUOTED}"
+    rf"|Removed \S{{1,16}} from {_QUOTED}",
+    re.DOTALL,
+)
+
+
+def is_reaction_phrase(text: object) -> bool:
+    """True when the whole text is the English summary of a tapback.
+
+    The forms, where the target is text in double quotes (straight or curly),
+    `an image`, `a movie`, `an audio message`, `an attachment` or `a contact`:
+    - `Loved`, `Liked`, `Disliked`, `Laughed at`, `Emphasized` or `Questioned`, then the target
+    - `Removed a heart from`, `Removed a like from`, `Removed a dislike from`, `Removed a laugh from`,
+      `Removed an exclamation from` or `Removed a question mark from`, then the target
+    - `Reacted <emoji> to` or `Removed <emoji> from`, then text in double quotes
+
+    The whole text must match. Text that starts like a phrase and does not end
+    as one (`Loved it`, `Loved "Dune" a lot`) is a message, not a tapback. The
+    rule is case-sensitive and knows English only.
+    """
+    return isinstance(text, str) and _REACTION_PHRASE.fullmatch(text) is not None

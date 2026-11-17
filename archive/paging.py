@@ -1,8 +1,8 @@
 """Read messages of one or more conversations in time order.
 
-The position of a message is (sent_ns, id). Every read here walks the index
-on (conversation_id, sent_ns, id), so a page costs the same anywhere in a
-long conversation. Several conversations are read one by one and merged.
+The position of a message is (sent_ns, source_rowid, id). Every read here
+walks the index on (conversation_id, sent_ns, source_rowid, id), so a page
+costs the same anywhere in a long conversation. Several conversations are read one by one and merged.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from archive import rows
 from archive.filters import check_id, check_int, time_clauses
 
 STREAM_CHUNK = 2000
-Key = tuple[int, int]
+Key = tuple[int, int, int]
 Row = tuple[Any, ...]
 Fetch = Callable[[str, Sequence[object]], list[Row]]  # runs one query to its end
 
@@ -41,13 +41,13 @@ def _side(
     """
     if limit <= 0:
         return []
-    compare, direction = ("<", "DESC") if older else (">", "ASC")
+    compare, order = ("<", rows.ORDER_NEWEST) if older else (">", rows.ORDER_OLDEST)
     clauses = ["m.conversation_id = ?"]
     if key is not None:
-        clauses.append(f"(m.sent_ns, m.id) {compare} (?, ?)")
+        clauses.append(f"{rows.ORDER_KEY} {compare} (?, ?, ?)")
     if not include_system:
         clauses.append(rows.VISIBLE)
-    sql = f"{rows.PAGED_MESSAGE_SELECT} WHERE {' AND '.join(clauses)} ORDER BY m.sent_ns {direction}, m.id {direction} LIMIT ?"
+    sql = f"{rows.PAGED_MESSAGE_SELECT} WHERE {' AND '.join(clauses)} ORDER BY {order} LIMIT ?"
     parts = [conn.execute(sql, (conversation, *(key or ()), limit)).fetchall() for conversation in conversation_keys]
     if len(parts) == 1:
         return parts[0]
@@ -164,8 +164,8 @@ def _stream_one(
     fixed = [place, *time_sql, *([] if include_system else [rows.VISIBLE])]
     key: Key | None = None
     while True:
-        clauses = fixed if key is None else [*fixed, "(m.sent_ns, m.id) > (?, ?)"]
-        sql = f"{rows.PAGED_MESSAGE_SELECT} WHERE {' AND '.join(clauses)} ORDER BY m.sent_ns, m.id LIMIT ?"
+        clauses = fixed if key is None else [*fixed, f"{rows.ORDER_KEY} > (?, ?, ?)"]
+        sql = f"{rows.PAGED_MESSAGE_SELECT} WHERE {' AND '.join(clauses)} ORDER BY {rows.ORDER_OLDEST} LIMIT ?"
         chunk = fetch(sql, (*time_params, *(key or ()), STREAM_CHUNK))
         for row in chunk:
             yield rows.sort_key(row), rows.message(row)

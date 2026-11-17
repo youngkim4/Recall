@@ -21,19 +21,24 @@ Message = dict[str, Any]
 Conversation = dict[str, Any]
 Person = dict[str, Any]
 
-CONVERSATION_INDEX = "messages_by_conversation_time"  # (conversation_id, sent_ns, id, is_from_me, kind)
+# (conversation_id, sent_ns, source_rowid, id, is_from_me, kind, sender_handle_id)
+CONVERSATION_INDEX = "messages_by_conversation_time"
+# The place of a message in time. Messages of one moment are in the order of the source.
+ORDER_KEY = "(m.sent_ns, m.source_rowid, m.id)"
+ORDER_OLDEST = "m.sent_ns, m.source_rowid, m.id"
+ORDER_NEWEST = "m.sent_ns DESC, m.source_rowid DESC, m.id DESC"
 TIME_INDEX = "messages_counted_by_time"  # (sent_ns, conversation_id, is_from_me) where kind is not system
 
 
 def _message_select(messages_table: str) -> str:
-    """columns 0 and 1 are the sort key (sent_ns, id); the rest is the Message"""
+    """Column 0 (sent_ns), the last column (source_rowid) and column 1 (id) are the sort key; the rest is the Message."""
     return f"""
 SELECT m.sent_ns, m.id, m.guid, COALESCE(c.chat_identifier, ''), {sql_local_timestamp("m.sent_at")}, m.sent_at,
        m.is_from_me, COALESCE(h.handle, ''), m.text, m.kind,
        (SELECT group_concat(COALESCE(NULLIF(a.mime_type, ''), '{UNKNOWN_MIME_TYPE}'), char(31)
                             ORDER BY a.position, a.id)
           FROM attachments a WHERE a.message_id = m.id),
-       m.reply_to_guid, m.edited_at, m.unsent
+       m.reply_to_guid, m.edited_at, m.unsent, m.source_rowid
   FROM {messages_table}
   LEFT JOIN conversations c ON c.id = m.conversation_id
   LEFT JOIN handles h ON h.id = m.sender_handle_id
@@ -48,7 +53,7 @@ PAGED_MESSAGE_SELECT = _message_select(f"messages m INDEXED BY {CONVERSATION_IND
 CONVERSATION_SELECT = """
 SELECT c.chat_identifier, c.is_group, c.title, c.message_count, c.sent_count, c.received_count,
        c.first_sent_ns, c.last_sent_ns,
-       (SELECT group_concat(h.handle, char(31) ORDER BY h.handle)
+       (SELECT group_concat(h.handle, char(31) ORDER BY cm.message_count DESC, h.handle)
           FROM conversation_members cm JOIN handles h ON h.id = cm.handle_id
          WHERE cm.conversation_id = c.id),
        c.person_id
@@ -73,9 +78,9 @@ def timestamp_from_ns(unix_ns: int | None) -> str | None:
     return None if unix_ns is None else local_timestamp(unix_ns // 1_000_000_000)
 
 
-def sort_key(row: sqlite3.Row | tuple[Any, ...]) -> tuple[int, int]:
-    """Position of a message row in its conversation: (sent_ns, id)."""
-    return row[0], row[1]
+def sort_key(row: sqlite3.Row | tuple[Any, ...]) -> tuple[int, int, int]:
+    """Position of a message row in time: (sent_ns, source_rowid, id), the columns of ORDER_KEY."""
+    return row[0], row[14], row[1]
 
 
 def message(row: sqlite3.Row | tuple[Any, ...]) -> Message:

@@ -116,7 +116,8 @@ class TestConversations:
             "received_count": 5,
             "first_timestamp": "2023-12-31 23:59:59",
             "last_timestamp": "2024-03-10 03:00:00",
-            "members": sorted([worlds.ROWAN_PHONE, worlds.MIRA_PHONE, worlds.TESSA_EMAIL]),
+            # the member who wrote the most messages in the group is first
+            "members": [worlds.MIRA_PHONE, worlds.TESSA_EMAIL, worlds.ROWAN_PHONE],
             "person_id": None,
         }
 
