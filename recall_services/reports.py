@@ -43,6 +43,7 @@ from typing import Any
 from archive import Archive
 from archive import ArchiveError as ArchiveFault
 from recall_services import inputs, keys, models, report_files
+from recall_services import messages as message_service
 from recall_services.names import Names, ReportLabeler
 from recall_services.report_failures import NO_KEY, ReportFailure, failure_of
 # part of this module for its callers
@@ -143,6 +144,8 @@ class _Asked:
     until: str | None
     info: ModelInfo
     labeler: ReportLabeler
+    # masks each handle that is not saved in the text of a message
+    redact: Callable[[str], str]
 
     @property
     def scope(self) -> dict[str, str | None] | None:
@@ -238,7 +241,27 @@ def _asked(contact: str, model: str, since: object, until: object, archive: Arch
         raise ValueError("The first day is after the last day.")
     info = models.model_info(inputs.text(model).strip() or models.default_id())
     record = archive.conversation(conversation) or {"id": conversation, "is_group": False}
-    return _Asked(conversation, first, last, info, names.report_labeler(record))
+    redact = names.chat_labeler(archive.conversations()).redact
+    return _Asked(conversation, first, last, info, names.report_labeler(record), redact)
+
+
+class _Masked:
+    """The messages of the archive for a report, with each handle that is not saved masked in their text.
+
+    The labeler of a report names the writers. A person can also type a
+    number or an address into a message: chat masks it there, and a report
+    does the same, so no handle that is not saved goes to the model. The
+    estimate and the run read through this source, so they plan the same parts.
+    """
+
+    def __init__(self, archive: Archive, redact: Callable[[str], str]) -> None:
+        self._source = ArchiveSource(archive)
+        self._redact = redact
+
+    def messages(self, conversation: str, since: str | None, until: str | None) -> Iterator[Any]:
+        for message in self._source.messages(conversation, since, until):
+            shown = self._redact(message["text"])
+            yield message if shown == message["text"] else {**message, "text": shown}
 
 
 def _provider(info: ModelInfo) -> str:
@@ -252,7 +275,7 @@ def _planned(
 
     def plan(cache: PeriodCache | None) -> list[Any]:
         return planned_calls(
-            ArchiveSource(archive),
+            _Masked(archive, asked.redact),
             asked.conversation,
             asked.scope,
             asked.info,
@@ -401,7 +424,7 @@ def run(
     watched = _Watched(_port(llm_factory or default_llm, asked.info))
     try:
         report = run_report(
-            source=ArchiveSource(archive),
+            source=_Masked(archive, asked.redact),
             conversation=asked.conversation,
             scope=asked.scope,
             llm=watched,
@@ -429,6 +452,24 @@ def run(
     return done
 
 
+def _quoted(archive: Archive, conversation: str, moment: Any) -> dict[str, Any] | None:
+    """The message that a moment quotes, as the archive holds it today, or None.
+
+    A report that was written on the rows of the bridge holds the id
+    `legacy:<ROWID>`. After the first pull the message has Apple's guid: it
+    is then found by its row number, and taken only when it is of the same
+    conversation and of the day of the moment.
+    """
+    found = archive.message(moment.quote_message_id)
+    if found is None:
+        found = message_service.find_saved(archive, moment.quote_message_id, chat_id=conversation)
+        if found is not None and str(found["timestamp"])[:10] != moment.date:
+            found = None
+    if found is None or found["conversation"] != conversation:
+        return None
+    return dict(found)
+
+
 def moments_for(report: Report, archive: Archive) -> list[dict[str, Any]]:
     """Each moment of a report with what the Reports screen needs to open its day.
 
@@ -439,9 +480,7 @@ def moments_for(report: Report, archive: Archive) -> list[dict[str, Any]]:
     """
     shaped = []
     for moment in report.moments:
-        quoted = archive.message(moment.quote_message_id) if moment.quote_verified else None
-        if quoted is not None and quoted["conversation"] != report.conversation:
-            quoted = None
+        quoted = _quoted(archive, report.conversation, moment) if moment.quote_verified else None
         shaped.append(
             {
                 "date": moment.date,

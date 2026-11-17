@@ -377,3 +377,72 @@ def test_a_quoted_message_that_the_archive_no_longer_holds_opens_the_day_only(de
     changed = done.report.model_copy(update={"moments": (gone, *done.report.moments[1:])})
     shaped = reports.moments_for(changed, desk.archive)[0]
     assert (shaped["day"], shaped["at"], shaped["pickedId"]) == (first.date, None, "")
+
+
+# --- what goes to the model, and a quoted message after the first pull ----------
+
+
+def test_a_handle_that_is_not_saved_and_stands_in_a_message_is_masked_for_the_model(tmp_path: Path) -> None:
+    """Chat masks such a handle in the text of a message. A report does the same."""
+    from recall_services.names import Names
+    from tests.integration.report_data import HANDLE_PARTS, MINA_CONTACT, Pulled
+    from tests.recall_services.report_world import OPTIONS
+    from tests.report_engine.synth import WordCounter, conversation, message
+
+    pulled = Pulled(tmp_path / "world")
+    from tests.report_engine.synth import RAVI
+
+    typed = message("typed", "2024-06-02 12:00:00", f"Call {THEO} or (202) 555-0171 when you arrive at the pier")
+    pulled.write(MINA, [*conversation("2024-06-01", days=3, per_day=4), typed])
+    # two people who are not saved: the archive knows the address of one and the number of the other
+    pulled.write(THEO, conversation("2024-06-01", days=2, per_day=2, others=(THEO,)))
+    pulled.write(RAVI, conversation("2024-06-01", days=2, per_day=2, others=(RAVI,)))
+    pulled.pull([MINA_CONTACT])
+    model = FakeLLM()
+    places = reports.ReportPlaces(tmp_path / "out", tmp_path / "saves" / "reports", tmp_path / "saves" / "cache.sqlite3")
+    try:
+        with pulled.open() as archive:
+            more = {"archive": archive, "names": Names.from_records([MINA_CONTACT]), "places": places}
+            done = reports.run(
+                MINA, MODEL, llm_factory=lambda _info: model, options=OPTIONS, counter=WordCounter(), **more
+            )
+            planned = reports.estimate(MINA, MODEL, options=OPTIONS, counter=WordCounter(), **more)
+    finally:
+        pulled.close()
+    sent = "\n".join(part["content"] for call in model.calls for part in call.messages)
+    assert "when you arrive at the pier" in sent
+    unsaved = [part for part in HANDLE_PARTS if "0171" in part or part == THEO]
+    assert unsaved and not [part for part in unsaved if part in sent]
+    assert not [part for part in unsaved if part in done.report_path.read_text(encoding="utf-8")]
+    # the estimate read the same text, so every part of the plan was found in the notes of the run
+    assert planned["periods_cached"] == planned["periods"] >= 1
+
+
+def _row_number(desk: Desk, message_id: str) -> int:
+    import sqlite3
+    from contextlib import closing
+
+    with closing(sqlite3.connect(desk.pulled.archive_path)) as conn:
+        return int(conn.execute("SELECT source_rowid FROM messages WHERE guid = ?", (message_id,)).fetchone()[0])
+
+
+def test_a_moment_written_on_the_rows_of_the_bridge_finds_its_message_after_the_first_pull(desk: Desk) -> None:
+    """Such a report holds `legacy:<ROWID>`. After the pull the message has another id and the same row number."""
+    done = reports.run(MINA, MODEL, **desk.more())
+    first = done.report.moments[0]
+    quoted = desk.archive.message(first.quote_message_id)
+    old_id = f"legacy:{_row_number(desk, quoted['id'])}"
+    bridged = first.model_copy(update={"quote_message_id": old_id, "message_ids": (old_id,)})
+    shaped = reports.moments_for(done.report.model_copy(update={"moments": (bridged,)}), desk.archive)[0]
+    assert (shaped["pickedId"], shaped["at"], shaped["day"]) == (quoted["id"], quoted["timestamp"], first.date)
+
+
+def test_a_row_number_that_now_names_a_message_of_another_day_is_not_taken(desk: Desk) -> None:
+    """A rebuilt Messages database numbers its rows again: the row number alone is not enough."""
+    done = reports.run(MINA, MODEL, **desk.more())
+    first, last = done.report.moments[0], done.report.moments[-1]
+    assert first.date != last.date
+    other = f"legacy:{_row_number(desk, last.quote_message_id)}"
+    moved = first.model_copy(update={"quote_message_id": other, "message_ids": (other,)})
+    shaped = reports.moments_for(done.report.model_copy(update={"moments": (moved,)}), desk.archive)[0]
+    assert (shaped["pickedId"], shaped["at"], shaped["day"]) == ("", None, first.date)

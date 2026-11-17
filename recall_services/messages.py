@@ -26,7 +26,7 @@ from archive import Archive
 from message_text import UNSENT_LABEL, attachment_label, clip_text, display_text
 from recall_services.names import Names
 
-# the same number as MESSAGE_TEXT_LIMIT in ui_server.py
+# how much of a text a list shows; the archive keeps it whole
 MESSAGE_TEXT_LIMIT = 600
 LEGACY_PREFIX = "legacy:"
 _SYSTEM_KIND = "system"
