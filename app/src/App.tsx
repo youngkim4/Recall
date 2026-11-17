@@ -6,6 +6,7 @@ import { JobsView } from './components/jobs/JobsView'
 import { OverviewView } from './components/overview/OverviewView'
 import { ArchiveWait } from './components/onboarding/ArchiveWait'
 import { OnboardingWizard } from './components/onboarding/OnboardingWizard'
+import { ReportDays } from './components/reports/ReportDays'
 import { ReportsView } from './components/reports/ReportsView'
 import { SearchView } from './components/search/SearchView'
 import { ResizeHandle } from './components/ResizeHandle'
@@ -573,22 +574,30 @@ function App() {
             onOpenSetup={() => void openSetup()}
           />
         ) : activeView === 'reports' ? (
-          <ReportsView
-            reports={reports}
-            selectedReport={selectedReport}
-            analysis={analysis}
-            loading={loadingReport}
-            failed={Boolean(selectedReport) && failedReport === selectedReport?.path}
-            listWidth={layout.reportListWidth}
-            onListWidthChange={(reportListWidth) => changeLayout({ reportListWidth })}
-            onSelectReport={openReport}
-            onOpenConversation={(chatId, name) =>
-              selectContactForAnalyze(
-                contacts.find((contact) => contact.chat_id === chatId) ?? { chat_id: chatId, display_name: name },
-              )
-            }
-            onChooseConversation={() => setActiveView('analyze')}
-          />
+          // a moment of a report opens its day in a sheet over the report
+          <ReportDays
+            messagesPath={effectiveDefaults?.messagesPath ?? ''}
+            contacts={contacts}
+            name={selectedReport?.displayName}
+            onOpenConversation={selectContactForAnalyze}
+          >
+            <ReportsView
+              reports={reports}
+              selectedReport={selectedReport}
+              analysis={analysis}
+              loading={loadingReport}
+              failed={Boolean(selectedReport) && failedReport === selectedReport?.path}
+              listWidth={layout.reportListWidth}
+              onListWidthChange={(reportListWidth) => changeLayout({ reportListWidth })}
+              onSelectReport={openReport}
+              onOpenConversation={(chatId, name) =>
+                selectContactForAnalyze(
+                  contacts.find((contact) => contact.chat_id === chatId) ?? { chat_id: chatId, display_name: name },
+                )
+              }
+              onChooseConversation={() => setActiveView('analyze')}
+            />
+          </ReportDays>
         ) : activeView === 'explore' ? (
           <SearchView defaults={effectiveDefaults} contacts={contacts} onSelectContact={selectContactForAnalyze} />
         ) : activeView === 'ask' ? (
