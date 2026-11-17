@@ -138,6 +138,7 @@ class ChatDbBuilder:
         self._without = frozenset(without)
         self._skipped = frozenset(skip_tables)
         self._counter = 0
+        self._closed = False
         self.raw = sqlite3.connect(str(self.path))
         if wal:
             self.raw.execute("PRAGMA journal_mode=WAL")
@@ -316,5 +317,9 @@ class ChatDbBuilder:
         return self.path
 
     def close(self) -> None:
+        """Commit and close. A second call does nothing."""
+        if self._closed:
+            return
+        self._closed = True
         self.raw.commit()
         self.raw.close()

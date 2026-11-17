@@ -19,8 +19,11 @@ from archive.errors import (
     SqliteFeatureError,
     TypedStreamError,
 )
+from archive.importer import ImportResult, import_chat_db
 
 __all__ = [
+    "ImportResult",
+    "import_chat_db",
     "ArchiveError",
     "ArchiveNotFoundError",
     "ArchiveVersionError",

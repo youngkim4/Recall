@@ -48,6 +48,63 @@ class SourceAttachment(NamedTuple):
     total_bytes: int | None
 
 
+class SourceChat(NamedTuple):
+    """One row of chat.db's chat table."""
+
+    rowid: int
+    identifier: str | None
+    title: str | None
+    service: str | None
+
+
+class MessageRow(NamedTuple):
+    """A row of the archive's messages table, without its id and import ids."""
+
+    guid: str
+    conversation_id: int
+    sender_handle_id: int | None
+    is_from_me: int
+    sent_ns: int
+    text: str
+    kind: str
+    service: str
+    reply_to_guid: str | None
+    edited_at: int | None
+    unsent: int
+    item_type: int
+    text_source: str
+    extra: str | None
+    source_rowid: int
+
+
+class ReactionRow(NamedTuple):
+    """A row of the archive's reactions table, without its id and import ids."""
+
+    guid: str
+    target_guid: str
+    target_part: int | None
+    conversation_id: int | None
+    sender_handle_id: int | None
+    is_from_me: int
+    kind: str
+    emoji: str | None
+    removed: int
+    sent_ns: int
+    source_rowid: int
+
+
+class AttachmentRow(NamedTuple):
+    """A row of the archive's attachments table, with the guid of its message."""
+
+    guid: str
+    message_guid: str
+    position: int
+    mime_type: str | None
+    file_name: str | None
+    path: str | None
+    total_bytes: int | None
+
+
 @dataclass(frozen=True, slots=True)
 class MessageRecord:
     """A message or a group event, ready for the archive. Ids are still source ROWIDs."""
