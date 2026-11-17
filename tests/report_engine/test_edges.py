@@ -105,17 +105,18 @@ def test_a_message_larger_than_the_room_of_the_model_is_cut_and_sent() -> None:
     assert report.warnings == ("1 long message was cut to fit: the model read only its start.",)
 
 
-class OneNameIsHeavy:
-    """Counts words, but every line of one speaker is 5,000 tokens however
-    short its text is. No cut makes such a line fit."""
+class NamesOfOnePeriodAreHeavy:
+    """Counts words, but the list of speakers of a period in which only Theo
+    writes is 5,000 tokens. A plan can not see that before it has its periods."""
 
     family = "words"
 
     def count_many(self, texts: Any) -> list[int]:
-        return [len(text.split()) + 5_000 * text.count("Theo:") for text in texts]
+        return [len(text.split()) + (5_000 if text == "Theo" else 0) for text in texts]
 
 
-def test_a_period_that_no_cut_can_make_fit_is_not_sent() -> None:
+def test_a_period_that_is_too_large_for_the_model_is_not_sent() -> None:
+    """The last check before a call: a request over the input limit is not sent."""
     messages = [
         message(1, "2024-06-01 09:00:00", "small start"),
         message(2, "2024-06-02 09:00:00", "a line", sender=THEO),
@@ -130,19 +131,19 @@ def test_a_period_that_no_cut_can_make_fit_is_not_sent() -> None:
             max_input_tokens=3_000, context_window=10_000, max_output_tokens=2_000
         ),
         labeler=labeler,
-        options=SMALL_OPTIONS,
-        counter=OneNameIsHeavy(),
+        options=replace(SMALL_OPTIONS, period_token_budget=14),
+        counter=NamesOfOnePeriodAreHeavy(),
     )
     assert [period.label for period in report.periods] == [
         "2024-06-01",
-        "2024-06-02 part 1",
+        "2024-06-02",
         "2024-06-03",
     ]
     assert len(llm.map_calls) == 2
     assert all("Theo:" not in call.text for call in llm.map_calls)
     assert report.status == "partial"
     assert report.warnings[0].startswith(
-        'Period "2024-06-02 part 1" was not analysed: the period is too large for the model'
+        'Period "2024-06-02" was not analysed: the period is too large for the model'
     )
     assert report.periods[1].usage.calls == 0
 

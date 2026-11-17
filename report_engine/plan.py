@@ -12,9 +12,10 @@ from dataclasses import dataclass
 
 from report_engine.cache import period_key
 from report_engine.chunking import (
-    HEADER_TOKENS,
+    HeaderSizer,
     Period,
     fit_lines,
+    header_sizer,
     line_sizer,
     measure_days,
     plan_periods,
@@ -38,11 +39,15 @@ from report_engine.prompts import (
 )
 from report_engine.scope import coerce_scope
 from report_engine.tokens import TokenCounter, TokenMeter, meter_for
-from report_engine.transcript import Line, build_lines, render_period
+from report_engine.transcript import COUNT_REF, ELISION_MARK, Line, build_lines, render_period
 
 logger = logging.getLogger(__name__)
 
 MIN_PERIOD_LINE_TOKENS = 60
+# a week of days holds every name of a weekday; the header of another day can
+# be a few tokens larger
+SAMPLE_WEEK = tuple(f"2024-01-{day:02d}" for day in range(1, 8))
+HEADER_SLACK_TOKENS = 4
 
 
 @dataclass(frozen=True)
@@ -138,6 +143,25 @@ def _check_reduce_fits(limits: Limits, figure_tokens: int, periods: int, model_i
         )
 
 
+def _check_line_fits(
+    budget: int, names: Sequence[str], meter: TokenMeter, headers: HeaderSizer
+) -> None:
+    """A period holds the header of a day and one line at least. When the
+    shortest line of a speaker does not fit, say so before a call is paid for."""
+    shortest = [f"{COUNT_REF} 00:00 {name}: {ELISION_MARK}\n" for name in names]
+    least = (
+        max(meter.count_many(shortest))
+        + max(headers(day) for day in SAMPLE_WEEK)
+        + HEADER_SLACK_TOKENS
+    )
+    if least > budget:
+        raise ConfigError(
+            f"a period of {budget} tokens can not hold one message: the shortest line with "
+            f"the header of its day is {least} tokens. Use a larger period_token_budget or a "
+            "model with a larger input limit."
+        )
+
+
 def _planned_periods(
     periods: Sequence[Period],
     lines: tuple[Line, ...],
@@ -194,9 +218,11 @@ def build_plan(
     meter = meter_for(model_info, counter, options.tokenizer_mismatch_margin)
     names = tuple(sorted({line.label for line in lines}))
     limits = resolve_limits(model_info, options, meter, names)
-    lines = fit_lines(lines, meter, max(1, limits.transcript_budget - HEADER_TOKENS))
+    headers = header_sizer(meter)
+    _check_line_fits(limits.transcript_budget, names, meter, headers)
+    lines = fit_lines(lines, meter, limits.transcript_budget, headers)
     days = measure_days(lines, meter)
-    periods = plan_periods(days, limits.transcript_budget, line_sizer(lines, meter))
+    periods = plan_periods(days, limits.transcript_budget, line_sizer(lines, meter), headers)
     figures = conversation_figures(lines)
     _check_reduce_fits(limits, meter.count(figures), len(periods), model_info.id)
     logger.info(

@@ -25,11 +25,12 @@ from dataclasses import dataclass
 import pandas as pd
 
 from report_engine.chunking import (
-    HEADER_TOKENS,
     DaySpan,
+    HeaderSizer,
     LineSizer,
     Period,
     fit_lines,
+    header_sizer,
     line_sizer,
     measure_days,
     plan_periods,
@@ -85,6 +86,14 @@ class Total:
     lines: int
     cut: int
     periods: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class Gauge:
+    """What sizes are taken with: the meter, and its sizes of the headers of days."""
+
+    meter: TokenMeter
+    headers: HeaderSizer
 
 
 def _refuse(*args: object, **kwargs: object) -> None:
@@ -153,24 +162,26 @@ def read_sized(frame: pd.DataFrame, chat: str, meter: TokenMeter) -> Sized | Non
 
 
 def plan(
-    sized: Sized, meter: TokenMeter, budget: int
+    sized: Sized, gauge: Gauge, budget: int
 ) -> tuple[tuple[Period, ...], tuple[DaySpan, ...], LineSizer]:
     """The periods for one budget, as `build_plan` makes them for a model with no limit."""
-    lines = fit_lines(sized.lines, meter, max(1, budget - HEADER_TOKENS))
-    days = sized.days if lines is sized.lines else measure_days(lines, meter)
-    sizer = line_sizer(lines, meter)
-    return plan_periods(days, budget, sizer), days, sizer
+    lines = fit_lines(sized.lines, gauge.meter, budget, gauge.headers)
+    days = sized.days if lines is sized.lines else measure_days(lines, gauge.meter)
+    sizer = line_sizer(lines, gauge.meter)
+    return plan_periods(days, budget, sizer, gauge.headers), days, sizer
 
 
-def unstable_cuts(days: Sequence[DaySpan], budget: int, sizer: LineSizer, cuts: int) -> list[int]:
+def unstable_cuts(
+    days: Sequence[DaySpan], budget: int, sizer: LineSizer, headers: HeaderSizer, cuts: int
+) -> list[int]:
     """Cut the history at `cuts` days and plan each start again. Every period
     but the last one of a shorter history must stand unchanged in the full plan.
     Returns the cut points where that does not hold."""
-    full = plan_periods(days, budget, sizer)
+    full = plan_periods(days, budget, sizer, headers)
     step = max(1, len(days) // (cuts + 1))
     found: list[int] = []
     for stop in range(step, len(days), step):
-        before = plan_periods(days[:stop], budget, sizer)
+        before = plan_periods(days[:stop], budget, sizer, headers)
         if before[:-1] != full[: len(before) - 1]:
             found.append(stop)
     return found
@@ -224,7 +235,7 @@ def _report_conversation(
     rank: int,
     rows: int,
     sized: Sized,
-    meter: TokenMeter,
+    gauge: Gauge,
     budgets: Sequence[int],
     cuts: int,
     emit: Emit,
@@ -238,11 +249,11 @@ def _report_conversation(
         f"largest day {largest_day:,}; read and count {sized.seconds:.1f} s"
     )
     for budget in budgets:
-        periods, days, sizer = plan(sized, meter, budget)
+        periods, days, sizer = plan(sized, gauge, budget)
         whole, ranges, parts = _kinds(periods)
         fill = sum(period.tokens for period in periods) / (len(periods) * budget)
         over = sum(period.tokens > budget for period in periods)
-        unstable = len(unstable_cuts(days, budget, sizer, cuts))
+        unstable = len(unstable_cuts(days, budget, sizer, gauge.headers, cuts))
         emit(
             f"  budget {budget:>7,}: periods {len(periods):>4,} (months {whole:,}, day ranges "
             f"{ranges:,}, parts of a day {parts:,}); mean fill {fill:.0%}; over the budget {over:,}; "
@@ -312,6 +323,7 @@ def run(args: argparse.Namespace, emit: Emit) -> None:
         HeuristicCounter() if args.heuristic else load_counter(args.tokenizer_family)
     )
     meter = meter_for(model, counter)
+    gauge = Gauge(meter, header_sizer(meter))
     budgets = tuple(sorted(set(args.budgets)))
     emit(f"tokens counted with {meter.describe()}; message cap {MAX_MESSAGE_CHARS:,} characters")
     if counter.family == HEURISTIC_FAMILY and not args.heuristic:
@@ -329,9 +341,9 @@ def run(args: argparse.Namespace, emit: Emit) -> None:
             if sized is None:
                 failures["no message with text"] += 1
                 continue
-            periods = tuple(len(plan(sized, meter, budget)[0]) for budget in budgets)
+            periods = tuple(len(plan(sized, gauge, budget)[0]) for budget in budgets)
             if rank <= args.top:
-                _report_conversation(rank, int(rows), sized, meter, budgets, args.cuts, emit)
+                _report_conversation(rank, int(rows), sized, gauge, budgets, args.cuts, emit)
             if rank <= args.estimates:
                 _report_estimate(rank, part, str(chat), model, counter, emit)
         except Exception as exc:  # noqa: BLE001 - one conversation must not stop the others

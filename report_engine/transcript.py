@@ -33,6 +33,9 @@ MAX_MESSAGE_CHARS = 4_000
 MIN_PHONE_DIGITS = 7
 ELISION_MARK = "[...]"
 SPACED_SCRIPTS_END = 0x0530  # Latin, Greek and Cyrillic end here
+MARK_ROOM = len(ELISION_MARK) + 1
+_JOINER = chr(0x200D)
+_FORM_MARKS = frozenset({chr(0xFE0E), chr(0xFE0F)})
 COUNT_REF = "m00000"
 FRAME_TAGS = ("transcript", "notes", "periods", "moments")
 TRANSCRIPT_OPEN = "<transcript>"
@@ -183,14 +186,26 @@ def is_word_char(char: str) -> bool:
     return char.isalnum() and ord(char) < SPACED_SCRIPTS_END
 
 
+def _in_word(char: str) -> bool:
+    """True for a character that belongs with the one before it: a letter or a
+    digit of a spaced script, an accent that stands on a letter, or the mark
+    that picks the form of a symbol."""
+    if not char:
+        return False
+    return is_word_char(char) or unicodedata.combining(char) != 0 or char in _FORM_MARKS
+
+
 def word_cut(text: str, keep: int) -> str:
     """At most the first `keep` characters of a text. The cut does not fall
-    inside a word: a quote can not end inside a word, so a text that was cut
-    there could not be found in its message."""
-    end = min(keep, len(text))
-    if is_word_char(text[end : end + 1]):
-        while end and is_word_char(text[end - 1]):
+    inside a word, and not between a letter and its accent: a quote can not
+    end inside a word, so a text that was cut there could not be found in its
+    message. No joiner is left at the end."""
+    end = max(0, min(keep, len(text)))
+    if _in_word(text[end : end + 1]):
+        while end and _in_word(text[end - 1]):
             end -= 1
+    while end and text[end - 1] == _JOINER:
+        end -= 1
     return text[:end].rstrip()
 
 
@@ -219,12 +234,14 @@ def _read_row(message: Mapping[str, Any], known_days: set[str], max_chars: int) 
         known_days.add(day)
     raw = message.get("text")
     text = scrub(raw if isinstance(raw, str) else "" if raw is None else str(raw))
-    flat = shield(text)
+    # one Unicode form for what the model reads; the quote check uses the same form
+    flat = shield(unicodedata.normalize("NFC", text))
     if not flat:
         return None
     sender = scrub(str(message.get("sender") or ""))
     cut = len(flat) > max_chars
-    shown = cut_start(flat, max_chars) if cut else flat
+    # the mark has its place inside the cap: a cut line is never the longer one
+    shown = cut_start(flat, max_chars - MARK_ROOM) if cut else flat
     return _Row(stamp=stamp, id=mid, own=own, sender=sender, text=text, flat=shown, cut=cut)
 
 

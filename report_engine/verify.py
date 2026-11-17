@@ -208,7 +208,8 @@ def _check_one(
     if date is None:
         return _Outcome(None)
 
-    quote = word_cut(clean_quote(raw.quote), MAX_QUOTE_CHARS)
+    given = clean_quote(raw.quote)
+    quote = word_cut(given, MAX_QUOTE_CHARS)
     parts = quote_parts(quote)
     source = _find_quote(parts, cited, date, index) if parts else None
     ids = [line.id for line in cited]
@@ -227,7 +228,9 @@ def _check_one(
         quote_message_id=source.id if source is not None else "",
         quote_speaker=source.label if source is not None else "",
     )
-    return _Outcome(moment, quote_cleared=bool(parts) and source is None, date_repaired=repaired)
+    # a quote that can not be cut to length between words counts as not found too
+    cleared = bool(quote_parts(given)) and source is None
+    return _Outcome(moment, quote_cleared=cleared, date_repaired=repaired)
 
 
 def check_moments(
