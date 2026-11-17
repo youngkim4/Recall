@@ -299,18 +299,6 @@ export type MemoriesPayload = {
   }>
 }
 
-export type SemanticStatus = {
-  state: 'none' | 'stale' | 'fresh'
-  windows?: number
-  builtAt?: string
-  model?: string
-  estimate?: {
-    windows: number
-    tokens: number
-    estimatedCost: number
-  }
-}
-
 // An answer of an older build, kept in a saved chat, has only the first six keys.
 export type AskResponse = {
   question: string

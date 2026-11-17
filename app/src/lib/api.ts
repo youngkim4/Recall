@@ -12,7 +12,6 @@ import type {
   PreviewPayload,
   ReportFile,
   SearchResponse,
-  SemanticStatus,
   SetupMarker,
   SetupStatus,
 } from '../types'
@@ -233,17 +232,6 @@ export const recallApi = {
     request<{ overview: ArchivePatterns }>(
       `/api/overview${queryString({ messagesPath: input.messagesPath })}`,
     ),
-
-  semanticStatus: (input: { messagesPath?: string }) =>
-    request<{ semantic: SemanticStatus }>(
-      `/api/semantic${queryString({ messagesPath: input.messagesPath })}`,
-    ),
-
-  createSemanticJob: (input: { messagesPath: string }) =>
-    request<{ job: Job }>('/api/jobs', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'semantic', ...input }),
-    }),
 
   refreshContactNames: () =>
     request<{ contactNames: ContactNamesSummary; message?: string }>('/api/contact-names', {
