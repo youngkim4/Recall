@@ -256,6 +256,14 @@ def test_the_answer_to_a_new_job_is_the_job_as_it_was_made(monkeypatch):
     assert made is not kept
 
 
+def test_the_answer_to_a_new_job_does_not_share_the_lines_of_the_job(held_jobs):
+    made = ui_server.create_job("export", {})
+
+    ui_server.append_log(made["id"], "a line that the job writes later")
+
+    assert made["logs"] == []
+
+
 def test_the_answer_about_a_job_is_a_copy_of_it(server, held_jobs):
     made = ui_server.create_job("export", {})
 

@@ -416,3 +416,45 @@ def test_files_that_a_quit_left_half_written_are_removed_when_an_import_starts(a
     assert unchanged(archive)
     assert left_behind(archive) == []
 
+
+def cut_off_after_the_moves(archive):
+    """As the end of the process left it: the three new files are in place, and the earlier files are all kept."""
+    folder = messages_csv(archive).parent
+    for path, text in archive.items():
+        path.with_name(f"{path.stem}.before-update{path.suffix}").write_text(text, encoding="utf-8")
+        path.write_text(text.replace("kept", "newer"), encoding="utf-8")
+    return folder
+
+
+def test_an_import_that_put_the_archive_back_does_not_say_that_nothing_changed(archive, tmp_path):
+    cut_off_after_the_moves(archive)
+
+    job = import_from(tmp_path / "gone.db", messages_csv(archive))
+
+    assert job["status"] == "failed"
+    assert job["error"] == (
+        "There is no Messages database on this Mac. "
+        "The archive is as it was before the import that did not finish."
+    )
+    assert unchanged(archive)
+
+
+def test_the_archive_of_the_app_is_put_back_when_the_server_starts(archive, monkeypatch):
+    cut_off_after_the_moves(archive)
+    monkeypatch.setattr(ui_server, "DEFAULT_MESSAGES_CSV", messages_csv(archive))
+
+    ui_server.settle_default_archive()
+
+    assert unchanged(archive)
+    assert left_behind(archive) == []
+
+
+def test_a_start_with_an_archive_that_cannot_be_put_back_goes_on(archive, monkeypatch):
+    cut_off_after_the_moves(archive)
+    monkeypatch.setattr(ui_server, "DEFAULT_MESSAGES_CSV", messages_csv(archive))
+    fail_on_call(monkeypatch, os, "replace", set(range(1, 9)), NO_SPACE)
+
+    ui_server.settle_default_archive()
+
+    assert (messages_csv(archive).parent / "messages.before-update.csv").exists()
+

@@ -315,3 +315,16 @@ def test_a_group_takes_its_name_from_messages_itself_when_that_can_be_read(serve
     names = names_of_conversations(server, group_export)
 
     assert names[GROUP] == "Project Crew"
+
+
+@pytest.mark.parametrize("content, holds", [(None, False), (HEADER_ONLY, False), (HEADER_ONLY + "1,2020-01-01 00:00:00,me,kept,+15550100,1,iMessage\n", True)])
+def test_the_state_of_setup_says_whether_the_archive_holds_messages(server, messages_home, tmp_path, content, holds):
+    # the guide and the server use one test for "is this an update"
+    target = tmp_path / "messages.csv"
+    if content is not None:
+        target.write_text(content, encoding="utf-8")
+
+    _, _, body = fetch(server, f"/api/setup/status?messagesPath={quote(str(target))}")
+
+    assert json.loads(body)["export"] == {"exists": content is not None, "path": str(target), "holdsMessages": holds}
+

@@ -37,7 +37,7 @@ def raising(error):
 
 @pytest.mark.parametrize("status", ["readable", "locked"])
 def test_a_database_that_can_be_tried_stops_nothing(status):
-    assert ui_server.why_unreadable(probe(status), archive_there=True) is None
+    assert ui_server.why_unreadable(probe(status), note=f" {KEPT}") is None
 
 
 @pytest.mark.parametrize("status, kind, words", [
@@ -53,7 +53,7 @@ def test_a_database_that_can_be_tried_stops_nothing(status):
     ("error", "copy", f"The copy at {COPY} could not be read."),
 ])
 def test_each_reason_has_its_sentence(status, kind, words):
-    stopped = ui_server.why_unreadable(probe(status, kind), archive_there=True)
+    stopped = ui_server.why_unreadable(probe(status, kind), note=f" {KEPT}")
 
     assert isinstance(stopped, ui_server.ImportStopped)
     assert words in str(stopped) and str(stopped).endswith(KEPT)
@@ -61,14 +61,14 @@ def test_each_reason_has_its_sentence(status, kind, words):
 
 @pytest.mark.parametrize("kind", ["live", "copy"])
 def test_a_file_that_could_not_be_read_is_not_said_to_be_another_kind_of_file(kind):
-    stopped = ui_server.why_unreadable(probe("error", kind, detail="Input/output error"), archive_there=True)
+    stopped = ui_server.why_unreadable(probe("error", kind, detail="Input/output error"), note=f" {KEPT}")
 
     assert "is not a Messages database" not in str(stopped)
     assert "could not be read (Input/output error)." in str(stopped)
 
 
 def test_what_the_check_found_is_told_with_the_reason():
-    stopped = ui_server.why_unreadable(probe("invalid", "copy", detail="not a SQLite database"), archive_there=True)
+    stopped = ui_server.why_unreadable(probe("invalid", "copy", detail="not a SQLite database"), note=f" {KEPT}")
 
     assert str(stopped) == f"The copy at {COPY} is not a Messages database (not a SQLite database). {KEPT}"
 
@@ -76,8 +76,8 @@ def test_what_the_check_found_is_told_with_the_reason():
 @pytest.mark.parametrize("status", ["fda_blocked", "missing", "empty", "invalid", "error"])
 @pytest.mark.parametrize("kind", ["live", "copy"])
 def test_the_archive_is_spoken_of_only_when_there_is_one(status, kind):
-    with_archive = str(ui_server.why_unreadable(probe(status, kind), archive_there=True))
-    without = str(ui_server.why_unreadable(probe(status, kind), archive_there=False))
+    with_archive = str(ui_server.why_unreadable(probe(status, kind), note=f" {KEPT}"))
+    without = str(ui_server.why_unreadable(probe(status, kind), note=""))
 
     assert with_archive == f"{without} {KEPT}"
     assert "archive" not in without

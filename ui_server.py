@@ -337,9 +337,15 @@ class ArchiveInParts(ImportStopped):
     """An import stopped part way, and an earlier file could not be put back."""
 
 
-def archive_note(archive_there: bool) -> str:
-    """What a failed import says of the archive: it is as it was, when there was one."""
-    return f" {ARCHIVE_KEPT}" if archive_there else ""
+ARCHIVE_PUT_BACK = "The archive is as it was before the import that did not finish."
+
+
+def archive_note(archive_there: bool, put_back: bool = False) -> str:
+    """What a failed import says of the archive, when there is one: it was not
+    changed, or this import put it back as it was before one that did not finish."""
+    if not archive_there:
+        return ""
+    return f" {ARCHIVE_PUT_BACK if put_back else ARCHIVE_KEPT}"
 
 
 def holds_messages(messages_path: Path) -> bool:
@@ -429,12 +435,13 @@ def held(probe: DbProbe) -> str:
     return f"The copy at {probe.path} is busy. Close the app that has it open, then try again."
 
 
-def why_unreadable(probe: DbProbe, archive_there: bool) -> ImportStopped | None:
+def why_unreadable(probe: DbProbe, note: str) -> ImportStopped | None:
     """What stops an import before it starts, or None when the database can be tried.
 
     The check tells a database macOS keeps closed from one that is not there:
-    without Full Disk Access macOS can show the file as missing. The reason
-    speaks of the archive only when there is one.
+    without Full Disk Access macOS can show the file as missing. `note` is
+    what the reason says of the archive (archive_note): nothing when there is
+    no archive.
     """
     # a busy database is tried: Messages may only be in the middle of a write
     if probe.status in ("readable", "locked"):
@@ -451,17 +458,16 @@ def why_unreadable(probe: DbProbe, archive_there: bool) -> ImportStopped | None:
     else:
         # the file could not be looked at: it is not said to be another kind of file
         reason = not_read(probe, said)
-    return ImportStopped(f"{reason}{archive_note(archive_there)}")
+    return ImportStopped(f"{reason}{note}")
 
 
-def reading_stopped(exc: Exception, probe: DbProbe, archive_there: bool) -> ImportStopped:
+def reading_stopped(exc: Exception, probe: DbProbe, note: str) -> ImportStopped:
     """The plain sentence for what a reader raised.
 
     What the reader raised is not put into the sentence: it can hold the text
     of a query. Only an error of sqlite3 is read for signs of its kind.
     """
     signs = str(exc).lower() if isinstance(exc, sqlite3.Error) else ""
-    note = archive_note(archive_there)
     if any(sign in signs for sign in BUSY_SIGNS):
         return DatabaseBusy(f"{held(probe)}{note}")
     if any(sign in signs for sign in CLOSED_SIGNS):
@@ -471,11 +477,11 @@ def reading_stopped(exc: Exception, probe: DbProbe, archive_there: bool) -> Impo
     return ImportStopped(f"{not_read(probe)}{note}")
 
 
-def writing_stopped(exc: Exception, messages_path: Path, archive_there: bool) -> ImportStopped:
+def writing_stopped(exc: Exception, messages_path: Path, note: str) -> ImportStopped:
     """The plain sentence for what stopped the writing of the archive. The files are as they were."""
     reason = f": {exc.strerror}" if isinstance(exc, OSError) and exc.strerror else ""
     return ImportStopped(
-        f"The archive could not be written to {messages_path.parent}{reason}.{archive_note(archive_there)}"
+        f"The archive could not be written to {messages_path.parent}{reason}.{note}"
     )
 
 
@@ -565,8 +571,9 @@ def in_parts(stuck: list[tuple[Path, bool]], targets: tuple[Path, ...]) -> Archi
     return ArchiveInParts(" ".join(said))
 
 
-def settle_earlier(targets: tuple[Path, ...]) -> None:
+def settle_earlier(targets: tuple[Path, ...]) -> bool:
     """Deal with the earlier files that an import before this one left beside the archive.
+    True when the archive was put back.
 
     While the earlier messages file is there, that import did not finish: the
     process ended during the moves, or a file could not be put back. Each
@@ -577,7 +584,7 @@ def settle_earlier(targets: tuple[Path, ...]) -> None:
     others, messages = targets[:-1], targets[-1]
     if not unfinished(targets):
         discard(earlier_path(target) for target in others)
-        return
+        return False
     stuck = [
         (target, True)
         for target in others
@@ -589,6 +596,19 @@ def settle_earlier(targets: tuple[Path, ...]) -> None:
         stuck = [(messages, True)]
     if stuck:
         raise in_parts(stuck, targets)
+    return True
+
+
+def settle_default_archive() -> None:
+    """At the start of the server: put back what an import that the end of the process cut off left.
+
+    Until then each request reads new attachments or reactions beside the
+    earlier messages. Only the archive file of the app is known here; an
+    archive at another path is put back by its next import. A failure
+    changes nothing: the next import tries again and tells the reader.
+    """
+    with contextlib.suppress(Exception):
+        settle_earlier(archive_files(DEFAULT_MESSAGES_CSV))
 
 
 def move_in(targets: tuple[Path, ...]) -> None:
@@ -684,25 +704,26 @@ def export_database(db_path: Path, messages_path: Path) -> dict:
     # What an import before this one could not finish is put back first, and
     # the files that it left half written are removed.
     targets = archive_files(messages_path)
-    settle_earlier(targets)
+    put_back = settle_earlier(targets)
     discard(staging_path(target) for target in targets)
     archive_there = path_exists(messages_path)
+    note = archive_note(archive_there, put_back)
     probe = probe_database(db_path)
-    stopped = why_unreadable(probe, archive_there)
+    stopped = why_unreadable(probe, note)
     if stopped:
         raise stopped
     try:
         frames = read_database(db_path)
     except Exception as exc:  # noqa: BLE001 - whatever a reader raises is told in a plain sentence
-        raise reading_stopped(exc, probe, archive_there) from exc
+        raise reading_stopped(exc, probe, note) from exc
     if frames.messages.empty:
-        raise ImportStopped(f"{no_messages(probe)}{archive_note(archive_there)}")
+        raise ImportStopped(f"{no_messages(probe)}{note}")
     try:
         write_archive(frames, messages_path)
     except ImportStopped:
         raise
     except Exception as exc:  # noqa: BLE001 - the files are as they were, and the reader is told so
-        raise writing_stopped(exc, messages_path, archive_there) from exc
+        raise writing_stopped(exc, messages_path, note) from exc
     # the files are in place: nothing after this is a reason to say that the import failed
     with contextlib.suppress(Exception):
         forget_previews()
@@ -812,6 +833,11 @@ def job_record(action: str, payload: dict) -> dict:
     }
 
 
+def job_copy(job: dict) -> dict:
+    """A job as it is now, for an answer. It shares no list with the job, which changes in its own thread."""
+    return {**job, "logs": list(job["logs"])}
+
+
 def create_job(action: str, payload: dict) -> dict:
     """Make a job and start it. Raises JobRefused when no job is made.
 
@@ -827,7 +853,7 @@ def create_job(action: str, payload: dict) -> dict:
         JOBS[job_id] = job
         # The answer is the job as it was made. The job itself changes in its
         # own thread, and it can end before the answer is written.
-        made = dict(job)
+        made = job_copy(job)
         # prune finished jobs so a long session doesn't grow memory unbounded
         if len(JOBS) > 60:
             for old_id in [
@@ -962,7 +988,8 @@ def setup_status_payload(db_path: Path | None, messages_path: Path, deep: bool =
             "firstYear": probe.first_year,
             "lastYear": probe.last_year,
         },
-        "export": {"exists": export_exists, "path": str(messages_path)},
+        # holdsMessages is the test for "is this an update": the guide and database_for use the same one
+        "export": {"exists": export_exists, "path": str(messages_path), "holdsMessages": holds_messages(messages_path)},
         "setup": read_setup_marker(),
     }
 
@@ -3383,14 +3410,14 @@ class RecallHandler(BaseHTTPRequestHandler):
                 })
                 return
             probe = probe_database(db_path)
-            if why_unreadable(probe, archive_there=False):
+            if why_unreadable(probe, note=""):
                 send_json(self, 400, {"error": f"There is no archive at {messages_path}, and Messages cannot be read."})
                 return
             try:
                 listed = list_contacts(str(db_path), limit=limit)
             except sqlite3.Error as exc:
                 # a busy database can be asked again; the reason is a plain sentence either way
-                stopped = reading_stopped(exc, probe, archive_there=False)
+                stopped = reading_stopped(exc, probe, note="")
                 send_json(self, 503 if isinstance(stopped, DatabaseBusy) else 500, {"error": str(stopped)})
                 return
             df = decorate_contacts_frame(listed)
@@ -3418,7 +3445,7 @@ class RecallHandler(BaseHTTPRequestHandler):
             job_id = parsed.path.rsplit("/", 1)[-1]
             with JOBS_LOCK:
                 # a copy: the job changes in its own thread while the answer is written
-                job = dict(JOBS[job_id]) if job_id in JOBS else None
+                job = job_copy(JOBS[job_id]) if job_id in JOBS else None
             if not job:
                 send_json(self, 404, {"error": "Job not found"})
                 return
@@ -3554,6 +3581,7 @@ def main():
     if BUNDLED:
         _retarget_streams_to_logfile()
     ensure_data_dirs()
+    settle_default_archive()
     host = os.environ.get("RECALL_UI_HOST", "127.0.0.1")
     port = int(os.environ.get("RECALL_UI_PORT", "8765"))
     server = LoopbackHTTPServer((host, port), RecallHandler)
