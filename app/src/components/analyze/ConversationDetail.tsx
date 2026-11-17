@@ -118,6 +118,7 @@ export function ConversationDetail({
           onScopeChange={onScopeChange}
           daily={preview?.daily ?? NO_DAYS}
           estimate={settled ? (preview?.estimate ?? null) : null}
+          estimateError={settled ? preview?.estimateError : undefined}
           canRun={canRun}
           running={running}
           failure={failure}

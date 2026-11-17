@@ -186,14 +186,19 @@ export const recallApi = {
       else throw new ApiError(event.error, { status: 0, code: event.code, body: event.body, retryAfter: event.retryAfter })
     }
 
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      const taken = takeFrames(buffer + decoder.decode(value, { stream: true }))
-      buffer = taken.rest
-      taken.frames.forEach(handleFrame)
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const taken = takeFrames(buffer + decoder.decode(value, { stream: true }))
+        buffer = taken.rest
+        taken.frames.forEach(handleFrame)
+      }
+      if (buffer.trim()) handleFrame(buffer)
+    } finally {
+      // an error event ends the reading before the stream ends: let the connection go
+      reader.cancel().catch(() => undefined)
     }
-    if (buffer.trim()) handleFrame(buffer)
 
     if (!finalPayload) throw new Error('The answer ended before it was whole. Ask again.')
     return finalPayload
