@@ -65,11 +65,12 @@
     margin-top: var(--s-8);
   }
 
-  /* the facts and the people keep together under the chart */
+  /* the facts and the people keep together under the chart; one block is
+     32px from the next, as on every open page */
   .detail > .detail-body > * + .section,
   .detail > .detail-body > * + .detail-facts,
   .detail-facts > * + .section {
-    margin-top: var(--s-12);
+    margin-top: var(--s-8);
   }
 
   /* With nothing to say they take no room. A narrow pane waits with the
@@ -80,30 +81,57 @@
   }
 
   /* ---- people: everyone who wrote in a group, busiest first. Opened, the
-     rest of the list fills in around your own row. ---- */
+     rest of the list fills in around your own row. It is an open list: a
+     hairline over the section, its heading in one band, and a hairline over
+     every row, each row in the same band (12px, a line of words, 12px). A row
+     keeps its 8px inset, so its words stand under the heading and its
+     hairline starts and ends where they do. ---- */
+  .people {
+    border-top: 1px solid var(--line);
+  }
+
+  .people > .section-head {
+    min-height: 2.75rem;
+    margin-bottom: 0;
+    padding-block: var(--s-3);
+  }
+
   .people .rows {
     gap: 0;
     margin-inline: calc(var(--s-2) * -1);
   }
 
-  /* the pitch of a list with a 1px gap, kept across the parts of this one;
-     a closed part then takes no room at all */
+  /* the line over a row is drawn in the row, so a closed part of the list
+     takes no room at all */
   .people .row {
-    margin-bottom: 1px;
+    padding-block: calc(var(--s-3) + 1px) var(--s-3);
+    border-radius: 0;
+    background: linear-gradient(var(--line), var(--line)) no-repeat var(--s-2) 0 / calc(100% - var(--s-4)) 1px;
   }
 
+  /* Your own row takes its line from the part that holds it. Closed, that
+     part stands 4px off the rows above and your row 4px under the line: the
+     wider place says that places are skipped between them. */
   .people-own {
-    box-shadow: inset 0 1px 0 transparent;
+    box-shadow: inset 0 1px 0 var(--line);
     transition:
       margin-top var(--dur-long) var(--ease-in-out),
-      padding-top var(--dur-long) var(--ease-in-out),
-      box-shadow var(--dur-long) var(--ease-in-out);
+      padding-top var(--dur-long) var(--ease-in-out);
   }
 
-  /* closed, a line says that places are skipped between the row above and yours */
+  .people-own .row {
+    background: none;
+  }
+
   .people-own.is-apart {
     margin-top: var(--s-1);
     padding-top: var(--s-1);
+  }
+
+  /* one line after the list, in the band of a row */
+  .people > .section-note {
+    margin-top: 0;
+    padding-block: var(--s-3);
     box-shadow: inset 0 1px 0 var(--line);
   }
 
@@ -156,17 +184,18 @@
     }
 
     /* Two columns that end on one line: the figures on the left, the latest
-       messages on the right. The figures set the height of the row. With no
-       messages the figures take the whole width. */
+       messages on the right, 40px apart as the columns of every open page
+       are. The figures set the height of the row. With no messages the
+       figures take the whole width. */
     .analyze-detail > .detail-body:has(> .latest) {
       display: grid;
       grid-template-columns: minmax(0, 7fr) minmax(22rem, 5fr);
       /* the chart's row takes the height the pane has left; the facts keep theirs */
       grid-template-rows: minmax(min-content, 1fr) auto;
-      column-gap: var(--s-6);
+      column-gap: var(--s-10);
     }
 
-    /* side by side the cards end as far from the foot of the pane as from its side */
+    /* side by side the columns end as far from the foot of the pane as from its side */
     .analyze-detail > .detail-body {
       padding-bottom: var(--page-pad);
     }
@@ -195,34 +224,34 @@
       grid-area: 2 / 1;
     }
 
-    /* the cards stand closer under the chart than one section does under another */
-    .analyze-detail > .detail-body > * + .detail-facts {
-      margin-top: var(--s-6);
-    }
-
     .analyze-detail > .detail-body > .detail-facts.is-waiting {
       display: block;
     }
 
-    /* The facts are one card of cells, a label over what it comes to. The
-       hairlines between the cells are the ground of the card seen through
-       1px gaps, so where two of them cross they are drawn once. */
+    /* The facts are figures set apart by hairlines and not by a card: a
+       label over what it comes to, a line over the block and a line under
+       it. The lines between the figures are the ground of the block seen
+       through 1px gaps, so where two of them cross they are drawn once.
+       Each figure keeps 20px on both sides, as figures do on every page. The
+       block is 20px wider than its column on each side and is cut back to the
+       column: the first figure of
+       a row starts on the column's edge, the last one ends on it, and the
+       lines between rows end where the words do. */
     .detail-facts > .facts {
       display: grid;
       grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 1px;
-      overflow: hidden;
-      border-radius: var(--r-lg);
-      background:
-        linear-gradient(var(--line), var(--line)),
-        var(--bg-raised);
-      box-shadow: var(--shadow-raised);
+      margin-inline: calc(var(--s-5) * -1);
+      border-block: 1px solid var(--line);
+      background: var(--line) padding-box;
+      clip-path: inset(0 var(--s-5));
     }
 
     .detail-facts > .facts > div {
       display: block;
-      padding: var(--s-3) var(--s-4);
-      background: var(--bg-raised);
+      padding: var(--s-3) var(--s-5);
+      border-top: 0;
+      background: var(--bg);
     }
 
     .detail-facts > .facts dt {
@@ -238,44 +267,10 @@
       text-wrap: balance;
     }
 
-    /* In a group the people are a second card under the first, in the same
-       rhythm: 12px above and below each line of words, a hairline between
-       rows. A row keeps its 8px inset, so its words stand under the heading
-       and its hairline starts and ends where they do. */
+    /* In a group the people follow the facts. The column ends on a line,
+       as the card of messages beside it does: the list is closed with one. */
     .detail-facts > .people {
-      margin-top: var(--s-4);
-      padding: var(--s-3) var(--s-4) 0;
-      border-radius: var(--r-lg);
-      background: var(--bg-raised);
-      box-shadow: var(--shadow-raised);
-    }
-
-    .detail-facts .people .row {
-      margin-bottom: 0;
-      padding-block: calc(var(--s-3) + 1px) var(--s-3);
-      border-radius: 0;
-      background: linear-gradient(var(--line), var(--line)) no-repeat var(--s-2) 0 / calc(100% - var(--s-4)) 1px;
-    }
-
-    /* the first row stands under the heading, with no line over it */
-    .detail-facts .people > .rows > .row:first-child {
-      padding-top: var(--s-2);
-      background: none;
-    }
-
-    /* Your own row takes its line from the part that holds it, which moves
-       away from the rows above while places between them are left out. */
-    .detail-facts .people-own {
-      box-shadow: inset 0 1px 0 var(--line);
-    }
-
-    .detail-facts .people-own .row {
-      background: none;
-    }
-
-    .detail-facts > .people > .section-note {
-      margin-top: 0;
-      padding-bottom: var(--s-3);
+      border-bottom: 1px solid var(--line);
     }
 
     /* The latest messages are a card as tall as the figures beside it. It
@@ -293,7 +288,7 @@
       margin-top: var(--drop);
       overflow: hidden;
       border-radius: var(--r-lg);
-      background: var(--bg-raised);
+      background: var(--bg-card);
       box-shadow: var(--shadow-raised);
     }
 
@@ -336,7 +331,7 @@
     }
   }
 
-  /* Three across from there on, and no line of the card left part empty: two
+  /* Three across from there on, and no line of the block left part empty: two
      cells left over share the last line, one left over takes it whole, and
      four facts make two lines of two. */
   @container detail (width >= 60rem) {

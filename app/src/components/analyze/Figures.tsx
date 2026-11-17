@@ -13,7 +13,8 @@ type FiguresProps = {
 // What the numbers say about a conversation over a stretch of time: the two
 // voices over that time, a few facts worth a line each, and in a group, who
 // wrote how much. The facts and the people keep together under the chart: as
-// lines in a narrow pane, as cards in a wide one.
+// lines in a narrow pane, and in a wide one the facts as figures set apart by
+// hairlines.
 export function Figures({ figures, title, group }: FiguresProps) {
   const { stats, activity } = figures
   const facts = conversationFacts(stats, figures.dynamics, group ? 'Someone else' : title)
