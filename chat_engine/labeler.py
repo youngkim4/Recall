@@ -20,7 +20,7 @@ GROUP_MASK = "a group chat"
 _EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 _SCHEME_RE = re.compile(r"^(?:tel|sms|mailto|imessage|p|e):", re.IGNORECASE)
 _PHONE_ONLY_RE = re.compile(r"^[\d\s+().\-]+$")
-_PHONE_SPAN_RE = re.compile(r"\+?\d(?:[\s().\-]{0,3}\d){6,}")
+_PHONE_SPAN_RE = re.compile(r"(?:\+\s?)?\(?\d(?:[\s().\-]{0,3}\d){6,}")
 _MIN_PHONE_DIGITS = 7
 _NATIONAL_DIGITS = 10
 _GROUP_NAMES_SHOWN = 3
@@ -191,8 +191,7 @@ class MaskingLabeler:
                 if key not in self._unsaved_phones:
                     continue
                 mask = PHONE_MASK.format(tail=key[-4:])
-                if len(digits) - size <= 3:  # only a country code is left over
-                    return mask
                 first, last = positions[start], positions[start + size - 1]
-                return span[:first] + mask + span[last + 1:]
+                head = "" if start <= 3 else span[:first]  # a country code goes with the number
+                return head + mask + span[last + 1:]
         return span

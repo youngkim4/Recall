@@ -44,6 +44,15 @@ class EvidenceRegistry:
         self._ref_by_id[message_id] = ref
         return ref
 
+    def checkpoint(self) -> int:
+        """A mark to roll back to when rendered lines are not shown after all."""
+        return len(self._by_ref)
+
+    def rollback(self, mark: int) -> None:
+        for ref in list(self._by_ref)[mark:]:
+            message = self._by_ref.pop(ref)
+            self._ref_by_id.pop(str(message["id"]), None)
+
     def get(self, ref: str) -> Optional[Message]:
         found = self._by_ref.get(normalize_ref(ref))
         return _copy(found) if found else None
