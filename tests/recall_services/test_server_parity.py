@@ -21,7 +21,8 @@ import pytest
 
 import ui_server
 from archive import Archive, import_legacy_csv
-from recall_services import conversations, day, messages, search
+from setup_status import DbProbe
+from recall_services import conversations, day, messages, search, unreadable
 from recall_services.names import Names
 
 pytestmark = pytest.mark.usefixtures("fresh_bundle_cache")
@@ -205,3 +206,22 @@ def test_the_name_of_each_conversation(export: Path, bridged: Archive, saved: Na
     assert {key: name for key, name in new.items() if name} == {key: name for key, name in old.items() if name}
     assert new[GROUP] == "Avery Stone, Blake Reyes and 1 other"
     assert new[TITLED] == "Allotment Board"
+
+
+STATUSES = ("readable", "fda_blocked", "missing", "empty", "invalid", "locked", "error")
+
+
+@pytest.mark.parametrize("status", STATUSES)
+@pytest.mark.parametrize("kind", ["live", "copy"])
+@pytest.mark.parametrize("detail", ["", "not a SQLite database"])
+def test_the_reason_a_database_can_not_be_read_has_the_words_of_the_server(status: str, kind: str, detail: str) -> None:
+    probe = DbProbe(status=status, kind=kind, path="/invented/place/chat.db", detail=detail)
+    stopped = ui_server.why_unreadable(probe)
+    assert unreadable.why(probe) == (None if stopped is None else str(stopped))
+    assert unreadable.closed_to_recall(probe) == ui_server.closed_to_recall(probe)
+
+
+def test_the_last_words_say_that_the_archive_is_as_it_was() -> None:
+    assert unreadable.ARCHIVE_KEPT == ui_server.ARCHIVE_KEPT
+    probe = DbProbe(status="missing", kind="copy", path="/invented/place/chat.db")
+    assert str(unreadable.why(probe)).endswith(unreadable.ARCHIVE_KEPT)
