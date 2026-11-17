@@ -171,12 +171,17 @@ def test_a_cache_or_store_under_a_file_is_a_store_error(tmp_path: Path) -> None:
 def test_frame_rows_with_odd_ids_and_flags_still_come_through() -> None:
     frame = pd.DataFrame(
         {
-            "message_id": [None, "guid-2", 3],
-            "timestamp": ["2024-06-01 09:00:00", "2024-06-01 09:01:00", "2024-06-01 09:02:00"],
-            "sender": ["a", "a", "a"],
-            "text": ["x", "y", "z"],
-            "chat_id": [CONVERSATION] * 3,
-            "is_from_me": [None, object(), "YES"],
+            "message_id": [None, "guid-2", 3, 4],
+            "timestamp": [
+                "2024-06-01 09:00:00",
+                "2024-06-01 09:01:00",
+                "2024-06-01 09:02:00",
+                "2024-06-01 09:03:00",
+            ],
+            "sender": ["a", "a", "a", "a"],
+            "text": ["x", "y", "z", "not said"],
+            "chat_id": [CONVERSATION] * 4,
+            "is_from_me": [0, False, "YES", object()],
         }
     )
     found = list(FrameSource(frame).messages(CONVERSATION, None, None))
