@@ -1,6 +1,7 @@
 /* Reports: saved reports on the left, the chosen one on the right as a
-   document. What the numbers say comes first, in cards like the Overview's;
-   then the moments on a timeline; then the story, set for reading.
+   document. What the numbers say comes first, open like the Overview: set
+   apart by space and hairlines, one block 32px from the next. Then the
+   moments on a timeline; then the story, set for reading.
    The timeline has a sheet of its own. Every name here starts with "report",
    except .prose, which is the reading text and is used nowhere else. */
 
@@ -26,7 +27,7 @@
 
   .report-page > * + .section,
   .report-data > * + .section {
-    margin-top: var(--s-12);
+    margin-top: var(--s-8);
   }
 
   /* a report that could not be opened: the words keep the middle of the pane
@@ -57,20 +58,33 @@
     align-items: baseline;
   }
 
-  /* ---- figures: a card each, its name over the number, one line under it.
-     The same measures as the Overview's tiles. ---- */
+  /* ---- figures: a name over the number, one line under it, in the
+     measures of the Overview's. A figure and its neighbour part with a
+     hairline; the first has no room before it and the last none after it.
+     The room on each side of a line is half the gap between the two columns
+     under the row. ---- */
   .report-figures {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: var(--s-3);
-    margin-top: var(--s-6);
+    margin-top: var(--s-8);
   }
 
   .report-figure {
     display: grid;
     align-content: start;
     min-width: 0;
-    padding: var(--s-4);
+    /* the line takes 1px of the room before a figure */
+    padding-inline: calc(var(--s-5) - 1px) var(--s-5);
+    border-left: 1px solid var(--line);
+  }
+
+  .report-figure:first-child {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .report-figure:last-child {
+    padding-right: 0;
   }
 
   .report-figure > * {
@@ -104,24 +118,58 @@
     letter-spacing: 0;
   }
 
-  /* too narrow for four: two rows of two */
+  /* too narrow for four: two rows of two, and the pattern starts again in each row */
   @container detail (max-width: 38rem) {
     .report-figures {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+      row-gap: var(--s-6);
+    }
+
+    .report-figure:nth-child(odd) {
+      padding-left: 0;
+      border-left: 0;
+    }
+
+    .report-figure:nth-child(even) {
+      padding-right: 0;
     }
   }
 
+  /* as tall as what it stands in for: the bar, the chart and its axis */
   .report-skeleton-chart {
-    height: 14rem;
+    height: 13rem;
   }
 
-  /* ---- the smaller figures: a card each, its name at the top and a picture
-     of itself under it. As many side by side as have 12rem each; one left
-     alone on the last line takes the whole of it, so no place stands empty. ---- */
+  /* stands in for a control while a report loads: as tall as one, so the
+     line it is on is as tall as it will be */
+  .report-skeleton-control {
+    display: inline-flex;
+    align-items: center;
+    height: var(--control-h);
+    padding-inline: var(--s-3);
+  }
+
+  /* ---- the chart and the smaller figures are open blocks: a hairline over
+     each and its name in one band under that (12px, a line, 12px), as a
+     ruled section has. ---- */
+  .report-voices,
+  .report-number {
+    border-top: 1px solid var(--line);
+  }
+
+  :is(.report-voices, .report-number) > .section-head {
+    min-height: 2.75rem;
+    margin-bottom: 0;
+    padding-block: var(--s-3);
+  }
+
+  /* ---- the smaller figures: each has its name at the top and a picture of
+     itself under it. As many side by side as have 12rem each; one left alone
+     on the last line takes the whole of it, so no place stands empty. ---- */
   .report-numbers {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--s-3);
+    gap: var(--s-8) var(--s-10);
   }
 
   .report-number {
@@ -130,11 +178,7 @@
   }
 
   .report-numbers + .people {
-    margin-top: var(--s-12);
-  }
-
-  .report-number .section-head {
-    margin-bottom: var(--s-3);
+    margin-top: var(--s-8);
   }
 
   /* one bar for the two voices, and what each comes to under its end */
@@ -209,9 +253,9 @@
     --report-measure: 38rem;
   }
 
-  /* the title of the story sits a little under the name of the section */
+  /* the story starts 16px under the words of its heading: the band's 12px and 4px more */
   .section-head + .report-chapter-title {
-    margin-top: var(--s-4);
+    margin-top: var(--s-1);
   }
 
   .report-opening {
@@ -233,7 +277,7 @@
   }
 
   .section-head + .report-chapter {
-    margin-top: var(--s-4);
+    margin-top: var(--s-1);
   }
 
   /* a chapter after another starts under a line, with room on both sides of it */
@@ -412,51 +456,33 @@
       margin-inline: auto;
     }
 
-    /* ---- the figures, the chart and the smaller figures are one block of
-       cards, 12px apart. Two columns: the gutter between them runs on from
-       the one between the second and third figures above. ---- */
+    /* ---- the chart and the smaller figures stand in two columns, 40px
+       apart and 32px under one another. The gap between the columns has the
+       hairline between the second and third figures above in its middle. ---- */
     .report-page > .report-data {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: var(--s-3);
-      margin-top: var(--s-3);
+      gap: var(--s-8) var(--s-10);
+      margin-top: var(--s-8);
     }
 
-    /* the cards of the smaller figures take their places in that grid */
+    /* the smaller figures take their places in that grid */
     .report-data > .section,
     .report-data .report-numbers {
       display: contents;
     }
 
-    /* The chart is a card among them, with its name inside it as theirs are.
-       Alone across the page it is 14rem tall, so it is not a strip. */
+    /* The chart is one of them. Alone across the page it is 14rem tall, so
+       it is not a strip. */
     .report-voices {
       --report-chart: 14rem;
 
       display: flex;
       flex-direction: column;
       grid-column: 1 / -1;
-      padding: var(--s-4);
-      border-radius: var(--r-lg);
-      background: var(--bg-raised);
-      box-shadow: var(--shadow-raised);
     }
 
-    .report-voices > .section-head {
-      margin-bottom: var(--s-3);
-    }
-
-    .report-voices > .card {
-      display: flex;
-      flex: 1;
-      flex-direction: column;
-      padding: 0;
-      border-radius: 0;
-      background: none;
-      box-shadow: none;
-    }
-
-    /* its picture takes whatever height the cards beside it give the card */
+    /* its picture takes whatever height the blocks beside it give it */
     .report-voices :is(.voices, .activity) {
       display: flex;
       flex: 1;
@@ -471,7 +497,7 @@
 
     /* With smaller figures beside it the chart keeps the left column, and the
        row that gives is one the chart is in. So the two columns end on one
-       line, and no card but the chart is taller than what it holds. */
+       line, and no block but the chart is taller than what it holds. */
     .report-data:has(.report-number:first-child:nth-last-child(n + 2)) > .report-voices,
     .report-data:has(.report-number:only-child:not([data-brief])) > .report-voices {
       --report-chart: 10rem;
@@ -521,7 +547,7 @@
     /* in a group, who wrote how much runs under them all */
     .report-data .people {
       grid-column: 1 / -1;
-      margin-top: calc(var(--s-12) - var(--s-3));
+      margin-top: 0;
     }
 
     /* while a report loads, the places are about the size of what will fill them */
@@ -536,11 +562,11 @@
     /* ---- the story: the text keeps its measure, and the list of its
        chapters stands beside it for as long as the story is in the pane.
        The text takes its measure first; the list has what is left, 14rem at
-       the least. ---- */
+       the least, and never stands nearer than the 40px two columns keep. ---- */
     .report-story {
       display: grid;
       grid-template-columns: minmax(0, var(--report-measure)) minmax(14rem, 1fr);
-      column-gap: var(--s-12);
+      column-gap: var(--s-10);
     }
 
     .report-story > * {
@@ -551,13 +577,13 @@
       grid-column: 1 / -1;
     }
 
-    /* The story starts 16px under its heading, as it does in a narrow pane.
-       Margins do not run together in a grid, so each first thing brings 8px
-       to the heading's own 8px: the title, the opening, or with neither of
-       them the first chapter. */
+    /* The story starts 16px under the words of its heading, as it does in a
+       narrow pane: each first thing brings 4px to the 12px of the heading's
+       band. That is the title, the opening, or with neither of them the
+       first chapter. */
     .report-story > .section-head + :is(.report-chapter-title, .report-opening, .report-chapter),
     .section-head + .report-contents + .report-chapter {
-      margin-top: var(--s-2);
+      margin-top: var(--s-1);
     }
 
     /* The list is beside everything under the heading, however many rows
@@ -573,7 +599,7 @@
       width: 100%;
       max-width: 24rem;
       max-height: calc(100cqb - var(--s-12));
-      margin-top: var(--s-2);
+      margin-top: var(--s-1);
       overflow-y: auto;
     }
   }

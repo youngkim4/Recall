@@ -53,9 +53,9 @@ function Said({ moment }: { moment: Moment }) {
   )
 }
 
-// The moments a report picked out of a conversation, in one card. Along the
-// top, where each one fell in time; under it, the ones that matter most as a
-// timeline, oldest first, with the rest a press away.
+// The moments a report picked out of a conversation, as an open section.
+// Along the top, where each one fell in time; under it, the ones that matter
+// most as a timeline, oldest first, with the rest a press away.
 export function ReportMoments({ events, first, last, paper }: ReportMomentsProps) {
   const baseId = useId()
   const [open, setOpen] = useState(false)
@@ -88,12 +88,12 @@ export function ReportMoments({ events, first, last, paper }: ReportMomentsProps
   }
 
   return (
-    <section className="section" aria-labelledby={`${baseId}-title`}>
+    <section className="section ruled" aria-labelledby={`${baseId}-title`}>
       <div className="section-head">
         <h3 id={`${baseId}-title`}>Moments</h3>
         <span className="meta">{formatNumber(moments.length)}</span>
       </div>
-      <div className="card">
+      <div className="report-moments">
         <MomentStrip
           moments={moments.filter((moment) => moment.day)}
           first={first}

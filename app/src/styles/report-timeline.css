@@ -1,11 +1,13 @@
 /* The moments of a report: where each one fell along the days it covers,
-   and under that the moments themselves as a timeline, in one card. */
+   and under that the moments themselves as a timeline. They stand on the
+   page's own ground, under the section's heading: their edges are the
+   section's edges. */
 
 @layer views {
   /* ---- along the days: a mark where each moment fell, larger for the ones
      that matter most ---- */
   .report-strip {
-    padding: var(--s-4) var(--s-4) var(--s-3);
+    padding-bottom: var(--s-3);
   }
 
   /* one line over the marks, always there, so reading a mark moves nothing:
@@ -89,7 +91,7 @@
     width: 0.5625rem;
     height: 0.5625rem;
     background: var(--text);
-    box-shadow: 0 0 0 2px var(--bg-raised);
+    box-shadow: 0 0 0 2px var(--bg-card);
   }
 
   .report-strip-line > [data-active] {
@@ -124,14 +126,16 @@
   }
 
   /* ---- the timeline: the day and the kind on the left, a line with a mark
-     for each moment, what happened on the right ---- */
+     for each moment, what happened on the right. It keeps 12px from the
+     lines over and under it, so the first year stands in the band of a
+     heading: 12px, a line, 12px. ---- */
   .report-timeline {
     --when: 5rem;
     --rail: calc(var(--when) + var(--s-3) + 0.5rem);
 
     display: grid;
     gap: var(--s-4);
-    padding: var(--s-4);
+    padding-block: var(--s-3);
   }
 
   .report-strip + .report-timeline {
@@ -181,7 +185,7 @@
     height: 0.4375rem;
     border: 1.5px solid var(--text-3);
     border-radius: 50%;
-    background: var(--bg-raised);
+    background: var(--bg-card);
     translate: -50% 0;
   }
 
@@ -252,9 +256,9 @@
     }
   }
 
-  /* the way to the rest of the moments is the card's last row */
+  /* the way to the rest of the moments is the last row, in the band of a row */
   .report-timeline-more {
-    padding: var(--s-3) var(--s-4);
+    padding-block: var(--s-3);
     border-top: 1px solid var(--line);
   }
 
@@ -283,7 +287,7 @@
 
   /* In a wide pane what happened and what was said stand side by side: the
      account keeps the line it reads at, the messages have the width they
-     have on a phone, and the card has no empty half. The last row is the
+     have on a phone, and the row has no empty half. The last row is the
      only one that gives, so a long exchange beside a short account moves no
      line of the account. */
   @container detail (min-width: 52rem) {

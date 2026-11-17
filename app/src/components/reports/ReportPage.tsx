@@ -18,6 +18,13 @@ type ReportPageProps = {
 }
 
 const FILE_NAMES: Record<string, string> = { md: 'Markdown', html: 'Web page', csv: 'Table of moments' }
+// what stands in for the figures while a report loads: a number, and the line under it
+const WAITING_FIGURES = [
+  ['00,000', '000 a day'],
+  ['000', 'of 000'],
+  ['0,000', 'Jan 00, 0000'],
+  ['00 days', 'in all'],
+]
 
 // A saved report, set as a document. What the numbers say comes first: who
 // and when, the figures, the two voices over time, the smaller figures. Then
@@ -89,20 +96,16 @@ export function ReportPage({ entry, analysis, onOpenConversation }: ReportPagePr
           in a narrow pane, fitted together side by side in a wide one */}
       <div className="section report-data">
         <section className="report-voices" aria-labelledby={`${baseId}-voices`}>
-          <div className="section-head">
-            <h3 id={`${baseId}-voices`}>By {activity.unit}</h3>
-          </div>
-          <div className="card card-pad">
-            <VoicesOverTime
-              // a new stretch of time starts with nothing picked out
-              key={`${activity.unit} ${activity.points[0]?.key} ${activity.points.length}`}
-              points={activity.points}
-              unit={activity.unit}
-              sent={stats.sentCount ?? 0}
-              received={stats.receivedCount ?? 0}
-              them={them}
-            />
-          </div>
+          <VoicesOverTime
+            // a new stretch of time starts with nothing picked out
+            key={`${activity.unit} ${activity.points[0]?.key} ${activity.points.length}`}
+            heading={<h3 id={`${baseId}-voices`}>By {activity.unit}</h3>}
+            points={activity.points}
+            unit={activity.unit}
+            sent={stats.sentCount ?? 0}
+            received={stats.receivedCount ?? 0}
+            them={them}
+          />
         </section>
         <ReportNumbers analysis={analysis} them={them} group={group} />
       </div>
@@ -138,42 +141,55 @@ export function ReportPage({ entry, analysis, onOpenConversation }: ReportPagePr
   )
 }
 
-// holds the place of a report while it is read from disk
+// Holds the place of a report while it is read from disk. The cover and the
+// figures are built as the report builds them, line for line, so the first
+// lines of the report arrive where their places were.
 export function ReportPageSkeleton() {
   return (
     <div className="report-page" aria-hidden="true">
-      <p className="detail-title">
-        <span className="skeleton">Name of a conversation</span>
-      </p>
-      <p className="detail-sub">
-        <span className="skeleton">Jan 1 – Dec 31, 2024. Written Jan 1, 2025.</span>
-      </p>
-      <div className="report-figures">
-        {['00,000', '000', '0,000', '00 days'].map((value) => (
-          <div key={value} className="report-figure card">
-            <p>
+      <div className="report-cover">
+        <div className="section-head">
+          <p className="detail-title">
+            <span className="skeleton">Name of a conversation</span>
+          </p>
+          <span className="section-links">
+            <span className="skeleton report-skeleton-control">Export PDF</span>
+          </span>
+        </div>
+        <p className="detail-sub">
+          <span className="skeleton">Jan 1 – Dec 31, 2024. Written Jan 1, 2025.</span>
+        </p>
+      </div>
+      <dl className="report-figures">
+        {WAITING_FIGURES.map(([value, note]) => (
+          <div key={value} className="report-figure">
+            <dt>
               <span className="skeleton">Name of it</span>
-            </p>
-            <p>
+            </dt>
+            <dd>
               <span className="skeleton">{value}</span>
-            </p>
+            </dd>
+            <dd className="report-figure-note">
+              <span className="skeleton">{note}</span>
+            </dd>
           </div>
         ))}
-      </div>
+      </dl>
       <div className="section report-data">
         <div className="report-voices">
-          <div className="card card-pad">
-            <div className="skeleton report-skeleton-chart" />
+          <div className="section-head">
+            <span className="skeleton">By month</span>
           </div>
+          <div className="skeleton report-skeleton-chart" />
         </div>
         {/* in a wide pane the smaller figures have their places beside the chart */}
         <div className="section report-skeleton-numbers">
           <div className="report-numbers">
             {[0, 1, 2].map((place) => (
-              <div key={place} className="report-number card card-pad">
-                <p>
+              <div key={place} className="report-number">
+                <div className="section-head">
                   <span className="skeleton">Name of it</span>
-                </p>
+                </div>
               </div>
             ))}
           </div>

@@ -28,7 +28,7 @@ export function ReportStory({ html }: ReportStoryProps) {
   }
 
   return (
-    <section className="section report-story" aria-labelledby={`${baseId}-title`}>
+    <section className="section ruled report-story" aria-labelledby={`${baseId}-title`}>
       <div className="section-head">
         <h3 id={`${baseId}-title`}>The story</h3>
         <span className="meta">{plural(story.minutes, 'minute')} to read</span>

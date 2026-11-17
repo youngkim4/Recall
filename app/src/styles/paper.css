@@ -31,7 +31,7 @@
 }
 
 /* a column that answers to its own size cannot be broken across pages */
-:root[data-paper] :is(.workspace, .detail, .report-pane) {
+:root[data-paper] :is(.workspace, .detail, .report-pane, .people) {
   container-type: normal;
 }
 
