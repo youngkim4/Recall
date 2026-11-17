@@ -223,7 +223,7 @@ class FakeArchive:
         positions: Optional[Sequence[int]] = None,
     ) -> list[Message]:
         """Messages that pass the filters, oldest first. `positions` narrows the scan."""
-        wanted = None if conversations is None else {str(c) for c in conversations}
+        wanted = None if conversations is None else set(_listed(conversations) or ())
         candidates = self._messages if positions is None else [self._messages[p] for p in positions]
         rows = []
         for message in candidates:
@@ -290,7 +290,10 @@ def _visible(rows: list[Message], include_system: bool) -> list[Message]:
 
 
 def _listed(values: Optional[Sequence[str]]) -> Optional[list[str]]:
-    return None if values is None else list(values)
+    """Conversation ids as a list. One id as a string is one id."""
+    if values is None:
+        return None
+    return [values] if isinstance(values, str) else [str(value) for value in values]
 
 
 def _copy_conversation(conversation: Conversation) -> Conversation:

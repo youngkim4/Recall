@@ -18,9 +18,9 @@ INES = "+351912345678"
 UNSAVED_PHONE = "+17205550199"
 UNSAVED_PHONE_TWO = "+13035550142"
 UNSAVED_EMAIL = "rk.unsaved@example.org"
-LISBON = "chat-lisbon-crew"
-FAMILY = "chat-raman-family"
-NONAME = "chat-work-two"
+LISBON = "chat310045"
+FAMILY = "chat310107"
+NONAME = "chat310212"
 
 SAVED_NAMES = {
     MAYA_PHONE: "Maya Okafor",
