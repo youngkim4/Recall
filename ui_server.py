@@ -62,6 +62,7 @@ from conversation import (
     month_points,
     parse_boolish,
     progression_series,
+    read_times,
     received_mask,
     sanitize_filename,
     sent_mask,
@@ -591,7 +592,7 @@ def run_job(job_id: str, action: str, payload: dict):
                 update_job(job_id, progress={"step": 3, "of": 3, "label": "Getting your archive ready"})
                 append_log(job_id, "Warming the archive")
                 df, catalog, _names = cached_messages_bundle(messages_path)
-                years = pd.to_datetime(df["timestamp"], errors="coerce").dt.year.dropna()
+                years = read_times(df["timestamp"]).dt.year.dropna()
                 result = {
                     "messages": int(len(df)),
                     "conversations": int(len(catalog)),
@@ -2965,7 +2966,7 @@ class RecallHandler(BaseHTTPRequestHandler):
             ))
         elif parsed.path == "/api/analysis":
             messages_path = safe_path(query.get("messagesPath"), DEFAULT_MESSAGES_CSV)
-            report_path = safe_path(unquote(query.get("reportPath", "")))
+            report_path = safe_path(query.get("reportPath", ""))
             if not path_exists(messages_path):
                 send_json(self, 400, {"error": f"Messages CSV not found: {messages_path}"})
                 return
@@ -2988,7 +2989,7 @@ class RecallHandler(BaseHTTPRequestHandler):
             )
             send_json(self, 200, {"analysis": payload, "cached": cached})
         elif parsed.path == "/api/report":
-            file_path = served_report_file(unquote(query.get("path", "")))
+            file_path = served_report_file(query.get("path", ""))
             if not file_path:
                 send_json(self, 404, {"error": "Report not found"})
                 return

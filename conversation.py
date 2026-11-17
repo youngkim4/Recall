@@ -1,6 +1,7 @@
 """Conversation loading, normalization, statistics, formatting, and chunking."""
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import tiktoken
+from pandas.tseries.api import guess_datetime_format
 
 from ai_config import SECONDS_PER_DAY, TOKEN_BUDGET
 
@@ -162,13 +164,10 @@ def parse_boolish(value) -> Optional[int]:
     """Normalize iMessage direction values from CSV/SQLite into 1, 0, or NA."""
     if pd.isna(value):
         return pd.NA
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, (int, float)):
-        return int(value == 1)
-    # the same words the whole-column masks below read, so one value and a
-    # column of them are never told apart: "1.0" is how a 1 reads back from a
-    # column that also holds blanks
+    # Every value is read as text, among the same words the whole-column masks
+    # below read, so one value and a column of them are never told apart.
+    # "1.0" is how a 1 reads back from a column that also holds blanks. A
+    # value that is neither word says nothing: 2 is not "received".
     text = str(value).strip().lower()
     if text in _SENT_VALUES:
         return 1
@@ -191,14 +190,14 @@ def count_directions(series: pd.Series) -> Tuple[int, int]:
 
 def sent_mask(series: pd.Series) -> pd.Series:
     """True where is_from_me marks a message as sent by the user. Agrees with
-    parse_boolish, but works on the whole column at once."""
+    parse_boolish for every value, and works on the whole column at once."""
     return series.astype("string").str.strip().str.lower().isin(_SENT_VALUES)
 
 
 def received_mask(series: pd.Series) -> pd.Series:
     """True where is_from_me marks a message as received. A row that does not
-    say is neither sent nor received. Agrees with parse_boolish for the values
-    an export holds, but works on the whole column at once."""
+    say is neither sent nor received. Agrees with parse_boolish for every
+    value, and works on the whole column at once."""
     return series.astype("string").str.strip().str.lower().isin(_RECEIVED_VALUES)
 
 
@@ -228,12 +227,56 @@ def within_dates(df: pd.DataFrame, since=None, until=None) -> pd.DataFrame:
     return df
 
 
+# how many times are looked at to learn the way a file writes them
+_TIMES_SAMPLED = 50
+
+
+def _all_written_one_way(values: pd.Series) -> pd.Series:
+    """Times read the one way a file from another source writes them. The way
+    is learned from a few of them, and reading them all with it is fast."""
+    # the same few each time, taken from all over the file
+    sampled = values.sample(n=min(len(values), _TIMES_SAMPLED), random_state=0).astype(str)
+    ways = Counter(way for way in map(guess_datetime_format, sampled) if way)
+    if not ways:
+        return pd.Series(pd.NaT, index=values.index)
+    # the way most of them are written; the rest are read each by itself
+    return pd.to_datetime(values, errors="coerce", format=ways.most_common(1)[0][0])
+
+
+def _each_by_itself(values: pd.Series) -> pd.Series:
+    return pd.to_datetime(values, errors="coerce", format="mixed")
+
+
+def read_times(values: pd.Series) -> pd.Series:
+    """The times in a column of an export. The way the first row is written
+    does not decide how the others are read: an export holds times with and
+    without parts of a second, and all of them are read. Times that are not
+    written the ISO way are read the one way their file writes them, and what
+    is left after that each by itself. A time that cannot be read is NaT,
+    never an error."""
+    stamps = pd.to_datetime(values, errors="coerce", format="ISO8601")
+    for read in (_all_written_one_way, _each_by_itself):
+        unread = stamps.isna() & values.notna()
+        if not unread.any():
+            break
+        try:
+            more = stamps.fillna(read(values[unread]))
+        except (TypeError, ValueError):
+            break
+        # times with a zone beside times with none do not go in one column:
+        # what was read so far is kept
+        if not pd.api.types.is_datetime64_any_dtype(more):
+            break
+        stamps = more
+    return stamps
+
+
 def load_messages(csv_path: str, since: datetime = None, until: datetime = None) -> pd.DataFrame:
     """Load messages CSV with optional date filtering."""
     df = pd.read_csv(csv_path, dtype={"chat_id": "string", "sender": "string"})
     if "timestamp" not in df.columns:
         raise ValueError("messages CSV must contain a 'timestamp' column")
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
+    df["timestamp"] = read_times(df["timestamp"])
     df = within_dates(df, since, until)
 
     if "is_from_me" not in df.columns:
@@ -249,7 +292,7 @@ def _companion_within_dates(df: pd.DataFrame, since=None, until=None) -> pd.Data
     a range of dates is a figure for those dates."""
     if df.empty or "timestamp" not in df.columns or not (since or until):
         return df
-    stamps = pd.DataFrame({"timestamp": pd.to_datetime(df["timestamp"], errors="coerce")}, index=df.index)
+    stamps = pd.DataFrame({"timestamp": read_times(df["timestamp"])}, index=df.index)
     return df.loc[within_dates(stamps, since, until).index]
 
 

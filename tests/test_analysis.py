@@ -88,6 +88,57 @@ class TestLoadMessages:
         assert "service" in df.columns
 
 
+class TestTimesOfAnExport:
+    def export(self, tmp_path, stamps):
+        csv = tmp_path / "messages.csv"
+        pd.DataFrame({
+            "timestamp": stamps,
+            "text": [f"m{index}" for index in range(len(stamps))],
+            "chat_id": ["+15550000001"] * len(stamps),
+        }).to_csv(csv, index=False)
+        return load_messages(str(csv))["timestamp"]
+
+    def test_times_with_and_without_parts_of_a_second_are_all_read(self, tmp_path):
+        # the first row used to decide how every other row was read
+        stamps = self.export(tmp_path, [
+            "2024-11-16 10:00:00", "2024-11-16 10:00:00.250000", "2024-11-16", "2024-11-16T11:30:00",
+        ])
+
+        assert [str(stamp) for stamp in stamps] == [
+            "2024-11-16 10:00:00", "2024-11-16 10:00:00.250000", "2024-11-16 00:00:00", "2024-11-16 11:30:00",
+        ]
+
+    def test_a_time_that_cannot_be_read_is_no_time_and_no_error(self, tmp_path):
+        stamps = self.export(tmp_path, ["2024-11-16 10:00:00", "not a time", "", "2024-13-45 10:00:00"])
+
+        assert [str(stamp) for stamp in stamps] == ["2024-11-16 10:00:00", "NaT", "NaT", "NaT"]
+
+    def test_times_written_another_way_are_still_read(self, tmp_path):
+        stamps = self.export(tmp_path, ["11/16/2024 10:00 AM", "11/17/2024 9:05 PM"])
+
+        assert [str(stamp) for stamp in stamps] == ["2024-11-16 10:00:00", "2024-11-17 21:05:00"]
+
+    def test_one_way_of_writing_a_time_does_not_hide_another(self, tmp_path):
+        stamps = self.export(tmp_path, ["11/16/2024 10:00 AM", "2024-11-17 09:00:00", "2024-11-18 09:00:00.5"])
+
+        assert stamps.isna().sum() == 0
+        assert str(stamps.iloc[1]) == "2024-11-17 09:00:00"
+
+    def test_attachments_with_and_without_seconds_are_all_in_their_days(self, tmp_path):
+        from datetime import datetime
+        from conversation import load_attachments
+
+        pd.DataFrame({
+            "chat_id": ["+15550000001"] * 3,
+            "timestamp": ["2024-01-15 10:00", "2024-01-15 10:05:30", "2024-01-15 10:06:00.5"],
+            "category": ["photo", "video", "photo"],
+        }).to_csv(tmp_path / "messages_attachments.csv", index=False)
+
+        loaded = load_attachments(str(tmp_path / "messages.csv"), since=datetime(2024, 1, 1), until=datetime(2024, 1, 31))
+
+        assert loaded["category"].tolist() == ["photo", "video", "photo"]
+
+
 class TestLoadAttachments:
     def test_loads_existing(self, tmp_path, sample_attachments_df):
         csv = tmp_path / "messages.csv"

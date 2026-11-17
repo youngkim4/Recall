@@ -84,6 +84,9 @@ def write_events_timeline(out_dir: str, contact: str, events_df) -> Optional[str
             os.remove(events_path)
         except FileNotFoundError:
             pass
+        except OSError as exc:
+            # the report is written; a file that cannot be removed must not undo the run
+            logger.warning("An older events file could not be removed (%s): %s", events_path, exc)
         return None
     events_df.to_csv(events_path, index=False)
     return events_path

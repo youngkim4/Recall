@@ -118,3 +118,17 @@ def test_a_report_keeps_a_month_with_no_messages_in_its_place(run):
         "| 2024-08-01 | 0 | 0 | 0 | 0% |",
         "| 2024-09-01 | 1 | 0 | 1 | 0% |",
     ]
+
+
+def test_an_older_events_file_that_cannot_be_removed_does_not_stop_the_run(run, monkeypatch):
+    run(events=[EVENT])
+
+    def refuse(path):
+        raise PermissionError(f"cannot remove {path}")
+
+    monkeypatch.setattr(analysis.os, "remove", refuse)
+    report, events_path = run(events=[])
+
+    # the report is written, and the run says it has no events of its own
+    assert events_path is None
+    assert "## Summary" in open(report, encoding="utf-8").read()

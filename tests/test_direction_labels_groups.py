@@ -1,11 +1,19 @@
 """Tests for three rules that every payload follows: who sent a message is
 yes, no or unknown; an unnamed conversation is labelled one way; and a group
 is an id made of "chat" and digits."""
+import numpy as np
 import pandas as pd
 import pytest
 
 import ui_server
-from conversation import group_chat_mask, is_group_chat
+from conversation import (
+    count_directions,
+    direction_label,
+    group_chat_mask,
+    is_group_chat,
+    received_mask,
+    sent_mask,
+)
 
 pytestmark = pytest.mark.usefixtures("fresh_bundle_cache")
 
@@ -119,6 +127,37 @@ def test_the_conversation_around_a_match_marks_your_lines(tmp_path, saved_names)
 
     assert "[2025-01-01] You: yes at eight" in text
     assert "[2025-01-01] Avery Stone: see you then" in text
+
+
+# every way a direction can be written, and what it says
+DIRECTIONS = [
+    (1, True), (0, False), (True, True), (False, False), (1.0, True), (0.0, False),
+    ("1", True), ("0", False), ("y", True), ("N", False), (" Yes ", True), ("false", False),
+    (np.int64(1), True), (np.int64(0), False), (np.float64(1.0), True),
+    # a value that is neither says nothing: it is not a message received
+    (2, None), (0.5, None), (-1, None), (np.int64(2), None), (np.float64(0.5), None),
+    ("2", None), ("maybe", None), ("", None), (None, None), (float("nan"), None), (pd.NA, None), (-0.0, None),
+    (np.bool_(True), True), (np.bool_(False), False),
+]
+
+
+@pytest.mark.parametrize("value, sent", DIRECTIONS)
+def test_one_value_says_what_a_column_of_them_says(value, sent):
+    column = pd.Series([value], dtype="object")
+
+    assert ui_server.sent_by_me(value) is sent
+    assert bool(sent_mask(column).iloc[0]) is (sent is True)
+    assert bool(received_mask(column).iloc[0]) is (sent is False)
+
+
+def test_a_column_of_every_way_is_counted_one_way():
+    column = pd.Series([value for value, _sent in DIRECTIONS], dtype="object")
+    said = [sent for _value, sent in DIRECTIONS]
+
+    assert count_directions(column) == (said.count(True), said.count(False))
+    assert int(sent_mask(column).sum()) == said.count(True)
+    assert int(received_mask(column).sum()) == said.count(False)
+    assert [direction_label(value) for value in (2, 0.5, -1)] == ["??", "??", "??"]
 
 
 # ---- what an unnamed conversation is called ----

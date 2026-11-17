@@ -146,3 +146,48 @@ def test_the_server_refuses_a_file_that_is_not_a_report(data_dir, server):
 
     assert status == 404
     assert b"KEY" not in body
+
+
+def test_the_name_of_a_report_is_read_as_it_was_sent(data_dir, server):
+    # a percent sign and two digits in a name are part of the name
+    report = write(data_dir / "out" / "analysis_100%41.md", "# Conversation Analysis - x\n")
+    write(data_dir / "out" / "analysis_100A.md", "another report")
+
+    status, _headers, body = fetch(server, f"/api/report?path={quote(str(report), safe='')}")
+
+    assert status == 200
+    assert body == report.read_bytes()
+
+
+def test_a_report_is_opened_by_the_name_it_was_sent_with(data_dir, server, tmp_path, monkeypatch):
+    import pandas as pd
+
+    from local_store import get_cache_entry, set_cache_entry
+
+    store = tmp_path / "store.sqlite3"
+    monkeypatch.setattr(ui_server, "get_cache_entry", lambda namespace, key: get_cache_entry(namespace, key, store))
+    monkeypatch.setattr(
+        ui_server,
+        "set_cache_entry",
+        lambda namespace, key, value, metadata=None, limit=None: set_cache_entry(
+            namespace, key, value, metadata=metadata, path=store, limit=limit,
+        ),
+    )
+    monkeypatch.setattr(ui_server, "resolve_contact_names", lambda handles, **_: {})
+    messages = data_dir / "messages.csv"
+    pd.DataFrame({
+        "message_id": [1, 2],
+        "timestamp": ["2025-01-01 09:00:00", "2025-01-02 09:00:00"],
+        "sender": ["+15550000001", "+15550000001"],
+        "text": ["hello", "hi"],
+        "chat_id": ["+15550000001", "+15550000001"],
+        "is_from_me": [1, 0],
+    }).to_csv(messages, index=False)
+    report = write(data_dir / "out" / "analysis_100%41.md", "# Conversation Analysis - +15550000001\n\n## Summary\nThe right story.\n")
+    write(data_dir / "out" / "analysis_100A.md", "# Conversation Analysis - +15550000001\n\n## Summary\nAnother story.\n")
+
+    query = f"messagesPath={quote(str(messages), safe='')}&reportPath={quote(str(report), safe='')}"
+    status, _headers, body = fetch(server, f"/api/analysis?{query}")
+
+    assert status == 200
+    assert b"The right story." in body
