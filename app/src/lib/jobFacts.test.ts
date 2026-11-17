@@ -87,6 +87,21 @@ test('what an import read is given as figures', () => {
   assert.match(figures[0].value, /565.666/)
 })
 
+// An update merges no second source, so nothing is "recovered". A result from
+// an earlier build can still hold that count: it is not a figure.
+test('a count of recovered messages in a result is not shown', () => {
+  const result = { messages: 12, conversations: 2, recovered: 5 } as Job['result']
+
+  assert.deepEqual(
+    whatItRead(result).map((figure) => [figure.label, figure.value]),
+    [
+      ['Messages', '12'],
+      ['Conversations', '2'],
+    ],
+  )
+  assert.deepEqual(whatItRead({ recovered: 5 } as Job['result']), [])
+})
+
 test('a figure the job did not give is not shown', () => {
   assert.deepEqual(whatItRead(null), [])
   assert.deepEqual(whatItRead({ reportPath: '/reports/analysis_x.md' }), [])
