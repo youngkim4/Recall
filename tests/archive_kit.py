@@ -39,11 +39,17 @@ __all__ = ["KEPT", "PERSON", "write_database", "write_export"]
 # ---- fixtures ----
 
 
+def _contacts_stay_closed():
+    raise AssertionError("a test reads no Contacts: give the import a names step of its own")
+
+
 @pytest.fixture
 def no_names(tmp_path, monkeypatch):
-    """No name is saved: the Contacts cache is a file that is not there."""
+    """No name is saved: the Contacts cache is a file that is not there, and no import reads Contacts."""
     cache = tmp_path / "no-names" / "contact_names.json"
     monkeypatch.setattr(ui_server, "CONTACTS_CACHE_PATH", cache)
+    # the real step starts a helper that asks macOS for the Contacts of this Mac
+    monkeypatch.setattr(ui_server, "export_contact_names", _contacts_stay_closed)
     return cache
 
 
