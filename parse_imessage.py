@@ -60,6 +60,17 @@ def open_read_only(db_path: Union[str, os.PathLike], timeout: float = 5.0) -> sq
     return sqlite3.connect(f"file://{quote(whole)}?mode=ro", uri=True, timeout=timeout)
 
 
+def read_frame(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> pd.DataFrame:
+    """The rows of a query as a frame. With no rows, the frame still has the columns.
+
+    An error is the one sqlite3 raises. pandas.read_sql_query puts the whole
+    text of the query into the error, and that text would reach the page.
+    """
+    cursor = conn.execute(sql, params)
+    names = [column[0] for column in cursor.description]
+    return pd.DataFrame.from_records(cursor.fetchall(), columns=names, coerce_float=True)
+
+
 def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
     """Return column names for a SQLite table."""
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
@@ -269,7 +280,7 @@ def extract_messages(db_path: str) -> pd.DataFrame:
         ORDER BY
             timestamp ASC;
         """
-        df = pd.read_sql_query(query, conn)
+        df = read_frame(conn, query)
     finally:
         conn.close()
 
@@ -310,7 +321,7 @@ def list_contacts(db_path: str, limit: int = 20) -> pd.DataFrame:
         ORDER BY message_count DESC
         LIMIT ?;
         """
-        df = pd.read_sql_query(query, conn, params=(limit,))
+        df = read_frame(conn, query, (limit,))
     finally:
         conn.close()
     return df
@@ -360,7 +371,7 @@ def extract_attachments(db_path: str) -> pd.DataFrame:
         LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
         ORDER BY timestamp ASC;
         """
-        df = pd.read_sql_query(query, conn)
+        df = read_frame(conn, query)
     finally:
         conn.close()
 
@@ -416,7 +427,7 @@ def extract_reactions(db_path: str) -> pd.DataFrame:
            OR (m.associated_message_type BETWEEN 3000 AND 3005)
         ORDER BY timestamp ASC;
         """
-        df = pd.read_sql_query(query, conn)
+        df = read_frame(conn, query)
     finally:
         conn.close()
 
@@ -450,7 +461,7 @@ def search_contacts(db_path: str, query: str, limit: int = 10) -> pd.DataFrame:
         LIMIT ?;
         """
         like_query = f"%{query}%"
-        df = pd.read_sql_query(sql, conn, params=(like_query, like_query, limit))
+        df = read_frame(conn, sql, (like_query, like_query, limit))
     finally:
         conn.close()
     return df

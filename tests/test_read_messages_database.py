@@ -2,11 +2,13 @@
 
 A reader gives a frame with all of its columns, also when there is nothing to
 give. It opens the database to read and nothing else: a path with no file
-makes no file, and what is still in the -wal file is read.
+makes no file, and what is still in the -wal file is read. An error is the one
+sqlite3 raises, with no text of a query in it.
 """
 import shutil
 import sqlite3
 
+import pandas as pd
 import pytest
 
 from conversation import load_attachments, load_reactions
@@ -16,9 +18,10 @@ from parse_imessage import (
     extract_reactions,
     list_contacts,
     open_read_only,
+    read_frame,
     search_contacts,
 )
-from tests.invented_db import fill, messages_db
+from tests.invented_db import apple_archive, fill, messages_db
 
 MESSAGE_COLUMNS = [
     "message_id", "timestamp", "sender", "text", "chat_id", "chat_display_name",
@@ -206,3 +209,40 @@ def test_a_copy_brought_with_its_wal_is_read_whole(tmp_path):
         writer.close()
 
     assert set(extract_messages(str(copied / "chat.db"))["text"]) == {"first", "second"}
+
+
+# ---- an error is the one sqlite3 raises ----
+
+
+@pytest.mark.parametrize("reader", READERS)
+def test_an_error_holds_no_text_of_the_query(tmp_path, reader):
+    no_tables = tmp_path / "other.db"
+    conn = sqlite3.connect(str(no_tables))
+    conn.execute("CREATE TABLE other (id INTEGER)")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(sqlite3.OperationalError) as stopped:
+        READERS[reader](str(no_tables))
+
+    assert "no such table" in str(stopped.value)
+    assert "SELECT" not in str(stopped.value)
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT ROWID AS message_id, handle_id, is_from_me, text, attributedBody FROM message ORDER BY ROWID",
+    "SELECT ROWID AS message_id, date FROM message WHERE ROWID < 0",
+    "SELECT COUNT(*) AS messages, MAX(date) AS last FROM message",
+    "SELECT filename, total_bytes FROM attachment",
+])
+def test_a_frame_is_the_one_pandas_gives_for_the_query(tmp_path, sql):
+    db = messages_db(tmp_path / "chat.db", ["one", "two", "three"], bodies=[apple_archive("ascii_128")])
+    conn = sqlite3.connect(str(db))
+    try:
+        # a column of whole numbers with a gap in it
+        conn.execute("UPDATE message SET handle_id = NULL, is_from_me = NULL WHERE ROWID = 2")
+        conn.commit()
+
+        pd.testing.assert_frame_equal(read_frame(conn, sql), pd.read_sql_query(sql, conn))
+    finally:
+        conn.close()
