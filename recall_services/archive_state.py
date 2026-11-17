@@ -25,12 +25,25 @@ place in one step. A reader that still holds the old handle gets
   that a pull filled.
 - No path of a database is kept: the note beside the archive says only
   where its content came from.
+
+Another process can write the archive too (the command line importer). The
+lock of this module holds inside one process only, so:
+- A load takes the write lock of the old archive before the new file takes its
+  place. When a connection of another process is in a write or in a read, the
+  answer is `busy` and nothing changed. The lock is let go just before the
+  move: a writer that starts in that instant loses its write.
+- A first pull that did not end removes the archive only when the archive
+  holds nothing. `PullBusy` removes nothing: the file is then another writer's.
+
+Do not call the state from inside a query of its own handle: `close()` of the
+handle waits for that query, and the move holds the lock of the state.
 """
 
 from __future__ import annotations
 
 import itertools
 import json
+import logging
 import os
 import shutil
 import sqlite3
@@ -68,11 +81,17 @@ from recall_services.outcomes import (
 )
 from setup_status import probe_database
 
+logger = logging.getLogger(__name__)
+
 NOTE_SUFFIX = ".source.json"
 BUILD_SUFFIX = ".building"
 WORK_SUFFIX = ".import-work"
 DEFAULT_MAX_REMOVED_SHARE = 0.2
+SWAP_WAIT_SECONDS = 2.0  # how long a load waits for a writer or a reader of another process
 KEPT_PULL = "The archive holds what Messages holds. An export does not replace it."
+IN_USE = f"Another program is using the archive. {ARCHIVE_KEPT}"
+NO_SUCH_PLACE = "There is no file at that place."
+_BUSY_CODES = (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
 Contacts = Sequence[Mapping[str, object]] | None
 
 
@@ -90,7 +109,7 @@ class ExportSignature:
         try:
             resolved = Path(export).expanduser().resolve()
             found = resolved.stat()
-        except OSError:
+        except (OSError, ValueError, RuntimeError):  # also a text that is no path, and a home that is not there
             return None
         return cls(str(resolved), found.st_mtime_ns, found.st_size) if resolved.is_file() else None
 
@@ -123,8 +142,62 @@ def _holds_pull(archive: Archive) -> bool:
     return bool(found) and not str(found[0]["id"]).startswith(LEGACY_PREFIX)
 
 
+def _place(named: object) -> Path | None:
+    """The path that a caller named, or None when the text is no path."""
+    try:
+        return Path(str(named)).expanduser()
+    except (ValueError, RuntimeError):
+        return None
+
+
 def _remove_database(database: Path) -> None:
     files.remove_files([database, *files.sidecars(database)])
+
+
+def _remove_quietly(database: Path) -> None:
+    """Remove a work file after the answer is known. A file that stays is said in the log only."""
+    try:
+        _remove_database(database)
+    except OSError as exc:
+        logger.warning("a work file of the archive could not be removed: %s", type(exc).__name__)
+
+
+def _holds_nothing(database: Path) -> bool:
+    """True when the file is an archive with no row, or no archive that can be opened."""
+    try:
+        with Archive.open(database) as held:
+            summary = held.summary()
+    except ArchiveError:
+        return True
+    return not summary["messages"] and not summary["conversations"]
+
+
+def _gather(database: Path) -> None:
+    """Bring an old archive into its one file, and make sure that nobody is in a write or a read of it.
+
+    SQLite keeps the last writes in `-wal` and finds that file by name: one
+    left beside the new archive would be read into it. So the old one is
+    emptied into its database first. A move that fails after this leaves the
+    old archive whole. Raises ImportBusyError when another connection is in
+    the way.
+    """
+    if not database.exists():
+        files.remove_files(files.sidecars(database))
+        return
+    conn = sqlite3.connect(database, timeout=SWAP_WAIT_SECONDS, isolation_level=None)
+    try:
+        blocked = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("ROLLBACK")
+    except sqlite3.OperationalError as exc:
+        if exc.sqlite_errorcode & 0xFF in _BUSY_CODES:
+            raise ImportBusyError("another connection writes the archive") from exc
+        raise
+    finally:
+        conn.close()
+    if blocked:
+        raise ImportBusyError("another connection reads the archive")
+    files.remove_files(files.sidecars(database))
 
 
 def _settle(database: Path) -> None:
@@ -206,7 +279,11 @@ class ArchiveState:
             return None
 
     def _write_note(self, note: Mapping[str, Any]) -> None:
-        files.write_text_atomic(self.source_path, json.dumps(note, indent=1) + "\n")
+        """Record where the content came from. The archive is right without the note: a failure is logged only."""
+        try:
+            files.write_text_atomic(self.source_path, json.dumps(note, indent=1) + "\n")
+        except OSError as exc:
+            logger.warning("the note beside the archive could not be written: %s", type(exc).__name__)
 
     # -- the bridge from an export -------------------------------------------
 
@@ -227,10 +304,10 @@ class ArchiveState:
 
         An archive that a pull from Messages filled is kept as it is.
         """
-        export = Path(messages_csv).expanduser()
-        signature = ExportSignature.of(export)
-        if signature is None:
-            return EnsureResult("no_export", reason=f"There is no export at {export}.")
+        export = _place(messages_csv)
+        signature = None if export is None else ExportSignature.of(export)
+        if export is None or signature is None:
+            return EnsureResult("no_export", reason=NO_SUCH_PLACE if export is None else f"There is no export at {export}.")
         if not self._importing.acquire(blocking=False):
             return EnsureResult("busy", reason=BUSY)
         try:
@@ -258,8 +335,8 @@ class ArchiveState:
         self, export: Path, signature: ExportSignature, contacts: Contacts, progress: Any, cancel: object
     ) -> EnsureResult:
         building = self.path.with_name(f".{self.path.name}{BUILD_SUFFIX}")
-        _remove_database(building)
         try:
+            _remove_database(building)
             result = import_legacy_csv(export, building, contacts=contacts, progress=progress, cancel=cancel)
             if result.status != "ok":
                 return EnsureResult("cancelled", reason=f"The load was stopped. {ARCHIVE_KEPT}")
@@ -270,19 +347,23 @@ class ArchiveState:
                 "failed",
                 reason=f"The file {export.name} is not an export of messages that Recall can read. {ARCHIVE_KEPT}",
             )
+        except ImportBusyError:
+            return EnsureResult("busy", reason=IN_USE)
         except (ArchiveError, OSError, sqlite3.Error):
             return EnsureResult("failed", reason=f"The export could not be loaded. {ARCHIVE_KEPT}")
         finally:
-            _remove_database(building)
+            _remove_quietly(building)
         self._write_note({"source": "export", "export": asdict(signature)})
         return EnsureResult("built", counts=_counts(result))
 
     def _move_into_place(self, building: Path) -> None:
-        """Put a finished file in the place of the archive. No reader can open the archive in between."""
+        """Put a finished file in the place of the archive. No reader of this process can open it in between.
+
+        Raises ImportBusyError when another process is in a write or a read of the old archive.
+        """
         with self._lock:
             self._drop()
-            # SQLite finds these by name: one left by the old archive would be read into the new file
-            files.remove_files(files.sidecars(self.path))
+            _gather(self.path)
             os.replace(building, self.path)
             self._generation += 1
         files.fsync_folder(self.path.parent)
@@ -311,17 +392,26 @@ class ArchiveState:
         named = "" if db_path is None else str(db_path).strip()
         if not named:
             raise ValueError("The caller must name the database to read.")
-        source = Path(named).expanduser()
-        stopped = unreadable.why(probe_database(source))
-        if stopped is not None:
-            return PullFailed(reason=stopped)
+        source = _place(named)
+        try:
+            stopped = NO_SUCH_PLACE if source is None else unreadable.why(probe_database(source))
+        except ValueError:  # a text that is no path
+            stopped = NO_SUCH_PLACE
+        if source is None or stopped is not None:
+            return PullFailed(reason=stopped or NO_SUCH_PLACE)
         if not self._importing.acquire(blocking=False):
             return PullBusy()
         try:
             was_there = self.exists()
-            outcome = self._pull(source, contacts, max_removed_share, progress, cancel)
-            if not was_there and not isinstance(outcome, PullDone):
-                self._forget_new_archive()
+            try:
+                outcome = self._pull(source, contacts, max_removed_share, progress, cancel)
+            except BaseException:
+                if not was_there:
+                    self._forget_empty_archive()
+                raise
+            # PullBusy removes nothing: another writer has the file
+            if not was_there and isinstance(outcome, (PullFailed, PullRefused, PullCancelled)):
+                self._forget_empty_archive()
             return outcome
         finally:
             self._importing.release()
@@ -353,17 +443,22 @@ class ArchiveState:
             return PullFailed(reason=f"The update failed. {ARCHIVE_KEPT}", detail=_detail(exc))
         if result.status != "ok":
             return PullCancelled()
-        self._write_note({"source": "messages"})
         with self._lock:
             self._generation += 1
+        self._write_note({"source": "messages"})
         summary = self.archive().summary()
         return PullDone(counts=_counts(result), messages=summary["messages"], conversations=summary["conversations"])
 
-    def _forget_new_archive(self) -> None:
-        """Remove the file that a first pull made and did not fill: there was no archive, and there is none."""
+    def _forget_empty_archive(self) -> None:
+        """Remove the file that a first pull made and did not fill: there was no archive, and there is none.
+
+        An archive that holds a row is not the file of this pull: another process filled it, and it stays.
+        """
         with self._lock:
             self._drop()
-            _remove_database(self.path)
+            if not _holds_nothing(self.path):
+                return
+            _remove_quietly(self.path)
         shutil.rmtree(self.path.with_name(f".{self.path.name}{WORK_SUFFIX}"), ignore_errors=True)
 
 
