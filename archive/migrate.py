@@ -54,9 +54,9 @@ def migrate(conn: sqlite3.Connection, migrations: Sequence[Migration] = MIGRATIO
         for step in migrations[found:]:
             step(conn)
         conn.execute(f"PRAGMA user_version = {int(known)}")
+        conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
-    conn.execute("COMMIT")
     return known

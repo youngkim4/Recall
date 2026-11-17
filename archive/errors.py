@@ -39,5 +39,21 @@ class ImportFailed(ArchiveError):
         self.run_id = run_id
 
 
+class RemovalLimitError(ArchiveError):
+    """A full pull would remove more of the archive than the caller allows. Nothing was changed."""
+
+    def __init__(self, *, would_remove: int, stored: int, max_share: float) -> None:
+        super().__init__(
+            f"the source lacks {would_remove} of the {stored} stored messages; the limit is {max_share:.0%}"
+        )
+        self.would_remove = would_remove
+        self.stored = stored
+        self.max_share = max_share
+
+
+class ArchiveNotEmptyError(ArchiveError):
+    """The legacy export bridge loads only into an empty archive."""
+
+
 class TypedStreamError(ArchiveError, ValueError):
     """A blob is not a typedstream archive of an attributed string."""

@@ -77,10 +77,10 @@ class TestContent:
     def test_text_comes_from_the_column_or_from_the_blob(
         self, imported: ImportResult, lake: worlds.Lake, archive_path: Path
     ) -> None:
-        rows = dict(
-            (guid, (text, source))
+        rows = {
+            guid: (text, source)
             for guid, text, source in query(archive_path, "SELECT guid, text, text_source FROM messages")
-        )
+        }
         assert rows[lake.guids["saturday"]] == ("Are we still on for Saturday?", "column")
         assert rows[lake.guids["dinner"]] == ("Dinner at seven?", "blob")
         assert rows[lake.guids["view"]] == ("Look at this view", "blob")
@@ -321,10 +321,10 @@ class TestSourceIsNeverWritten:
 
     def test_temp_copy_is_removed(self, imported: ImportResult, archive_path: Path) -> None:
         assert sorted(p.name for p in archive_path.parent.iterdir() if "import" in p.name) == []
-        assert not (archive_path.parent / importer_module.WORK_DIR_NAME).exists()
+        assert not importer_module.work_dir(archive_path).exists()
 
     def test_stale_temp_copies_are_removed(self, lake: worlds.Lake, source_path: Path, archive_path: Path) -> None:
-        work = archive_path.parent / importer_module.WORK_DIR_NAME
+        work = importer_module.work_dir(archive_path)
         work.mkdir(parents=True)
         (work / "source-crashed.sqlite3").write_bytes(b"left by a run that was killed")
         import_chat_db(source_path, archive_path)
@@ -418,8 +418,9 @@ class TestOddRows:
         builder.message(chat, when=utc(2024, 1, 1, 12, 6), text="", guid="", handle=rowan)
         builder.commit()
         result = import_chat_db(source_path, archive_path)
-        assert texts(archive_path) == ["kept"]
-        assert dict(result.skipped) == {"no_conversation": 1, "no_date": 1, "empty": 2, "no_target": 1, "no_guid": 1}
+        assert texts(archive_path) == ["kept", "no conversation"]  # stored, but it belongs to no conversation
+        assert result.counts["without_conversation"] == 1
+        assert dict(result.skipped) == {"no_date": 1, "empty": 2, "no_target": 1, "no_guid": 1}
         assert result.decode_failures == 1
         assert result.rows_seen == 7
 

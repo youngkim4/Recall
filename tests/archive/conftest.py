@@ -19,29 +19,51 @@ from pathlib import Path
 os.environ["OPENAI_API_KEY"] = "test-key-not-real"
 _DATA_DIR = tempfile.mkdtemp(prefix="recall-archive-tests-")
 atexit.register(shutil.rmtree, _DATA_DIR, True)
-os.environ.setdefault("RECALL_DATA_DIR", _DATA_DIR)
+os.environ["RECALL_DATA_DIR"] = _DATA_DIR  # also when the shell of the developer names the real folder
 
-from tests.archive import netguard  # noqa: E402
+from tests.archive import netguard
 
 netguard.install()
 
-from dataclasses import dataclass  # noqa: E402
-from typing import Any  # noqa: E402
+from dataclasses import dataclass
+from typing import Any
 
-import pytest  # noqa: E402
+import pytest
 
-from archive import Archive, import_chat_db  # noqa: E402
-from tests.archive import worlds  # noqa: E402
-from tests.archive.builders import ChatDbBuilder  # noqa: E402
+from archive import Archive, import_chat_db
+from tests.archive import worlds
+from tests.archive.builders import ChatDbBuilder
 
 TEST_TIME_ZONE = "America/Los_Angeles"
+DATA_FILES = {
+    "SAVES_DIR": "saves",
+    "OUT_DIR": "out",
+    "DEFAULT_MESSAGES_CSV": "messages.csv",
+    "SNAPSHOT_DB": "chat.db",
+    "DOTENV_PATH": ".env",
+}
+
+
+def _pin_data_folder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point recall_paths at the temp folder.
+
+    recall_paths reads RECALL_DATA_DIR one time, at its first import. In a run of the whole
+    test suite another package can import it first, with the real data folder.
+    """
+    import recall_paths
+
+    monkeypatch.setenv("RECALL_DATA_DIR", _DATA_DIR)
+    monkeypatch.setattr(recall_paths, "DATA_DIR", Path(_DATA_DIR))
+    for name, leaf in DATA_FILES.items():
+        monkeypatch.setattr(recall_paths, name, Path(_DATA_DIR) / leaf)
 
 
 @pytest.fixture(autouse=True)
-def _guards() -> Iterator[None]:
-    """Fixed time zone and a live socket block for every archive test."""
+def _guards(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Fixed time zone, a temp data folder and a live socket block for every archive test."""
     netguard.ensure()
     assert netguard.blocks_outbound(), "sockets that leave this machine are not blocked"
+    _pin_data_folder(monkeypatch)
     previous = os.environ.get("TZ")
     os.environ["TZ"] = TEST_TIME_ZONE
     time.tzset()

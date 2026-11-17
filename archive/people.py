@@ -9,11 +9,14 @@ Rules:
   phone number or an email address: then they are two cards of one person.
 - A handle that two different names share belongs to the first record.
 - A handle with no record is its own person with an empty name.
-- A person keeps its id while its handles stay together.
+- A person keeps its id while its handles stay together. When people merge,
+  the id that already holds most of the handles stays. A tie goes to the
+  lower id.
 """
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import NamedTuple
@@ -48,6 +51,8 @@ def _record_keys(record: Mapping[str, object]) -> frozenset[str]:
     keys: set[str] = set()
     for field, to_key in (("phones", phone_key), ("emails", email_key)):
         values = record.get(field)
+        if isinstance(values, str):
+            values = [values]  # one value written without a list
         if not isinstance(values, (list, tuple)):
             continue
         for value in values:
@@ -55,6 +60,11 @@ def _record_keys(record: Mapping[str, object]) -> frozenset[str]:
             if key is not None:
                 keys.add(key)
     return frozenset(keys)
+
+
+def _record_name(record: Mapping[str, object]) -> str:
+    """The name with single spaces. One spelling of an accented letter, so that two cards of one name match."""
+    return " ".join(unicodedata.normalize("NFC", str(record.get("name") or "")).split())
 
 
 def _find(parents: list[int], index: int) -> int:
@@ -76,7 +86,7 @@ def contact_groups(contacts: Sequence[Mapping[str, object]]) -> tuple[tuple[Cont
             continue
         keys = _record_keys(record)
         if keys:
-            usable.append((" ".join(str(record.get("name") or "").split()), keys))
+            usable.append((_record_name(record), keys))
 
     parents = list(range(len(usable)))
     first_with: dict[tuple[str, str], int] = {}
@@ -111,10 +121,13 @@ def _wanted_people(handles: Sequence[HandleRow], groups: Sequence[ContactGroup])
 
 
 def _reuse_ids(wanted: list[tuple[str, tuple[int, ...]]], owner: Mapping[int, int | None]) -> tuple[PersonPlan, ...]:
-    """Give each wanted person the stored id that already holds most of its handles."""
+    """Give each wanted person the stored id that already holds most of its handles.
+
+    The largest person chooses first. At equal size a named person chooses before an unnamed one.
+    """
     claimed: set[int] = set()
     plans: list[PersonPlan] = []
-    for name, handle_ids in sorted(wanted, key=lambda item: (-len(item[1]), item[1][0])):
+    for name, handle_ids in sorted(wanted, key=lambda item: (-len(item[1]), item[0] == "", item[1][0])):
         votes: dict[int, int] = {}
         for handle_id in handle_ids:
             person_id = owner.get(handle_id)

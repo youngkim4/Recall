@@ -1,4 +1,4 @@
-"""Repeat imports: the archive only grows, runs are recorded, a failed run changes nothing."""
+"""Repeat imports: what a second pull changes, how runs are recorded, a failed run changes nothing."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from archive import ImportBusyError, ImportFailed, SourceError, import_chat_db
+from archive import ImportBusyError, ImportFailed, RemovalLimitError, SourceError, import_chat_db, run_control
 from archive import importer as importer_module
 from tests.archive import worlds
 from tests.archive.builders import ChatDbBuilder, apple_time, utc
@@ -55,11 +55,11 @@ def add_many(builder: ChatDbBuilder, chat: int, handle: int, count: int) -> list
     return made
 
 
-class TestTheArchiveOnlyGrows:
+class TestRepeatedPulls:
     def test_second_import_adds_nothing(self, lake: worlds.Lake, source_path: Path, archive_path: Path) -> None:
         import_chat_db(source_path, archive_path, contacts=[worlds.ROWAN_CONTACT])
         before = content(archive_path)
-        second = import_chat_db(source_path, archive_path, contacts=[worlds.ROWAN_CONTACT])
+        second = import_chat_db(source_path, archive_path, contacts=[worlds.ROWAN_CONTACT], full=False)
         assert second.mode == "incremental"
         assert changes(second) == NO_CHANGE
         assert content(archive_path) == before
@@ -75,7 +75,7 @@ class TestTheArchiveOnlyGrows:
         assert changes(again) == NO_CHANGE
         assert content(archive_path) == before
 
-    def test_rows_deleted_from_the_source_stay_in_the_archive(
+    def test_an_incremental_run_keeps_messages_that_the_source_deleted(
         self, lake: worlds.Lake, builder: ChatDbBuilder, source_path: Path, archive_path: Path
     ) -> None:
         import_chat_db(source_path, archive_path)
@@ -84,15 +84,13 @@ class TestTheArchiveOnlyGrows:
             "DELETE FROM chat_message_join WHERE message_id IN (SELECT ROWID FROM message WHERE ROWID % 2 = 0)"
         )
         builder.raw.execute("DELETE FROM message WHERE ROWID % 2 = 0")
-        builder.raw.execute("DELETE FROM message_attachment_join")
-        builder.raw.execute("DELETE FROM attachment")
         builder.commit()
-        for full in (False, True):
-            result = import_chat_db(source_path, archive_path, full=full)
-            assert changes(result) == NO_CHANGE
-            assert content(archive_path) == before
+        result = import_chat_db(source_path, archive_path, full=False)
+        assert result.mode == "incremental"
+        assert changes(result) == NO_CHANGE
+        assert content(archive_path) == before
 
-    def test_smaller_source_loses_nothing(
+    def test_a_much_smaller_source_trips_the_valve_and_then_replaces_the_archive(
         self, lake: worlds.Lake, tmp_path: Path, source_path: Path, archive_path: Path
     ) -> None:
         import_chat_db(source_path, archive_path)
@@ -110,51 +108,35 @@ class TestTheArchiveOnlyGrows:
             guid=lake.guids["saturday"],
         )
         small.close()
-        result = import_chat_db(small_path, archive_path)
-        assert result.mode == "full"
-        assert changes(result) == NO_CHANGE
+        with pytest.raises(RemovalLimitError):
+            import_chat_db(small_path, archive_path)
         assert content(archive_path) == before
 
-    def test_older_snapshot_adds_what_the_live_database_lost(
-        self, lake: worlds.Lake, tmp_path: Path, source_path: Path, archive_path: Path
-    ) -> None:
-        old_path = tmp_path / "old" / "chat.db"
-        old_path.parent.mkdir()
-        old = ChatDbBuilder(old_path)
-        rowan = old.handle(worlds.ROWAN_PHONE)
-        chat = old.chat(worlds.ROWAN_PHONE, members=[rowan])
-        old.message(chat, when=utc(2019, 7, 4, 12, 0), text="offloaded long ago", handle=rowan, guid="OLD-ONLY-1")
-        old.message(
-            chat,
-            when=utc(2024, 1, 15, 18, 0),
-            text="Are we still on for Saturday?",
-            handle=rowan,
-            guid=lake.guids["saturday"],
-        )
-        old.close()
-        import_chat_db(source_path, archive_path)
-        result = import_chat_db(old_path, archive_path)
-        assert result.messages_added == 1
-        assert texts(archive_path)[0] == "offloaded long ago"
-        assert (
-            scalar(
-                archive_path, "SELECT message_count FROM conversations WHERE chat_identifier = ?", (worlds.ROWAN_PHONE,)
-            )
-            == 6
-        )
-        assert totals_match_messages(archive_path)
+        result = import_chat_db(small_path, archive_path, max_removed_share=1)
+        assert result.mode == "full"
+        assert texts(archive_path) == ["Are we still on for Saturday?"]
+        assert [row[0] for row in content(archive_path)["conversations"]] == [worlds.ROWAN_PHONE]
+        assert totals_match_messages(archive_path) and fts_is_consistent(archive_path)
 
-    def test_lost_text_in_the_source_does_not_blank_the_archive(
+    def test_text_that_the_source_lost_is_lost_in_the_archive_too(
         self, lake: worlds.Lake, builder: ChatDbBuilder, source_path: Path, archive_path: Path
     ) -> None:
         import_chat_db(source_path, archive_path)
-        before = content(archive_path)
         builder.raw.execute("UPDATE message SET attributedBody = NULL WHERE guid = ?", (lake.guids["view"],))
         builder.raw.execute("UPDATE message SET text = NULL WHERE guid = ?", (lake.guids["saturday"],))
         builder.commit()
         result = import_chat_db(source_path, archive_path, full=True)
-        assert result.messages_updated == 0
-        assert content(archive_path) == before
+        # the photo keeps its attachment and loses its caption: the source is the truth
+        assert result.messages_updated == 1
+        assert query(archive_path, "SELECT kind, text FROM messages WHERE guid = ?", (lake.guids["view"],)) == [
+            ("attachment", "")
+        ]
+        # a row with nothing to show is skipped. Its guid is still in the source, so the stored row stays.
+        assert result.skipped == {"empty": 1}
+        assert scalar(archive_path, "SELECT text FROM messages WHERE guid = ?", (lake.guids["saturday"],)) == (
+            "Are we still on for Saturday?"
+        )
+        assert fts_is_consistent(archive_path)
 
 
 class TestIncremental:
@@ -167,7 +149,7 @@ class TestIncremental:
             lake.chats["phone"], lake.guids["long"], 2003, when=utc(2024, 6, 2, 9), handle=lake.handles["rowan_phone"]
         )
         builder.commit()
-        result = import_chat_db(source_path, archive_path)
+        result = import_chat_db(source_path, archive_path, full=False)
         assert result.mode == "incremental"
         assert (result.messages_added, result.reactions_added, result.messages_updated) == (3, 1, 0)
         assert texts(archive_path)[-3:] == ["extra 0", "extra 1", "extra 2"]
@@ -192,7 +174,7 @@ class TestIncremental:
         builder.commit()
         import_chat_db(source_path, archive_path)
         add_many(builder, lake.chats["phone"], lake.handles["rowan_phone"], 5)
-        result = import_chat_db(source_path, archive_path)
+        result = import_chat_db(source_path, archive_path, full=False)
         assert result.rows_seen == 2 + 5
         assert result.messages_added == 5
 
@@ -212,7 +194,7 @@ class TestIncremental:
             (apple_time(edited_at), lake.guids["saturday"]),
         )
         builder.commit()
-        result = import_chat_db(source_path, archive_path)
+        result = import_chat_db(source_path, archive_path, full=False)
         assert result.mode == "incremental" and result.messages_updated == 1 and result.messages_added == 0
         row = query(archive_path, "SELECT text, edited_at FROM messages WHERE guid = ?", (lake.guids["saturday"],))[0]
         assert row == ("Are we still on for Sunday?", int(edited_at.timestamp()))
@@ -235,7 +217,7 @@ class TestIncremental:
             (apple_time(utc(2024, 2, 1, 20, 6)), lake.guids["gotit"]),
         )
         builder.commit()
-        result = import_chat_db(source_path, archive_path)
+        result = import_chat_db(source_path, archive_path, full=False)
         assert result.messages_updated == 1
         assert query(
             archive_path, "SELECT text, unsent, kind FROM messages WHERE guid = ?", (lake.guids["gotit"],)
@@ -253,7 +235,7 @@ class TestIncremental:
         import_chat_db(source_path, archive_path)
         builder.attachment(lake.rowids["jackets"], mime_type="application/pdf", transfer_name="packing-list.pdf")
         builder.commit()
-        result = import_chat_db(source_path, archive_path)
+        result = import_chat_db(source_path, archive_path, full=False)
         assert result.mode == "incremental" and result.attachments_added == 1
         assert query(
             archive_path,
@@ -265,7 +247,7 @@ class TestIncremental:
         self, lake: worlds.Lake, tmp_path: Path, source_path: Path, archive_path: Path
     ) -> None:
         import_chat_db(source_path, archive_path)
-        before = content(archive_path)
+        ids_before = dict(query(archive_path, "SELECT guid, id FROM messages"))
         rebuilt_path = tmp_path / "rebuilt" / "chat.db"
         rebuilt_path.parent.mkdir()
         rebuilt = ChatDbBuilder(rebuilt_path)
@@ -292,65 +274,42 @@ class TestIncremental:
             rowid=901,
         )
         rebuilt.close()
-        result = import_chat_db(rebuilt_path, archive_path)
-        assert result.mode == "full"
-        assert (result.messages_added, result.messages_updated) == (1, 0)
-        after = content(archive_path)
-        assert len(after["messages"]) == len(before["messages"]) + 1
-        assert scalar(archive_path, "SELECT COUNT(*) FROM messages WHERE guid = ?", (lake.guids["saturday"],)) == 1
+        result = import_chat_db(rebuilt_path, archive_path, full=False, max_removed_share=1)
+        assert result.mode == "full"  # no mark of the old database fits: the run reads everything
+        assert (result.messages_added, result.messages_updated) == (1, 2)  # the two known rows have new ROWIDs
+        ids_after = dict(query(archive_path, "SELECT guid, id FROM messages"))
+        assert set(ids_after) == {"NEW-AFTER-REBUILD", lake.guids["long"], lake.guids["saturday"]}
+        assert all(ids_before[guid] == ids_after[guid] for guid in (lake.guids["long"], lake.guids["saturday"]))
         assert (
             scalar(archive_path, "SELECT source_rowid FROM messages WHERE guid = ?", (lake.guids["saturday"],)) == 901
         )
 
-    def test_older_snapshot_does_not_undo_an_edit_or_an_unsend(
-        self, lake: worlds.Lake, tmp_path: Path, source_path: Path, archive_path: Path
-    ) -> None:
-        import_chat_db(source_path, archive_path)
-        before = content(archive_path)
-        old_path = tmp_path / "old" / "chat.db"
-        old_path.parent.mkdir()
-        old = ChatDbBuilder(old_path)
-        mira = old.handle(worlds.MIRA_PHONE)
-        tessa = old.handle(worlds.TESSA_EMAIL)
-        group = old.chat(worlds.GROUP_ID, members=[mira, tessa])
-        old.message(
-            group, when=utc(2024, 3, 1, 17, 10), text="Bring life jakets", handle=mira, guid=lake.guids["jackets"]
-        )
-        old.message(
-            group,
-            when=utc(2024, 3, 1, 17, 15),
-            text="text before it was unsent",
-            handle=tessa,
-            guid=lake.guids["unsent"],
-        )
-        old.close()
-        result = import_chat_db(old_path, archive_path)
-        assert result.messages_updated == 0
-        assert content(archive_path) == before
-
     def test_full_flag_reads_everything_again(self, lake: worlds.Lake, source_path: Path, archive_path: Path) -> None:
         import_chat_db(source_path, archive_path)
         assert import_chat_db(source_path, archive_path, full=True).rows_seen == worlds.SOURCE_ROWS
-        assert import_chat_db(source_path, archive_path).rows_seen < worlds.SOURCE_ROWS + 1
+        assert import_chat_db(source_path, archive_path, full=False).rows_seen <= worlds.SOURCE_ROWS
 
-    def test_first_and_last_import_are_tracked(
+    def test_import_ids_name_the_run_that_added_a_row_and_the_run_that_last_changed_it(
         self, lake: worlds.Lake, builder: ChatDbBuilder, source_path: Path, archive_path: Path
     ) -> None:
         first = import_chat_db(source_path, archive_path)
         add_many(builder, lake.chats["phone"], lake.handles["rowan_phone"], 1)
+        builder.raw.execute("UPDATE message SET text = 'Got it!' WHERE text = 'Got it'")
+        builder.commit()
         second = import_chat_db(source_path, archive_path, full=True)
-        rows = dict(
-            (text, (a, b))
+        rows = {
+            text: (a, b)
             for text, a, b in query(archive_path, "SELECT text, first_import_id, last_import_id FROM messages")
-        )
-        assert rows["Got it"] == (first.run_id, second.run_id)
+        }
+        assert rows["Got it!"] == (first.run_id, second.run_id)
         assert rows["extra 0"] == (second.run_id, second.run_id)
+        assert rows["Are we still on for Saturday?"] == (first.run_id, first.run_id)  # not changed: not written
 
 
 class TestRunRecords:
     def test_each_run_is_recorded(self, lake: worlds.Lake, source_path: Path, archive_path: Path) -> None:
         first = import_chat_db(source_path, archive_path)
-        second = import_chat_db(source_path, archive_path)
+        second = import_chat_db(source_path, archive_path, full=False)
         assert runs(archive_path) == [(first.run_id, "full", "ok", None), (second.run_id, "incremental", "ok", None)]
         started, finished, source, counts, checkpoints = query(
             archive_path,
@@ -457,7 +416,7 @@ class TestRunRecords:
         result = import_chat_db(source_path, archive_path, cancel=stop)
         assert result.status == "cancelled"
         assert all(not rows for rows in content(archive_path).values())
-        assert not (archive_path.parent / importer_module.WORK_DIR_NAME).exists()
+        assert not importer_module.work_dir(archive_path).exists()
 
     def test_progress_reports_each_phase(
         self, lake: worlds.Lake, source_path: Path, archive_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -469,6 +428,7 @@ class TestRunRecords:
         assert [phase for index, phase in enumerate(phases) if index == 0 or phases[index - 1] != phase] == [
             "copy",
             "messages",
+            "changes",
             "finish",
         ]
         for event in events:
@@ -493,7 +453,7 @@ class TestRunRecords:
         self, lake: worlds.Lake, source_path: Path, archive_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         import_chat_db(source_path, archive_path)
-        monkeypatch.setattr(importer_module, "LOCK_WAIT_SECONDS", 0.05)
+        monkeypatch.setattr(run_control, "LOCK_WAIT_SECONDS", 0.05)
         other = sqlite3.connect(str(archive_path), isolation_level=None)
         other.execute("BEGIN IMMEDIATE")
         try:

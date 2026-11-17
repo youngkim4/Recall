@@ -76,12 +76,16 @@ class TestContactGroups:
             [
                 "not a record",
                 {"name": "No Handles"},
-                {"name": "Odd Lists", "phones": "5550100123", "emails": None},
+                {"name": "One Value", "phones": "5550100123", "emails": None},
+                {"name": "Odd Lists", "phones": 5550100999, "emails": {"home": "odd@example.com"}},
                 {"name": "Mixed", "phones": [None, 5550100456, "555-010-0789"], "emails": ["no-at-sign"]},
             ]
         )
         assert skipped == 1
-        assert made == (ContactGroup("Mixed", frozenset({"p:5550100789"})),)
+        assert made == (
+            ContactGroup("One Value", frozenset({"p:5550100123"})),  # one value written without a list
+            ContactGroup("Mixed", frozenset({"p:5550100789"})),
+        )
 
     def test_contacts_must_be_a_list(self) -> None:
         with pytest.raises(TypeError):

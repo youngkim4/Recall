@@ -61,7 +61,7 @@ class MessageRow(NamedTuple):
     """A row of the archive's messages table, without its id and import ids."""
 
     guid: str
-    conversation_id: int
+    conversation_id: int | None  # None: the source links the message to no chat
     sender_handle_id: int | None
     is_from_me: int
     sent_ns: int
@@ -147,12 +147,23 @@ class ReactionRecord:
 
 @dataclass(frozen=True, slots=True)
 class Skipped:
-    """A source row that is not stored. `reason` is one of SKIP_REASONS."""
+    """A source row that is not stored. `reason` is one of SKIP_REASONS: the importer counts `skipped_<reason>`."""
 
     reason: str
     decode_failed: bool = False
 
+    def __post_init__(self) -> None:
+        if self.reason not in SKIP_REASONS:
+            raise ValueError(f"{self.reason!r} is not a skip reason")
 
-SKIP_REASONS: tuple[str, ...] = ("no_guid", "no_date", "no_target", "empty", "no_conversation")
+
+SKIP_REASONS: tuple[str, ...] = (
+    "no_guid",
+    "no_date",
+    "no_target",  # a tapback with no target, or with a target the archive does not hold
+    "unknown_tapback",  # a tapback code this version does not know
+    "empty",
+    "bad_row",  # a value in the row cannot be used
+)
 
 Record = MessageRecord | ReactionRecord | Skipped

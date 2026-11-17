@@ -20,9 +20,9 @@ CONTENT_QUERIES: dict[str, str] = {
         " ORDER BY 1, 2"
     ),
     "messages": (
-        "SELECT m.guid, c.chat_identifier, COALESCE(h.handle, ''), m.is_from_me, m.sent_ns, m.text, m.kind,"
-        " m.service, m.reply_to_guid, m.edited_at, m.unsent, m.item_type, m.text_source, m.extra"
-        " FROM messages m JOIN conversations c ON c.id = m.conversation_id"
+        "SELECT m.guid, COALESCE(c.chat_identifier, ''), COALESCE(h.handle, ''), m.is_from_me, m.sent_ns, m.text,"
+        " m.kind, m.service, m.reply_to_guid, m.edited_at, m.unsent, m.item_type, m.text_source, m.extra"
+        " FROM messages m LEFT JOIN conversations c ON c.id = m.conversation_id"
         " LEFT JOIN handles h ON h.id = m.sender_handle_id ORDER BY m.guid"
     ),
     "attachments": (

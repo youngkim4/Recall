@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import socket
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,19 @@ def test_api_key_is_a_dummy() -> None:
 def test_default_data_folder_is_a_temp_folder() -> None:
     data_dir = Path(os.environ["RECALL_DATA_DIR"]).resolve()
     assert REPO_ROOT not in data_dir.parents and data_dir != REPO_ROOT
+    assert data_dir.is_relative_to(Path(tempfile.gettempdir()).resolve())
     assert default_archive_path().resolve().is_relative_to(data_dir)
+
+
+def test_a_data_folder_that_was_read_earlier_is_replaced(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Another test package can import recall_paths first: the guard must still win."""
+    import recall_paths
+    from tests.archive.conftest import _pin_data_folder
+
+    monkeypatch.setattr(recall_paths, "SAVES_DIR", REPO_ROOT / "saves")
+    _pin_data_folder(monkeypatch)
+
+    assert default_archive_path().resolve().is_relative_to(Path(tempfile.gettempdir()).resolve())
 
 
 @pytest.mark.parametrize("address", [("192.0.2.1", 443), ("2001:db8::1", 443), ("api.example.invalid", 443)])

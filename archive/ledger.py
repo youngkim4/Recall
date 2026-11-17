@@ -1,10 +1,8 @@
 """Write messages, reactions and attachments into the archive, one batch at a time.
 
-Every row is keyed by Apple's guid. A row the archive has is never deleted,
-and what the archive knows is never replaced by less:
-- an older copy of a message does not undo an edit or an unsend
-- text that the source lost does not blank the stored text
-- an unknown value does not replace a known one
+Every row is keyed by Apple's guid, so a row that the source still holds
+keeps its id across pulls. The source is the truth: a stored row takes every
+value the source has now. A row that did not change is not written again.
 """
 
 from __future__ import annotations
@@ -17,7 +15,7 @@ from archive.records import AttachmentRow, MessageRow, ReactionRow
 
 MESSAGE_FIELDS = ", ".join(MessageRow._fields)
 REACTION_FIELDS = ", ".join(ReactionRow._fields)
-SOURCE_ROWID = MessageRow._fields.index("source_rowid")
+KIND = MessageRow._fields.index("kind")
 ROWS_PER_INSERT = 400  # 17 values each: far below SQLite's limit of 32,766 bound values
 
 
@@ -25,37 +23,31 @@ class MessageCounts(NamedTuple):
     messages_added: int
     system_added: int
     messages_updated: int
+    system_updated: int
     conversations: frozenset[int]  # conversations whose totals can have changed
+
+
+class ReactionCounts(NamedTuple):
+    added: int
+    updated: int
+    waiting: tuple[ReactionRow, ...]  # tapbacks on a message that the archive does not hold (yet)
+
+
+class KindChanges(NamedTuple):
+    """Stored rows that were removed because their guid is now a row of the other kind."""
+
+    messages_removed: int
+    reactions_removed: int
+    conversations: frozenset[int]  # conversations whose totals can have changed
+
+
+class AttachmentCounts(NamedTuple):
+    added: int
+    removed: int
 
 
 def _marks(count: int) -> str:
     return ", ".join("?" for _ in range(count))
-
-
-def _is_older_copy(stored: MessageRow, incoming: MessageRow) -> bool:
-    """True when `incoming` shows the message before an edit or unsend that the archive has."""
-    if stored.unsent and not incoming.unsent:
-        return True
-    if stored.edited_at is None:
-        return False
-    return incoming.edited_at is None or incoming.edited_at < stored.edited_at
-
-
-def merge_message(stored: MessageRow, incoming: MessageRow) -> MessageRow:
-    """The row the archive must hold after an import sees the message again."""
-    if _is_older_copy(stored, incoming):
-        return stored._replace(source_rowid=incoming.source_rowid)
-    merged = incoming._replace(
-        sender_handle_id=incoming.sender_handle_id
-        if incoming.sender_handle_id is not None
-        else stored.sender_handle_id,
-        service=incoming.service or stored.service,
-        reply_to_guid=incoming.reply_to_guid or stored.reply_to_guid,
-        extra=incoming.extra if incoming.extra is not None else stored.extra,
-    )
-    if merged.text == "" and stored.text != "" and not merged.unsent:
-        return merged._replace(text=stored.text, kind=stored.kind, text_source=stored.text_source)
-    return merged
 
 
 def _insert_messages(conn: sqlite3.Connection, rows: Sequence[tuple[object, ...]]) -> None:
@@ -78,107 +70,143 @@ def _stored_messages(conn: sqlite3.Connection, guids: Sequence[str]) -> dict[str
     return {row[1]: (int(row[0]), MessageRow._make(row[1:])) for row in rows.fetchall()}
 
 
+def drop_other_kind(
+    conn: sqlite3.Connection, message_guids: Sequence[str], reaction_guids: Sequence[str]
+) -> KindChanges:
+    """Remove a stored tapback whose guid is now a message, and a stored message whose guid is now a tapback.
+
+    One source row is one stored row. Without this step a row that changes its
+    kind would stay in the table of its old kind for ever: its guid is not gone.
+    """
+    reactions_removed = 0
+    if message_guids:
+        marks = _marks(len(message_guids))
+        reactions_removed = conn.execute(f"DELETE FROM reactions WHERE guid IN ({marks})", list(message_guids)).rowcount
+    stale: list[tuple[int, int | None]] = []
+    if reaction_guids:
+        marks = _marks(len(reaction_guids))
+        stale = conn.execute(
+            f"SELECT id, conversation_id FROM messages WHERE guid IN ({marks})", list(reaction_guids)
+        ).fetchall()
+    if stale:
+        ids = [(message_id,) for message_id, _ in stale]
+        conn.executemany("DELETE FROM attachments WHERE message_id = ?", ids)
+        conn.executemany("DELETE FROM messages WHERE id = ?", ids)
+    touched = frozenset(key for _, key in stale if key is not None)
+    return KindChanges(len(stale), int(reactions_removed), touched)
+
+
 def write_messages(conn: sqlite3.Connection, run_id: int, rows: Sequence[MessageRow]) -> MessageCounts:
-    """Insert new messages, update changed ones, and mark the others as seen by this run."""
-    unique = list({row.guid: row for row in rows}.values())
+    """Insert new messages and update the ones whose source row changed."""
+    unique = list({row.guid: row for row in rows}.values())  # one guid twice in a batch: the last row wins
     if not unique:
-        return MessageCounts(0, 0, 0, frozenset())
+        return MessageCounts(0, 0, 0, 0, frozenset())
     stored = _stored_messages(conn, [row.guid for row in unique])
     inserts: list[tuple[object, ...]] = []
     updates: list[tuple[object, ...]] = []
-    seen: list[tuple[int, int, int]] = []
+    system_updated = 0
     touched: set[int] = set()
     for row in unique:
         found = stored.get(row.guid)
         if found is None:
             inserts.append((*row, run_id, run_id))
-            touched.add(row.conversation_id)
-            continue
-        message_id, old = found
-        merged = merge_message(old, row)
-        if merged[:SOURCE_ROWID] == old[:SOURCE_ROWID]:
-            seen.append((run_id, merged.source_rowid, message_id))
+            changed: tuple[int | None, ...] = (row.conversation_id,)
+        elif found[1] != row:
+            updates.append((*row[1:], run_id, found[0]))
+            system_updated += int(row.kind == "system")
+            changed = (found[1].conversation_id, row.conversation_id)
         else:
-            updates.append((*merged[1:], run_id, message_id))
-            touched.update((old.conversation_id, merged.conversation_id))
+            continue
+        touched.update(key for key in changed if key is not None)  # a message can have no conversation
     _insert_messages(conn, inserts)
     assignments = ", ".join(f"{name} = ?" for name in MessageRow._fields[1:])
     conn.executemany(f"UPDATE messages SET {assignments}, last_import_id = ? WHERE id = ?", updates)
-    conn.executemany("UPDATE messages SET last_import_id = ?, source_rowid = ? WHERE id = ?", seen)
-    system_added = sum(1 for values in inserts if values[MessageRow._fields.index("kind")] == "system")
-    return MessageCounts(len(inserts) - system_added, system_added, len(updates), frozenset(touched))
+    system_added = sum(1 for values in inserts if values[KIND] == "system")
+    return MessageCounts(
+        len(inserts) - system_added, system_added, len(updates) - system_updated, system_updated, frozenset(touched)
+    )
 
 
-def write_reactions(conn: sqlite3.Connection, run_id: int, rows: Sequence[ReactionRow]) -> int:
-    """Insert new tapbacks and refresh known ones. Return the number added."""
+def write_reactions(conn: sqlite3.Connection, run_id: int, rows: Sequence[ReactionRow]) -> ReactionCounts:
+    """Insert new tapbacks and update changed ones.
+
+    A tapback is stored only when the archive holds its target message.
+    The others come back as `waiting`: the target can be in a later batch.
+    """
     unique = list({row.guid: row for row in rows}.values())
     if not unique:
-        return 0
-    guids = [row.guid for row in unique]
+        return ReactionCounts(0, 0, ())
+    targets = sorted({row.target_guid for row in unique})
+    held = {
+        guid for (guid,) in conn.execute(f"SELECT guid FROM messages WHERE guid IN ({_marks(len(targets))})", targets)
+    }
+    ready = [row for row in unique if row.target_guid in held]
+    guids = [row.guid for row in ready]
     found = conn.execute(f"SELECT id, {REACTION_FIELDS} FROM reactions WHERE guid IN ({_marks(len(guids))})", guids)
     stored = {row[1]: (int(row[0]), ReactionRow._make(row[1:])) for row in found.fetchall()}
-    inserts = [(*row, run_id, run_id) for row in unique if row.guid not in stored]
-    updates: list[tuple[object, ...]] = []
-    for row in unique:
-        if row.guid not in stored:
-            continue
-        reaction_id, old = stored[row.guid]
-        merged = row._replace(
-            conversation_id=row.conversation_id if row.conversation_id is not None else old.conversation_id,
-            sender_handle_id=row.sender_handle_id if row.sender_handle_id is not None else old.sender_handle_id,
-            emoji=row.emoji or old.emoji,
-        )
-        updates.append((*merged[1:], run_id, reaction_id))
+    inserts = [(*row, run_id, run_id) for row in ready if row.guid not in stored]
+    updates = [
+        (*row[1:], run_id, stored[row.guid][0]) for row in ready if row.guid in stored and stored[row.guid][1] != row
+    ]
     conn.executemany(
-        f"INSERT INTO reactions({REACTION_FIELDS}, first_import_id, last_import_id) VALUES ({_marks(len(ReactionRow._fields) + 2)})",
+        f"INSERT INTO reactions({REACTION_FIELDS}, first_import_id, last_import_id)"
+        f" VALUES ({_marks(len(ReactionRow._fields) + 2)})",
         inserts,
     )
     assignments = ", ".join(f"{name} = ?" for name in ReactionRow._fields[1:])
     conn.executemany(f"UPDATE reactions SET {assignments}, last_import_id = ? WHERE id = ?", updates)
-    return len(inserts)
+    return ReactionCounts(len(inserts), len(updates), tuple(row for row in unique if row.target_guid not in held))
 
 
-def write_attachments(conn: sqlite3.Connection, rows: Sequence[AttachmentRow]) -> int:
-    """Insert new attachment records and fill in metadata that was missing. Return the number added."""
-    unique = list({row.guid: row for row in rows}.values())
-    if not unique:
-        return 0
-    message_guids = sorted({row.message_guid for row in unique})
-    message_ids = dict(
-        conn.execute(
-            f"SELECT guid, id FROM messages WHERE guid IN ({_marks(len(message_guids))})", message_guids
-        ).fetchall()
-    )
-    guids = [row.guid for row in unique]
-    stored = {
-        row[0]: row[1:]
-        for row in conn.execute(
-            f"SELECT guid, id, mime_type, file_name, path, total_bytes FROM attachments WHERE guid IN ({_marks(len(guids))})",
-            guids,
-        ).fetchall()
+def write_attachments(
+    conn: sqlite3.Connection, message_guids: Sequence[str], rows: Sequence[AttachmentRow]
+) -> AttachmentCounts:
+    """Make the attachment records of the given messages equal to `rows`.
+
+    `message_guids` names every message of the batch, also one that has no
+    attachment now: a record that the source dropped is removed.
+    """
+    if not message_guids:
+        return AttachmentCounts(0, 0)
+    message_ids = {
+        str(guid): int(message_id)
+        for guid, message_id in conn.execute(
+            f"SELECT guid, id FROM messages WHERE guid IN ({_marks(len(message_guids))})", list(message_guids)
+        )
     }
-    inserts: list[tuple[object, ...]] = []
-    updates: list[tuple[object, ...]] = []
-    for row in unique:
-        message_id = message_ids.get(row.message_guid)
-        if message_id is None:
-            continue
-        old = stored.get(row.guid)
-        if old is None:
-            inserts.append(
-                (row.guid, message_id, row.position, row.mime_type, row.file_name, row.path, row.total_bytes)
-            )
-            continue
-        attachment_id, *known = old
-        merged = [new if new is not None else kept for new, kept in zip(row[3:], known, strict=True)]
-        if merged != known:
-            updates.append((*merged, attachment_id))
+    ids = sorted(message_ids.values())
+    stored = {
+        (int(row[1]), str(row[2])): (int(row[0]), *row[3:])
+        for row in conn.execute(
+            "SELECT id, message_id, guid, position, mime_type, file_name, path, total_bytes FROM attachments"
+            f" WHERE message_id IN ({_marks(len(ids))})",
+            ids,
+        )
+    }
+    wanted = {
+        (message_ids[row.message_guid], row.guid): (
+            row.position,
+            row.mime_type,
+            row.file_name,
+            row.path,
+            row.total_bytes,
+        )
+        for row in rows
+        if row.message_guid in message_ids
+    }
+    inserts = [(*key, *values) for key, values in wanted.items() if key not in stored]
+    updates = [
+        (*values, stored[key][0]) for key, values in wanted.items() if key in stored and stored[key][1:] != values
+    ]
+    gone = [(found[0],) for key, found in stored.items() if key not in wanted]
     conn.executemany(
-        "INSERT INTO attachments(guid, message_id, position, mime_type, file_name, path, total_bytes)"
+        "INSERT INTO attachments(message_id, guid, position, mime_type, file_name, path, total_bytes)"
         " VALUES (?, ?, ?, ?, ?, ?, ?)",
         inserts,
     )
     conn.executemany(
-        "UPDATE attachments SET mime_type = ?, file_name = ?, path = ?, total_bytes = ? WHERE id = ?", updates
+        "UPDATE attachments SET position = ?, mime_type = ?, file_name = ?, path = ?, total_bytes = ? WHERE id = ?",
+        updates,
     )
-    return len(inserts)
+    conn.executemany("DELETE FROM attachments WHERE id = ?", gone)
+    return AttachmentCounts(len(inserts), len(gone))

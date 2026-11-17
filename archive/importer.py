@@ -1,8 +1,10 @@
 """Import a Messages database (chat.db) into the archive.
 
-One run is one transaction. It either commits everything or leaves the
-archive data as it was. Messages are upserted by guid and never deleted, so
-the archive keeps what the source lost.
+The archive mirrors the source. A full pull reads every row: after it the
+archive holds exactly the messages of the source. A row that the source
+still holds keeps its id (upsert by guid). A row whose guid is gone from the
+source is removed. An incremental run reads only new and changed rows and
+removes nothing.
 """
 
 from __future__ import annotations
@@ -11,16 +13,12 @@ import json
 import os
 import sqlite3
 import time
-from collections import Counter
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field, fields
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from types import MappingProxyType
-from typing import Any
 
-from archive import connection, directory, ledger, runs
+from archive import directory, ledger, mirror, run_control, runs
 from archive.classify import classify
-from archive.errors import ArchiveError, ImportBusyError, ImportFailed
 from archive.people import ContactGroup, contact_groups
 from archive.records import (
     AttachmentRow,
@@ -28,96 +26,24 @@ from archive.records import (
     MessageRow,
     ReactionRecord,
     ReactionRow,
+    Record,
     Skipped,
     SourceAttachment,
+    SourceChat,
     SourceMessage,
 )
+from archive.run_control import ImportResult, Progress, Run
+from archive.schema import INDEXED_TEXT_CHARS
 from archive.source import SourceReader, open_snapshot
 
-WORK_DIR_NAME = ".recall-import-work"
+__all__ = ["ImportResult", "import_chat_db", "work_dir"]
+
 BATCH_ROWS = 1000
-# An incremental run reads these many rows below its mark again. Recent rows
-# can still change: an attachment arrives, a chat link is written late.
+# An incremental run reads again the rows whose ROWID is at most this far
+# below its mark. Recent rows can still change: an attachment arrives, a
+# chat link is written late.
 OVERLAP_ROWS = 2000
 CHECKPOINT_ROWS = 8
-LOCK_WAIT_SECONDS = 2.0
-
-Progress = Callable[[dict[str, Any]], None]
-COUNT_NAMES = (
-    "rows_seen",
-    "messages_seen",
-    "reactions_seen",
-    "system_seen",
-    "messages_added",
-    "messages_updated",
-    "reactions_added",
-    "system_added",
-    "attachments_added",
-    "conversations_added",
-    "handles_added",
-    "blob_texts",
-    "decode_failures",
-)
-
-
-class _Cancelled(Exception):
-    """The caller asked to stop."""
-
-
-@dataclass(frozen=True)
-class ImportResult:
-    """What one import run did. `status` is `ok` or `cancelled`."""
-
-    run_id: int
-    status: str
-    mode: str  # full | incremental: what the run read, not what was asked
-    source_path: str
-    archive_path: str
-    started_at: int
-    finished_at: int
-    rows_seen: int = 0
-    messages_seen: int = 0
-    reactions_seen: int = 0
-    system_seen: int = 0
-    messages_added: int = 0
-    messages_updated: int = 0
-    reactions_added: int = 0
-    system_added: int = 0
-    attachments_added: int = 0
-    conversations_added: int = 0
-    handles_added: int = 0
-    blob_texts: int = 0
-    decode_failures: int = 0
-    skipped: Mapping[str, int] = field(default_factory=dict)  # reason -> rows not stored
-    counts: Mapping[str, int] = field(default_factory=dict)  # every counter of the run
-
-    def as_dict(self) -> dict[str, Any]:
-        """A plain dict that json.dumps accepts."""
-        values = {item.name: getattr(self, item.name) for item in fields(self)}
-        return {**values, "skipped": dict(self.skipped), "counts": dict(self.counts)}
-
-
-@dataclass
-class _Run:
-    """Working state of one run."""
-
-    source: Path
-    archive: Path
-    started_at: int
-    mode: str
-    report: Progress | None
-    should_stop: Callable[[], bool]
-    run_id: int = 0
-    counts: Counter[str] = field(default_factory=Counter)
-    touched: set[int] = field(default_factory=set)
-
-    def tell(self, phase: str, done: int, total: int) -> None:
-        if self.report is not None and total > 0:
-            self.report({"phase": phase, "done": min(done, total), "total": total})
-
-    def check_stop(self) -> None:
-        if self.should_stop():
-            raise _Cancelled
 
 
 @dataclass(frozen=True)
@@ -129,15 +55,9 @@ class _Lookups:
     conversations: Mapping[int, int]
 
 
-def _stop_check(cancel: object) -> Callable[[], bool]:
-    if cancel is None:
-        return lambda: False
-    is_set = getattr(cancel, "is_set", None)
-    if callable(is_set):
-        return lambda: bool(is_set())
-    if callable(cancel):
-        return lambda: bool(cancel())
-    raise TypeError("cancel must be a callable or an object with is_set()")
+def work_dir(archive_path: Path) -> Path:
+    """The private folder that holds the copy of the source during a run. Each archive has its own."""
+    return archive_path.parent / f".{archive_path.name}.import-work"
 
 
 def _extra_json(record: MessageRecord, lookups: _Lookups) -> str | None:
@@ -148,7 +68,7 @@ def _extra_json(record: MessageRecord, lookups: _Lookups) -> str | None:
     return json.dumps(extra, ensure_ascii=False, sort_keys=True, separators=(",", ":")) if extra else None
 
 
-def _message_row(record: MessageRecord, conversation_id: int, lookups: _Lookups) -> MessageRow:
+def _message_row(record: MessageRecord, conversation_id: int | None, lookups: _Lookups) -> MessageRow:
     sender = lookups.handles.get(record.handle_rowid) if record.handle_rowid is not None else None
     return MessageRow(
         guid=record.guid,
@@ -203,8 +123,16 @@ def _attachment_rows(message_guid: str, attachments: Sequence[SourceAttachment])
     return rows
 
 
+def _classified(row: SourceMessage, has_attachments: bool) -> Record:
+    """Classify one row. A row with a value that cannot be used is skipped: it must not stop every import."""
+    try:
+        return classify(row, has_attachments=has_attachments)
+    except (ValueError, OverflowError, TypeError):
+        return Skipped("bad_row")
+
+
 def _store_batch(
-    conn: sqlite3.Connection, run: _Run, reader: SourceReader, lookups: _Lookups, batch: Sequence[SourceMessage]
+    conn: sqlite3.Connection, run: Run, reader: SourceReader, lookups: _Lookups, batch: Sequence[SourceMessage]
 ) -> None:
     """Classify one batch of source rows and write it."""
     attachments = reader.attachments_for([row.rowid for row in batch])
@@ -214,7 +142,7 @@ def _store_batch(
     counts = run.counts
     for row in batch:
         counts["rows_seen"] += 1
-        record = classify(row, has_attachments=row.rowid in attachments)
+        record = _classified(row, row.rowid in attachments)
         if isinstance(record, Skipped):
             counts[f"skipped_{record.reason}"] += 1
             counts["decode_failures"] += int(record.decode_failed)
@@ -224,28 +152,53 @@ def _store_batch(
             reactions.append(_reaction_row(record, lookups))
             continue
         conversation_id = lookups.conversations.get(record.chat_rowid) if record.chat_rowid is not None else None
-        if conversation_id is None:
-            counts["skipped_no_conversation"] += 1
-            continue
+        counts["without_conversation"] += int(conversation_id is None)  # stored, in no conversation
         counts["system_seen" if record.kind == "system" else "messages_seen"] += 1
         counts["blob_texts"] += int(record.text_source == "blob")
         counts["decode_failures"] += int(record.decode_failed)
+        counts["oversize_texts"] += int(len(record.text) > INDEXED_TEXT_CHARS)
         messages.append(_message_row(record, conversation_id, lookups))
         files.extend(_attachment_rows(record.guid, attachments.get(row.rowid, ())))
 
+    moved = ledger.drop_other_kind(conn, [row.guid for row in messages], [row.guid for row in reactions])
+    counts["messages_removed"] += moved.messages_removed
+    counts["reactions_removed"] += moved.reactions_removed
     written = ledger.write_messages(conn, run.run_id, messages)
     counts["messages_added"] += written.messages_added
     counts["system_added"] += written.system_added
     counts["messages_updated"] += written.messages_updated
-    counts["reactions_added"] += ledger.write_reactions(conn, run.run_id, reactions)
-    counts["attachments_added"] += ledger.write_attachments(conn, files)
-    run.touched.update(written.conversations)
+    counts["system_updated"] += written.system_updated
+    run.touched.update(moved.conversations | written.conversations)
+    tapbacks = ledger.write_reactions(conn, run.run_id, reactions)
+    counts["reactions_added"] += tapbacks.added
+    counts["reactions_updated"] += tapbacks.updated
+    run.waiting.extend(tapbacks.waiting)
+    records = ledger.write_attachments(conn, [row.guid for row in messages], files)
+    counts["attachments_added"] += records.added
+    counts["attachments_removed"] += records.removed
 
 
-def _sync_directory(conn: sqlite3.Connection, run: _Run, reader: SourceReader) -> _Lookups:
-    source_handles = reader.handles()
+def _settle_waiting(conn: sqlite3.Connection, run: Run) -> None:
+    """Store the tapbacks whose target came in a later batch. The others have no target in the archive."""
+    for start in range(0, len(run.waiting), BATCH_ROWS):
+        settled = ledger.write_reactions(conn, run.run_id, run.waiting[start : start + BATCH_ROWS])
+        run.counts["reactions_added"] += settled.added
+        run.counts["reactions_updated"] += settled.updated
+        run.counts["skipped_no_target"] += len(settled.waiting)
+    run.waiting.clear()
+
+
+def _sync_directory(
+    conn: sqlite3.Connection,
+    run: Run,
+    reader: SourceReader,
+    source_handles: Sequence[tuple[int, str]],
+    chats: Sequence[SourceChat],
+    *,
+    replace: bool,
+) -> _Lookups:
     handle_ids, handles_added = directory.sync_handles(conn, source_handles)
-    conversation_ids, conversations_added = directory.sync_conversations(conn, reader.chats())
+    conversation_ids, conversations_added = directory.sync_conversations(conn, chats)
     directory.sync_members(
         conn,
         (
@@ -253,41 +206,76 @@ def _sync_directory(conn: sqlite3.Connection, run: _Run, reader: SourceReader) -
             for chat, handle in reader.members()
             if chat in conversation_ids and handle in handle_ids
         ),
+        replace=replace,
     )
     run.counts["handles_added"] += handles_added
     run.counts["conversations_added"] += conversations_added
     return _Lookups(handle_ids, {rowid: text.strip() for rowid, text in source_handles}, conversation_ids)
 
 
-def _read_source(conn: sqlite3.Connection, run: _Run, reader: SourceReader, full: bool) -> None:
-    """Read the rows this run needs and write them."""
-    mark = 0 if full else runs.verified_mark(conn, reader.guid_at)
-    run.mode = "incremental" if mark else "full"
-    lookups = _sync_directory(conn, run, reader)
-    start = max(0, mark - OVERLAP_ROWS)
+def _read_rows(conn: sqlite3.Connection, run: Run, reader: SourceReader, lookups: _Lookups, start: int) -> None:
+    """Read every row above ROWID `start`, then the older rows with an edit or unsend mark."""
     total = reader.count_after(start)
     done = 0
+    run.tell("messages", done, total)
     for batch in reader.messages_after(start, BATCH_ROWS):
         _store_batch(conn, run, reader, lookups, batch)
         done += len(batch)
         run.tell("messages", done, total)
         run.check_stop()
     changed = 0
-    for batch in reader.changed_messages(start, BATCH_ROWS):  # edits and unsends of older messages
+    for batch in reader.changed_messages(start, BATCH_ROWS):
         _store_batch(conn, run, reader, lookups, batch)
         changed += len(batch)
         run.check_stop()
     run.tell("changes", changed, changed)
+    _settle_waiting(conn, run)
 
 
-def _finish(conn: sqlite3.Connection, run: _Run, groups: Sequence[ContactGroup] | None) -> None:
-    directory.apply_people(conn, groups)
-    directory.refresh_totals(conn, run.touched)
-    directory.link_conversations(conn)
-    directory.drop_unused_people(conn)
+def _remove_gone(conn: sqlite3.Connection, run: Run) -> None:
+    """The mirror step of a full pull: remove the rows whose guid the source no longer has."""
+    removed = mirror.remove_gone(conn)
+    run.counts["messages_removed"] += removed.messages
+    run.counts["system_removed"] += removed.system
+    run.counts["reactions_removed"] += removed.reactions
+    run.counts["attachments_removed"] += removed.attachments
 
 
-def _run_import(conn: sqlite3.Connection, run: _Run, groups: Sequence[ContactGroup] | None, full: bool) -> None:
+def _prune_directory(
+    conn: sqlite3.Connection, run: Run, chats: Sequence[SourceChat], source_handles: Sequence[tuple[int, str]]
+) -> None:
+    """The last step of a full pull: tapbacks, conversations and handles that nothing holds any more."""
+    run.counts["reactions_removed"] += mirror.drop_orphan_tapbacks(conn)  # the target became a tapback itself
+    directory.drop_gone(
+        conn,
+        {(chat.identifier or "").strip() for chat in chats},
+        {text.strip() for _, text in source_handles},
+    )
+
+
+def _pull(conn: sqlite3.Connection, run: Run, reader: SourceReader, full: bool, max_removed_share: float) -> None:
+    """Read the rows this run needs and write them. A full pull first removes what is gone from the source."""
+    replaces_bridge = mirror.has_bridge_rows(conn)
+    mark = 0 if full or replaces_bridge else runs.verified_mark(conn, reader.guid_at)
+    is_full = mark == 0
+    run.mode = "full" if is_full else "incremental"
+    if is_full:
+        mirror.note_source_guids(conn, reader.guids(BATCH_ROWS))  # small chunks: memory stays flat
+        mirror.check_removal_limit(conn, max_removed_share)  # before the first change
+        run.counts["legacy_rows_replaced"] = mirror.clear_bridge_rows(conn)
+        _remove_gone(conn, run)
+    source_handles = reader.handles()
+    chats = reader.chats()
+    lookups = _sync_directory(conn, run, reader, source_handles, chats, replace=is_full)
+    _read_rows(conn, run, reader, lookups, max(0, mark - OVERLAP_ROWS))
+    if is_full:
+        _prune_directory(conn, run, chats, source_handles)
+        run.touched.update(directory.conversation_ids(conn))  # a full pull counts every total again
+
+
+def _run_import(
+    conn: sqlite3.Connection, run: Run, groups: Sequence[ContactGroup] | None, full: bool, max_removed_share: float
+) -> None:
     """Everything inside the transaction."""
     run.check_stop()
     run.run_id = runs.start_run(conn, str(run.source), run.mode, run.started_at)
@@ -296,10 +284,10 @@ def _run_import(conn: sqlite3.Connection, run: _Run, groups: Sequence[ContactGro
         run.tell("copy", done, total)
         run.check_stop()
 
-    with open_snapshot(run.source, run.archive.parent / WORK_DIR_NAME, copy_step) as reader:
-        _read_source(conn, run, reader, full)
+    with open_snapshot(run.source, work_dir(run.archive), copy_step) as reader:
+        _pull(conn, run, reader, full, max_removed_share)
         run.tell("finish", 0, 1)
-        _finish(conn, run, groups)
+        directory.settle(conn, groups, run.touched)
         checkpoints = reader.top_rows(CHECKPOINT_ROWS)
     runs.finish_run(
         conn, run.run_id, mode=run.mode, counts=dict(run.counts), checkpoints=checkpoints, finished_at=int(time.time())
@@ -307,84 +295,27 @@ def _run_import(conn: sqlite3.Connection, run: _Run, groups: Sequence[ContactGro
     run.tell("finish", 1, 1)
 
 
-def _take_write_lock(conn: sqlite3.Connection) -> None:
-    """Start the import transaction. Only one import can write to an archive at a time."""
-    conn.execute(f"PRAGMA busy_timeout={int(LOCK_WAIT_SECONDS * 1000)}")
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-    except sqlite3.OperationalError as exc:
-        raise ImportBusyError("another import is writing to this archive") from exc
-    finally:
-        conn.execute(f"PRAGMA busy_timeout={int(connection.BUSY_SECONDS * 1000)}")
-
-
-def _rollback(conn: sqlite3.Connection) -> None:
-    if conn.in_transaction:
-        conn.execute("ROLLBACK")
-
-
-def _record_end(conn: sqlite3.Connection, run: _Run, status: str, error: str | None) -> int:
-    return runs.record_ended_run(
-        conn,
-        source_path=str(run.source),
-        mode=run.mode,
-        status=status,
-        error=error,
-        started_at=run.started_at,
-        finished_at=int(time.time()),
-    )
-
-
-def _record_failure(conn: sqlite3.Connection, run: _Run, cause: BaseException) -> int | None:
-    """Log a failed run. A failure to log must not hide the first error."""
-    try:
-        return _record_end(conn, run, "failed", f"{type(cause).__name__}: {cause}"[:2000])
-    except sqlite3.Error:
-        return None
-
-
-def _after_commit(conn: sqlite3.Connection) -> None:
-    """Housekeeping. The run is already safe: an error here is not a failed import."""
-    try:
-        conn.execute("PRAGMA optimize")
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    except sqlite3.Error:
-        return
-
-
-def _result(run: _Run, status: str, run_id: int, counts: Mapping[str, int]) -> ImportResult:
-    skipped = {
-        name[len("skipped_") :]: value for name, value in counts.items() if name.startswith("skipped_") and value
-    }
-    return ImportResult(
-        run_id=run_id,
-        status=status,
-        mode=run.mode,
-        source_path=str(run.source),
-        archive_path=str(run.archive),
-        started_at=run.started_at,
-        finished_at=int(time.time()),
-        skipped=MappingProxyType(skipped),
-        counts=MappingProxyType(dict(counts)),
-        **{name: int(counts.get(name, 0)) for name in COUNT_NAMES},
-    )
-
-
 def import_chat_db(
     source_path: str | os.PathLike[str],
     archive_path: str | os.PathLike[str],
     *,
     contacts: Sequence[Mapping[str, object]] | None = None,
-    full: bool = False,
+    full: bool = True,
+    max_removed_share: float = mirror.DEFAULT_MAX_REMOVED_SHARE,
     progress: Progress | None = None,
     cancel: object = None,
 ) -> ImportResult:
-    """Import `source_path` (a chat.db) into the archive at `archive_path`.
+    """Pull `source_path` (a chat.db) into the archive at `archive_path`.
 
     - `contacts`: records `{name, phones, emails}` from the Contacts cache.
       None keeps the people the archive has.
-    - `full`: read every row. The default reads only rows that are new since
-      the last run of the same database, plus edited and unsent rows.
+    - `full`: read every row and make the archive equal to the source: a
+      message that the source no longer has is removed. False reads only the
+      rows that are new since the last run of the same database, plus edited
+      and unsent rows, and removes nothing.
+    - `max_removed_share`: the safety valve of a full pull. When the source
+      lacks more than this share of the stored messages, the pull raises
+      RemovalLimitError before it changes anything. 1 switches the valve off.
     - `progress`: called with `{"phase", "done", "total"}`. Phases are `copy`,
       `messages`, `changes` and `finish`.
     - `cancel`: a callable that returns bool, or an object with `is_set()`.
@@ -392,32 +323,8 @@ def import_chat_db(
     Returns an ImportResult with status `ok` or `cancelled`. A failure raises
     an ArchiveError after the failed run is recorded.
     """
+    share = mirror.check_share(max_removed_share)
     groups, contacts_skipped = contact_groups(contacts) if contacts is not None else (None, 0)
-    run = _Run(
-        source=Path(source_path).expanduser(),
-        archive=Path(archive_path).expanduser(),
-        started_at=int(time.time()),
-        mode="full" if full else "incremental",
-        report=progress,
-        should_stop=_stop_check(cancel),
-    )
+    run = run_control.new_run(source_path, archive_path, "full" if full else "incremental", progress, cancel)
     run.counts["contacts_skipped"] = contacts_skipped
-    conn = connection.open_writer(run.archive)
-    try:
-        _take_write_lock(conn)
-        try:
-            _run_import(conn, run, groups, full)
-            conn.execute("COMMIT")
-        except _Cancelled:
-            _rollback(conn)
-            return _result(run, "cancelled", _record_end(conn, run, "cancelled", None), {})
-        except BaseException as exc:
-            _rollback(conn)
-            failed_run = _record_failure(conn, run, exc)
-            if isinstance(exc, ArchiveError) or not isinstance(exc, Exception):
-                raise
-            raise ImportFailed(f"import failed: {exc}", run_id=failed_run) from exc
-        _after_commit(conn)
-        return _result(run, "ok", run.run_id, run.counts)
-    finally:
-        conn.close()
+    return run_control.execute(run, lambda conn, state: _run_import(conn, state, groups, bool(full), share))

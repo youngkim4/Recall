@@ -9,7 +9,7 @@ from datetime import datetime
 import pytest
 
 from archive import timeconv
-from archive.classify import classify, clean_text
+from archive.classify import classify, stored_text
 from archive.handles import (
     handle_kind,
     handle_match_key,
@@ -165,13 +165,13 @@ class TestTapbacks:
         assert split_target(value) == expected
 
 
-class TestCleanText:
-    def test_attachment_placeholders_and_outer_space_are_removed(self) -> None:
-        assert clean_text(PLACEHOLDER) == ""
-        assert clean_text(f"{PLACEHOLDER}{PLACEHOLDER} Look at this \n") == "Look at this"
-        assert clean_text("line one\nline two") == "line one\nline two"
-        assert clean_text("nul\x00byte") == "nulbyte"
-        assert clean_text(None) == ""
+class TestStoredText:
+    def test_only_attachment_placeholders_and_nul_are_removed(self) -> None:
+        assert stored_text(PLACEHOLDER) == ""
+        assert stored_text(f"{PLACEHOLDER}{PLACEHOLDER} Look at this \n") == " Look at this \n"  # nothing is trimmed
+        assert stored_text("line one\nline two") == "line one\nline two"
+        assert stored_text("nul\x00byte") == "nulbyte"
+        assert stored_text(None) == ""
 
 
 class TestClassify:

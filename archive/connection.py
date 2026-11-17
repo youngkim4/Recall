@@ -75,15 +75,16 @@ def _connect(target: str, *, uri: bool, same_thread: bool = True) -> sqlite3.Con
 
 
 def _create_private_file(path: Path) -> None:
-    """The archive holds private messages: only the owner can read the file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    """The archive holds private messages: only the owner can read the file, and a folder made here."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
         os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
     except FileExistsError:
         return
 
 
-def _check_identity(conn: sqlite3.Connection, path: Path) -> None:
+def _check_identity(conn: sqlite3.Connection, path: Path) -> bool:
+    """Raise when the file is not a Recall archive. Return True for a file with nothing in it yet."""
     try:
         application_id = int(conn.execute("PRAGMA application_id").fetchone()[0])
         version = migrate.schema_version(conn)
@@ -93,6 +94,7 @@ def _check_identity(conn: sqlite3.Connection, path: Path) -> None:
     is_new_file = application_id == 0 and version == 0 and objects == 0
     if application_id != APPLICATION_ID and not is_new_file:
         raise ArchiveError(f"{path} is not a Recall archive")
+    return is_new_file
 
 
 def open_writer(path: Path) -> sqlite3.Connection:
@@ -158,7 +160,8 @@ def open_reader(path: Path) -> sqlite3.Connection:
 def _open_reader(path: Path) -> sqlite3.Connection:
     conn = connect_reader(path)
     try:
-        _check_identity(conn, path)
+        if _check_identity(conn, path):
+            raise ArchiveNotFoundError(f"{path} is an empty file, not an archive")  # a reader never creates one
         needs_migration = migrate.schema_version(conn) != len(migrate.MIGRATIONS)
     except BaseException:
         conn.close()
@@ -176,8 +179,8 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     conn.execute("BEGIN IMMEDIATE")
     try:
         yield
+        conn.execute("COMMIT")
     except BaseException:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
-    conn.execute("COMMIT")

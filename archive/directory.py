@@ -1,13 +1,14 @@
 """Write the small tables of the archive: handles, people, conversations, members.
 
 These tables are bounded by the number of contacts and chats, not by the
-number of messages, so each is read whole.
+number of messages, so each is read whole. The source is the truth: a title,
+a service or a member list that changed in the source changes here.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 
 from archive.handles import handle_kind, handle_match_key, is_group_identifier
 from archive.people import ContactGroup, HandleRow, plan_people
@@ -17,32 +18,44 @@ from archive.records import SourceChat
 SERVICE_ORDER = ("iMessage", "RCS", "SMS")
 
 
-def _service_rank(service: str) -> tuple[int, str]:
+def service_rank(service: str) -> tuple[int, str]:
     return (SERVICE_ORDER.index(service) if service in SERVICE_ORDER else len(SERVICE_ORDER), service)
 
 
-def sync_handles(conn: sqlite3.Connection, source_handles: Iterable[tuple[int, str]]) -> tuple[dict[int, int], int]:
-    """Add the handles the archive does not have. Return (source ROWID -> handle id, number added).
+def add_handle(conn: sqlite3.Connection, text: str) -> int:
+    """Add one handle. A new handle starts as its own unnamed person."""
+    person_id = conn.execute("INSERT INTO people(name) VALUES ('')").lastrowid
+    cursor = conn.execute(
+        "INSERT INTO handles(handle, kind, match_key, person_id) VALUES (?, ?, ?, ?)",
+        (text, handle_kind(text), handle_match_key(text), person_id),
+    )
+    return int(cursor.lastrowid or 0)
 
-    A new handle starts as its own unnamed person.
+
+def sync_handles(conn: sqlite3.Connection, source_handles: Iterable[tuple[int, str]]) -> tuple[dict[int, int], int]:
+    """Add the handles the archive does not have, and bring the kind and the match key of the
+    stored ones up to the rules of this version. Return (source ROWID -> handle id, number added).
     """
-    known = {str(text): int(handle_id) for text, handle_id in conn.execute("SELECT handle, id FROM handles")}
+    known = {
+        str(text): (int(handle_id), str(kind), str(match_key))
+        for text, handle_id, kind, match_key in conn.execute("SELECT handle, id, kind, match_key FROM handles")
+    }
     ids: dict[int, int] = {}
     added = 0
     for rowid, raw in source_handles:
         text = raw.strip()
         if not text:
             continue
-        handle_id = known.get(text)
-        if handle_id is None:
-            person_id = conn.execute("INSERT INTO people(name) VALUES ('')").lastrowid
-            handle_id = conn.execute(
-                "INSERT INTO handles(handle, kind, match_key, person_id) VALUES (?, ?, ?, ?)",
-                (text, handle_kind(text), handle_match_key(text), person_id),
-            ).lastrowid
-            known[text] = int(handle_id or 0)
+        found = known.get(text)
+        rules = (handle_kind(text), handle_match_key(text))
+        if found is None:
+            found = (add_handle(conn, text), *rules)
+            known[text] = found
             added += 1
-        ids[rowid] = known[text]
+        elif found[1:] != rules:
+            conn.execute("UPDATE handles SET kind = ?, match_key = ? WHERE id = ?", (*rules, found[0]))
+            known[text] = (found[0], *rules)
+        ids[rowid] = found[0]
     return ids, added
 
 
@@ -56,15 +69,25 @@ def _merged_chats(chats: Sequence[SourceChat]) -> dict[str, tuple[str, str]]:
         title, service = (chat.title or "").strip(), (chat.service or "").strip()
         old_title, old_service = merged.get(identifier, ("", ""))
         services = [name for name in (old_service, service) if name]
-        merged[identifier] = (title or old_title, min(services, key=_service_rank) if services else "")
+        merged[identifier] = (title or old_title, min(services, key=service_rank) if services else "")
     return merged
 
 
-def sync_conversations(conn: sqlite3.Connection, chats: Sequence[SourceChat]) -> tuple[dict[int, int], int]:
-    """Add or update conversations. Return (source chat ROWID -> conversation id, number added).
+def add_conversation(conn: sqlite3.Connection, identifier: str, title: str = "", service: str = "") -> int:
+    cursor = conn.execute(
+        "INSERT INTO conversations(chat_identifier, is_group, title, service) VALUES (?, ?, ?, ?)",
+        (identifier, int(is_group_identifier(identifier)), title, service),
+    )
+    return int(cursor.lastrowid or 0)
 
-    A title or service that the source no longer has is kept.
-    """
+
+def set_details(conn: sqlite3.Connection, details: Iterable[tuple[str, str, int]]) -> None:
+    """Set the title and the service of conversations: (title, service, conversation id)."""
+    conn.executemany("UPDATE conversations SET title = ?, service = ? WHERE id = ?", list(details))
+
+
+def sync_conversations(conn: sqlite3.Connection, chats: Sequence[SourceChat]) -> tuple[dict[int, int], int]:
+    """Add or update conversations. Return (source chat ROWID -> conversation id, number added)."""
     stored = {
         str(identifier): (int(conversation_id), str(title), str(service))
         for identifier, conversation_id, title, service in conn.execute(
@@ -76,18 +99,14 @@ def sync_conversations(conn: sqlite3.Connection, chats: Sequence[SourceChat]) ->
     for identifier, (title, service) in _merged_chats(chats).items():
         found = stored.get(identifier)
         if found is None:
-            cursor = conn.execute(
-                "INSERT INTO conversations(chat_identifier, is_group, title, service) VALUES (?, ?, ?, ?)",
-                (identifier, int(is_group_identifier(identifier)), title, service),
-            )
-            ids_by_identifier[identifier] = int(cursor.lastrowid or 0)
+            ids_by_identifier[identifier] = add_conversation(conn, identifier, title, service)
             added += 1
             continue
         conversation_id, old_title, old_service = found
-        services = [name for name in (old_service, service) if name]
-        wanted = (title or old_title, min(services, key=_service_rank) if services else "")
-        if wanted != (old_title, old_service):
-            conn.execute("UPDATE conversations SET title = ?, service = ? WHERE id = ?", (*wanted, conversation_id))
+        if (title, service) != (old_title, old_service):
+            conn.execute(
+                "UPDATE conversations SET title = ?, service = ? WHERE id = ?", (title, service, conversation_id)
+            )
         ids_by_identifier[identifier] = conversation_id
     ids = {
         chat.rowid: ids_by_identifier[(chat.identifier or "").strip()]
@@ -97,10 +116,58 @@ def sync_conversations(conn: sqlite3.Connection, chats: Sequence[SourceChat]) ->
     return ids, added
 
 
-def sync_members(conn: sqlite3.Connection, pairs: Iterable[tuple[int, int]]) -> None:
-    """Add (conversation id, handle id) pairs. A member that left is kept: the archive only grows."""
+def sync_members(conn: sqlite3.Connection, pairs: Iterable[tuple[int, int]], *, replace: bool) -> None:
+    """Add (conversation id, handle id) pairs. With `replace`, a pair that is not given is removed."""
+    wanted = set(pairs)
+    stored = {
+        (int(conversation_id), int(handle_id))
+        for conversation_id, handle_id in conn.execute("SELECT conversation_id, handle_id FROM conversation_members")
+    }
     conn.executemany(
-        "INSERT OR IGNORE INTO conversation_members(conversation_id, handle_id) VALUES (?, ?)", sorted(set(pairs))
+        "INSERT INTO conversation_members(conversation_id, handle_id) VALUES (?, ?)", sorted(wanted - stored)
+    )
+    if replace:
+        conn.executemany(
+            "DELETE FROM conversation_members WHERE conversation_id = ? AND handle_id = ?", sorted(stored - wanted)
+        )
+
+
+def _used_ids(conn: sqlite3.Connection, columns: Sequence[tuple[str, str]]) -> set[int]:
+    """Every id that the given (table, column) pairs hold. One pass over each table."""
+    return {
+        int(row[0])
+        for table, column in columns
+        for row in conn.execute(f"SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL")
+    }
+
+
+def drop_gone(conn: sqlite3.Connection, identifiers: Collection[str], handles: Collection[str]) -> None:
+    """Remove the conversations and handles that the source no longer has and that no stored row uses.
+
+    Call it at the end of a full pull, after the messages that are gone were removed.
+    """
+    gone_chats = [
+        int(conversation_id)
+        for conversation_id, identifier in conn.execute("SELECT id, chat_identifier FROM conversations")
+        if str(identifier) not in identifiers
+    ]
+    if gone_chats:
+        # one pass over each table, only when a conversation is a candidate
+        held = _used_ids(conn, (("messages", "conversation_id"), ("reactions", "conversation_id")))
+        free = [(conversation_id,) for conversation_id in gone_chats if conversation_id not in held]
+        conn.executemany("DELETE FROM conversation_members WHERE conversation_id = ?", free)
+        conn.executemany("DELETE FROM conversations WHERE id = ?", free)
+    gone_handles = [
+        int(handle_id) for handle_id, text in conn.execute("SELECT id, handle FROM handles") if str(text) not in handles
+    ]
+    if not gone_handles:
+        return
+    used = _used_ids(
+        conn,
+        (("messages", "sender_handle_id"), ("reactions", "sender_handle_id"), ("conversation_members", "handle_id")),
+    )
+    conn.executemany(
+        "DELETE FROM handles WHERE id = ?", [(handle_id,) for handle_id in gone_handles if handle_id not in used]
     )
 
 
@@ -149,6 +216,18 @@ def link_conversations(conn: sqlite3.Connection) -> None:
 def drop_unused_people(conn: sqlite3.Connection) -> None:
     """Remove people that no handle points to. Call after link_conversations."""
     conn.execute("DELETE FROM people WHERE id NOT IN (SELECT person_id FROM handles)")
+
+
+def settle(conn: sqlite3.Connection, groups: Sequence[ContactGroup] | None, touched: Iterable[int]) -> None:
+    """The last steps of every import: people, the totals of the touched conversations, links."""
+    apply_people(conn, groups)
+    refresh_totals(conn, touched)
+    link_conversations(conn)
+    drop_unused_people(conn)
+
+
+def conversation_ids(conn: sqlite3.Connection) -> list[int]:
+    return [int(row[0]) for row in conn.execute("SELECT id FROM conversations")]
 
 
 def refresh_totals(conn: sqlite3.Connection, conversation_ids: Iterable[int]) -> None:

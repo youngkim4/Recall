@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -112,7 +112,7 @@ def apple_time(moment: datetime | int | None, unit: str = "ns") -> int | None:
     seconds = moment.timestamp() - APPLE_EPOCH_UNIX
     if unit == "s":
         return int(seconds)
-    return int(round(seconds * 1_000_000_000))
+    return round(seconds * 1_000_000_000)
 
 
 def make_guid(kind: str, number: int) -> str:
