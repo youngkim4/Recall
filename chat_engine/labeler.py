@@ -69,6 +69,14 @@ def mask_handle(handle: str) -> str:
     return UNKNOWN_MASK
 
 
+def handle_spans(text: str) -> list[tuple[int, int]]:
+    """Where a phone number or an email address stands in free text."""
+    source = str(text or "")
+    spans = [match.span() for match in _EMAIL_RE.finditer(source)]
+    spans.extend(match.span() for match in _PHONE_SPAN_RE.finditer(source))
+    return sorted(spans)
+
+
 def is_mask(label: str) -> bool:
     """True when a label is one of the masks above, not a real name."""
     text = str(label or "")

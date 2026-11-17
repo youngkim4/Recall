@@ -111,6 +111,10 @@ class ConversationBook:
             self._labels[key] = self._labeler.conversation(facts) if facts else UNKNOWN_MASK
         return self._labels[key]
 
+    def labels(self) -> list[str]:
+        """Every label given so far."""
+        return list(self._labels.values())
+
     def alias(self, conversation_id: str) -> str:
         return self._aliases.alias(str(conversation_id))
 

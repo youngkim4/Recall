@@ -161,6 +161,10 @@ class ToolBox:
             prepared = self.guard(lambda: builder(self.context, parse_arguments(raw_arguments)))
         except ToolInputError as error:
             return _refused(f"Cannot run {name}: {error}", name)
+        return self.wrap(name, prepared)
+
+    def wrap(self, name: str, prepared: Prepared) -> Prepared:
+        """Give a lookup the guard and the redaction every tool result gets."""
         redact = self.context.labeler.redact
         return Prepared(redact(prepared.status), lambda budget: self._run(name, prepared, budget))
 
