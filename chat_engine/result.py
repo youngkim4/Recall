@@ -72,4 +72,5 @@ def build_payload(
         "usage": dict(usage),
         "cancelled": cancelled,
         "truncated": truncated,
+        "mode": "ai",
     }
