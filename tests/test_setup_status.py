@@ -2,6 +2,7 @@ import sqlite3
 
 import pytest
 
+import setup_status
 from setup_status import DbProbe, derive_state, probe_database
 
 
@@ -76,6 +77,29 @@ def test_probe_reads_a_file_whose_name_has_marks_in_it(tmp_path, name):
 
     assert (probe.status, probe.approx_messages) == ("readable", 3)
     assert [path.name for path in tmp_path.iterdir()] == [name]
+
+
+def test_only_a_file_in_the_messages_folder_is_the_database_of_messages(tmp_path, monkeypatch):
+    library = tmp_path.resolve() / "Library"
+    monkeypatch.setattr(setup_status, "LIVE_MESSAGES_DIR", library / "Messages")
+    for folder in ("Messages", "Messages-old", "Messages2", "Messages/Archive"):
+        (library / folder).mkdir(parents=True)
+        make_messages_db(library / folder / "chat.db", rows=1)
+
+    kinds = {folder: probe_database(library / folder / "chat.db").kind for folder in ("Messages", "Messages/Archive", "Messages-old", "Messages2")}
+
+    # a folder whose name only starts like the folder of Messages holds a copy
+    assert kinds == {"Messages": "live", "Messages/Archive": "live", "Messages-old": "copy", "Messages2": "copy"}
+
+
+def test_a_missing_file_beside_the_messages_folder_is_a_missing_copy(tmp_path, monkeypatch):
+    library = tmp_path.resolve() / "Library"
+    monkeypatch.setattr(setup_status, "LIVE_MESSAGES_DIR", library / "Messages")
+    (library / "Messages-old").mkdir(parents=True)
+
+    probe = probe_database(library / "Messages-old" / "chat.db")
+
+    assert (probe.status, probe.kind) == ("missing", "copy")
 
 
 def test_derive_state_matrix():

@@ -37,13 +37,26 @@ class DbProbe:
     last_year: int | None = None
 
 
-def probe_database(path: Path | str | None = None, deep: bool = False) -> DbProbe:
-    target = Path(path).expanduser() if path else LIVE_CHAT_DB
+def _whole(path: Path) -> Path:
+    """The path with its links followed, or as it is when that cannot be done."""
     try:
-        target = target.resolve()
+        return path.resolve()
     except OSError:
-        pass
-    kind = "live" if str(target).startswith(str(LIVE_MESSAGES_DIR)) else "copy"
+        return path
+
+
+def in_messages_folder(target: Path) -> bool:
+    """True for a file in the folder that Messages keeps.
+
+    The parts of the path are compared, not its text: a folder beside it
+    whose name only starts the same way holds a copy.
+    """
+    return target.is_relative_to(_whole(LIVE_MESSAGES_DIR))
+
+
+def probe_database(path: Path | str | None = None, deep: bool = False) -> DbProbe:
+    target = _whole(Path(path).expanduser() if path else LIVE_CHAT_DB)
+    kind = "live" if in_messages_folder(target) else "copy"
 
     def result(status: str, detail: str = "", **extra) -> DbProbe:
         return DbProbe(status=status, kind=kind, path=str(target), detail=detail, **extra)
