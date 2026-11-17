@@ -7,17 +7,45 @@ Purpose:
 """
 import html as html_lib
 import os
-import json
-import re
-from datetime import datetime, timezone
-from typing import List, Optional
+from datetime import datetime
+from typing import List
 
 import pandas as pd
-import markdown
+
+from safe_html import story_html
 
 
 def _has_value(value) -> bool:
     return value is not None and pd.notna(value) and str(value) != ""
+
+
+def _volume_chart(labels: List[str], sent: List[int], received: List[int]) -> str:
+    """The months as two lines, drawn in the page itself. No script runs to
+    show them, so opening a report runs nothing."""
+    if not labels:
+        return ""
+    width, height, pad = 800, 240, 6
+    top = max(1, max(sent + received))
+    last = max(1, len(labels) - 1)
+
+    def points(values: List[int]) -> str:
+        return " ".join(
+            f"{pad + (width - 2 * pad) * (index / last):.1f},{height - pad - (height - 2 * pad) * (value / top):.1f}"
+            for index, value in enumerate(values)
+        )
+
+    return (
+        f'<svg class="volume" viewBox="0 0 {width} {height}" role="img" '
+        'aria-label="Messages sent and received each month">'
+        f'<polyline class="volume-received" points="{points(received)}" />'
+        f'<polyline class="volume-sent" points="{points(sent)}" />'
+        "</svg>"
+        '<div class="volume-notes">'
+        f"<span>{html_lib.escape(labels[0])}</span>"
+        "<span>Sent is the brighter line, received the fainter</span>"
+        f"<span>{html_lib.escape(labels[-1])}</span>"
+        "</div>"
+    )
 
 
 def write_html_report(
@@ -152,11 +180,10 @@ def write_html_report(
             '</section>'
         )
 
-    summary_escaped = html_lib.escape(summary_text or "")
-    # restore line-leading blockquote markers the escape just neutralized,
-    # so quoted messages render as quotes instead of literal "> ..." text
-    summary_escaped = re.sub(r"(?m)^(\s*)&gt; ?", r"\1> ", summary_escaped)
-    summary_rendered = markdown.markdown(summary_escaped, extensions=['extra'])
+    # the summary is written by a model from other people's messages; it goes
+    # into this page through the same allowlist as in the app
+    summary_rendered = story_html(summary_text)
+    volume_chart = _volume_chart(months_labels, sent_data, received_data)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -164,8 +191,6 @@ def write_html_report(
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Conversation Analysis — {html_lib.escape(str(contact))}</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {{
             --bg-base: #0a0a0a;
@@ -281,6 +306,35 @@ def write_html_report(
         /* Chart */
         .chart-container {{
             padding: var(--space-4) 0;
+        }}
+
+        .volume {{
+            display: block;
+            width: 100%;
+            height: auto;
+        }}
+
+        .volume polyline {{
+            fill: none;
+            stroke-width: 1.5;
+            stroke-linejoin: round;
+            vector-effect: non-scaling-stroke;
+        }}
+
+        .volume-sent {{
+            stroke: rgba(255, 255, 255, 0.7);
+        }}
+
+        .volume-received {{
+            stroke: rgba(255, 255, 255, 0.25);
+        }}
+
+        .volume-notes {{
+            display: flex;
+            justify-content: space-between;
+            margin-top: var(--space-2);
+            font-size: 11px;
+            color: #707070;
         }}
 
         /* Events */
@@ -519,7 +573,7 @@ def write_html_report(
         <section class="section">
             <h2>Message Volume Over Time</h2>
             <div class="chart-container">
-                <canvas id="volumeChart"></canvas>
+                {volume_chart}
             </div>
         </section>
 
@@ -539,97 +593,6 @@ def write_html_report(
         </div>
     </footer>
 
-    <script>
-        const ctx = document.getElementById('volumeChart').getContext('2d');
-        new Chart(ctx, {{
-            type: 'line',
-            data: {{
-                labels: {json.dumps(months_labels)},
-                datasets: [
-                    {{
-                        label: 'Sent',
-                        data: {json.dumps(sent_data)},
-                        borderColor: 'rgba(255, 255, 255, 0.7)',
-                        backgroundColor: 'rgba(255, 255, 255, 0.03)',
-                        borderWidth: 1.5,
-                        pointRadius: 0,
-                        pointHoverRadius: 4,
-                        pointHoverBackgroundColor: '#e8e8e8',
-                        pointHoverBorderColor: '#e8e8e8',
-                        tension: 0.3,
-                        fill: true,
-                    }},
-                    {{
-                        label: 'Received',
-                        data: {json.dumps(received_data)},
-                        borderColor: 'rgba(255, 255, 255, 0.25)',
-                        backgroundColor: 'rgba(255, 255, 255, 0.01)',
-                        borderWidth: 1.5,
-                        pointRadius: 0,
-                        pointHoverRadius: 4,
-                        pointHoverBackgroundColor: '#888888',
-                        pointHoverBorderColor: '#888888',
-                        tension: 0.3,
-                        fill: true,
-                    }}
-                ]
-            }},
-            options: {{
-                responsive: true,
-                events: ['mousemove', 'mouseout', 'touchstart', 'touchmove'],
-                interaction: {{
-                    intersect: false,
-                    mode: 'index',
-                }},
-                plugins: {{
-                    legend: {{
-                        onClick: () => {{}},
-                        labels: {{
-                            color: '#505050',
-                            font: {{ family: "'Inter', sans-serif", size: 11, weight: '600' }},
-                            boxWidth: 10,
-                            boxHeight: 10,
-                            borderRadius: 0,
-                            padding: 20,
-                            usePointStyle: true,
-                            pointStyle: 'line',
-                        }}
-                    }},
-                    tooltip: {{
-                        backgroundColor: '#141414',
-                        titleColor: '#e8e8e8',
-                        bodyColor: '#888888',
-                        borderColor: 'rgba(255, 255, 255, 0.06)',
-                        borderWidth: 1,
-                        titleFont: {{ family: "'Inter', sans-serif", size: 11, weight: '600' }},
-                        bodyFont: {{ family: "'Inter', sans-serif", size: 11 }},
-                        padding: 12,
-                        cornerRadius: 4,
-                        displayColors: false,
-                    }}
-                }},
-                scales: {{
-                    x: {{
-                        grid: {{ color: 'rgba(255, 255, 255, 0.03)', drawBorder: false }},
-                        ticks: {{
-                            color: '#404040',
-                            font: {{ family: "'Inter', sans-serif", size: 10, weight: '500' }},
-                            maxRotation: 45,
-                        }},
-                        border: {{ display: false }},
-                    }},
-                    y: {{
-                        grid: {{ color: 'rgba(255, 255, 255, 0.03)', drawBorder: false }},
-                        ticks: {{
-                            color: '#404040',
-                            font: {{ family: "'Inter', sans-serif", size: 10, weight: '500' }},
-                        }},
-                        border: {{ display: false }},
-                    }}
-                }}
-            }}
-        }});
-    </script>
 </body>
 </html>"""
 

@@ -9,6 +9,7 @@ sys.path.insert(0, ".")
 
 from analysis import compute_stats, progression_series, AttachmentStats, ReactionStats
 from html_report import write_html_report
+from tests.html_shape import assert_only_allowed
 
 
 @pytest.fixture
@@ -35,10 +36,21 @@ class TestWriteHtmlReport:
         content = Path(path).read_text()
         assert "+1234" in content
 
-    def test_contains_chart_js(self, basic_report_args):
+    def test_the_page_runs_no_script_and_loads_nothing(self, basic_report_args):
+        # the report is someone's private messages: opening it must not run
+        # code from anywhere, or fetch anything that says it was opened
+        path = write_html_report(**basic_report_args)
+        content = Path(path).read_text().lower()
+        assert "<script" not in content
+        assert "<link" not in content
+        assert "src=" not in content
+        assert "@import" not in content
+
+    def test_the_months_are_drawn_in_the_page(self, basic_report_args):
         path = write_html_report(**basic_report_args)
         content = Path(path).read_text()
-        assert "chart.js" in content.lower() or "Chart" in content
+        assert "<svg" in content
+        assert content.count("<polyline") == 2
 
     def test_summary_rendered_as_html(self, basic_report_args):
         path = write_html_report(**basic_report_args)
@@ -125,6 +137,34 @@ class TestWriteHtmlReport:
         content = Path(path).read_text()
         assert "Reactions" in content
         assert "Loves" in content
+
+    def test_the_summary_cannot_name_an_attribute(self, tmp_path, sample_messages_df):
+        # the summary is written by a model from other people's messages; an
+        # attribute list in it must not become a handler in the saved page
+        stats = compute_stats(sample_messages_df)
+        monthly = progression_series(sample_messages_df)
+        text = (
+            "Hello\n{: onmouseover=alert(1) }\n\n"
+            "[a link](http://a.example){: onclick=alert(2) }\n\n"
+            "## A heading {: onfocus=alert(3) tabindex=0 }\n\n"
+            "![a picture](http://a.example/p.png)\n\n"
+            "[a bad link](javascript:alert(4))\n"
+        )
+        path = write_html_report(str(tmp_path), "+1234", stats, monthly, text)
+        content = Path(path).read_text()
+        summary = content.split('<div class="summary">', 1)[1].split("</div>", 1)[0]
+        assert_only_allowed(summary)
+        assert "<img" not in summary
+        assert "a picture" in summary
+
+    def test_the_summary_keeps_its_quotes_and_tables(self, tmp_path, sample_messages_df):
+        stats = compute_stats(sample_messages_df)
+        monthly = progression_series(sample_messages_df)
+        text = "> a quoted line\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+        path = write_html_report(str(tmp_path), "+1234", stats, monthly, text)
+        summary = Path(path).read_text().split('<div class="summary">', 1)[1].split("</div>", 1)[0]
+        assert "<blockquote>" in summary
+        assert "<table>" in summary
 
     def test_footer_has_timestamp(self, basic_report_args):
         path = write_html_report(**basic_report_args)
