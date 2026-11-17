@@ -199,7 +199,7 @@ def _sync_directory(
 ) -> _Lookups:
     handle_ids, handles_added = directory.sync_handles(conn, source_handles)
     conversation_ids, conversations_added = directory.sync_conversations(conn, chats)
-    directory.sync_members(
+    changed = directory.sync_members(
         conn,
         (
             (conversation_ids[chat], handle_ids[handle])
@@ -208,6 +208,7 @@ def _sync_directory(
         ),
         replace=replace,
     )
+    run.touched.update(changed)  # a member that joined: count what that member wrote
     run.counts["handles_added"] += handles_added
     run.counts["conversations_added"] += conversations_added
     return _Lookups(handle_ids, {rowid: text.strip() for rowid, text in source_handles}, conversation_ids)

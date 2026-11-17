@@ -412,6 +412,29 @@ class TestOrderOfMembers:
                 assert opened.conversation(GROUP)["members"] == [self.C, self.B, self.A, self.D]  # type: ignore[index]
 
 
+class TestMemberThatJoinsLater:
+    def test_an_incremental_run_counts_what_a_new_member_wrote_before(
+        self, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
+        first, late = builder.handle("+15550100211"), builder.handle("+15550100212")
+        group = builder.chat(GROUP, members=[first])
+        other = builder.chat(MIRA, members=[builder.handle(MIRA)])
+        builder.message(group, when=la(2024, 6, 1, 9), text="from the member", handle=first)
+        for minute in range(3):  # written by a handle that is not a member yet
+            builder.message(group, when=la(2024, 6, 1, 10, minute), text="from the late member", handle=late)
+        builder.commit()
+        import_chat_db(source_path, archive_path)
+
+        builder.member(group, late)
+        builder.message(other, when=la(2024, 6, 2, 9), text="news in another chat", handle=3)
+        builder.commit()
+        result = import_chat_db(source_path, archive_path, full=False)
+
+        assert result.mode == "incremental"
+        with Archive.open(archive_path) as opened:
+            assert opened.conversation(GROUP)["members"] == ["+15550100212", "+15550100211"]  # type: ignore[index]
+
+
 class TestOrderInsideOneMoment:
     def test_messages_of_one_moment_are_in_the_order_of_the_source_rowid(
         self, builder: ChatDbBuilder, source_path: Path, archive_path: Path

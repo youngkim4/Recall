@@ -94,6 +94,7 @@ def _check_identity(conn: sqlite3.Connection, path: Path) -> bool:
     is_new_file = application_id == 0 and version == 0 and objects == 0
     if application_id != APPLICATION_ID and not is_new_file:
         raise ArchiveError(f"{path} is not a Recall archive")
+    migrate.check_layout(conn)
     return is_new_file
 
 

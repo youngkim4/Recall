@@ -165,7 +165,7 @@ The bridge loads ONE legacy export (`messages.csv` from `parse_imessage.py`) int
 - The export does not mark tapbacks. It keeps only the English summary that Messages writes into a tapback row. One function holds the rule for such a text: `archive.tapbacks.is_reaction_phrase(text)`. A row whose whole text is a reaction phrase is stored as kind `system`: it is hidden by default and is not counted. `ImportResult.counts["reaction_phrases"]` is their number. The forms, where the target is text in double quotes (straight or curly), `an image`, `a movie`, `an audio message`, `an attachment` or `a contact`:
   - `Loved`, `Liked`, `Disliked`, `Laughed at`, `Emphasized` or `Questioned`, then the target.
   - `Removed a heart from`, `Removed a like from`, `Removed a dislike from`, `Removed a laugh from`, `Removed an exclamation from` or `Removed a question mark from`, then the target.
-  - `Reacted <emoji> to` or `Removed <emoji> from`, then text in double quotes.
+  - `Reacted <emoji> to` or `Removed <emoji> from`, then text in double quotes. The emoji is 1 to 16 characters with no space, no ASCII letter and no ASCII digit, so `Reacted badly to "the news"` is a message.
 - The whole text must match, and the rule is case-sensitive. A text that starts like a reaction phrase and does not end as one (`Loved it`, `Loved "Dune" a lot`, `Loved a sticker`) is a message: it is stored as text and counted. A real text of the exact form of a phrase is hidden.
 - A row that holds only the attachment placeholder, or the `[Attachment]` label of the old exporter, is kind `attachment`.
 - A row with no `chat_id` is a message with no conversation.
@@ -398,6 +398,7 @@ The test fixtures come from Apple's encoder. `scripts/make_typedstream_fixtures.
 - Default path: `recall_paths.SAVES_DIR / "archive.sqlite3"`. The file mode is 0600.
 - WAL mode. A reader never waits for an import.
 - `PRAGMA user_version` holds the schema version. `archive/migrate.py` holds the migrations. Add a migration at the end of the list. Do not edit a migration that has shipped.
+- Version 1 is the layout at the commit that hands this package over. It changed while the package was built. An archive that an earlier build made raises `ArchiveVersionError`: delete the file and pull again. Such a file holds nothing that a pull or the bridge cannot make again.
 - Tables: `import_runs`, `people`, `handles`, `conversations`, `conversation_members`, `messages`, `attachments`, `reactions`, and the FTS5 index `messages_fts`.
 - `messages_fts` is an external-content index over `messages.search_text`, the first 10,000 characters of the text. Triggers keep it in step.
 - The tokenizer is `unicode61 remove_diacritics 2` with a list of separators: every symbol, punctuation mark and emoji above ASCII. Without the list, the tokenizer takes an emoji newer than Unicode 6.1 for a letter. The list is made from the Unicode data of the Python that creates the archive, and it is stored in the file.

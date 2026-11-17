@@ -291,7 +291,7 @@ def _load(conn: sqlite3.Connection, run: Run, groups: Sequence[ContactGroup] | N
             for identifier, conversation_id in known.conversations.items()
         ],
     )
-    directory.sync_members(conn, known.members, replace=False)
+    run.touched.update(directory.sync_members(conn, known.members, replace=False))
     directory.settle(conn, groups, run.touched)
     runs.finish_run(conn, run.run_id, mode=MODE, counts=dict(run.counts), checkpoints=(), finished_at=int(time.time()))
     run.tell("finish", 1, 1)

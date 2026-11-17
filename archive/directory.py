@@ -116,20 +116,22 @@ def sync_conversations(conn: sqlite3.Connection, chats: Sequence[SourceChat]) ->
     return ids, added
 
 
-def sync_members(conn: sqlite3.Connection, pairs: Iterable[tuple[int, int]], *, replace: bool) -> None:
-    """Add (conversation id, handle id) pairs. With `replace`, a pair that is not given is removed."""
+def sync_members(conn: sqlite3.Connection, pairs: Iterable[tuple[int, int]], *, replace: bool) -> set[int]:
+    """Add (conversation id, handle id) pairs. With `replace`, a pair that is not given is removed.
+
+    Return the conversations whose member list changed. Their totals must be counted
+    again: a new member row has no count of the messages that the member wrote before.
+    """
     wanted = set(pairs)
     stored = {
         (int(conversation_id), int(handle_id))
         for conversation_id, handle_id in conn.execute("SELECT conversation_id, handle_id FROM conversation_members")
     }
-    conn.executemany(
-        "INSERT INTO conversation_members(conversation_id, handle_id) VALUES (?, ?)", sorted(wanted - stored)
-    )
-    if replace:
-        conn.executemany(
-            "DELETE FROM conversation_members WHERE conversation_id = ? AND handle_id = ?", sorted(stored - wanted)
-        )
+    added = sorted(wanted - stored)
+    removed = sorted(stored - wanted) if replace else []
+    conn.executemany("INSERT INTO conversation_members(conversation_id, handle_id) VALUES (?, ?)", added)
+    conn.executemany("DELETE FROM conversation_members WHERE conversation_id = ? AND handle_id = ?", removed)
+    return {conversation_id for conversation_id, _ in (*added, *removed)}
 
 
 def _used_ids(conn: sqlite3.Connection, columns: Sequence[tuple[str, str]]) -> set[int]:

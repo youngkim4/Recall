@@ -163,3 +163,37 @@ class TestDirectory:
 
         assert archive_path.parent.stat().st_mode & 0o777 == 0o700
         assert archive_path.stat().st_mode & 0o777 == 0o600
+
+
+class TestArchiveOfAnEarlierBuild:
+    """Schema version 1 changed while the package was built. An archive of such a build must fail in a clear way."""
+
+    @pytest.mark.parametrize(
+        "damage",
+        [
+            "ALTER TABLE conversation_members DROP COLUMN message_count",
+            "DROP INDEX messages_by_conversation_time",
+            (
+                "DROP INDEX messages_by_conversation_time;"
+                " CREATE INDEX messages_by_conversation_time ON messages(conversation_id, sent_ns, id, is_from_me, kind)"
+            ),
+        ],
+    )
+    def test_it_is_refused_with_a_version_error(
+        self, damage: str, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
+        import sqlite3
+
+        from archive import Archive, ArchiveVersionError
+
+        notes(builder, 2)
+        import_chat_db(source_path, archive_path)
+        conn = sqlite3.connect(str(archive_path))
+        conn.executescript(damage)
+        conn.commit()
+        conn.close()
+
+        with pytest.raises(ArchiveVersionError, match="earlier build"):
+            Archive.open(archive_path)
+        with pytest.raises(ArchiveVersionError, match="Delete the file"):
+            import_chat_db(source_path, archive_path)
