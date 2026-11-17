@@ -24,6 +24,8 @@ export type MomentOfDay = {
   day: string
   // when the quoted message was sent, if the moment quotes one
   at: string | null
+  // that message's id, where the server gives one
+  quotedId?: string
 }
 
 type Moment = {
@@ -38,9 +40,10 @@ type Moment = {
   // in a group, who wrote the quoted message
   quotedFrom?: string
   line: string
-  // the day the moment is of, and when its quoted message was sent
+  // the day the moment is of, when its quoted message was sent, and that message's id
   day?: string
   at?: string | null
+  quotedId?: string
 }
 
 function yearsAgoToday(years: number) {
@@ -63,6 +66,7 @@ function buildMoments(memories: MemoriesPayload): Moment[] {
     line: `${plural(item.count, 'message')} that day`,
     day: item.day,
     at: item.previewAt,
+    quotedId: item.previewId || undefined,
   }))
   const anniversaries = memories.anniversaries.slice(0, 2).map((item) => ({
     key: `anniversary-${item.chatId}`,
@@ -141,6 +145,7 @@ export function Moments({
                         title: contactTitle(contactFor(moment)),
                         day: moment.day,
                         at: moment.at ?? null,
+                        quotedId: moment.quotedId,
                       })
                     : onSelectContact(contactFor(moment))
                 }

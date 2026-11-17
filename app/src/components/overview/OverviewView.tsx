@@ -4,9 +4,9 @@ import { messageCount } from '../../lib/conversations'
 import { useLoad } from '../../lib/useLoad'
 import type { ArchiveSummary, Contact, Defaults, ReportFile, ViewKey } from '../../types'
 import { CardStudio } from '../cards/CardStudio'
+import { DaySheet } from '../ui/DaySheet'
 import { VoicesOverTime, VoicesSkeleton } from '../ui/VoicesOverTime'
 import { ArchiveTiles, ArchiveTilesSkeleton } from './ArchiveTiles'
-import { MomentDay } from './MomentDay'
 import { Moments, MomentsSkeleton, type MomentOfDay } from './Moments'
 import { RecentReports } from './RecentReports'
 import { Rhythm } from './Rhythm'
@@ -200,13 +200,14 @@ export function OverviewView({
       </div>
 
       {openDay ? (
-        <MomentDay
+        <DaySheet
           key={`${openDay.contact.chat_id} ${openDay.day}`}
           messagesPath={messagesPath}
           chatId={openDay.contact.chat_id}
           title={openDay.title}
           day={openDay.day}
           at={openDay.at}
+          pickedId={openDay.quotedId}
           onOpenConversation={() => onSelectContact(openDay.contact)}
           onClose={() => setOpenDay(null)}
         />

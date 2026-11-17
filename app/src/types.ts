@@ -260,6 +260,9 @@ export type MemoriesPayload = {
     previewSender: string
     // when the quoted message was sent; null when there is no quote
     previewAt: string | null
+    // the quoted message's id, as a message of /api/day carries it; '' when
+    // there is no quote, and absent from a server that does not say
+    previewId?: string
   }>
   anniversaries: Array<{
     chatId: string

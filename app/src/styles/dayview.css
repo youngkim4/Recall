@@ -1,5 +1,5 @@
-/* One day of a conversation, opened from a moment: whose it is, the day and
-   the way to its neighbors, then the messages. */
+/* One day of a conversation: the day and the way to its neighbors, then the
+   messages. A moment opens it in a sheet, under whose day it is. */
 
 @layer views {
   .dayview {
@@ -7,9 +7,18 @@
     height: min(100dvh - 3rem, 46rem);
   }
 
-  /* a head, the day, and the messages under them */
+  /* one column, no wider than the sheet: a long name is cut short and does
+     not push the Close button out of it */
   .dayview[open] {
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* the day over its messages, in whatever holds it: a sheet's second row, a pane */
+  .dayview-reader {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-width: 0;
+    min-height: 0;
   }
 
   .sheet-head h2 {
@@ -31,17 +40,20 @@
   }
 
   /* 8px in on the side of the arrows, whose own room brings the chevron to
-     the 16px edge the name above stands on; 16px on the side of the count */
+     the 16px edge the name above stands on; 16px on the side of the count.
+     Where the two do not fit on one line the count goes under the day, still
+     on the right, and the arrows keep their places. */
   .dayview-bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--s-3);
+    gap: var(--s-1) var(--s-3);
     padding: var(--s-2) var(--s-4) var(--s-2) var(--s-2);
     border-bottom: 1px solid var(--line);
   }
 
   .dayview-bar > .stepper {
+    flex: none;
     margin: 0;
     color: var(--text);
   }
@@ -53,21 +65,26 @@
   }
 
   .dayview-count {
+    margin-left: auto;
     font-size: var(--t-small);
     line-height: var(--lh-small);
     font-variant-numeric: tabular-nums;
     color: var(--text-3);
   }
 
+  /* Where the messages stand is set by the reader: at the message a day was
+     opened for, where a day was left, and unmoved when earlier messages are
+     put above. The browser's own anchoring would move them a second time. */
   .dayview-scroll {
     overflow: auto;
+    overflow-anchor: none;
     overscroll-behavior: contain;
     padding: var(--s-4);
     outline-offset: -2px;
   }
 
   /* the message the day was opened for */
-  .dayview .thread-item[data-picked] .bubble {
+  .dayview-scroll .thread-item[data-picked] .bubble {
     outline: 2px solid var(--text);
     outline-offset: 2px;
   }
