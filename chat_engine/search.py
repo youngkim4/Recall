@@ -9,7 +9,8 @@ One long exchange never takes all the slots.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Optional, Sequence
 
@@ -24,6 +25,8 @@ _RANKING_UNITS = 6
 _COMMON_SHARE = 0.02
 _COMMON_FLOOR = 5
 _RANKED_CHARS = 10_000  # the archive searches the start of a very long text; the ranking reads no more
+# A piece of a query that is only ASCII signs ("-", "&", "--"). The archive would look for it as plain text.
+_SIGNS_ALONE_RE = re.compile(r"(?<!\S)[!-/:-@\[-`{-~]+(?!\S)")
 _BURST_WINDOW = timedelta(minutes=10)
 _MOMENT_WINDOW = timedelta(minutes=30)
 _TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -61,6 +64,7 @@ class SearchOutcome:
 
 
 def run_search(archive: ChatArchive, request: SearchRequest) -> SearchOutcome:
+    request = replace(request, query=" ".join(_SIGNS_ALONE_RE.sub(" ", request.query).split()))
     # the words go to the archive as they were written: a folded word is not what a message holds
     units = surface_units(request.query)[:_MAX_UNITS]
     if request.match == "any" and len(units) > 1:

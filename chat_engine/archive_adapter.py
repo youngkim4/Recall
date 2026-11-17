@@ -11,7 +11,7 @@ default that changes in the archive cannot silently change what chat asks.
 
 from __future__ import annotations
 
-from typing import Any, Iterator, Optional, Sequence, Union
+from typing import Any, Callable, Iterator, Optional, Sequence, Union
 
 from .errors import ArchiveError
 from .ports import ArchiveSummary, Conversation, CountRow, Message, MessagePage, SearchResult
@@ -56,11 +56,23 @@ class ArchiveAdapter:
         given = {name: value for name, value in cursors.items() if value is not None}
         return self._archive.messages(conversation_id, limit=limit, include_system=False, **given)
 
-    def iter_messages(
-        self, conversation_id: str, *, since: Optional[str] = None, until: Optional[str] = None
-    ) -> Iterator[Message]:
-        """The messages of one conversation, oldest first. Not in the port: the engine uses it when it is there."""
-        return iter(self._archive.iter_messages(conversation_id, since=since, until=until, include_system=False))
+    @property
+    def iter_messages(self) -> Optional[Callable[..., Iterator[Message]]]:
+        """The reader of the archive: the messages of one conversation, oldest first.
+
+        Not in the port. It is None when the archive has no reader: the
+        engine then walks pages.
+        """
+        inner = getattr(self._archive, "iter_messages", None)
+        if not callable(inner):
+            return None
+
+        def read(
+            conversation_id: str, *, since: Optional[str] = None, until: Optional[str] = None
+        ) -> Iterator[Message]:
+            return iter(inner(conversation_id, since=since, until=until, include_system=False))
+
+        return read
 
     def context(self, message_id: str, *, radius: int = 6) -> list[Message]:
         return self._archive.context(message_id, radius=radius, include_system=False)

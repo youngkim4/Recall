@@ -86,6 +86,8 @@ engine.ask("When was that?", session=session)    # can cite and re-read the earl
 - The session keeps the earlier turns, the scope of each turn, and the evidence registry.
 - A reference such as `m3` means the same message for the whole chat.
 - A question that does not finish leaves the session as it was. This applies to a cancel, to a failure and to a closed stream.
+- A question that was left open is rolled back when the next question starts. A stream that is closed late changes nothing.
+- The session stores each answer without the references that the answer could not cite.
 - `session.to_dict()` gives JSON. `ChatSession.from_dict(data)` restores it. Data that is not a session raises `ValueError`.
 - `ChatSession.from_history(rows, scope=scope)` restores the turns only. Give the scope of the chat. The numbers `[1]`, `[2]` of the shown answers are removed.
 - Do not use one session for two questions at the same time.
@@ -124,7 +126,10 @@ How the masking works:
 
 - Before any text goes out, the engine shows the labeler every conversation and every member of the archive.
 - `MaskingLabeler.redact` then masks each handle of a person who is not saved, in any spelling.
-- Spellings that it knows: with or without the country code, a `0` after the country code, the local form of seven digits, digits of another script, any mark between the groups.
+- Spellings of a number that it knows: with or without the country code, a `0` after the country code, digits of another script, any mark or a line break between the groups.
+- The local form of seven digits is masked when it stands as a number of its own: `555-0199`, `5550199`, also in "room 4, 555-0199".
+- An address is masked next to any character: before a letter of another script, between underscores, before `.Thanks`, `-thanks` or a digit.
+- An address of the archive in an unusual form (with an apostrophe, with letters of another script) is masked as it is written.
 - A number or an address that a cut would split is dropped at the cut.
 - All text for the model passes one function: `QuestionTurn._outbound` in `turn.py`.
 
@@ -132,6 +137,7 @@ Limits of the masking:
 
 - A handle of a person who is in no conversation of the archive is plain text. The engine does not know it.
 - A saved number is not masked. A local form of seven digits is not masked when a saved number has the same seven digits.
+- Seven digits inside a longer number with another area code are another number. They are not masked. A date such as `3/14/2024` is not a number.
 - If you write your own `Labeler`, its `redact` must do the same work. See `ports.Labeler`.
 
 The model provider receives the question, the tool results and the labels.
@@ -153,6 +159,8 @@ A simple recall question then ends in one model call.
 
 Words go to the archive as the user or the model wrote them, in lower case.
 The engine compares words without case or diacritics only inside its own code.
+
+A piece of a query that is only signs, such as `-` or `&`, is dropped. The archive would look for it as plain text.
 
 What `limit` of `search_messages` counts:
 
@@ -179,7 +187,7 @@ A period with no message is empty at once. No page walk can prove that in a very
 | Field | Default | Meaning |
 |---|---|---|
 | `max_steps` | 6 | Model calls that can use tools. One more call must answer. |
-| `max_calls_per_step` | 8 | The most lookups that one model call can start. |
+| `max_calls_per_step` | 8 | The most lookups that one model call can start. More calls are not run and get no answer of their own: a note says how many. |
 | `result_tokens` | 3000 | The largest tool result. |
 | `total_tool_tokens` | 18000 | All tool results of one question. |
 | `history_tokens` | 6000 | Earlier turns sent with a follow-up. `0` sends none. |
@@ -191,16 +199,19 @@ The limits are hard:
 
 - A message text longer than the cap keeps its start. A note says how many characters are missing.
 - When a search match lies past the start, the part around the match is shown too.
-- A tool result never counts more tokens than its budget. Notes that say what is left out always fit.
+- A tool result never counts more tokens than its budget. Notes that say what is left out always fit. A refusal is cut to the budget too.
+- A mask is longer than the handle it stands for. If a result passes its budget after the masking, the engine writes it again. If it still does not fit, the model gets a short refusal and no message stays registered.
+- The notes for lookups that were not run count as tool output.
 - A lookup runs only when 300 tokens of `total_tool_tokens` are left. With less, the model must answer.
 - The quote check uses the whole stored text of a message, also the part that a cap cut away.
 
 ## Quotes
 
 - Every quoted span of 12 characters or more must be in one shown message, or be a name.
-- A quote with an elision ("the start ... the end") must have all its parts in one message, in their order.
+- A quote with an elision ("the start ... the end") must have all its parts in one message, in their order, at most 400 characters apart.
 - The words of the user are not a source. A quote of the question is flagged too.
-- The engine does not change the answer. It lists the spans in `unverified_quotes`.
+- The engine does not change the answer. It lists the spans in `unverified_quotes`, without the references that stand inside them.
+- A quote of more than 2,000 characters is not checked.
 
 ## Errors
 
@@ -269,13 +280,13 @@ Results on this machine for 565,821 invented rows (548,543 messages, 1,414 conve
 
 | Measure | Result |
 |---|---|
-| Build the archive from the frame | 1.6 s |
-| Build the search index | 4.7 s |
-| Memory at its peak | 489 MB |
-| Read and label every conversation, once for each question | 59 ms at the first question, less after |
-| Slowest of 45 lookups | 70 ms (count by sender over the whole archive) |
-| A search | 2 to 20 ms |
-| A whole question without the model time | 74 to 94 ms |
+| Build the archive from the frame | 1.5 s |
+| Build the search index | 4.0 s |
+| Memory at its peak | 479 MB |
+| Read and label every conversation, once for each question | 34 ms |
+| Slowest of 45 lookups | 40 ms (count by sender over the whole archive) |
+| A search | 2 to 11 ms |
+| A whole question without the model time | 45 to 57 ms |
 | Largest tool result | 2,932 tokens of 3,000 |
 | Lookups over the budget | 0 |
 | Lookups that failed | 0 |
@@ -384,7 +395,7 @@ Archive (`archive.queries.Archive`, read through `archive_adapter.py`):
 - One archive object serves all request threads.
 - The adapter passes `include_system=False` by name in every call that takes it.
 - `messages()` pages by message id. `around` includes the anchor. `before` and `after` exclude it. With no cursor the page is the newest one.
-- `search("")` gives no hit. To read a conversation without a word, the engine uses `iter_messages(conversation_id, since=, until=)` when the archive has it. If not, it walks pages (see `browse.py`).
+- `search("")` gives no hit. To read a conversation without a word, the engine uses `iter_messages(conversation_id, since=, until=)` when the archive has it. If not, it walks pages (see `browse.py`). The adapter has a reader only when the archive has one.
 - The engine does not use `messages(oldest=True)` or `day()`.
 - Search looks at the first 10,000 characters of a text. The ranking of the engine reads the same part.
 - `count(group_by="sender")` uses `""` for the owner and `"unknown"` for a received message with no handle. `weekday_hour` keys are `W-HH` with Monday as 0.
@@ -419,7 +430,7 @@ Screens (redesign commit `ab20b5e`):
 - The search has no meaning search. The model can use `match="any"` with other words for the same thing.
 - The engine reads message text only. It does not read attachments or reactions.
 - The default token count is an estimate of three bytes for each token.
-- Each question lists and labels every conversation again. The parsed handles are remembered, so this costs about 25 microseconds for each conversation after the first question.
+- Each question lists and labels every conversation again. The parsed handles are remembered, so this costs about 25 microseconds for each conversation.
 - The list is not kept between questions. A contact or a group can get a new name with no new message, and then no count of the archive changes.
 - A typed message that has the exact form of a reaction phrase is left out by `FrameArchive`.
 - The volume numbers above come from invented text. Real text has more different words.

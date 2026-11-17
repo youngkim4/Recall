@@ -21,6 +21,8 @@ from .tool_limits import SEARCH_LIMIT_MAX
 from .tool_search import READ_RADIUS_MAX, prepare_read, prepare_search
 
 logger = logging.getLogger(__name__)
+_WRITES = 2  # a result is written at most this many times to fit its budget
+_TOO_LARGE = "The result does not fit. Ask for less: a smaller limit, fewer conversations, or a shorter period."
 
 _ECHO_CHARS = 40
 _DAY = "A day as YYYY-MM-DD in local time. The day itself is included."
@@ -190,24 +192,36 @@ class ToolBox:
             raise ArchiveError(detail=f"{type(error).__name__}: {error}") from error
 
     def _run(self, name: str, prepared: Prepared, budget: int) -> ToolOutcome:
-        try:
-            outcome = self.guard(lambda: prepared.run(max(0, budget)))
-        except ToolInputError as error:
-            return self._refuse(f"Cannot run {name}: {error}", name).run(budget)
+        """Run a lookup and mask its result. The result never counts more tokens than `budget`.
+
+        A mask is longer than the handle it stands for. When the labeler
+        learns a handle while a result is written, the lines before it grow
+        in the last masking and the result can pass its budget. Then the
+        result is written again: now every line is masked as it is written.
+        """
+        registry = self.context.registry
         redact = self.context.labeler.redact
-        text = redact(outcome.text)
         count = self.context.limits.count_tokens
-        if count(text) > max(0, budget):
-            # a mask is longer than the handle it stands for; this is the last line of defence for the budget
-            logger.warning("the result of %s was cut after masking to fit its budget", name)
-            text = squeeze(text, max(0, budget), count)
-        return ToolOutcome(text, redact(outcome.summary), outcome.ok)
+        room = max(0, budget)
+        for _ in range(_WRITES):
+            mark = registry.checkpoint()
+            try:
+                outcome = self.guard(lambda: prepared.run(room))
+            except ToolInputError as error:
+                return self._refuse(f"Cannot run {name}: {error}", name).run(budget)
+            text = redact(outcome.text)
+            if count(text) <= room:
+                return ToolOutcome(text, redact(outcome.summary), outcome.ok)
+            registry.rollback(mark)  # no message stays registered without its line
+        logger.warning("the result of %s does not fit its budget after masking", name)
+        return self._refuse(_TOO_LARGE, name).run(budget)
 
     def _refuse(self, reason: str, name: str) -> Prepared:
         """A call that is not run. The model gets the reason; no raw handle is echoed."""
-        redact = self.context.labeler.redact
-        outcome = ToolOutcome(redact(reason), f"Could not run {_brief(name)}", ok=False)
-        return Prepared("", lambda _budget: outcome)
+        text = self.context.labeler.redact(reason)
+        count = self.context.limits.count_tokens
+        summary = f"Could not run {_brief(name)}"
+        return Prepared("", lambda budget: ToolOutcome(squeeze(text, max(0, budget), count), summary, ok=False))
 
 
 def _brief(value: object) -> str:

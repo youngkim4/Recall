@@ -61,7 +61,8 @@ def parse_query(query: str) -> Query:
     for piece in _PIECE_RE.findall(source):
         term = piece.strip('"').strip()
         if term and _is_fragment(term):
-            fragments.append(term)
+            # a star after such a term adds nothing: plain text already matches the start of a longer word
+            fragments.append(unicodedata.normalize("NFC", term.rstrip("*")) or term)
         else:
             kept.append(piece)
     units = tuple(dict.fromkeys(fold(unit) for unit in query_units(" ".join(kept))))

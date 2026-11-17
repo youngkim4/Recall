@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import socket
@@ -304,6 +305,15 @@ def main(argv: Optional[Sequence[str]] = None, out: Out = print) -> int:
         parser.error("give the export file, or --invented ROWS")
     block_network()
     warnings.simplefilter("ignore")  # a warning can quote a value of the file
+    logged = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)  # a log line can hold the text of an error, and that text a row of the file
+    try:
+        return _run(arguments, out)
+    finally:
+        logging.disable(logged)
+
+
+def _run(arguments: argparse.Namespace, out: Out) -> int:
     try:
         archive = load(arguments.path, arguments.invented, out)
         picks = pick(archive)

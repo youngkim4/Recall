@@ -37,6 +37,27 @@ def _expand(body: str) -> list[str]:
     return list(dict.fromkeys(refs))
 
 
+def stored_form(text: str, cited: Callable[[str], bool]) -> str:
+    """The answer as the later turns of the chat read it.
+
+    It keeps the references that the answer could cite, as [m3]. A reference
+    that it could not cite is removed: later in the chat that number can be
+    another message. A bare number is written as (3), as the reader saw it.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        body = match.group("body")
+        if not _BODY_RE.match(body):
+            return match.group(0)
+        refs = _expand(body)
+        if not refs:
+            return f"{match.group('space')}({body.strip()})"
+        kept = [ref for ref in refs if cited(ref)]
+        return match.group("space") + "".join(f"[{ref}]" for ref in kept) if kept else ""
+
+    return _MARKER_RE.sub(replace, text).strip()
+
+
 class CitationStream:
     """Feed it the raw answer in pieces; it returns the pieces to show."""
 

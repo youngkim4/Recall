@@ -6,6 +6,7 @@ call failed, and must say that it did.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from .labeler import MaskingLabeler
@@ -20,6 +21,7 @@ from .tool_context import ToolContext
 from .tools import ToolBox
 
 _EXCERPT_CHARS = 200
+_BARE_NUMBER_RE = re.compile(r"\[\s*(\d+)\s*\]")
 _NO_USAGE = {
     "input_tokens": 0,
     "output_tokens": 0,
@@ -84,6 +86,7 @@ def _answer(context: ToolContext, question: str, scope: Scope, limit: int) -> di
 def _line(context: ToolContext, message: Any, number: int) -> str:
     text = " ".join(str(message.get("text") or "").split())
     excerpt = text if len(text) <= _EXCERPT_CHARS else text[:_EXCERPT_CHARS].rstrip() + "…"
+    excerpt = _BARE_NUMBER_RE.sub(r"(\1)", excerpt)  # a number in brackets in a message is not a citation
     day = str(message.get("timestamp") or "")[:10]
     speaker = context.book.speaker(message)
     place = context.book.label(str(message["conversation"]))

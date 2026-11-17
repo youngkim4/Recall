@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any, Callable, Generator, Iterator, Optional
 
 from .cancel import CancelToken
-from .citations import CitationStream
+from .citations import CitationStream, stored_form
 from .errors import ChatEngineError, ModelError
 from .ports import (
     LLM,
@@ -41,7 +41,10 @@ _REPEATED = "Same lookup as before: its result is above. Try a different lookup,
 _SKIPPED = "Lookup skipped: the limit on lookups for this question is reached."
 _LOOKING = "Looking at more messages"
 _LEFT_OUT = "[This earlier answer is left out: it was written for another scope than this question has.]"
-_TOO_MANY = "Lookup skipped: one step runs at most {limit} lookups. Ask for it in the next step if you still need it."
+_TOO_MANY = (
+    "[{count} more lookups of this step were not run: one step runs at most {limit}. "
+    "Ask for them in the next step if you still need them.]"
+)
 
 
 @dataclass(frozen=True)
@@ -132,18 +135,17 @@ class QuestionTurn:
         caller) leaves the session as it was: the messages and the aliases
         that it added are forgotten, so a later answer cannot cite them.
         """
-        registry, aliases = self._session.registry, self._session.aliases
-        marks = registry.checkpoint(), aliases.checkpoint()
-        finished = False
+        session = self._session
+        question = session.begin()
+        keep = False
         try:
             reply = yield from self._answer_steps()
             done = self._done(reply)
-            finished = not reply.cancelled
+            keep = not reply.cancelled
+            session.finish(question, keep)  # before the last event goes out: the caller can leave the stream open
             yield done
         finally:
-            if not finished:
-                registry.rollback(marks[0])
-                aliases.rollback(marks[1])
+            session.finish(question, keep)
 
     def _answer_steps(self) -> Generator[Event, None, Reply]:
         """The lookups and the model calls. After a cancel, nothing more is read from the archive."""
@@ -282,27 +284,32 @@ class QuestionTurn:
     # --- the tools ---
 
     def _run_tools(self, reply: Reply) -> Generator[Event, None, None]:
-        self._transcript.append(
-            ChatMessage("assistant", reply.text, tool_calls=reply.calls, provider_items=reply.provider_items)
-        )
+        limit = self._settings.max_calls_per_step
+        calls = reply.calls[:limit]
+        extra = len(reply.calls) - len(calls)
+        # calls past the cap leave the transcript: so do the items of the provider, which name every call
+        items = () if extra else reply.provider_items
+        self._transcript.append(ChatMessage("assistant", reply.text, tool_calls=calls, provider_items=items))
         if reply.streamed:
             yield status(_LOOKING, reset=True)  # the text shown so far was not the answer
-        limit = self._settings.max_calls_per_step
-        ran = 0
-        for call in reply.calls:
+        yield from self._run_calls(calls)
+        if extra and self._transcript[-1].role == "tool":
+            note = _TOO_MANY.format(count=extra, limit=limit)
+            last = self._transcript[-1]
+            self._transcript[-1] = replace(last, content=f"{last.content}\n{note}")
+            self._left -= self._settings.count_tokens(note)
+
+    def _run_calls(self, calls: tuple[ToolCall, ...]) -> Generator[Event, None, None]:
+        for call in calls:
             if self._cancel.cancelled:
                 return
             key = (call.name, call.arguments)
             if key in self._ran:
-                self._answer(call, _REPEATED)
+                self._skip(call, _REPEATED)
                 continue
             if self._left < MIN_RESULT_TOKENS:
-                self._answer(call, _SKIPPED)
+                self._skip(call, _SKIPPED)
                 continue
-            if ran >= limit:
-                self._answer(call, _TOO_MANY.format(limit=limit))
-                continue
-            ran += 1
             prepared = self._box.prepare(call.name, call.arguments)
             if prepared.status:
                 yield status(prepared.status)
@@ -316,6 +323,11 @@ class QuestionTurn:
 
     def _answer(self, call: ToolCall, text: str) -> None:
         self._transcript.append(ChatMessage("tool", text, tool_call_id=call.id))
+
+    def _skip(self, call: ToolCall, text: str) -> None:
+        """Answer a call that is not run. The note counts as tool output too."""
+        self._answer(call, text)
+        self._left -= self._settings.count_tokens(text)
 
     def _allowance(self) -> int:
         return max(0, min(self._settings.result_tokens, self._left))
@@ -409,7 +421,9 @@ class QuestionTurn:
             truncated=reply.stop_reason == "length",
         )
         if not reply.cancelled:
-            self._session.add_turn(Turn(self._question, reply.text.strip(), reply.order, self._scope))
+            cited = frozenset(reply.order)
+            answer = stored_form(reply.text, cited.__contains__)
+            self._session.add_turn(Turn(self._question, answer, reply.order, self._scope))
         return {"type": "done", "payload": payload}
 
 

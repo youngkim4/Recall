@@ -409,7 +409,8 @@ def test_one_step_runs_a_limited_number_of_lookups() -> None:
     result = engine.ask("zz?")
     assert result["usage"]["tool_calls"] == 10
     answered = [m.content for m in fake.requests[1].messages if m.role == "tool"]
-    assert len(answered) == 50 and sum("Lookup skipped" in text for text in answered) == 45
+    assert len(answered) == 5 and "45 more lookups of this step were not run" in answered[-1]
+    assert sum("were not run" in text for text in answered) == 1
     assert Counter(name for name, _ in archive.calls)["count"] == 10
 
 

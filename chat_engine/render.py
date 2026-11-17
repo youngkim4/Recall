@@ -223,6 +223,8 @@ class ConversationBook:
         sender = str(message.get("sender") or "")
         if self.is_group(conversation_id):
             return self._labeler.sender(sender) if sender else "someone in the group"
+        if sender:
+            self._labeler.sender(sender)  # a direct thread can have a second handle: the labeler must know it
         return self.label(conversation_id)
 
 

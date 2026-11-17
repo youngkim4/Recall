@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Optional
 
 from .registry import ConversationAliases, EvidenceRegistry
 from .scope import EVERYTHING, Scope
@@ -33,9 +33,38 @@ class ChatSession:
         self.registry = EvidenceRegistry()
         self.aliases = ConversationAliases()
         self.turns: tuple[Turn, ...] = ()
+        self._started = 0  # questions started on this session
+        self._open: Optional[tuple[int, int]] = None  # where the open question began in the registry and the aliases
 
     def add_turn(self, turn: Turn) -> None:
         self.turns = (*self.turns, turn)
+
+    def begin(self) -> int:
+        """Start a question and get its number. A question that was left open before is rolled back first."""
+        self._roll_back()
+        self._open = (self.registry.checkpoint(), self.aliases.checkpoint())
+        self._started += 1
+        return self._started
+
+    def finish(self, question: int, keep: bool) -> None:
+        """End the question with this number. `keep=False` forgets the evidence and the aliases it added.
+
+        A call for a question that is not the newest one does nothing: its
+        marks are not valid any more. So a stream that is closed late cannot
+        take away what a later question found.
+        """
+        if question != self._started or self._open is None:
+            return
+        if keep:
+            self._open = None
+        else:
+            self._roll_back()
+
+    def _roll_back(self) -> None:
+        if self._open is not None:
+            self.registry.rollback(self._open[0])
+            self.aliases.rollback(self._open[1])
+            self._open = None
 
     def to_dict(self) -> dict[str, Any]:
         return {

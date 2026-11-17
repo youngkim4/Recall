@@ -231,10 +231,11 @@ class FrameArchive:
         conversation_id = rows.conversations[code]
         group = is_group_id(conversation_id)
         sent = int(rows.from_me[positions].sum())
-        members = [conversation_id]
+        senders = [str(sender) for sender in pd.unique(rows.senders[positions]) if sender]
+        members = [conversation_id, *(sender for sender in senders if sender != conversation_id)]
         name = ""
         if group:
-            members = [str(sender) for sender in pd.unique(rows.senders[positions]) if sender]
+            members = senders
             titles = rows.display_names[positions]
             given = titles[titles != ""]
             name = str(given[-1]) if len(given) else ""
@@ -351,7 +352,9 @@ class FrameArchive:
         for fragment in query.fragments:
             if not len(positions):
                 break
-            held = self._texts.iloc[positions].str.contains(fragment_pattern(fragment), regex=True)
+            # the part of each text that the index holds, in composed form: a text can be stored decomposed
+            start = self._texts.iloc[positions].str.slice(0, self._index_chars).str.normalize("NFC")
+            held = start.str.contains(fragment_pattern(fragment), regex=True)
             positions = positions[held.to_numpy(dtype=bool)]
         return positions
 

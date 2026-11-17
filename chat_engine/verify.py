@@ -5,7 +5,8 @@ spaces, quote marks and case are normalised. A span that is not found is
 returned, so the caller can flag it. Nothing is removed from the answer.
 
 A quote with an elision ("the start ... the end") must have all its parts in
-one source, in their order: parts of two messages are not one quote.
+one source, in their order and near each other: parts of two messages, or
+of two far ends of one long message, are not one quote.
 
 A straight double quote mark opens a quote only before text and closes one
 only after text. So an inch mark pairs with nothing. A straight single quote
@@ -19,6 +20,8 @@ import unicodedata
 from typing import Iterable, Sequence
 
 MIN_QUOTE_CHARS = 12
+_MAX_GAP = 400  # the most characters an elision may stand for
+_MAX_STARTS = 50  # places in one source where a quote with an elision is tried
 _MAX_QUOTE = 2000
 _SPAN = f"{{1,{_MAX_QUOTE}}}"
 _LATIN = "A-Za-z0-9\u00c0-\u024f"  # the letters an apostrophe stands between
@@ -73,13 +76,27 @@ def _pieces(span: str, without_references: bool) -> list[str]:
 
 
 def _in_order(pieces: Sequence[str], source: str) -> bool:
-    cursor = 0
-    for piece in pieces:
-        found = source.find(piece, cursor)
-        if found < 0:
+    """True when the source holds the parts in their order, each at most `_MAX_GAP` after the one before."""
+    start = source.find(pieces[0])
+    for _ in range(_MAX_STARTS):
+        if start < 0:
             return False
-        cursor = found + len(piece)
-    return True
+        cursor = start + len(pieces[0])
+        for piece in pieces[1:]:
+            found = source.find(piece, cursor, cursor + _MAX_GAP + len(piece))
+            if found < 0:
+                break
+            cursor = found + len(piece)
+        else:
+            return True
+        start = source.find(pieces[0], start + 1)
+    return False
+
+
+def _shown(span: str) -> str:
+    """A flagged quote as the user reads it: no reference of the model inside it, a bare number as (3)."""
+    text = re.sub(r"\[\s*(\d+)\s*\]", r"(\1)", span)
+    return " ".join(_REFERENCE_RE.sub(" ", text).split())
 
 
 def _is_held(span: str, sources: Sequence[str], joined: str) -> bool:
@@ -108,4 +125,4 @@ def unverified_quotes(answer: str, sources: Iterable[str]) -> list[str]:
     for span in quoted_spans(answer):
         if span not in held:
             held[span] = _is_held(span, normalised, joined)
-    return [span for span, found in held.items() if not found]
+    return list(dict.fromkeys(_shown(span) for span, found in held.items() if not found))
