@@ -85,3 +85,20 @@ def test_browsing_with_no_words_counts_the_whole_conversation(tmp_path, saved_na
     assert [result["text"] for result in payload["results"]] == ["message 5", "message 4"]
     assert payload["count"] == 2
     assert payload["total"] == 5
+
+
+def test_a_search_in_one_conversation_is_never_in_one_that_only_holds_its_id(tmp_path, saved_names):
+    csv = write_export(tmp_path / "messages.csv", [row(AVERY, "2025-01-01 09:00:00", "pizza night")])
+
+    assert search_messages_payload(csv, query="pizza", contact=AVERY)["total"] == 1
+    assert search_messages_payload(csv, query="pizza", contact=AVERY[:-1]) == {
+        "query": "pizza", "contact": AVERY[:-1], "results": [], "count": 0, "total": 0,
+    }
+
+
+def test_a_question_about_one_conversation_is_never_answered_from_another(tmp_path, saved_names):
+    csv = write_export(tmp_path / "messages.csv", [row(AVERY, "2025-01-01 09:00:00", "pizza night at mine")])
+
+    asked = ui_server.ask_messages_payload(csv, "what about pizza night?", contact=AVERY[:-1], use_ai=False)
+
+    assert asked["citations"] == []

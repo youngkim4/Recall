@@ -16,11 +16,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
 from tqdm import tqdm
 
 from parse_imessage import extract_messages, list_contacts, extract_attachments, extract_reactions
 from analysis import DEFAULT_MODEL, get_token_budget, run_cli
+from conversation import conversation_in
 
 
 def parse_date(date_str: str) -> datetime:
@@ -202,7 +202,7 @@ Examples:
                 print(f"  {label}{group_tag}")
                 print(f"    Messages: {row['message_count']:,}  |  {row['first_msg']} → {row['last_msg']}")
             print("-" * 80)
-            print(f"\nUse --contact <chat_id> to analyze.")
+            print("\nUse --contact <chat_id> to analyze.")
             sys.exit(0)
         
         # Export DB to CSV
@@ -243,10 +243,17 @@ Examples:
         print("Error: Provide --contact or --list-contacts")
         sys.exit(1)
 
-    print(f"\n🔍 Analyzing {args.contact}...")
+    # what was typed can be a whole id, or part of the id of one conversation
+    try:
+        contact = conversation_in(messages_csv, args.contact)
+    except (OSError, ValueError) as error:
+        print(f"Error: {error}")
+        sys.exit(1)
+
+    print(f"\n🔍 Analyzing {contact}...")
     
     # Estimate cost
-    cost_info = estimate_cost(messages_csv, args.contact, model=args.model, since=args.since, until=args.until)
+    cost_info = estimate_cost(messages_csv, contact, model=args.model, since=args.since, until=args.until)
     print(f"\n📊 {cost_info['msg_count']:,} messages → ~{cost_info['input_tokens']:,} tokens")
     if cost_info['needs_chunking']:
         years_str = ", ".join(str(y) for y in cost_info['years'])
@@ -264,7 +271,7 @@ Examples:
     print(f"🤖 Model: {args.model}")
     _, report_path, events_path, html_path = run_cli(
         messages_csv,
-        args.contact,
+        contact,
         args.out,
         since=args.since,
         until=args.until,

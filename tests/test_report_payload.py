@@ -343,3 +343,23 @@ def test_the_scope_line_is_not_part_of_the_story(tmp_path, export, saved_names):
 
     assert payload["summary"] == "They made plans."
     assert "Scope" not in payload["summaryHtml"]
+
+
+def test_a_stored_report_is_not_reused_once_its_figures_can_differ(tmp_path, monkeypatch):
+    csv = tmp_path / "messages.csv"
+    csv.write_text("x", encoding="utf-8")
+
+    def key():
+        return str(ui_server.analysis_cache_key(csv, AVERY, "gpt-5.4-mini"))
+
+    first = key()
+    # the figures of a report count attachments and reactions
+    (tmp_path / "messages_attachments.csv").write_text("a", encoding="utf-8")
+    with_attachments = key()
+    (tmp_path / "messages_reactions.csv").write_text("r", encoding="utf-8")
+    with_reactions = key()
+    # and a report holds a preview, so a preview that changed in shape is a new report
+    monkeypatch.setattr(ui_server, "PREVIEW_PAYLOAD_VERSION", ui_server.PREVIEW_PAYLOAD_VERSION + 1)
+    with_new_preview = key()
+
+    assert len({first, with_attachments, with_reactions, with_new_preview}) == 4

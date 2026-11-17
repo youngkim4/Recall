@@ -24,12 +24,13 @@ def run(tmp_path, monkeypatch):
     find are whatever the test hands in, and nothing is sent anywhere."""
     csv = tmp_path / "messages.csv"
     pd.DataFrame({
-        "message_id": [1, 2, 3],
-        "timestamp": ["2024-05-20 09:00:00", "2024-06-10 20:00:00", "2024-07-04 12:00:00"],
-        "sender": [AVERY, AVERY, AVERY],
-        "text": ["long before", "see you at 8", "long after"],
-        "chat_id": [AVERY, AVERY, AVERY],
-        "is_from_me": [0, 0, 1],
+        "message_id": [1, 2, 3, 4],
+        # nothing in August
+        "timestamp": ["2024-05-20 09:00:00", "2024-06-10 20:00:00", "2024-07-04 12:00:00", "2024-09-02 08:00:00"],
+        "sender": [AVERY, AVERY, AVERY, AVERY],
+        "text": ["long before", "see you at 8", "long after", "after the summer"],
+        "chat_id": [AVERY, AVERY, AVERY, AVERY],
+        "is_from_me": [0, 0, 1, 0],
     }).to_csv(csv, index=False)
     out_dir = tmp_path / "out"
     found = {"events": pd.DataFrame()}
@@ -99,3 +100,21 @@ def test_a_report_open_on_one_side_states_the_side_it_was_given(run):
 
     until_only, _events = run(until=datetime(2024, 6, 30))
     assert "- Scope: through 2024-06-30\n" in overview(until_only)
+
+
+def months_of(report_path):
+    text = open(report_path, encoding="utf-8").read()
+    table = text.split("## Monthly Progression\n", 1)[1].split("\n\n", 1)[0]
+    return table.splitlines()[2:]
+
+
+def test_a_report_keeps_a_month_with_no_messages_in_its_place(run):
+    report, _events = run()
+
+    assert months_of(report) == [
+        "| 2024-05-01 | 1 | 0 | 1 | 0% |",
+        "| 2024-06-01 | 1 | 0 | 1 | 0% |",
+        "| 2024-07-01 | 1 | 1 | 0 | 100% |",
+        "| 2024-08-01 | 0 | 0 | 0 | 0% |",
+        "| 2024-09-01 | 1 | 0 | 1 | 0% |",
+    ]

@@ -982,8 +982,8 @@ def file_cache_signature(path: Path | str | None) -> tuple | None:
 
 
 # Bump when an opened report changes in shape or in how its story is rendered,
-# so that a stored one is not served as it was. Version 3: the story HTML is
-# written from an allowlist, and stories stored before that are not.
+# so that a stored one is not served as it was. A change to story_html in
+# safe_html is such a change.
 ANALYSIS_PAYLOAD_VERSION = 4
 
 
@@ -999,15 +999,13 @@ def analysis_cache_key(
 ) -> tuple:
     return (
         ANALYSIS_PAYLOAD_VERSION,
-        file_cache_signature(messages_path),
-        str(contact or ""),
-        str(model or ""),
-        str(since or ""),
-        str(until or ""),
+        # An opened report holds the preview of its conversation. Whatever
+        # makes a stored preview stale makes a stored report stale: the
+        # export, its attachments and reactions, Contacts, and the version.
+        preview_cache_key(messages_path, contact, model, since=since, until=until),
         file_cache_signature(report_path),
         file_cache_signature(events_path),
         file_cache_signature(html_path),
-        file_cache_signature(CONTACTS_CACHE_PATH),
     )
 
 

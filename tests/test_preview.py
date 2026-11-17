@@ -285,3 +285,15 @@ def test_people_and_the_received_figure_count_the_same_rows(tmp_path, saved_name
 
     written_by_people = sum(speaker["count"] for speaker in payload["dynamics"]["speakers"])
     assert written_by_people == payload["stats"]["receivedCount"] == 2
+
+
+def test_a_preview_is_never_of_a_conversation_that_only_holds_the_id_asked_for(tmp_path, saved_names):
+    csv = write_export(tmp_path / "messages.csv", [
+        row(AVERY, "2025-01-01 09:00:00", "are you up"),
+        row(AVERY, "2025-01-01 09:01:00", "barely", from_me=1),
+    ])
+
+    # the start of Avery's number is not Avery, and is nobody in this export
+    with pytest.raises(ValueError, match="No messages found"):
+        preview(csv, AVERY[:-1])
+    assert preview(csv, AVERY)["stats"]["totalMessages"] == 2

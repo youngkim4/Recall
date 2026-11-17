@@ -1,7 +1,7 @@
 """Tests for CLI estimate_cost and main argument parsing."""
 import os
 from datetime import datetime
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
@@ -103,6 +103,32 @@ class TestMainValidation:
                 mock_run.return_value = (None, "/tmp/report.md", None, None)
                 main()
                 mock_run.assert_called_once()
+
+    def test_part_of_an_id_that_one_conversation_holds_is_that_conversation(self, messages_csv):
+        from cli import main
+        with patch("sys.argv", ["cli.py", "--contact", "123", "--messages", messages_csv, "--no-confirm"]):
+            with patch("cli.run_cli") as mock_run:
+                mock_run.return_value = (None, "/tmp/report.md", None, None)
+                main()
+                # the report is written for the whole id, which the app reads back from it
+                assert mock_run.call_args.args[1] == "chat123"
+
+    @pytest.mark.parametrize("typed", ["chat", "+19990000000"])
+    def test_text_that_names_no_one_conversation_is_refused(self, tmp_path, typed):
+        from cli import main
+        csv = tmp_path / "messages.csv"
+        pd.DataFrame({
+            "timestamp": ["2024-01-15 10:00:00", "2024-01-15 10:05:00"],
+            "text": ["hello", "hey"],
+            "chat_id": ["chat123", "chat456"],
+            "is_from_me": [0, 1],
+        }).to_csv(csv, index=False)
+        with patch("sys.argv", ["cli.py", "--contact", typed, "--messages", str(csv), "--no-confirm"]):
+            with patch("cli.run_cli") as mock_run:
+                with pytest.raises(SystemExit) as exc:
+                    main()
+                assert exc.value.code == 1
+                mock_run.assert_not_called()
 
     @pytest.fixture
     def messages_csv(self, tmp_path):

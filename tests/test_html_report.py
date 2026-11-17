@@ -65,6 +65,15 @@ class TestWriteHtmlReport:
         assert "<svg" in content
         assert content.count("<polyline") == 2
 
+    def test_one_month_is_drawn_as_a_mark_that_can_be_seen(self, tmp_path, sample_messages_df):
+        january = sample_messages_df[sample_messages_df["timestamp"] < "2024-02-01"]
+        path = write_html_report(str(tmp_path), "+1234", compute_stats(january), progression_series(january), "story")
+        content = Path(path).read_text()
+        # a line through one point draws nothing
+        assert "<polyline" not in content
+        assert content.count("<circle") == 2
+        assert content.count("2024-01-01") == 1
+
     def test_summary_rendered_as_html(self, basic_report_args):
         path = write_html_report(**basic_report_args)
         content = Path(path).read_text()

@@ -46,10 +46,12 @@ from conversation import (
     compute_reaction_stats,
     compute_stats,
     contact_label,
+    conversation_in,
     conversation_label,
     count_sent,
     direction_label,
     estimate_tokens,
+    fill_months,
     filter_conversation,
     format_all_messages,
     given_name,
@@ -107,7 +109,8 @@ def run_cli(
     reactions_df = load_reactions(messages_csv, since, until)
 
     stats = compute_stats(conv, attachments_df, reactions_df)
-    monthly = progression_series(conv)
+    # a month with no messages keeps its place in the table and on the chart
+    monthly = fill_months(progression_series(conv))
 
     os.makedirs(out_dir, exist_ok=True)
 
@@ -187,9 +190,13 @@ def main():
     parser.add_argument("--html", action="store_true", help="Generate HTML report")
     parser.add_argument("--model", default=DEFAULT_MODEL, help=f"OpenAI model (default: {DEFAULT_MODEL})")
     args = parser.parse_args()
+    try:
+        contact = conversation_in(args.messages, args.contact)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
 
     _, report_path, events_path, html_path = run_cli(
-        args.messages, args.contact, args.out,
+        args.messages, contact, args.out,
         since=args.since, until=args.until, html=args.html, model=args.model,
     )
     print(f"✅ Report: {report_path}")

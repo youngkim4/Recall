@@ -26,24 +26,31 @@ def _volume_chart(labels: List[str], sent: List[int], received: List[int]) -> st
         return ""
     width, height, pad = 800, 240, 6
     top = max(1, max(sent + received))
-    last = max(1, len(labels) - 1)
+    one_month = len(labels) == 1
 
-    def points(values: List[int]) -> str:
-        return " ".join(
-            f"{pad + (width - 2 * pad) * (index / last):.1f},{height - pad - (height - 2 * pad) * (value / top):.1f}"
-            for index, value in enumerate(values)
-        )
+    def place(index: int, value: int) -> str:
+        # one month has no line to be on, so it sits in the middle
+        along = 0.5 if one_month else index / (len(labels) - 1)
+        return f"{pad + (width - 2 * pad) * along:.1f},{height - pad - (height - 2 * pad) * (value / top):.1f}"
+
+    def drawn(values: List[int], name: str) -> str:
+        if one_month:
+            # a line through one point draws nothing
+            x, y = place(0, values[0]).split(",")
+            return f'<circle class="{name}" cx="{x}" cy="{y}" r="3" />'
+        points = " ".join(place(index, value) for index, value in enumerate(values))
+        return f'<polyline class="{name}" points="{points}" />'
 
     return (
         f'<svg class="volume" viewBox="0 0 {width} {height}" role="img" '
         'aria-label="Messages sent and received each month">'
-        f'<polyline class="volume-received" points="{points(received)}" />'
-        f'<polyline class="volume-sent" points="{points(sent)}" />'
+        f'{drawn(received, "volume-received")}'
+        f'{drawn(sent, "volume-sent")}'
         "</svg>"
         '<div class="volume-notes">'
         f"<span>{html_lib.escape(labels[0])}</span>"
-        "<span>Sent is the brighter line, received the fainter</span>"
-        f"<span>{html_lib.escape(labels[-1])}</span>"
+        "<span>Sent is the brighter mark, received the fainter</span>"
+        f'<span>{"" if one_month else html_lib.escape(labels[-1])}</span>'
         "</div>"
     )
 
@@ -332,6 +339,18 @@ def write_html_report(
 
         .volume-received {{
             stroke: rgba(255, 255, 255, 0.25);
+        }}
+
+        .volume circle {{
+            stroke: none;
+        }}
+
+        circle.volume-sent {{
+            fill: rgba(255, 255, 255, 0.7);
+        }}
+
+        circle.volume-received {{
+            fill: rgba(255, 255, 255, 0.25);
         }}
 
         .volume-notes {{

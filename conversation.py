@@ -273,14 +273,37 @@ def load_reactions(csv_path: str, since=None, until=None) -> pd.DataFrame:
 
 
 def filter_conversation(df: pd.DataFrame, contact: str) -> pd.DataFrame:
-    """Return a DataFrame for matching chat_id, sorted by time."""
+    """The messages of the conversation whose id is `contact`, oldest first.
+    Messages sent at the same time keep their order. The id is matched whole:
+    text that an id only holds is no conversation, so one conversation is
+    never shown as another. find_conversation is for text typed by hand."""
     if "chat_id" not in df.columns:
         raise ValueError("messages CSV must contain a 'chat_id' column")
-    exact = df[df["chat_id"].astype(str) == contact]
-    if not exact.empty:
-        return exact.sort_values("timestamp")
-    contains = df[df["chat_id"].astype(str).str.contains(contact, na=False, regex=False)]
-    return contains.sort_values("timestamp")
+    return df[df["chat_id"].astype(str) == str(contact)].sort_values("timestamp", kind="stable")
+
+
+def find_conversation(chat_ids: pd.Series, wanted: str) -> str:
+    """The id of the conversation that text typed at the command line names:
+    that id itself, or the one id that holds the text (a number typed with no
+    country code). Text that several ids hold names none of them."""
+    text = str(wanted or "").strip()
+    if not text:
+        raise ValueError("A conversation is needed")
+    ids = [str(chat_id) for chat_id in pd.unique(chat_ids.dropna())]
+    if text in ids:
+        return text
+    holding = [chat_id for chat_id in ids if text in chat_id]
+    if len(holding) == 1:
+        return holding[0]
+    if not holding:
+        raise ValueError(f"No conversation matches '{text}'")
+    raise ValueError(f"{len(holding)} conversations match '{text}'. Give the whole id of one of them.")
+
+
+def conversation_in(csv_path: str, wanted: str) -> str:
+    """find_conversation over the conversations of an export file."""
+    ids = pd.read_csv(csv_path, usecols=["chat_id"], dtype={"chat_id": "string"})["chat_id"]
+    return find_conversation(ids, wanted)
 
 
 def compute_attachment_stats(attachments_df: pd.DataFrame, contact: str) -> AttachmentStats:

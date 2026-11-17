@@ -1,7 +1,6 @@
 import json
 import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -26,12 +25,10 @@ from analysis import (
     get_token_budget,
     _parse_json_events,
     write_markdown_report,
-    ConversationStats,
-    AttachmentStats,
-    ReactionStats,
     TOKEN_BUDGET,
     SECONDS_PER_DAY,
 )
+from conversation import find_conversation
 
 
 class TestSanitizeFilename:
@@ -128,9 +125,18 @@ class TestFilterConversation:
         result = filter_conversation(sample_messages_df, "+1234")
         assert len(result) == 5
 
-    def test_partial_match(self, sample_messages_df):
-        result = filter_conversation(sample_messages_df, "1234")
-        assert len(result) == 5
+    def test_part_of_an_id_is_no_conversation(self, sample_messages_df):
+        # text that an id only holds would show one conversation as another
+        assert filter_conversation(sample_messages_df, "1234").empty
+        assert filter_conversation(sample_messages_df, "+123").empty
+
+    def test_messages_sent_at_the_same_time_keep_their_order(self):
+        df = pd.DataFrame({
+            "timestamp": pd.to_datetime(["2024-01-15 10:00:00"] * 40),
+            "text": [f"m{index}" for index in range(40)],
+            "chat_id": ["+1234"] * 40,
+        })
+        assert filter_conversation(df, "+1234")["text"].tolist() == [f"m{index}" for index in range(40)]
 
     def test_no_match(self, sample_messages_df):
         result = filter_conversation(sample_messages_df, "+9999")
@@ -145,6 +151,30 @@ class TestFilterConversation:
         df = pd.DataFrame({"text": ["hi"]})
         with pytest.raises(ValueError, match="chat_id"):
             filter_conversation(df, "+1234")
+
+
+class TestFindConversation:
+    IDS = pd.Series(["+15550000001", "+15550000001", "+1555", "sam99@example.com", None, "chat4471"], dtype="string")
+
+    def test_a_whole_id_is_that_conversation(self):
+        assert find_conversation(self.IDS, "+15550000001") == "+15550000001"
+
+    def test_a_whole_id_wins_over_the_ids_that_hold_it(self):
+        assert find_conversation(self.IDS, "+1555") == "+1555"
+
+    def test_text_that_one_id_holds_is_that_conversation(self):
+        # a number typed with no country code, or the start of an address
+        assert find_conversation(self.IDS, "5550000001") == "+15550000001"
+        assert find_conversation(self.IDS, " sam99 ") == "sam99@example.com"
+
+    def test_text_that_several_ids_hold_is_refused(self):
+        with pytest.raises(ValueError, match="2 conversations"):
+            find_conversation(self.IDS, "555")
+
+    @pytest.mark.parametrize("wanted", ["+19990000000", "", "   ", None])
+    def test_text_that_no_id_holds_is_refused(self, wanted):
+        with pytest.raises(ValueError):
+            find_conversation(self.IDS, wanted)
 
 
 class TestComputeStats:
