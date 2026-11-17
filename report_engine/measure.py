@@ -35,7 +35,7 @@ from report_engine.chunking import (
     plan_periods,
 )
 from report_engine.estimate import estimate
-from report_engine.frame_source import EXPORT_COLUMNS, FrameSource
+from report_engine.frame_source import EXPORT_COLUMNS, FrameSource, local_moments
 from report_engine.measure_file import (
     check_tapbacks,
     count_rows,
@@ -112,12 +112,15 @@ def _quiet_engine() -> Iterator[None]:
 
 
 def load_frame(path: str) -> pd.DataFrame:
-    """The export as the app loads it: ids and senders as text, timestamps parsed."""
+    """The export as the app loads it (ids and senders as text, timestamps
+    parsed), with the timestamps as the engine then reads them. So a row with
+    no timestamp here is a row that a report leaves out."""
     frame = pd.read_csv(path, dtype={"chat_id": "string", "sender": "string"})
     absent = [name for name in EXPORT_COLUMNS if name not in frame.columns]
     if absent:
         raise ValueError(f"the file has no column {', '.join(absent)}")
-    return frame.assign(timestamp=pd.to_datetime(frame["timestamp"], errors="coerce"))
+    parsed = pd.to_datetime(frame["timestamp"], errors="coerce")
+    return frame.assign(timestamp=local_moments(parsed))
 
 
 def open_model(family: str) -> ModelInfo:

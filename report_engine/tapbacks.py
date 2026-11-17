@@ -28,8 +28,10 @@ STICKER = "Reacted with a sticker to"
 
 OPEN_MARKS = chr(0x201C) + '"'
 CLOSE_MARKS = chr(0x201D) + '"'
-# a tapback with a symbol of the person's choice: the symbol has no letter and no digit
-_SYMBOL = r"[^\sA-Za-z0-9]{1,16}"
+# a tapback with a symbol of the person's choice: the symbol has no letter and no
+# digit, but for a keycap, which is a digit and then its two marks
+_KEYCAP = "[0-9]" + chr(0xFE0F) + "?" + chr(0x20E3)
+_SYMBOL = rf"(?:{_KEYCAP}|[^\sA-Za-z0-9]){{1,16}}"
 _PHRASES = "|".join(
     [
         *(re.escape(phrase) for phrase in (*ADDED, *REMOVED, STICKER)),

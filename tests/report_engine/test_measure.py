@@ -258,6 +258,23 @@ def test_a_row_with_no_conversation_does_not_stop_the_tool(tmp_path: Path) -> No
     assert any(line.startswith("all conversations: read 1;") for line in lines)
 
 
+def test_the_count_of_rows_with_no_timestamp_is_what_a_report_leaves_out(tmp_path: Path) -> None:
+    """Two offsets in one column: the app's parse gives a column of objects.
+    The tool must count and read the rows as the engine does."""
+    rows = [
+        odd_row(1, "one", timestamp="2024-01-01 10:00:00-05:00"),
+        odd_row(2, "two", timestamp="2024-07-01 10:00:00-04:00"),
+        odd_row(3, "three", timestamp="not a time"),
+    ]
+    path = tmp_path / "messages.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    code, lines = run_tool(path, "--top", "1")
+    assert code == 0
+    assert any("no timestamp 1;" in line for line in lines)
+    first = next(line for line in lines if line.startswith("conversation 1:"))
+    assert numbers(first)[1:3] == [3, 2]
+
+
 def test_no_warning_of_a_library_reaches_the_output(tmp_path: Path) -> None:
     """A library can quote a cell of the file in a warning. The tool is run on
     private data and all of its output is passed on, so it shows no warning."""

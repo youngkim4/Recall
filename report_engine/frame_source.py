@@ -44,12 +44,10 @@ _RECEIVED_WORDS = frozenset({"0", "0.0", "false", "f", "no", "n"})
 
 
 def _missing(value: Any) -> bool:
-    return (
-        value is None
-        or value is pd.NA
-        or value is pd.NaT
-        or (isinstance(value, float) and math.isnan(value))
-    )
+    """True for None, NaN, NA and NaT, also as numpy values."""
+    if value is None or value is pd.NA or value is pd.NaT:
+        return True
+    return isinstance(value, (float, np.floating)) and math.isnan(value)
 
 
 def _text(value: Any) -> str:
@@ -72,10 +70,12 @@ def _message_id(value: Any, position: int) -> str:
 
 
 def direction_of(value: Any) -> bool | None:
-    """True for sent, False for received, None when the row does not say."""
+    """True for sent, False for received, None when the row does not say. The
+    same steps as parse_boolish: a plain number is sent when it is 1, and any
+    other value is read as a word."""
     if _missing(value):
         return None
-    if isinstance(value, (bool, int, float, np.bool_, np.integer, np.floating)):
+    if isinstance(value, (bool, int, float)):
         return bool(value == 1)
     word = str(value).strip().lower()
     return True if word in _SENT_WORDS else False if word in _RECEIVED_WORDS else None
@@ -90,18 +90,31 @@ def _same_chat(column: pd.Series, conversation: str) -> npt.NDArray[np.bool_]:
     return (text == conversation).fillna(False).to_numpy(dtype=bool)
 
 
+def _lost(moments: pd.Series) -> int:
+    return int(moments.isna().sum())
+
+
 def _parse(column: pd.Series) -> pd.Series:
-    """Text timestamps as datetimes; NaT where a value does not parse."""
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", FutureWarning)
-            moments = pd.to_datetime(column, errors="coerce", format=ISO_FORMAT)
-    except ValueError:
-        moments = None
-    if moments is None or not pd.api.types.is_datetime64_any_dtype(moments):
-        # values with different UTC offsets: read them all as instants
-        moments = pd.to_datetime(column, errors="coerce", format=ISO_FORMAT, utc=True)
-    return moments
+    """Timestamps that are not a datetime column yet, as datetimes; NaT where a
+    value does not parse. Values with different UTC offsets do not fit one
+    plain column: then all values are read as instants, when that loses fewer.
+    No warning of the library is shown: a warning can quote a cell."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            plain = pd.to_datetime(column, errors="coerce", format=ISO_FORMAT)
+        except ValueError:
+            plain = None
+        if (
+            plain is not None
+            and pd.api.types.is_datetime64_any_dtype(plain)
+            and _lost(plain) == _lost(column)
+        ):
+            return plain
+        instants = pd.to_datetime(column, errors="coerce", format=ISO_FORMAT, utc=True)
+    if plain is None or not pd.api.types.is_datetime64_any_dtype(plain):
+        return instants
+    return instants if _lost(instants) < _lost(plain) else plain
 
 
 def _to_local(moments: pd.Series) -> pd.Series:
@@ -113,7 +126,9 @@ def _to_local(moments: pd.Series) -> pd.Series:
     return pd.Series(local, index=moments.index, dtype="datetime64[ns]")
 
 
-def _local_moments(column: pd.Series) -> pd.Series:
+def local_moments(column: pd.Series) -> pd.Series:
+    """The timestamp column as local wall-clock datetimes; NaT where a row has
+    no usable timestamp."""
     moments = column if pd.api.types.is_datetime64_any_dtype(column) else _parse(column)
     return _to_local(moments) if moments.dt.tz is not None else moments
 
@@ -149,7 +164,7 @@ class FrameSource:
         positions = np.flatnonzero(_same_chat(self._frame["chat_id"], conversation))
         rows = self._frame.iloc[positions][list(EXPORT_COLUMNS)].reset_index(drop=True)
         try:
-            moments = _local_moments(rows["timestamp"])
+            moments = local_moments(rows["timestamp"])
         except (TypeError, ValueError, AttributeError) as exc:
             raise SourceError(
                 f"the timestamp column can not be read: {type(exc).__name__}"
@@ -158,6 +173,11 @@ class FrameSource:
         _log_left_out(int(moments.isna().sum()), "message", "had no usable timestamp and ")
 
         keep = moments.notna()
+        said = pd.Series(
+            [direction_of(value) for value in rows["is_from_me"].tolist()], dtype=object
+        )
+        if keep.any() and said[keep].isna().all():
+            raise SourceError("the export does not say who sent the messages of this conversation")
         low, high = lower_bound(since), upper_bound(until)
         if low is not None:
             keep &= stamps >= low
@@ -165,11 +185,13 @@ class FrameSource:
             keep &= stamps <= high
         order = moments[keep].sort_values(kind="stable").index
         chosen = rows.loc[order]
-        directions = [direction_of(value) for value in chosen["is_from_me"].tolist()]
+        directions = said.loc[order].tolist()
         texts = [_text(value) for value in chosen["text"].tolist()]
-        if directions and all(direction is None for direction in directions):
-            raise SourceError("the export does not say who sent the messages of this conversation")
-        tapbacks = [is_tapback(text) for text in texts]
+        # a row is left out for one reason: a tapback is a row that says who sent it
+        tapbacks = [
+            own is not None and is_tapback(text)
+            for own, text in zip(directions, texts, strict=True)
+        ]
         _log_left_out(sum(direction is None for direction in directions), "message", _NO_DIRECTION)
         _log_left_out(sum(tapbacks), "tapback row", level=logging.INFO)
         columns = zip(

@@ -2,14 +2,17 @@
 attachment placeholders, and rows that do not say who sent them."""
 
 import logging
+import warnings
+from datetime import datetime
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from report_engine.errors import SourceError
 from report_engine.fake_llm import FakeLLM
-from report_engine.frame_source import FrameSource
+from report_engine.frame_source import FrameSource, direction_of
 from report_engine.tapbacks import is_tapback
 
 from .support import run
@@ -176,3 +179,89 @@ def test_a_conversation_where_no_row_says_who_sent_it_is_an_error() -> None:
         list(source.messages(CONVERSATION, None, None))
     assert "who sent" in str(caught.value)
     assert "one" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "value, own",
+    [
+        (np.int64(1), True),
+        (np.float32(1.0), True),
+        (np.bool_(True), True),
+        (np.int64(0), False),
+        (np.bool_(False), False),
+        (np.float32("nan"), None),
+        (np.float64("nan"), None),
+        (np.float32(0.5), None),
+        (np.int64(2), None),
+    ],
+)
+def test_a_number_of_another_kind_is_read_as_the_app_reads_it(value: Any, own: bool | None) -> None:
+    """The app reads only a plain 0 or 1 as a number. Any other value is read
+    as text, and text that is not a known word does not say who sent the row."""
+    assert direction_of(value) is own
+    column = pd.Series([0, value], dtype=object)
+    table = frame(["one", "two"]).assign(is_from_me=column)
+    found = list(FrameSource(table).messages(CONVERSATION, None, None))
+    assert [row["is_from_me"] for row in found] == ([False] if own is None else [False, own])
+
+
+def test_a_row_is_counted_for_one_reason_only(caplog: pytest.LogCaptureFixture) -> None:
+    texts = ["hi", quoted("Loved", "hi"), "x"]
+    with caplog.at_level(logging.INFO, logger="report_engine.frame_source"):
+        assert ids(FrameSource(frame(texts, own=[1, None, None]))) == ["1"]
+    assert "2 messages in this conversation did not say who sent it" in caplog.text
+    assert "tapback" not in caplog.text
+
+
+def test_the_error_for_no_direction_is_about_the_whole_conversation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Some rows of the conversation say who sent them. A scope that holds only
+    rows that do not say it is empty, not an error."""
+    table = frame(["one", "two", "three"], own=[1, None, None])
+    source = FrameSource(table)
+    with caplog.at_level(logging.WARNING, logger="report_engine.frame_source"):
+        assert list(source.messages(CONVERSATION, "2024-06-01 09:01:00", None)) == []
+    assert "2 messages" in caplog.text
+    nobody = FrameSource(frame(["one", "two"], own=[None, None]))
+    with pytest.raises(SourceError):
+        list(nobody.messages(CONVERSATION, "2024-06-01 09:01:00", None))
+
+
+@pytest.mark.parametrize("key", ["1", "9", "#", "*"])
+def test_a_tapback_with_a_keycap_symbol_is_recognised(key: str) -> None:
+    keycap = key + chr(0xFE0F) + chr(0x20E3)
+    assert is_tapback(quoted(f"Reacted {keycap} to", "fine"))
+    assert is_tapback(quoted(f"Removed {keycap} from", "fine"))
+    assert not is_tapback(quoted(f"Reacted {key}5 to", "fine"))
+
+
+def test_timestamps_with_different_offsets_all_come_through_after_the_apps_own_parse() -> None:
+    """The app parses the column before the engine reads it. Two offsets in one
+    column give a column of objects, and no row of it may be lost."""
+    stamps = ["2024-01-01 10:00:00-05:00", "2024-07-01 10:00:00-04:00", "2024-07-02 09:00:00+00:00"]
+    with warnings.catch_warnings():
+        # the app's own parse of such a column warns; that is not under test here
+        warnings.simplefilter("ignore", FutureWarning)
+        parsed = pd.to_datetime(pd.Series(stamps), errors="coerce")
+    table = frame(["one", "two", "three"]).assign(timestamp=parsed)
+    assert table["timestamp"].dtype == object
+    expected = [
+        datetime.fromtimestamp(datetime.fromisoformat(stamp).timestamp()).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        for stamp in stamps
+    ]
+    found = list(FrameSource(table).messages(CONVERSATION, None, None))
+    assert [row["timestamp"] for row in found] == expected
+
+
+def test_reading_timestamps_shows_no_warning_of_the_library() -> None:
+    """A warning of pandas can quote a cell. The log must never hold a row."""
+    table = frame(["one", "two", "three"]).assign(
+        timestamp=["2024-01-01 10:00:00 FOO", "2024-01-01 10:00:00-05:00", "2024-01-02T10:00:00"]
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        list(FrameSource(table).messages(CONVERSATION, None, None))
+    assert caught == []
