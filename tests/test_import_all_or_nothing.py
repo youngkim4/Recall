@@ -1,460 +1,430 @@
-"""An import changes all three files of the archive, or none of them.
+"""An import changes the whole archive, or nothing of it.
 
-A failure at any step (a write, the keeping of an earlier file, a move) leaves
-the three files as they were, and nothing else beside them. While the new files
-move in, each of the three places holds a whole file. An earlier file that
-could not be put back is never lost: the next import puts it back first.
+An update makes the archive hold what the database of Messages holds: new
+messages come in, changed ones change, and those that Messages no longer has
+go. A pull that fails at any step leaves the archive as it was, row for row,
+and a first pull that fails leaves no archive file. Nothing of a second source
+is merged. The export of an earlier build is never written and never removed.
 """
 import errno
-import os
-import shutil
-from pathlib import Path
+import sqlite3
 
-import pandas as pd
 import pytest
 
 import ui_server
-from tests.archive_kit import import_from, left_behind, messages_csv, texts_in, unchanged
-from tests.invented_db import messages_db
+from archive import directory, importer, ledger, runs, source
+from recall_services import archive_state
+from setup_status import DbProbe
+from tests.archive_kit import (
+    KEPT,
+    beside,
+    bridged,
+    held,
+    import_from,
+    no_names,  # noqa: F401
+    own_archives,  # noqa: F401
+    picture,
+    pulled,
+    put_in_messages,
+    run,
+    unchanged,
+    write_database,
+    write_export,
+    write_rows,
+)
 
-pytestmark = pytest.mark.usefixtures("fresh_bundle_cache", "no_saved_names", "messages_home")
+pytestmark = pytest.mark.usefixtures("fresh_bundle_cache", "no_names", "own_archives", "messages_home")
 
-NAMES = ["messages.csv", "messages_attachments.csv", "messages_reactions.csv"]
-NO_SPACE = OSError(errno.ENOSPC, "No space left on device")
-NO_LINKS = OSError(errno.ENOTSUP, "Operation not supported")
+FIRST = ["one", "two", "three", "four", "five"]
+FIRST_HELD = {f"guid-{text}": text for text in FIRST}
+# against FIRST: one message changed, one is gone, one is new
+LATER = [("guid-one", "one, said again"), ("guid-two", "two"), ("guid-three", "three"), ("guid-four", "four"), ("guid-six", "six")]
+QUERY = "SELECT m.ROWID FROM message m"
 
 
-def fail_on_call(monkeypatch, owner, name, failing, error):
-    """Make the calls of `owner.name` whose place is in `failing` raise `error`. Gives the list of calls made."""
-    real = getattr(owner, name)
+@pytest.fixture
+def filled(tmp_path):
+    """An archive that a pull filled with the messages of FIRST."""
+    return pulled(tmp_path / "saves" / "archive.sqlite3", FIRST)
+
+
+def later_database(folder):
+    return write_rows(folder / "later" / "chat.db", LATER)
+
+
+# ---- an update makes the archive hold what the database holds ----
+
+
+def test_an_update_brings_in_the_messages_that_are_new(filled, tmp_path):
+    job = import_from(write_database(tmp_path / "chat.db", [*FIRST, "six"]), filled)
+
+    assert job["status"] == "completed", job["error"]
+    assert held(filled) == {**FIRST_HELD, "guid-six": "six"}
+
+
+def test_an_update_changes_a_message_that_changed_in_messages(filled, tmp_path):
+    rows = [(guid, "two, said again" if guid == "guid-two" else text) for guid, text in FIRST_HELD.items()]
+
+    job = import_from(write_rows(tmp_path / "chat.db", rows), filled)
+
+    assert job["status"] == "completed", job["error"]
+    assert held(filled) == {**FIRST_HELD, "guid-two": "two, said again"}
+
+
+def test_an_update_removes_a_message_that_messages_no_longer_has(filled, tmp_path):
+    job = import_from(write_database(tmp_path / "chat.db", FIRST[:4]), filled)
+
+    assert job["status"] == "completed", job["error"]
+    assert held(filled) == {guid: text for guid, text in FIRST_HELD.items() if text != "five"}
+
+
+def test_after_an_update_the_archive_holds_what_the_database_holds(filled, tmp_path):
+    before = picture(filled)
+
+    job = import_from(later_database(tmp_path), filled)
+
+    assert job["status"] == "completed", job["error"]
+    assert held(filled) == dict(LATER)
+    assert not unchanged(filled, before)
+
+
+def test_an_update_from_the_same_database_changes_no_message(filled, tmp_path):
+    job = import_from(write_database(tmp_path / "chat.db", FIRST), filled)
+
+    assert job["status"] == "completed", job["error"]
+    assert held(filled) == FIRST_HELD
+
+
+def test_nothing_of_an_export_is_merged_into_the_archive_that_a_pull_fills(tmp_path):
+    export = bridged(tmp_path / "messages.csv", ["one", "only in the export"])
+
+    job = import_from(write_database(tmp_path / "chat.db", ["one", "two"]), export)
+
+    assert job["status"] == "completed", job["error"]
+    assert held(export) == {"guid-one": "one", "guid-two": "two"}
+
+
+# ---- a pull that fails leaves the archive as it was ----
+
+
+def not_there(monkeypatch, folder):
+    return folder / "gone" / "chat.db"
+
+
+def not_a_database(monkeypatch, folder):
+    wrong = folder / "notes.db"
+    wrong.write_bytes(b"these are notes, and no database of any kind. " * 40)
+    return wrong
+
+
+def with_no_message(monkeypatch, folder):
+    return write_database(folder / "empty" / "chat.db", [])
+
+
+def closed_to_recall(monkeypatch, folder):
+    hidden = lambda path=None, deep=False: DbProbe(status="fda_blocked", kind="live", path=str(path))  # noqa: E731
+    monkeypatch.setattr(archive_state, "probe_database", hidden)
+    return later_database(folder)
+
+
+def read_stops_midway(monkeypatch, folder):
+    """The reader raises after two batches of one row each: rows of this pull are written by then."""
+    monkeypatch.setattr(importer, "BATCH_ROWS", 1)
+    real = source.SourceReader.messages_after
+
+    def two_batches_then_stop(reader, rowid, size):
+        for count, batch in enumerate(real(reader, rowid, size)):
+            if count == 2:
+                raise sqlite3.OperationalError(f"disk I/O error in {QUERY}")
+            yield batch
+
+    monkeypatch.setattr(source.SourceReader, "messages_after", two_batches_then_stop)
+    return later_database(folder)
+
+
+def disk_fills_during_the_writes(monkeypatch, folder):
+    """The second batch finds the disk full: the first batch is written by then."""
+    monkeypatch.setattr(importer, "BATCH_ROWS", 1)
+    real = ledger.write_messages
     calls = []
 
-    def sometimes(*args, **kwargs):
+    def full_at_the_second(*args, **kwargs):
         calls.append(args)
-        if len(calls) in failing:
-            raise error
+        if len(calls) == 2:
+            raise sqlite3.OperationalError("database or disk is full")
         return real(*args, **kwargs)
 
-    monkeypatch.setattr(owner, name, sometimes)
-    return calls
+    monkeypatch.setattr(ledger, "write_messages", full_at_the_second)
+    return later_database(folder)
 
 
-# ---- a failure at any step ----
+def no_room_for_the_work_file(monkeypatch, folder):
+    def no_room(*_args, **_more):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(source, "copy_source", no_room)
+    return later_database(folder)
 
 
-@pytest.mark.parametrize("failing_write", [1, 2, 3])
-def test_a_write_that_fails_leaves_the_three_files_as_they_were(archive, tmp_path, monkeypatch, failing_write):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    fail_on_call(monkeypatch, pd.DataFrame, "to_csv", {failing_write}, NO_SPACE)
+def last_step_fails(monkeypatch, folder):
+    """Every row is written; the step that ends the run fails."""
 
-    job = import_from(copy, messages_csv(archive))
+    def fail(*_args, **_more):
+        raise sqlite3.OperationalError("disk I/O error")
 
-    assert job["status"] == "failed"
-    assert "No space left on device" in job["error"] and "not changed" in job["error"]
-    assert unchanged(archive)
-    assert left_behind(archive) == []
+    monkeypatch.setattr(runs, "finish_run", fail)
+    return later_database(folder)
 
 
-@pytest.mark.parametrize("failing_move", [1, 2, 3])
-def test_a_move_that_fails_leaves_the_three_files_as_they_were(archive, tmp_path, monkeypatch, failing_move):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    fail_on_call(monkeypatch, os, "replace", {failing_move}, NO_SPACE)
+def a_fault_that_is_not_of_a_database(monkeypatch, folder):
+    def fail(*_args, **_more):
+        raise RuntimeError("anything else")
 
-    job = import_from(copy, messages_csv(archive))
-
-    assert job["status"] == "failed"
-    assert "No space left on device" in job["error"] and "not changed" in job["error"]
-    assert unchanged(archive)
-    assert left_behind(archive) == []
+    monkeypatch.setattr(directory, "settle", fail)
+    return later_database(folder)
 
 
-@pytest.mark.parametrize("failing_move", [1, 2, 3])
-def test_a_first_import_that_fails_leaves_no_file(tmp_path, monkeypatch, failing_move):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    folder = tmp_path / "new"
-    fail_on_call(monkeypatch, os, "replace", {failing_move}, NO_SPACE)
-
-    job = import_from(copy, folder / "messages.csv")
-
-    assert job["status"] == "failed"
-    assert list(folder.iterdir()) == []
-    # there was no archive, so nothing is said about one
-    assert "No space left on device" in job["error"] and "archive was not changed" not in job["error"]
-
-
-def test_a_volume_with_no_hard_links_keeps_the_earlier_files_as_copies(archive, tmp_path, monkeypatch):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    fail_on_call(monkeypatch, os, "link", {1, 2, 3}, NO_LINKS)
-
-    job = import_from(copy, messages_csv(archive))
-
-    assert job["status"] == "completed", job["error"]
-    assert texts_in(messages_csv(archive)) == {"one"}
-    assert left_behind(archive) == []
+FAILURES = [
+    not_there,
+    not_a_database,
+    with_no_message,
+    closed_to_recall,
+    read_stops_midway,
+    disk_fills_during_the_writes,
+    no_room_for_the_work_file,
+    last_step_fails,
+    a_fault_that_is_not_of_a_database,
+]
 
 
-@pytest.mark.parametrize("failing_move", [1, 2, 3])
-def test_a_move_that_fails_on_a_volume_with_no_hard_links_puts_the_copies_back(archive, tmp_path, monkeypatch, failing_move):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    fail_on_call(monkeypatch, os, "link", {1, 2, 3}, NO_LINKS)
-    fail_on_call(monkeypatch, os, "replace", {failing_move}, NO_SPACE)
+@pytest.mark.parametrize("failure", FAILURES, ids=lambda failure: failure.__name__)
+def test_an_update_that_fails_leaves_the_archive_as_it_was(filled, tmp_path, monkeypatch, failure):
+    before = picture(filled)
 
-    job = import_from(copy, messages_csv(archive))
+    job = import_from(failure(monkeypatch, tmp_path), filled)
 
     assert job["status"] == "failed"
-    assert unchanged(archive)
-    assert left_behind(archive) == []
+    assert job["error"].endswith(KEPT)
+    assert unchanged(filled, before)
+    assert held(filled) == FIRST_HELD
+    # the handle that the server holds still reads it
+    assert ui_server.what_the_archive_holds(filled)["messages"] == len(FIRST)
+    assert beside(filled) == []
 
 
-def test_an_earlier_file_that_cannot_be_kept_stops_the_import_before_a_move(archive, tmp_path, monkeypatch):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    fail_on_call(monkeypatch, os, "link", {1, 2, 3}, NO_LINKS)
-    fail_on_call(monkeypatch, shutil, "copy2", {2}, NO_SPACE)
-    moves = fail_on_call(monkeypatch, os, "replace", set(), NO_SPACE)
+@pytest.mark.parametrize("failure", FAILURES, ids=lambda failure: failure.__name__)
+def test_a_first_import_that_fails_leaves_no_archive_file(tmp_path, monkeypatch, failure):
+    target = tmp_path / "new" / "archive.sqlite3"
 
-    job = import_from(copy, messages_csv(archive))
-
-    assert job["status"] == "failed"
-    assert moves == []
-    assert unchanged(archive)
-    assert left_behind(archive) == []
-
-
-def test_files_that_cannot_be_put_back_stay_beside_the_archive_and_the_error_says_so(archive, tmp_path, monkeypatch):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    before = dict(archive)
-    # the second move fails, and so does the move that puts the first file back
-    fail_on_call(monkeypatch, os, "replace", {2, 3}, NO_SPACE)
-
-    job = import_from(copy, messages_csv(archive))
-
-    folder = messages_csv(archive).parent
-    kept = folder / "messages_attachments.before-update.csv"
-    assert job["status"] == "failed"
-    assert ".before-update" in job["error"] and "not changed" not in job["error"]
-    assert kept.read_text(encoding="utf-8") == before[folder / "messages_attachments.csv"]
-    # the two files that were not moved are as they were
-    for name in ("messages.csv", "messages_reactions.csv"):
-        assert (folder / name).read_text(encoding="utf-8") == before[folder / name]
-
-
-def test_a_file_that_cannot_be_removed_afterwards_does_not_hide_why_the_import_stopped(archive, tmp_path, monkeypatch):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    fail_on_call(monkeypatch, pd.DataFrame, "to_csv", {2}, NO_SPACE)
-    real_unlink = Path.unlink
-
-    def refuse_to_remove(path, *args, **kwargs):
-        if ".tmp-export" in path.name:
-            raise PermissionError(errno.EACCES, "Permission denied")
-        return real_unlink(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "unlink", refuse_to_remove)
-
-    job = import_from(copy, messages_csv(archive))
+    job = import_from(failure(monkeypatch, tmp_path), target)
 
     assert job["status"] == "failed"
-    assert "No space left on device" in job["error"]
-    assert unchanged(archive)
+    assert not target.exists()
+    assert not target.parent.exists() or list(target.parent.iterdir()) == []
+    # there was no archive, so nothing is said of one
+    assert "The archive" not in job["error"]
+    assert ui_server.holds_messages(target) is False
 
 
-def test_an_import_that_finished_is_not_failed_by_what_it_cannot_remove(archive, tmp_path):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    real_unlink = Path.unlink
-    strays = ("messages_attachments.before-update.csv", "messages_reactions.before-update.csv")
+@pytest.mark.parametrize("target", ["messages.csv", "archive.sqlite3"])
+def test_a_first_import_that_fails_leaves_no_archive_beside_an_export_with_no_message(tmp_path, monkeypatch, target):
+    export = write_export(tmp_path / "new" / "messages.csv", [])
+    kept = export.read_bytes()
 
-    def refuse_to_remove(path, *args, **kwargs):
-        if path.name in strays and path.exists():
-            raise PermissionError(errno.EACCES, "Permission denied")
-        return real_unlink(path, *args, **kwargs)
+    job = import_from(read_stops_midway(monkeypatch, tmp_path), tmp_path / "new" / target)
 
+    assert job["status"] == "failed"
+    assert [path.name for path in export.parent.iterdir()] == ["messages.csv"]
+    assert export.read_bytes() == kept
+
+
+def test_a_pull_that_is_cut_off_leaves_the_archive_as_it_was(filled, tmp_path, monkeypatch):
+    # the thread of the job ends in a way that no code catches
+    before = picture(filled)
+    monkeypatch.setattr(importer, "BATCH_ROWS", 1)
+    real = source.SourceReader.messages_after
+
+    def one_batch_then_leave(reader, rowid, size):
+        yield next(real(reader, rowid, size))
+        raise SystemExit("the process is ending")
+
+    monkeypatch.setattr(source.SourceReader, "messages_after", one_batch_then_leave)
+
+    with pytest.raises(SystemExit):
+        import_from(later_database(tmp_path), filled)
+
+    assert unchanged(filled, before)
+    assert beside(filled) == []
+
+
+def test_a_first_pull_that_is_cut_off_leaves_no_archive_file(tmp_path, monkeypatch):
+    target = tmp_path / "new" / "archive.sqlite3"
+    monkeypatch.setattr(importer, "BATCH_ROWS", 1)
+    real = source.SourceReader.messages_after
+
+    def one_batch_then_leave(reader, rowid, size):
+        yield next(real(reader, rowid, size))
+        raise SystemExit("the process is ending")
+
+    monkeypatch.setattr(source.SourceReader, "messages_after", one_batch_then_leave)
+
+    with pytest.raises(SystemExit):
+        import_from(later_database(tmp_path), target)
+
+    assert not target.parent.exists() or list(target.parent.iterdir()) == []
+
+
+def test_the_update_after_one_that_failed_runs(filled, tmp_path):
+    # a failure keeps no lock and leaves no work file in the way
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(Path, "unlink", refuse_to_remove)
-        job = import_from(copy, messages_csv(archive))
+        failed = import_from(read_stops_midway(patch, tmp_path), filled)
 
+    job = import_from(later_database(tmp_path), filled)
+
+    assert failed["status"] == "failed"
     assert job["status"] == "completed", job["error"]
-    assert texts_in(messages_csv(archive)) == {"one"}
-    assert left_behind(archive) == sorted(strays)
-
-    # they are of an import that finished: the next import removes them, and does not put them back
-    after = import_from(tmp_path / "gone.db", messages_csv(archive))
-
-    assert after["status"] == "failed"
-    assert texts_in(messages_csv(archive)) == {"one"}
-    assert left_behind(archive) == []
+    assert held(filled) == dict(LATER)
+    assert beside(filled) == []
 
 
-# ---- what a request reads while the files move ----
-
-
-def test_each_file_of_the_archive_is_whole_at_every_step_of_the_moves(archive, tmp_path, monkeypatch):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    folder = messages_csv(archive).parent
-    old = {path.name: text for path, text in archive.items()}
-    real_replace = os.replace
-    seen = []
-
-    def look_then_move(source, target):
-        seen.append({name: (folder / name).read_text(encoding="utf-8") for name in NAMES})
-        return real_replace(source, target)
-
-    monkeypatch.setattr(os, "replace", look_then_move)
-
-    job = import_from(copy, messages_csv(archive))
-
-    assert job["status"] == "completed", job["error"]
-    new = {name: (folder / name).read_text(encoding="utf-8") for name in NAMES}
-    attachments, reactions, messages = "messages_attachments.csv", "messages_reactions.csv", "messages.csv"
-    # the messages move last: a new file of messages is never beside earlier attachments or reactions
-    assert seen == [
-        old,
-        {**old, attachments: new[attachments]},
-        {**old, attachments: new[attachments], reactions: new[reactions]},
-    ]
-    assert new[messages] != old[messages]
-
-
-def test_what_an_import_that_was_cut_off_left_is_removed_by_the_next(archive, tmp_path):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    folder = messages_csv(archive).parent
-    for name in ("messages.tmp-export.csv", "messages_reactions.tmp-export.csv", "messages_attachments.before-update.csv"):
-        (folder / name).write_text("left by an import that was cut off", encoding="utf-8")
-
-    job = import_from(copy, messages_csv(archive))
-
-    assert job["status"] == "completed", job["error"]
-    assert left_behind(archive) == []
-
-
-
-# ---- what an import that did not finish left ----
-
-
-def leave_in_parts(archive, copy):
-    """An import whose second move fails, and whose move that puts the first file back fails too."""
+def test_a_first_import_after_one_that_failed_runs(tmp_path):
+    target = tmp_path / "new" / "archive.sqlite3"
     with pytest.MonkeyPatch.context() as patch:
-        fail_on_call(patch, os, "replace", {2, 3}, NO_SPACE)
-        job = import_from(copy, messages_csv(archive))
-    assert job["status"] == "failed" and ".before-update" in job["error"], job["error"]
-    assert not unchanged(archive)
-    return job
+        failed = import_from(read_stops_midway(patch, tmp_path), target)
+
+    job = import_from(later_database(tmp_path), target)
+
+    assert failed["status"] == "failed"
+    assert job["status"] == "completed", job["error"]
+    assert held(target) == dict(LATER)
 
 
-def test_an_import_that_could_not_put_a_file_back_says_that_the_next_one_will(archive, tmp_path):
-    job = leave_in_parts(archive, messages_db(tmp_path / "copy.db", ["one"]))
+def test_a_file_that_is_no_archive_is_not_written_over(tmp_path):
+    put_in_messages(write_database(tmp_path / "chat.db", ["one"]))
+    target = tmp_path / "saves" / "archive.sqlite3"
+    target.parent.mkdir()
+    target.write_bytes(b"not an archive, and long enough to be read as a page. " * 40)
+    kept = target.read_bytes()
 
-    assert "messages_attachments.before-update.csv" in job["error"]
-    assert "The next import puts them back." in job["error"]
+    job = run("setup_import", {"messagesPath": str(target), "includeContacts": False})
 
-
-def test_the_next_import_first_puts_back_what_the_one_before_it_could_not(archive, tmp_path):
-    leave_in_parts(archive, messages_db(tmp_path / "copy.db", ["one"]))
-
-    # this one cannot even start: there is no file to read
-    job = import_from(tmp_path / "gone.db", messages_csv(archive))
-
-    assert job["status"] == "failed" and "There is no Messages database" in job["error"]
-    assert unchanged(archive)
-    assert left_behind(archive) == []
+    assert job["status"] == "failed"
+    assert job["error"] == f"The update failed. {KEPT}"
+    assert target.read_bytes() == kept
+    assert [path.name for path in target.parent.iterdir()] == ["archive.sqlite3"]
 
 
-def test_the_next_import_that_succeeds_leaves_only_the_new_archive(archive, tmp_path):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    leave_in_parts(archive, copy)
+# ---- a database with no message to keep ----
 
-    job = import_from(copy, messages_csv(archive))
+
+def rows_and_no_message(folder):
+    """A database whose rows are all events of a group: the check finds rows, and none is a message."""
+    from tests.recall_services.state_data import write_database_of_events
+
+    (folder / "events").mkdir()
+    return write_database_of_events(folder / "events" / "chat.db")
+
+
+def test_an_update_from_a_database_with_no_message_to_keep_leaves_the_archive(filled, tmp_path):
+    before = picture(filled)
+
+    job = import_from(rows_and_no_message(tmp_path), filled)
+
+    assert job["status"] == "failed"
+    assert job["error"].endswith(KEPT)
+    assert unchanged(filled, before)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason=(
+        "product fault: a first import of a database whose rows hold no message to keep ends as completed "
+        "with 0 messages and leaves an archive file with nothing in it; CONTRACTS.md says that a database "
+        "with no message to keep is not imported"
+    ),
+)
+def test_a_first_import_of_a_database_with_no_message_to_keep_makes_no_archive(tmp_path):
+    target = tmp_path / "new" / "archive.sqlite3"
+
+    job = import_from(rows_and_no_message(tmp_path), target)
+
+    assert job["status"] == "failed"
+    assert "holds no messages" in job["error"]
+    assert not target.exists()
+
+
+# ---- the export of an earlier build ----
+
+
+EXPORT_FILES = {
+    "messages.csv": None,
+    "messages_attachments.csv": "message_id,filename\n1,kept.jpg\n",
+    "messages_reactions.csv": "reaction_id,reaction_type\n1,kept\n",
+}
+
+
+@pytest.fixture
+def earlier_export(tmp_path):
+    """The three files that an earlier build wrote, as bytes by name. The archive is not made yet."""
+    folder = tmp_path / "earlier"
+    write_export(folder / "messages.csv", ["one", "two", "three"])
+    for name, text in EXPORT_FILES.items():
+        if text is not None:
+            (folder / name).write_text(text, encoding="utf-8")
+    return {folder / name: (folder / name).read_bytes() for name in EXPORT_FILES}
+
+
+def as_it_was(export_files):
+    return all(path.read_bytes() == kept for path, kept in export_files.items())
+
+
+def stamps(export_files):
+    return [path.stat().st_mtime_ns for path in export_files]
+
+
+def test_a_load_of_the_export_leaves_its_three_files_as_they_were(earlier_export):
+    export = next(iter(earlier_export))
+    written = stamps(earlier_export)
+
+    job = run("bridge", {"messagesPath": str(export)})
 
     assert job["status"] == "completed", job["error"]
-    assert texts_in(messages_csv(archive)) == {"one"}
-    assert left_behind(archive) == []
+    assert as_it_was(earlier_export) and stamps(earlier_export) == written
+    assert beside(export.with_suffix(".sqlite3")) == sorted(EXPORT_FILES)
 
 
-def test_the_next_import_that_fails_part_way_leaves_the_archive_as_it_first_was(archive, tmp_path, monkeypatch):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    leave_in_parts(archive, copy)
-    fail_on_call(monkeypatch, pd.DataFrame, "to_csv", {2}, NO_SPACE)
+def test_a_pull_leaves_the_three_files_of_the_export_as_they_were(earlier_export, tmp_path):
+    export = next(iter(earlier_export))
+    written = stamps(earlier_export)
+    run("bridge", {"messagesPath": str(export)})
 
-    job = import_from(copy, messages_csv(archive))
+    first = import_from(write_database(tmp_path / "chat.db", ["one", "two", "three", "four"]), export)
+    second = import_from(write_database(tmp_path / "chat.db", ["one", "two", "three", "four", "five"]), export)
 
-    assert job["status"] == "failed"
-    assert unchanged(archive)
-    assert left_behind(archive) == []
-
-
-def test_an_archive_that_still_cannot_be_put_back_is_not_imported_over(archive, tmp_path, monkeypatch):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    leave_in_parts(archive, copy)
-    folder = messages_csv(archive).parent
-    kept = folder / "messages_attachments.before-update.csv"
-    fail_on_call(monkeypatch, os, "replace", set(range(1, 20)), NO_SPACE)
-    monkeypatch.setattr(ui_server, "extract_messages", lambda _path: pytest.fail("the database was read"))
-
-    job = import_from(copy, messages_csv(archive))
-
-    assert job["status"] == "failed"
-    assert "messages_attachments.before-update.csv" in job["error"] and "not changed" not in job["error"]
-    # the only copy of the earlier attachments is still there
-    assert kept.read_text(encoding="utf-8") == archive[folder / "messages_attachments.csv"]
+    assert (first["status"], second["status"]) == ("completed", "completed"), (first["error"], second["error"])
+    assert len(held(export)) == 5
+    assert as_it_was(earlier_export) and stamps(earlier_export) == written
+    assert beside(export.with_suffix(".sqlite3")) == sorted(EXPORT_FILES)
 
 
-def test_a_file_that_cannot_be_put_back_twice_is_still_put_back_the_third_time(archive, tmp_path):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    leave_in_parts(archive, copy)
+def test_a_first_pull_beside_an_export_that_was_never_loaded_leaves_its_files(earlier_export, tmp_path):
+    export = next(iter(earlier_export))
+    put_in_messages(write_database(tmp_path / "chat.db", ["from messages"]))
 
-    # the next import cannot put the attachments back either; everything else would work
-    with pytest.MonkeyPatch.context() as patch:
-        fail_on_call(patch, os, "replace", {1}, NO_SPACE)
-        second = import_from(copy, messages_csv(archive))
-    third = import_from(tmp_path / "gone.db", messages_csv(archive))
+    job = run("setup_import", {"messagesPath": str(export), "includeContacts": False})
 
-    assert second["status"] == "failed" and "messages_attachments.before-update.csv" in second["error"]
-    assert third["status"] == "failed" and "There is no Messages database" in third["error"]
-    assert unchanged(archive)
-    assert left_behind(archive) == []
+    assert job["status"] == "completed", job["error"]
+    assert held(export) == {"guid-from messages": "from messages"}
+    assert as_it_was(earlier_export)
 
 
-def test_an_import_that_was_cut_off_during_its_moves_is_undone_by_the_next(archive, tmp_path):
-    # as the process left it: the attachments are new, and all three earlier files are kept
-    folder = messages_csv(archive).parent
-    for path in archive:
-        os.link(path, path.with_name(f"{path.stem}.before-update{path.suffix}"))
-    (folder / "messages_attachments.csv").unlink()
-    (folder / "messages_attachments.csv").write_text("message_id,filename\n9,new.jpg\n", encoding="utf-8")
+def test_a_pull_that_fails_leaves_the_three_files_of_the_export_as_they_were(earlier_export, tmp_path, monkeypatch):
+    export = next(iter(earlier_export))
+    run("bridge", {"messagesPath": str(export)})
 
-    job = import_from(tmp_path / "gone.db", messages_csv(archive))
+    job = import_from(read_stops_midway(monkeypatch, tmp_path), export)
 
     assert job["status"] == "failed"
-    assert unchanged(archive)
-    assert left_behind(archive) == []
-
-
-def test_what_an_import_that_finished_left_is_removed_and_not_put_back(archive, tmp_path):
-    # as the process left it: all three files are new, and two earlier files were not yet removed
-    folder = messages_csv(archive).parent
-    for name in ("messages_attachments", "messages_reactions"):
-        (folder / f"{name}.before-update.csv").write_text("from the archive before this one", encoding="utf-8")
-
-    job = import_from(tmp_path / "gone.db", messages_csv(archive))
-
-    assert job["status"] == "failed"
-    assert unchanged(archive)
-    assert left_behind(archive) == []
-
-
-def test_an_import_whose_last_step_fails_leaves_the_three_files_as_they_were(archive, tmp_path, monkeypatch):
-    # the three files have moved in; giving up the earlier messages file is what finishes the import
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    real_unlink = Path.unlink
-    refused = []
-
-    def refuse_once(path, *args, **kwargs):
-        if path.name == "messages.before-update.csv" and path.exists() and not refused:
-            refused.append(path)
-            raise PermissionError(errno.EACCES, "Permission denied")
-        return real_unlink(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "unlink", refuse_once)
-
-    job = import_from(copy, messages_csv(archive))
-
-    assert job["status"] == "failed" and refused
-    assert "Permission denied" in job["error"] and "not changed" in job["error"]
-    assert unchanged(archive)
-    assert left_behind(archive) == []
-
-
-def test_a_new_file_that_cannot_be_removed_is_named_and_no_earlier_file_is_claimed(archive, tmp_path, monkeypatch):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    folder = messages_csv(archive).parent
-    (folder / "messages_attachments.csv").unlink()
-    # the second move fails; the new attachments file has no earlier file, and it cannot be removed
-    fail_on_call(monkeypatch, os, "replace", {2}, NO_SPACE)
-    real_unlink = Path.unlink
-
-    def keep_the_new_file(path, *args, **kwargs):
-        if path.name == "messages_attachments.csv":
-            raise PermissionError(errno.EACCES, "Permission denied")
-        return real_unlink(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "unlink", keep_the_new_file)
-
-    job = import_from(copy, messages_csv(archive))
-
-    assert job["status"] == "failed"
-    assert "A new file could not be removed" in job["error"] and "messages_attachments.csv" in job["error"]
-    assert "messages_attachments.before-update.csv" not in job["error"]
-    for name in ("messages.csv", "messages_reactions.csv"):
-        assert (folder / name).read_text(encoding="utf-8") == archive[folder / name]
-
-
-def test_one_file_that_cannot_be_put_back_does_not_stop_the_others(archive, tmp_path, monkeypatch):
-    copy = messages_db(tmp_path / "copy.db", ["one"])
-    folder = messages_csv(archive).parent
-    # the third move fails; of the two files to put back, the first one tried (the reactions) fails
-    fail_on_call(monkeypatch, os, "replace", {3, 4}, NO_SPACE)
-
-    job = import_from(copy, messages_csv(archive))
-
-    assert job["status"] == "failed"
-    assert "messages_reactions.before-update.csv" in job["error"]
-    assert "messages_attachments.before-update.csv" not in job["error"]
-    for name in ("messages.csv", "messages_attachments.csv"):
-        assert (folder / name).read_text(encoding="utf-8") == archive[folder / name]
-    assert (folder / "messages_reactions.before-update.csv").read_text(encoding="utf-8") == archive[folder / "messages_reactions.csv"]
-    # the earlier messages file stays too: it says that the import did not finish
-    assert (folder / "messages.before-update.csv").exists()
-
-
-def test_files_that_a_quit_left_half_written_are_removed_when_an_import_starts(archive, tmp_path):
-    folder = messages_csv(archive).parent
-    for name in ("messages.tmp-export.csv", "messages_attachments.tmp-export.csv"):
-        (folder / name).write_text("half of a file", encoding="utf-8")
-
-    # this import cannot read anything, and still clears what the one before it left
-    job = import_from(tmp_path / "gone.db", messages_csv(archive))
-
-    assert job["status"] == "failed"
-    assert unchanged(archive)
-    assert left_behind(archive) == []
-
-
-def cut_off_after_the_moves(archive):
-    """As the end of the process left it: the three new files are in place, and the earlier files are all kept."""
-    folder = messages_csv(archive).parent
-    for path, text in archive.items():
-        path.with_name(f"{path.stem}.before-update{path.suffix}").write_text(text, encoding="utf-8")
-        path.write_text(text.replace("kept", "newer"), encoding="utf-8")
-    return folder
-
-
-def test_an_import_that_put_the_archive_back_does_not_say_that_nothing_changed(archive, tmp_path):
-    cut_off_after_the_moves(archive)
-
-    job = import_from(tmp_path / "gone.db", messages_csv(archive))
-
-    assert job["status"] == "failed"
-    assert job["error"] == (
-        "There is no Messages database on this Mac. "
-        "The archive is as it was before the import that did not finish."
-    )
-    assert unchanged(archive)
-
-
-def test_the_archive_of_the_app_is_put_back_when_the_server_starts(archive, monkeypatch):
-    cut_off_after_the_moves(archive)
-    monkeypatch.setattr(ui_server, "DEFAULT_MESSAGES_CSV", messages_csv(archive))
-
-    ui_server.settle_default_archive()
-
-    assert unchanged(archive)
-    assert left_behind(archive) == []
-
-
-def test_a_start_with_an_archive_that_cannot_be_put_back_goes_on(archive, monkeypatch):
-    cut_off_after_the_moves(archive)
-    monkeypatch.setattr(ui_server, "DEFAULT_MESSAGES_CSV", messages_csv(archive))
-    fail_on_call(monkeypatch, os, "replace", set(range(1, 9)), NO_SPACE)
-
-    ui_server.settle_default_archive()
-
-    assert (messages_csv(archive).parent / "messages.before-update.csv").exists()
-
+    assert as_it_was(earlier_export)
+    assert beside(export.with_suffix(".sqlite3")) == sorted(EXPORT_FILES)
