@@ -13,6 +13,7 @@ import {
   noNotes,
   noted,
   notStartedJob,
+  offersCopy,
   revealsFirstWords,
   stepForDatabase,
   whyNotThisCopy,
@@ -179,7 +180,7 @@ test('the four marks at the top follow the step', () => {
 })
 
 test('an import writes the archive file that the app reads', () => {
-  const request = importRequest({ archivePath: '/elsewhere/mine.csv', copyPath: '' })
+  const request = importRequest({ archivePath: '/elsewhere/mine.csv', copyPath: '', rerun: false })
 
   assert.deepEqual(request, { messagesPath: '/elsewhere/mine.csv', dbPath: undefined, includeContacts: true })
   // what is sent names the archive and no database
@@ -188,20 +189,29 @@ test('an import writes the archive file that the app reads', () => {
 
 test('with no archive file set, the server writes its own', () => {
   for (const archivePath of ['', '   ']) {
-    assert.deepEqual(JSON.parse(JSON.stringify(importRequest({ archivePath, copyPath: '' }))), { includeContacts: true })
+    assert.deepEqual(JSON.parse(JSON.stringify(importRequest({ archivePath, copyPath: '', rerun: false }))), { includeContacts: true })
   }
 })
 
 test('a copy is named only when one was chosen, and with the archive file', () => {
-  const request = importRequest({ archivePath: '/elsewhere/mine.csv', copyPath: '/copies/chat.db' })
+  const request = importRequest({ archivePath: '/elsewhere/mine.csv', copyPath: '/copies/chat.db', rerun: false })
 
   assert.deepEqual(request, { messagesPath: '/elsewhere/mine.csv', dbPath: '/copies/chat.db', includeContacts: true })
 })
 
 test('the path of the archive is sent without the spaces around it, also with a copy', () => {
-  const request = importRequest({ archivePath: '  /elsewhere/mine.csv ', copyPath: '/copies/chat.db' })
+  const request = importRequest({ archivePath: '  /elsewhere/mine.csv ', copyPath: '/copies/chat.db', rerun: false })
 
   assert.deepEqual(request, { messagesPath: '/elsewhere/mine.csv', dbPath: '/copies/chat.db', includeContacts: true })
+})
+
+test('an update names no copy: it reads Messages on this Mac', () => {
+  assert.equal(offersCopy(false), true)
+  assert.equal(offersCopy(true), false)
+  // whatever is still in hand, the request of an update names no database
+  const request = importRequest({ archivePath: '/elsewhere/mine.csv', copyPath: '/copies/chat.db', rerun: true })
+
+  assert.deepEqual(JSON.parse(JSON.stringify(request)), { messagesPath: '/elsewhere/mine.csv', includeContacts: true })
 })
 
 test('a copy that can be imported has nothing against it', () => {

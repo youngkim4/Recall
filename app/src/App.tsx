@@ -465,6 +465,8 @@ function App() {
     async (result: SetupImportResult | null) => {
       // the first words follow the first setup, not each update
       const reveal = revealsFirstWords(rerunSetup, result)
+      // no preview of the archive before the import is shown again
+      clearPreviewCache()
       setShowOnboarding(false)
       setRerunSetup(false)
       setActiveView('home')

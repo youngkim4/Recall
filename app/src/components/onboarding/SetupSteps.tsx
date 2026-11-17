@@ -1,5 +1,6 @@
 import { recallBridge } from '../../lib/bridge'
 import { plural } from '../../lib/format'
+import { offersCopy } from '../../lib/setupGuide'
 import type { SetupImportResult } from '../../types'
 import { OtherSource } from './OtherSource'
 
@@ -110,7 +111,7 @@ export function PermissionStep({
           Waiting for access
         </p>
       )}
-      <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} />
+      {offersCopy(rerun) ? <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} /> : null}
     </>
   )
 }
@@ -140,9 +141,11 @@ export function NoMessagesStep({
     <>
       <h1>{variant === 'missing' ? 'No Messages database on this Mac' : 'Your Messages history is empty'}</h1>
       <p className="setup-lead">
-        {variant === 'missing'
-          ? 'Recall looked in ~/Library/Messages and found no chat.db. If your messages are on another Mac, copy chat.db from it and choose the copy below.'
-          : 'The database is there with nothing in it. If you signed in to iCloud a moment ago, Messages may still be syncing.'}
+        {variant === 'empty'
+          ? 'The database is there with nothing in it. If you signed in to iCloud a moment ago, Messages may still be syncing.'
+          : rerun
+            ? 'Recall looked in ~/Library/Messages and found no chat.db. An update reads Messages on this Mac. Open Messages and sign in, then check again.'
+            : 'Recall looked in ~/Library/Messages and found no chat.db. If your messages are on another Mac, copy chat.db from it and choose the copy below.'}
       </p>
       {stillNothing ? (
         <p className="setup-note" role="status">
@@ -157,7 +160,7 @@ export function NoMessagesStep({
           {wayOut(rerun)}
         </button>
       </div>
-      <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} />
+      {offersCopy(rerun) ? <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} /> : null}
     </>
   )
 }
@@ -173,7 +176,8 @@ type DbProblemStepProps = SourceProps & {
 }
 
 // Messages itself cannot be read as a database. A copy that cannot be read
-// never comes here: it is refused where it is chosen.
+// never comes here: it is refused where it is chosen. A first setup can go on
+// from a copy; an update cannot.
 export function DbProblemStep({
   rerun,
   variant,
@@ -192,6 +196,7 @@ export function DbProblemStep({
         {variant === 'invalid'
           ? 'The file that Messages keeps on this Mac, ~/Library/Messages/chat.db, is not a Messages database.'
           : 'The file that Messages keeps on this Mac, ~/Library/Messages/chat.db, could not be read.'}
+        {rerun ? ' An update reads Messages on this Mac. Open Messages, wait until your conversations show, then try again.' : null}
       </p>
       {detail ? <p className="setup-note">{detail}</p> : null}
       <div className="setup-actions">
@@ -202,7 +207,7 @@ export function DbProblemStep({
           {rerun ? 'Not now' : 'Back'}
         </button>
       </div>
-      <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} />
+      {offersCopy(rerun) ? <OtherSource busy={pickBusy} error={pickError} onPick={onPick} onPath={onManualPath} /> : null}
     </>
   )
 }
@@ -230,6 +235,7 @@ export function DoneStep({ result, rerun, onFinish }: DoneStepProps) {
     <>
       <h1>Your archive is ready</h1>
       {counted.length ? <p className="setup-lead">{counted.join(', ')}</p> : null}
+      {result?.warning ? <p className="setup-note">{result.warning}</p> : null}
       {result?.contactsSkipped ? (
         <p className="setup-note">
           Contacts could not be read, so some people show as numbers. Read them again from Settings at any time.

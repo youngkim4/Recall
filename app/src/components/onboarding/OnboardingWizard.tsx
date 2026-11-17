@@ -228,7 +228,7 @@ export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, o
     asked.current = true
     setStarting(true)
     try {
-      const request = importRequest({ archivePath: messagesPath, copyPath: picked?.path ?? '' })
+      const request = importRequest({ archivePath: messagesPath, copyPath: picked?.path ?? '', rerun })
       const { job: created } = await recallApi.createSetupImportJob(request)
       follow(created)
     } catch (error) {

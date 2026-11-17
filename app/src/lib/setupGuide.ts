@@ -96,13 +96,20 @@ export function foundTheSame(before: SetupDbStatus, next: SetupStatus | null) {
   return next !== null && next.db.status === before
 }
 
+// A copy can be named in a first setup only. An update reads Messages on
+// this Mac and nothing else, so its guide offers no other source. The server
+// holds the same rule (database_for).
+export function offersCopy(rerun: boolean) {
+  return !rerun
+}
+
 // What the guide asks the server for when it starts an import. The archive
 // file is the one that the app reads; with none set, the server writes its
-// own. A database is named only when a copy was chosen in this guide.
-export function importRequest(input: { archivePath: string; copyPath: string }) {
+// own. A database is named only when a copy was chosen in a first setup.
+export function importRequest(input: { archivePath: string; copyPath: string; rerun: boolean }) {
   return {
     messagesPath: input.archivePath.trim() || undefined,
-    dbPath: input.copyPath || undefined,
+    dbPath: (offersCopy(input.rerun) && input.copyPath) || undefined,
     includeContacts: true,
   }
 }

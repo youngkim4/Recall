@@ -59,6 +59,8 @@ export type SetupImportResult = {
   firstYear?: number | null
   lastYear?: number | null
   contactsSkipped?: boolean
+  // the archive is written, and a later step of the import failed
+  warning?: string
 }
 
 export type FirstWordsEntry = {
@@ -371,6 +373,7 @@ export type Job = {
     firstYear?: number | null
     lastYear?: number | null
     contactsSkipped?: boolean
+    warning?: string
   } | null
   error?: string | null
 }
