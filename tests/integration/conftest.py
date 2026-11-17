@@ -1,12 +1,12 @@
 """Test setup for the tests of the joined branch.
 
 The guards are set before the first project import: a dummy key, a temp data
-folder, and no socket that leaves this machine. See guards.py.
+folder, and no socket that leaves this machine. See tests/guards.py.
 """
 
 from __future__ import annotations
 
-from tests.integration import guards
+from tests import guards
 
 guards.install()
 
@@ -17,8 +17,7 @@ import pytest  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _guards(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """A fixed time zone, a temp data folder and a live socket block for every test."""
-    guards.assert_no_way_out()
+    """A fixed time zone and the temp data folder for every test."""
     guards.pin_data_folder(monkeypatch)
     with guards.time_zone():
         yield

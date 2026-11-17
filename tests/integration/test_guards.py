@@ -9,8 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.archive import netguard
-from tests.integration import guards
+from tests import guards
 
 
 def test_the_key_is_a_dummy() -> None:
@@ -44,7 +43,7 @@ def test_default_paths_are_in_a_temp_folder() -> None:
     from archive import default_archive_path
 
     folder = Path(os.environ["RECALL_DATA_DIR"])
-    assert folder.name.startswith("recall-joined-tests-")
+    assert folder.name.startswith(guards.TEMP_PREFIX)
     assert recall_paths.DATA_DIR == folder
     assert recall_paths.SAVES_DIR == folder / "saves"
     assert recall_paths.DEFAULT_MESSAGES_CSV == folder / "messages.csv"
@@ -70,10 +69,10 @@ def test_modules_that_read_the_home_folder_point_into_the_temp_folder() -> None:
 
 
 def test_no_socket_leaves_this_machine() -> None:
-    assert netguard.blocks_outbound()
-    with pytest.raises(netguard.NetworkBlocked):
+    assert guards.blocks_outbound()
+    with pytest.raises(guards.NetworkBlocked):
         socket.getaddrinfo("api.openai.com", 443)
-    with pytest.raises(netguard.NetworkBlocked):
+    with pytest.raises(guards.NetworkBlocked):
         socket.create_connection(("192.0.2.1", 9), timeout=1)
 
 
@@ -86,14 +85,14 @@ def test_no_socket_leaves_this_machine() -> None:
     ],
 )
 def test_no_name_is_asked_of_another_machine(lookup: object) -> None:
-    with pytest.raises(OSError, match="blocked in tests"):
+    with pytest.raises(guards.NetworkBlocked, match="blocked in tests"):
         lookup()  # type: ignore[operator]
 
 
 def test_no_packet_is_sent_with_sendmsg() -> None:
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        with pytest.raises(OSError, match="blocked in tests"):
+        with pytest.raises(guards.NetworkBlocked, match="blocked in tests"):
             probe.sendmsg([b"x"], [], 0, ("192.0.2.1", 9))
     finally:
         probe.close()

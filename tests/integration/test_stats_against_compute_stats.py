@@ -17,8 +17,8 @@ import pytest
 
 from archive.compat import messages_frame
 from conversation import compute_stats, filter_conversation, within_dates
+from tests import guards
 from tests.integration import bridge_data as data
-from tests.integration import guards
 from tests.integration.bridge_data import GROUP, MIRA, NEIGHBOUR, ROWAN, Loaded, export_row
 
 HOUR_IN_DAYS = 1 / 24  # 0.0417 days

@@ -1,47 +1,23 @@
-import atexit
-import os
-import shutil
-import socket
 import sqlite3
-import tempfile
 import threading
 
-# These three lines come before any import of the project.
+# These lines come before any import of the project. See tests/guards.py.
 # - The key is not a key, whatever the shell or a .env file holds.
 # - "~" is an empty folder: setup_status and contact_names work out where
 #   Messages and Contacts are from it when they are imported.
-_HOME = tempfile.mkdtemp(prefix="recall-tests-home-")
-atexit.register(shutil.rmtree, _HOME, ignore_errors=True)
-os.environ.update({"OPENAI_API_KEY": "test-key-not-real", "HOME": _HOME})
+# - No socket leaves this machine.
+from tests import guards
+
+guards.install()
 
 import pandas as pd  # noqa: E402
 import pytest  # noqa: E402
-
-THIS_MACHINE = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
 @pytest.fixture(autouse=True)
 def stay_on_this_machine(monkeypatch):
     """No test reaches another host: not an AI provider, not anything else."""
-    connect = socket.socket.connect
-    look_up = socket.getaddrinfo
-
-    def refuse(host):
-        raise ConnectionRefusedError(f"a test tried to reach {host}; tests stay on this machine")
-
-    def guarded_connect(sock, address):
-        # an address that is not a pair is a socket file on this machine
-        if isinstance(address, tuple) and address[0] not in THIS_MACHINE:
-            refuse(address[0])
-        return connect(sock, address)
-
-    def guarded_look_up(host, *args, **kwargs):
-        if host is not None and host not in THIS_MACHINE:
-            refuse(host)
-        return look_up(host, *args, **kwargs)
-
-    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
-    monkeypatch.setattr(socket, "getaddrinfo", guarded_look_up)
+    guards.hold(monkeypatch)
 
 
 @pytest.fixture

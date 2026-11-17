@@ -21,8 +21,8 @@ import day_view
 from archive import days as archive_days
 from archive.compat import messages_frame
 from conversation import in_conversation
+from tests import guards
 from tests.integration import bridge_data as data
-from tests.integration import guards
 from tests.integration.bridge_data import GROUP, MIRA, NEIGHBOUR, ROWAN, Loaded, export_row
 
 SHORT_DAY = "2024-03-04"

@@ -177,18 +177,18 @@ def test_the_socket_guard_blocks_every_way_out(blocked_attempts: list[str]) -> N
     documentation: even without the guard these would reach nobody."""
     import socket
 
-    from .conftest import OutboundNetworkBlocked
+    from tests.guards import NetworkBlocked
 
     before = len(blocked_attempts)
-    with pytest.raises(OutboundNetworkBlocked):
+    with pytest.raises(NetworkBlocked):
         socket.getaddrinfo("lookup.invalid", 443)
-    with pytest.raises(OutboundNetworkBlocked):
+    with pytest.raises(NetworkBlocked):
         socket.gethostbyname("byname.invalid")
-    with pytest.raises(OutboundNetworkBlocked):
+    with pytest.raises(NetworkBlocked):
         socket.create_connection(("192.0.2.1", 9), timeout=1)
     with (
         socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as datagram,
-        pytest.raises(OutboundNetworkBlocked),
+        pytest.raises(NetworkBlocked),
     ):
         datagram.sendto(b"x", ("192.0.2.1", 9))
     assert blocked_attempts[before:] == [
@@ -203,6 +203,8 @@ def test_the_socket_guard_blocks_every_way_out(blocked_attempts: list[str]) -> N
 def test_no_setting_in_the_environment_can_redirect_a_client() -> None:
     import os
 
-    assert os.environ["OPENAI_API_KEY"].startswith("sk-test-dummy")
+    from tests.guards import DUMMY_KEY
+
+    assert os.environ["OPENAI_API_KEY"] == DUMMY_KEY
     for name in ("OPENAI_BASE_URL", "HTTPS_PROXY", "https_proxy", "ALL_PROXY"):
         assert name not in os.environ

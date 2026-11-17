@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from archive import default_archive_path
-from tests.archive import netguard
+from tests import guards
 from tests.archive.legacy import REPO_ROOT
 
 
@@ -28,10 +28,9 @@ def test_default_data_folder_is_a_temp_folder() -> None:
 def test_a_data_folder_that_was_read_earlier_is_replaced(monkeypatch: pytest.MonkeyPatch) -> None:
     """Another test package can import recall_paths first: the guard must still win."""
     import recall_paths
-    from tests.archive.conftest import _pin_data_folder
 
     monkeypatch.setattr(recall_paths, "SAVES_DIR", REPO_ROOT / "saves")
-    _pin_data_folder(monkeypatch)
+    guards.pin_data_folder(monkeypatch)
 
     assert default_archive_path().resolve().is_relative_to(Path(tempfile.gettempdir()).resolve())
 
@@ -39,18 +38,18 @@ def test_a_data_folder_that_was_read_earlier_is_replaced(monkeypatch: pytest.Mon
 @pytest.mark.parametrize("address", [("192.0.2.1", 443), ("2001:db8::1", 443), ("api.example.invalid", 443)])
 def test_connect_to_another_machine_is_blocked(address: tuple[str, int]) -> None:
     family = socket.AF_INET6 if ":" in address[0] else socket.AF_INET
-    with socket.socket(family, socket.SOCK_STREAM) as sock, pytest.raises(netguard.NetworkBlocked):
+    with socket.socket(family, socket.SOCK_STREAM) as sock, pytest.raises(guards.NetworkBlocked):
         sock.connect(address)
-    with socket.socket(family, socket.SOCK_DGRAM) as sock, pytest.raises(netguard.NetworkBlocked):
+    with socket.socket(family, socket.SOCK_DGRAM) as sock, pytest.raises(guards.NetworkBlocked):
         sock.sendto(b"x", address)
 
 
 def test_name_lookup_of_another_machine_is_blocked() -> None:
-    with pytest.raises(netguard.NetworkBlocked):
+    with pytest.raises(guards.NetworkBlocked):
         socket.getaddrinfo("api.openai.com", 443)
-    with pytest.raises(netguard.NetworkBlocked):
+    with pytest.raises(guards.NetworkBlocked):
         socket.create_connection(("api.openai.com", 443), timeout=1)
-    with pytest.raises(netguard.NetworkBlocked):
+    with pytest.raises(guards.NetworkBlocked):
         socket.gethostbyname("example.com")
 
 
@@ -70,6 +69,6 @@ def test_guard_comes_back_when_another_patch_removes_it(monkeypatch: pytest.Monk
     import _socket
 
     monkeypatch.setattr(socket.socket, "connect", _socket.socket.connect)  # the C method, with no guard
-    assert not netguard.blocks_outbound()
-    netguard.ensure()
-    assert netguard.blocks_outbound()
+    assert not guards.blocks_outbound()
+    guards.ensure()
+    assert guards.blocks_outbound()

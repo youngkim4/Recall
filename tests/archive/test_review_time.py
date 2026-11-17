@@ -24,7 +24,7 @@ import pytest
 
 from archive import timeconv
 from tests.archive.builders import utc
-from tests.archive.conftest import TEST_TIME_ZONE
+from tests.guards import TEST_TIME_ZONE
 
 NS = timeconv.NS_PER_SECOND
 DAY = 86_400

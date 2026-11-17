@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from tests.integration import guards
+from tests import guards
 
 ROWS = 20_000
 SEED = 20261117

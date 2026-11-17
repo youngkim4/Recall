@@ -23,8 +23,8 @@ import pytest
 
 from archive import INDEXED_TEXT_CHARS, Archive, ImportResult, import_chat_db, import_legacy_csv
 from conversation import load_messages
+from tests import guards
 from tests.integration import bridge_data as data
-from tests.integration import guards
 from tests.integration.bridge_data import ROWAN, AppleFixture, BlobDatabase
 
 # texts that must arrive whole. The old decoder kept 43 bytes of `ascii_300`.

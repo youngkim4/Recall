@@ -17,8 +17,8 @@ import pytest
 from archive import INDEXED_TEXT_CHARS, compat, legacy_csv
 from archive.tapbacks import is_reaction_phrase
 from conversation import compute_stats, filter_conversation, in_conversation, sent_mask
+from tests import guards
 from tests.integration import bridge_data as data
-from tests.integration import guards
 from tests.integration.bridge_data import GROUP, GROUP_TITLE, MIRA, PLACEHOLDER, ROWAN, Loaded, export_row
 
 DAY = "2024-03-01"

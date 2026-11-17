@@ -28,8 +28,8 @@ from report_engine import PeriodCache, Report, estimate
 from report_engine.archive_source import ArchiveSource
 from report_engine.fake_llm import FakeLLM
 from report_engine.ports import SourceMessage
+from tests import guards
 from tests.archive.builders import ChatDbBuilder
-from tests.integration import guards
 from tests.report_engine.support import SMALL_OPTIONS, run
 from tests.report_engine.synth import MINA, RAVI, THEO, WordCounter, model_info
 
