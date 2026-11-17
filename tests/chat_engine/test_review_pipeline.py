@@ -581,3 +581,36 @@ def test_a_very_long_message_does_not_slow_the_ranking_or_the_quote_check() -> N
     assert result["unverified_quotes"] == ["something that is made up"]
     cited = result["citations"][0]
     assert cited["text_truncated"] is True and len(cited["text"]) == 4000
+
+
+# --- 11: the archive seam ------------------------------------------------------
+
+
+def test_a_message_of_a_thread_names_the_first_message_of_the_thread() -> None:
+    chat = "+15550000042"
+    rows = [
+        make_message("t1", chat, "2024-01-01 10:00:00", "the plan is ready"),
+        make_message("t2", chat, "2024-01-01 10:01:00", "sounds good to me", reply_to="t1"),
+        make_message("t3", chat, "2024-01-01 10:02:00", "good for me too", reply_to="t3"),
+    ]
+    engine, fake, _ = make_engine([[call("search_messages", "s1", query="good")], say("ok")], archive=FakeArchive(rows))
+    engine.ask("zz?")
+    out = tool_results(fake.requests[1])[0]
+    assert "sounds good to me (in the thread that starts at m1)" in out
+    assert "good for me too  <<< match" in out and out.count("in the thread") == 1
+
+
+def test_a_received_message_with_no_handle_is_not_counted_as_the_owner() -> None:
+    chat = "chat4242"
+    rows = [
+        make_message("n1", chat, "2024-01-01 10:00:00", "from nobody known", sender=""),
+        make_message("n2", chat, "2024-01-01 10:01:00", "from the owner", is_from_me=True),
+        make_message("n3", chat, "2024-01-01 10:02:00", "from nobody known again", sender=""),
+    ]
+    described = [{"id": chat, "is_group": True, "name": "Club", "members": []}]
+    for archive in (FakeArchive(rows, described), FrameArchive(frame_of(rows, described))):
+        keys = {row["key"]: row["total"] for row in archive.count(group_by="sender")}
+        assert keys == {"unknown": 2, "": 1}
+        engine, fake, _ = make_engine([[call("count_messages", "c1", group_by="sender")], say("ok")], archive=archive)
+        engine.ask("zz?")
+        assert tool_results(fake.requests[1])[0].splitlines()[1:] == ["an unsaved contact: 2", "You: 1"]
