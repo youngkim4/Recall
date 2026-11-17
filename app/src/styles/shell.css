@@ -128,10 +128,12 @@
     color: var(--text);
   }
 
+  /* Under the pointer a row takes half the fill that other rows take, so it
+     cannot be read as a second selected row beside the one that is. */
   @media (hover: hover) and (pointer: fine) {
     .nav-item:hover:not([aria-current='page']) {
       color: var(--text);
-      background: var(--fill-hover);
+      background: color-mix(in srgb, var(--fill-hover) 50%, transparent);
     }
 
     .nav-item:hover:not([aria-current='page']) .icon {
