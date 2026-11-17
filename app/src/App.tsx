@@ -24,6 +24,7 @@ import {
   storeRuntimePaths,
 } from './lib/appStorage'
 import { NARROW_WINDOW } from './lib/layout'
+import { offerModels } from './lib/models'
 import { useLayout } from './lib/useLayout'
 import { nameReports } from './lib/reports'
 import { isUpdate, revealsFirstWords } from './lib/setupGuide'
@@ -151,6 +152,7 @@ function App() {
     const data = await recallApi.defaults()
     const nextPaths =
       pathOverride || (hasRuntimePath(paths) ? paths : readStoredPaths(pathsFromDefaults(data)))
+    offerModels(data.modelChoices)
     setDefaults(data)
     setPaths(nextPaths)
     setReports(data.reports || [])
@@ -170,6 +172,7 @@ function App() {
       try {
         const data = await recallApi.defaults()
         if (cancelled) return
+        offerModels(data.modelChoices)
         setDefaults(data)
         const nextPaths = readStoredPaths(pathsFromDefaults(data))
         setPaths(nextPaths)
