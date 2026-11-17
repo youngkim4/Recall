@@ -127,20 +127,25 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - In a wide workspace no screen keeps its content in one narrow column with the rest empty. A screen is a page of columns (Overview, Settings) or panes that fill the width (Chat, Analyze, Search, Reports, Jobs).
 - The pages are open. A part of a page stands on the ground of the page. Space and hairlines set the parts apart. A card does not.
   - One block is 32px (`--s-8`) from the next block. The first block is 32px below the title strip.
-  - `.section.ruled` in `shell.css` puts a hairline over a section. The heading is one band of 44px: 12px, a line of 20px, 12px. The people of a group (`analyze.css`) and the blocks of a report (`reports.css`) repeat this band. Change the three together.
-  - `.rows.ruled` in `lists.css` puts a hairline over each row, the first row also. A row is the same band of 44px.
+  - No line stands between two sections. Space sets a section apart. The hairlines of a page are between the rows of a list, between figures, and around a card.
+  - Four lines stay on purpose. A section with one line of words where a list would be has the hairline of a first row (`.section.ruled > .section-note`). The first year of a report's moments has a hairline below the strip of marks (`.report-strip + .report-timeline`). The files of a report are a footer with a hairline above it (`.report-files`). A chapter of a story after another has a hairline above it, with 32px on each side.
+  - `.section.ruled` in `shell.css` is an open section. The heading is one line of 20px. It is 12px above the content. The people of a group (`analyze.css`) and the blocks of a report (`reports.css`) repeat this heading. Change the three together.
+  - `.rows.ruled` in `lists.css` puts a hairline over each row, the first row also. A row is one band of 44px: 12px, a line of 20px, 12px. A card below a heading starts where the hairline of a first row would be.
   - Words keep 12px above and below them in a band, on one line or on more. A control of 32px keeps 6px.
   - Figures in a row have vertical hairlines between them. The first figure has no space before it. The last figure has no space after it. The tiles of the Overview, the figures of a report, the figures of a job and the facts of Analyze obey this rule.
   - Two columns are 40px (`--s-10`) apart. A figure keeps 20px on each side of its hairline. Thus the hairline in the middle of four figures is on the center of the gap between the two columns below it.
-  - Two columns of a row end on one line. If one column ends with an open list and the other ends with a card, the last row of the list has a hairline below it.
-  - Only an object is a card: the moments of the Overview, the latest messages of Analyze, the chapters of a report, the log of a job.
-- The Overview is rows of sections.
+  - Two columns of a row end on one line where a list can take the height that is left. On the Overview and in Analyze, a column that ends with an open list has a hairline below the last row of that list. The two columns of Settings both end with a row and have no such line.
+  - The moments do not grow to fill a column. With one or two moments, the column of the moments is shorter than the column beside it.
+  - Only an object is a card: each moment of the Overview, the latest messages of Analyze, the chapters of a report, the log of a job.
+  - A card holds one thing. Objects that are each opened by themselves are each a card, 12px apart. Do not put them as rows in one card. The contents of a report (`.report-contents`) is one thing: one list of the places in one story.
+- The Overview is rows of sections. A column of sections in a row is `.overview-col`.
+  - `momentsOf` in `app/src/lib/moments.ts` makes one list of moments. Each moment is a card of `.moment-cards`.
   - The list of the busiest conversations shows the rows that fit beside the moments. `useRowsThatFit` reads `--fit` on the box of the list. The style sheet sets `--fit` where the height of the box comes from outside. `rowsThatFit` in `app/src/lib/fit.ts` shows one more row if each row is then 5% shorter at most.
   - The row of the two heat maps is cut so that a day and an hour have the same size. The cut in `overview.css` and the cell sizes in `charts.css` use the same numbers: 53 weeks, 24 hours, gaps of 2px, 2rem of weekday names for each map, 2.5rem between the maps.
 - A chart of the two voices that has a `heading` puts the heading, the day or month that is picked out, and the two totals in one band (`VoicesOverTime`, `VoicesSkeleton`). The day or month is `.readout-when` between the heading and `.readout`. It takes only the space that is left, so a pick does not move the totals to a second line. The rules for `.section-head > .readout` and `.section-head > .readout-when` in `charts.css` need this structure.
 - A row of Settings with no value has an empty `.setting-value`. In a narrow workspace `settings.css` reads `:empty` to keep the label and the control on one line. Do not put a space or a comment in that element.
 - A placeholder has the structure and the classes of the content that replaces it. Thus no block moves when the content arrives.
-  - `MomentsSkeleton` has the number of rows and the height that the list of moments had last. `app/src/lib/keptShape.ts` keeps these two numbers in the browser under `recall.shape.<name>`.
+  - `MomentsSkeleton` has the number of cards and the height that the list of moments had last. `app/src/lib/keptShape.ts` keeps these two numbers in the browser under `recall.shape.<name>`.
   - WARNING: `keptShape.ts` keeps numbers only. Do not keep a name or the text of a message there.
   - The cover and the figures of `ReportPageSkeleton` have the same classes, line for line, as the cover and the figures of `ReportPage`.
   - Where the size of the content is not known before it arrives, the placeholder is about that size. The blocks of a report under its figures are such a case.
