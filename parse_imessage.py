@@ -56,73 +56,116 @@ def chat_display_name_sql(conn: sqlite3.Connection) -> str:
         return "NULLIF(TRIM(chat.display_name), '')"
     return "NULL"
 
-def extract_text_from_attributed_body(blob: bytes) -> Optional[str]:
+
+# attributedBody is a typedstream (NSArchiver) of an NSAttributedString:
+#   ...NSString...+[length][UTF-8 text]...
+_NSSTRING_MARKER = b"NSString"
+_STRING_TYPE_CODE = b"+"
+# from the class name to the type code: class version, superclass, then "+"
+_TYPE_CODE_WINDOW = 20
+# a length of 128 or more: this tag byte, then this many bytes, low byte first
+_WIDE_LENGTH_BYTES = {0x81: 2, 0x82: 4}
+# C0 controls other than tab and newline: not part of a message, and NUL breaks the CSV
+_DROPPED_CONTROLS = re.compile("[\x00-\x08\x0b-\x1f]")
+# a blob with no NSString marker: what it must be to count as a message
+_FALLBACK_MAX_BYTES = 4096
+_FALLBACK_MIN_CHARS = 2
+
+
+def _typedstream_length(data: bytes, pos: int) -> Optional[tuple[int, int]]:
+    """Read the length at pos: (length, offset of the byte after it), or None.
+
+    A byte below 0x80 is the length. 0x81 is followed by a 2-byte length and
+    0x82 by a 4-byte length, low byte first. This is not BER: 0x81 does not
+    mean "one length byte follows".
     """
-    Extract plain text from attributedBody blob (NSAttributedString).
-    
-    Newer macOS/iMessage versions store message text in attributedBody instead of text column.
-    The blob is a streamtyped NSAttributedString with format:
-    ...NSString...+[length_byte][text_content][marker]...
+    if pos >= len(data):
+        return None
+    head = data[pos]
+    if head < 0x80:
+        return head, pos + 1
+    width = _WIDE_LENGTH_BYTES.get(head)
+    if width is None:
+        return None
+    end = pos + 1 + width
+    if end > len(data):
+        return None
+    return int.from_bytes(data[pos + 1:end], "little"), end
+
+
+def _nsstring_bytes(data: bytes, marker: int) -> Optional[bytes]:
+    """UTF-8 bytes of the NSString whose class name is at marker, or None."""
+    search_start = marker + len(_NSSTRING_MARKER)
+    type_code = data.find(_STRING_TYPE_CODE, search_start, search_start + _TYPE_CODE_WINDOW)
+    if type_code == -1:
+        return None
+    length = _typedstream_length(data, type_code + 1)
+    if length is None:
+        return None
+    text_len, text_start = length
+    text_end = text_start + text_len
+    if text_end > len(data):
+        return None
+    return data[text_start:text_end]
+
+
+def _message_text(raw: bytes) -> Optional[str]:
+    """Decode the bytes of a message. None when they are not UTF-8 or hold no text."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return _DROPPED_CONTROLS.sub("", text) or None
+
+
+def _fallback_text(data: bytes) -> Optional[str]:
+    """Text of a blob with no NSString marker, only when the whole blob is plain text.
+
+    Plain text is UTF-8 with no C0 control other than tab and newline, at most
+    _FALLBACK_MAX_BYTES, with _FALLBACK_MIN_CHARS or more characters and a
+    letter or a digit. It comes back whole, with its ends as they are.
+    A run of text is never taken out of a blob, and a longer blob is not cut
+    to fit: a part of a text reads as a whole message. A typedstream starts
+    with a control byte, so it never passes.
     """
-    if not blob:
+    if len(data) > _FALLBACK_MAX_BYTES:
         return None
     try:
-        # The format is: ...NSString\x01+\x[len][text]...
-        # Find the NSString marker and extract text after the + length indicator
-        
-        # Method 1: Look for the +[length][text] pattern after NSString
-        ns_string_marker = b'NSString'
-        idx = blob.find(ns_string_marker)
-        if idx != -1:
-            # Skip past NSString and look for the + marker
-            search_start = idx + len(ns_string_marker)
-            plus_idx = blob.find(b'+', search_start, search_start + 20)
-            if plus_idx != -1 and plus_idx + 2 < len(blob):
-                # Decode length using BER-style encoding:
-                # - 0x00-0x7F: direct length (0-127)
-                # - 0x80+: long form — low 7 bits = number of subsequent length bytes
-                first_byte = blob[plus_idx + 1]
-                if first_byte < 0x80:
-                    text_len = first_byte
-                    text_start = plus_idx + 2
-                else:
-                    num_len_bytes = first_byte & 0x7F
-                    if 1 <= num_len_bytes <= 4 and plus_idx + 2 + num_len_bytes <= len(blob):
-                        text_len = int.from_bytes(
-                            blob[plus_idx + 2:plus_idx + 2 + num_len_bytes], 'big'
-                        )
-                        text_start = plus_idx + 2 + num_len_bytes
-                    else:
-                        # Fallback: treat as direct single-byte length
-                        text_len = first_byte
-                        text_start = plus_idx + 2
-
-                text_end = text_start + text_len
-                if 0 < text_len and text_end <= len(blob):
-                    try:
-                        text = blob[text_start:text_end].decode('utf-8')
-                        text = ''.join(c for c in text if c.isprintable() or c in '\n\t ')
-                        if text.strip():
-                            return text.strip()
-                    except UnicodeDecodeError:
-                        pass
-        
-        # Method 2: Fallback - try to find readable text between markers
-        # Look for text that's surrounded by non-printable bytes
-        decoded = blob.decode('utf-8', errors='ignore')
-        
-        # Remove known metadata patterns
-        cleaned = re.sub(r'(streamtyped|NSAttributedString|NSMutableString|NSString|NSObject|NSDictionary|NSNumber|NSArray)', '', decoded)
-        
-        # Find sequences of printable characters (min 2 chars, not just 'iI' or similar markers)
-        matches = re.findall(r'[a-zA-Z0-9\s\.\,\!\?\'\"\-\:\;\@\#\$\%\&\*\(\)\[\]\{\}\/\\]+', cleaned)
-        matches = [m.strip() for m in matches if len(m.strip()) >= 2 and m.strip() not in ['iI', 'II', 'ii', 'NS']]
-        
-        if matches:
-            # Return the longest meaningful match
-            return max(matches, key=len)
-        
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
         return None
+    if _DROPPED_CONTROLS.search(text):
+        return None
+    visible = text.strip()
+    if len(visible) < _FALLBACK_MIN_CHARS or not any(char.isalnum() for char in visible):
+        return None
+    return text
+
+
+def extract_text_from_attributed_body(blob: Optional[bytes]) -> Optional[str]:
+    """
+    Text of a message from its attributedBody blob, as Messages stored it.
+
+    Newer macOS/iMessage versions store message text in attributedBody instead of text column.
+    The blob is a typedstream of an NSAttributedString:
+    ...NSString...+[length][UTF-8 text]...
+
+    The result is the same string as the text column gives: the ends are not
+    trimmed, and invisible characters stay (emoji joiners, variation selectors,
+    direction marks). Only C0 controls other than tab and newline are dropped.
+
+    Returns None when the blob holds no text or cannot be read. Never raises.
+    A blob with the NSString marker gives its text or None, never a part of it.
+    """
+    if not isinstance(blob, (bytes, bytearray, memoryview)):
+        return None
+    try:
+        data = bytes(blob)
+        marker = data.find(_NSSTRING_MARKER)
+        if marker == -1:
+            return _fallback_text(data)
+        raw = _nsstring_bytes(data, marker)
+        return None if raw is None else _message_text(raw)
     except Exception:
         logger.debug("Failed to extract text from attributedBody blob", exc_info=True)
         return None

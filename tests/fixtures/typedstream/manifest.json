@@ -1,0 +1,294 @@
+{
+  "encoder" : "NSArchiver.archivedData(withRootObject:)",
+  "fixtures" : [
+    {
+      "archive_bytes" : 178,
+      "name" : "ascii_1",
+      "note" : "1 byte: the shortest text",
+      "root" : "NSAttributedString",
+      "sha256" : "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+      "utf8_bytes" : 1,
+      "utf8_hex" : "30"
+    },
+    {
+      "archive_bytes" : 304,
+      "name" : "ascii_127",
+      "note" : "127 bytes: the longest text with a one-byte length",
+      "root" : "NSAttributedString",
+      "sha256" : "8e1aef4e98c560fb0b62bd0e5af225a48b730979bacb0f8c81f4b6ec52d5cc25",
+      "utf8_bytes" : 127,
+      "utf8_hex" : "303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132"
+    },
+    {
+      "archive_bytes" : 309,
+      "name" : "ascii_128",
+      "note" : "128 bytes: the shortest text with a two-byte length",
+      "root" : "NSAttributedString",
+      "sha256" : "3c6087b6fbbb52f66a2401d1c594d12e00ffa301492a00b7a32b81cb0b0022f2",
+      "utf8_bytes" : 128,
+      "utf8_hex" : "303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30313233"
+    },
+    {
+      "archive_bytes" : 436,
+      "name" : "ascii_255",
+      "note" : "255 bytes: the old decoder lost the last byte from 128 to 255",
+      "root" : "NSAttributedString",
+      "sha256" : "c4f93e3455f5215e4db29eb7f14fd907362a6a832dfadbcf396e7e5f3e9cc6a4",
+      "utf8_bytes" : 255,
+      "utf8_hex" : "303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30313233343536"
+    },
+    {
+      "archive_bytes" : 437,
+      "name" : "ascii_256",
+      "note" : "256 bytes: the first length with a high byte",
+      "root" : "NSAttributedString",
+      "sha256" : "a78428619cb3a9884605dc48537d07a7faca2fceabd80d03b1674b077a21860a",
+      "utf8_bytes" : 256,
+      "utf8_hex" : "303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a3031323334353637"
+    },
+    {
+      "archive_bytes" : 481,
+      "name" : "ascii_300",
+      "note" : "300 bytes: the old decoder kept 43 bytes of this text",
+      "root" : "NSAttributedString",
+      "sha256" : "e688e3fc2f9651eca270fde8123bf2aad08564f607712867cb899a4d09bf7ba5",
+      "utf8_bytes" : 300,
+      "utf8_hex" : "303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50"
+    },
+    {
+      "archive_bytes" : 32948,
+      "name" : "ascii_32767",
+      "note" : "32,767 bytes: the longest text with a two-byte length",
+      "root" : "NSAttributedString",
+      "sha256" : "74b42012856bfd2c6cccbd5630e2b411f68ba3b98197019e3d2d85562712f5eb",
+      "utf8_bytes" : 32767,
+      "utf8_hex" : null
+    },
+    {
+      "archive_bytes" : 32953,
+      "name" : "ascii_32768",
+      "note" : "32,768 bytes: the shortest text with a four-byte length",
+      "root" : "NSAttributedString",
+      "sha256" : "de608e495015d1bd615cac7d10c020dbdf80d38d20c5e419c8c91e2cbc193890",
+      "utf8_bytes" : 32768,
+      "utf8_hex" : null
+    },
+    {
+      "archive_bytes" : 65720,
+      "name" : "ascii_65535",
+      "note" : "65,535 bytes: a four-byte length",
+      "root" : "NSAttributedString",
+      "sha256" : "2d59ad0e2c6717b2521956f4f729b90e8d668242631c4398fca317f6a3d6d97a",
+      "utf8_bytes" : 65535,
+      "utf8_hex" : null
+    },
+    {
+      "archive_bytes" : 70185,
+      "name" : "ascii_70000",
+      "note" : "70,000 bytes: a four-byte length",
+      "root" : "NSAttributedString",
+      "sha256" : "f3fccc940641247e1e0fe2b6a7a0b0939dbdc62b3901a48f91a97918d59deeaa",
+      "utf8_bytes" : 70000,
+      "utf8_hex" : null
+    },
+    {
+      "archive_bytes" : 198,
+      "name" : "emoji_end",
+      "note" : "ends in an emoji",
+      "root" : "NSAttributedString",
+      "sha256" : "4d5a8c30eb626e8e2fad715ff8301e72b6b977c0dffeac9c312ec948a23f6e15",
+      "utf8_bytes" : 21,
+      "utf8_hex" : "53656520796f7520617420656967687420f09f9880"
+    },
+    {
+      "archive_bytes" : 311,
+      "name" : "emoji_end_130",
+      "note" : "130 bytes, ends in an emoji: the old decoder split it",
+      "root" : "NSAttributedString",
+      "sha256" : "d4bf9e12db6e730f865ef3a23519cc4342a8f6a42edbb75aa1e2d64c791b6820",
+      "utf8_bytes" : 130,
+      "utf8_hex" : "303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a3031f09f9880"
+    },
+    {
+      "archive_bytes" : 244,
+      "name" : "zwj_emoji",
+      "note" : "emoji joined with U+200D, and U+FE0F selectors",
+      "root" : "NSAttributedString",
+      "sha256" : "d04ef27c5b48af66d91c9a64d6b5aa36373f635f5c00a1d21a111f4bd3b38d4c",
+      "utf8_bytes" : 67,
+      "utf8_hex" : "46616d696c7920f09f91a8e2808df09f91a9e2808df09f91a7e2808df09f91a62c20666c616720f09f8fb3efb88fe2808df09f8c882c20686561727420e29da4efb88f"
+    },
+    {
+      "archive_bytes" : 222,
+      "name" : "emoji_sequences",
+      "note" : "tag characters, a keycap and a skin tone",
+      "root" : "NSAttributedString",
+      "sha256" : "80fab97ac51998874fd0f48dc1ae730c5b496d330c609fc08b6646d726fc3e27",
+      "utf8_bytes" : 45,
+      "utf8_hex" : "f09f8fb4f3a081a7f3a081a2f3a081b3f3a081a3f3a081b4f3a081bf2031efb88fe283a320f09f918df09f8fbd"
+    },
+    {
+      "archive_bytes" : 240,
+      "name" : "accented",
+      "note" : "accented letters, composed and decomposed",
+      "root" : "NSAttributedString",
+      "sha256" : "4dfc4f514b0a2d2bac6dc43059c6e4372f0b2a181802e6532ac49ccdc32563ba",
+      "utf8_bytes" : 63,
+      "utf8_hex" : "436166c3a92064c3a96ac3a02076752c206e61c3af7665206661c3a761646520696e205ac3bc726963682e204465636f6d706f7365643a2065cc81206ecc83"
+    },
+    {
+      "archive_bytes" : 241,
+      "name" : "cjk",
+      "note" : "Chinese, Japanese and Korean, with U+3000",
+      "root" : "NSAttributedString",
+      "sha256" : "0db827610289b86f06f5a7b0a7c0976c05721ecf5b45e911420622bb96069fbf",
+      "utf8_bytes" : 64,
+      "utf8_hex" : "e4bb8ae5a4a9e5a4a9e6b094e5be88e5a5bde38082e38080e6988ee697a5e381afe699b4e3828ce381a7e38199e3808220ec9588eb8595ed9598ec84b8ec9a94"
+    },
+    {
+      "archive_bytes" : 223,
+      "name" : "newline",
+      "note" : "newlines and a tab inside the text",
+      "root" : "NSAttributedString",
+      "sha256" : "a735628f130d8e4c0aa93a3da4c0049438a6f133896c943f1ca90ddd40191166",
+      "utf8_bytes" : 46,
+      "utf8_hex" : "6669727374206c696e650a7365636f6e64206c696e650a0a09666f75727468206c696e652c20696e64656e746564"
+    },
+    {
+      "archive_bytes" : 211,
+      "name" : "spaces_both_ends",
+      "note" : "two spaces before the text and one after it",
+      "root" : "NSAttributedString",
+      "sha256" : "c716b0bb2f6aa8c27b96d6f8698e41eb4ee94b78b61b0668fed79528e497fbd2",
+      "utf8_bytes" : 34,
+      "utf8_hex" : "202074776f20737061636573206265666f726520616e64206f6e6520616674657220"
+    },
+    {
+      "archive_bytes" : 209,
+      "name" : "newline_ends",
+      "note" : "a newline before the text and after it",
+      "root" : "NSAttributedString",
+      "sha256" : "76c2b8c5d1bec3f49d0d53995f1c913fedbecca7769c0e9362104a2916475b51",
+      "utf8_bytes" : 32,
+      "utf8_hex" : "0a73746172747320616e6420656e647320776974682061206e65776c696e650a"
+    },
+    {
+      "archive_bytes" : 181,
+      "name" : "whitespace_only",
+      "note" : "only spaces and a newline",
+      "root" : "NSAttributedString",
+      "sha256" : "186d8a49bb936701f533bf790dedebc4c2193eeb35fd449c600b2355f5fcdf0b",
+      "utf8_bytes" : 4,
+      "utf8_hex" : "20200a20"
+    },
+    {
+      "archive_bytes" : 318,
+      "name" : "format_chars",
+      "note" : "invisible format characters and unusual spaces",
+      "root" : "NSAttributedString",
+      "sha256" : "73b4440bfc2d85d387edc23cc10825a93220468f6cb5fa6b990a2eb158af90b0",
+      "utf8_bytes" : 139,
+      "utf8_hex" : "7a65726fe2808b77696474682c206c656674e2808e6d61726b2c20d7a9d79cd795d79de2808f207269676874206d61726b2c20776f7264e281a06a6f696e65722c20736f6674c2ad68797068656e2c206e6fc2a0627265616b2c20e281a669736f6c617465e281a92c206c696e65e280a8736570617261746f722c20e280ab656d62656464696e67e280ac"
+    },
+    {
+      "archive_bytes" : 180,
+      "name" : "attachment_char",
+      "note" : "only U+FFFC, the place of an attachment",
+      "root" : "NSAttributedString",
+      "sha256" : "cd2822e88bcde089a4b8d4d60820a4c0c387d75c7fb1737b5e5ac93129194ff7",
+      "utf8_bytes" : 3,
+      "utf8_hex" : "efbfbc"
+    },
+    {
+      "archive_bytes" : 192,
+      "name" : "control_chars",
+      "note" : "NUL, U+0001, U+001F, tab, newline, carriage return and U+007F",
+      "root" : "NSAttributedString",
+      "sha256" : "1482a85e37ef3c57c5f12b668ed2ac28b2a610ca48444bd89323237e5d46cc8f",
+      "utf8_bytes" : 15,
+      "utf8_hex" : "61006201631f6409650a660d677f68"
+    },
+    {
+      "archive_bytes" : 307,
+      "name" : "multibyte_128",
+      "note" : "128 bytes of two-byte letters",
+      "root" : "NSAttributedString",
+      "sha256" : "845836d7e680de9961df321148f8cb5e8a7da92aba65f5b05b817c3b58256bd5",
+      "utf8_bytes" : 128,
+      "utf8_hex" : "c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9c3a9"
+    },
+    {
+      "archive_bytes" : 481,
+      "name" : "multibyte_300",
+      "note" : "300 bytes: byte 43 is in the middle of a letter",
+      "root" : "NSAttributedString",
+      "sha256" : "8bd1031cd94a7e628fd2ea1b6a32a6e28b19153aa5a2bf5305d7a613e1d03357",
+      "utf8_bytes" : 300,
+      "utf8_hex" : "2168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d212168c3a96c6c6f2077c3b6726c6420f09f8c8d21"
+    },
+    {
+      "archive_bytes" : 76,
+      "name" : "empty",
+      "note" : "the empty string",
+      "root" : "NSAttributedString",
+      "sha256" : "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "utf8_bytes" : 0,
+      "utf8_hex" : ""
+    },
+    {
+      "archive_bytes" : 226,
+      "name" : "mutable_ascii_1",
+      "note" : "1 byte, in a mutable string",
+      "root" : "NSMutableAttributedString",
+      "sha256" : "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+      "utf8_bytes" : 1,
+      "utf8_hex" : "30"
+    },
+    {
+      "archive_bytes" : 357,
+      "name" : "mutable_ascii_128",
+      "note" : "128 bytes, in a mutable string",
+      "root" : "NSMutableAttributedString",
+      "sha256" : "3c6087b6fbbb52f66a2401d1c594d12e00ffa301492a00b7a32b81cb0b0022f2",
+      "utf8_bytes" : 128,
+      "utf8_hex" : "303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a30313233"
+    },
+    {
+      "archive_bytes" : 529,
+      "name" : "mutable_ascii_300",
+      "note" : "300 bytes, in a mutable string",
+      "root" : "NSMutableAttributedString",
+      "sha256" : "e688e3fc2f9651eca270fde8123bf2aad08564f607712867cb899a4d09bf7ba5",
+      "utf8_bytes" : 300,
+      "utf8_hex" : "303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f505152535455565758595a303132333435363738396162636465666768696a6b6c6d6e6f707172737475767778797a4142434445464748494a4b4c4d4e4f50"
+    },
+    {
+      "archive_bytes" : 292,
+      "name" : "mutable_zwj_emoji",
+      "note" : "emoji joined with U+200D, in a mutable string",
+      "root" : "NSMutableAttributedString",
+      "sha256" : "d04ef27c5b48af66d91c9a64d6b5aa36373f635f5c00a1d21a111f4bd3b38d4c",
+      "utf8_bytes" : 67,
+      "utf8_hex" : "46616d696c7920f09f91a8e2808df09f91a9e2808df09f91a7e2808df09f91a62c20666c616720f09f8fb3efb88fe2808df09f8c882c20686561727420e29da4efb88f"
+    },
+    {
+      "archive_bytes" : 259,
+      "name" : "mutable_spaces_both_ends",
+      "note" : "spaces at both ends, in a mutable string",
+      "root" : "NSMutableAttributedString",
+      "sha256" : "c716b0bb2f6aa8c27b96d6f8698e41eb4ee94b78b61b0668fed79528e497fbd2",
+      "utf8_bytes" : 34,
+      "utf8_hex" : "202074776f20737061636573206265666f726520616e64206f6e6520616674657220"
+    },
+    {
+      "archive_bytes" : 104,
+      "name" : "not_text",
+      "note" : "an archive of two numbers: no string in it",
+      "root" : "NSArray",
+      "sha256" : null,
+      "utf8_bytes" : null,
+      "utf8_hex" : null
+    }
+  ],
+  "generator" : "scripts/make_attributed_body_fixtures.swift"
+}
