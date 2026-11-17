@@ -12,8 +12,8 @@ type FiguresProps = {
 
 // What the numbers say about a conversation over a stretch of time: the two
 // voices over that time, a few facts worth a line each, and in a group, who
-// wrote how much. The facts and the people keep together: under the chart in
-// a narrow pane, beside it in a wide one.
+// wrote how much. The facts and the people keep together under the chart: as
+// lines in a narrow pane, as cards in a wide one.
 export function Figures({ figures, title, group }: FiguresProps) {
   const { stats, activity } = figures
   const facts = conversationFacts(stats, figures.dynamics, group ? 'Someone else' : title)
@@ -31,7 +31,7 @@ export function Figures({ figures, title, group }: FiguresProps) {
         />
       </section>
 
-      <div className="detail-side">
+      <div className="detail-facts">
         {facts.length ? (
           <dl className="section facts">
             {facts.map((fact) => (
@@ -46,29 +46,5 @@ export function Figures({ figures, title, group }: FiguresProps) {
         {group ? <People preview={figures} /> : null}
       </div>
     </>
-  )
-}
-
-// what the facts are called, to hold their place while they are worked out
-const WAITING = ['Active days', 'Busiest day', 'Longest gap', 'First to write', 'Shared', 'Reactions']
-
-// Holds the place of the facts beside the chart, so the chart is as wide
-// while it loads as it is when the figures arrive. Only a wide pane shows it.
-export function FactsSkeleton() {
-  return (
-    <div className="detail-side is-waiting">
-      <dl className="section facts">
-        {WAITING.map((label) => (
-          <div key={label}>
-            <dt>
-              <span className="skeleton">{label}</span>
-            </dt>
-            <dd>
-              <span className="skeleton">000 of 0,000</span>
-            </dd>
-          </div>
-        ))}
-      </dl>
-    </div>
   )
 }

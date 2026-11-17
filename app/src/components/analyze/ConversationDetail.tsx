@@ -3,9 +3,10 @@ import { contactTitle, conversationName, isGroupChat, isOutbound, messageCount }
 import { formatDateRange, plural } from '../../lib/format'
 import type { Contact, PreviewPayload, ReportFile } from '../../types'
 import { ChevronLeftIcon } from '../Icons'
-import { Thread, type ThreadMessage } from '../ui/Thread'
-import { VoicesSkeleton } from '../ui/VoicesOverTime'
-import { FactsSkeleton, Figures } from './Figures'
+import type { ThreadMessage } from '../ui/Thread'
+import { Figures } from './Figures'
+import { FiguresSkeleton } from './FiguresSkeleton'
+import { LatestMessages } from './LatestMessages'
 import { ReportBar } from './ReportBar'
 
 type Scope = { since: string; until: string }
@@ -136,22 +137,11 @@ export function ConversationDetail({
           <div className="detail-body">
             <Figures figures={preview} title={title} group={group} />
 
-            {thread.length ? (
-              <section className="section" aria-labelledby="latest-title">
-                <div className="section-head">
-                  <h3 id="latest-title">Latest messages</h3>
-                </div>
-                <Thread messages={thread} />
-              </section>
-            ) : null}
+            {thread.length ? <LatestMessages messages={thread} /> : null}
           </div>
         ) : failed ? null : (
-          // the shape the figures will have, so nothing moves when they arrive
           <div className="detail-body" aria-hidden="true">
-            <div className="section">
-              <VoicesSkeleton />
-            </div>
-            <FactsSkeleton />
+            <FiguresSkeleton group={group} />
           </div>
         )}
       </div>
