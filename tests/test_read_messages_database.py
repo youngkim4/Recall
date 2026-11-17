@@ -105,6 +105,42 @@ def test_a_message_with_only_a_photo_keeps_its_place_as_an_attachment(tmp_path):
     assert list(extract_messages(str(db))["text"]) == ["[Attachment] image/jpeg | photo.jpg"]
 
 
+def with_text(folder, text, body=None):
+    """A database with one message whose text column holds `text`, and its body `body`."""
+    folder.mkdir(exist_ok=True)
+    db = messages_db(folder / "chat.db", [], photo=False, reaction=False)
+    conn = sqlite3.connect(str(db))
+    conn.execute("INSERT INTO message VALUES (1, 0, 1, ?, ?, 0, 'iMessage', NULL, 0)", (text, body))
+    conn.execute("INSERT INTO chat_message_join VALUES (1, 1)")
+    conn.commit()
+    conn.close()
+    return db
+
+
+def test_text_from_the_text_column_is_cleaned_by_the_rule_for_text_from_the_body(tmp_path):
+    # the stored text of this fixture holds NUL, U+0001, U+001F and a carriage return
+    stored = "a\x00b\x01c\x1fd\te\nf\rg\x7fh"
+    from_body = list(extract_messages(str(with_text(tmp_path / "body", None, apple_archive("control_chars"))))["text"])
+    from_column = list(extract_messages(str(with_text(tmp_path / "column", stored)))["text"])
+
+    assert from_column == from_body == ["abcd\te\nfg\x7fh"]
+
+
+def test_a_text_column_with_nothing_left_in_it_is_no_text(tmp_path):
+    # only characters that are dropped: the text comes from the body, as if the column were empty
+    db = with_text(tmp_path, "\x00\r", apple_archive("ascii_1"))
+
+    assert list(extract_messages(str(db))["text"]) == ["0"]
+
+
+def test_a_message_with_no_text_at_all_is_no_row(tmp_path):
+    assert extract_messages(str(with_text(tmp_path, "\x00"))).empty
+
+
+def test_a_text_of_white_space_is_kept_as_it_is(tmp_path):
+    assert list(extract_messages(str(with_text(tmp_path, " \n\t ")))["text"]) == [" \n\t "]
+
+
 def test_files_written_from_empty_frames_are_read_back_as_empty(tmp_path):
     db = messages_db(tmp_path / "chat.db", ["one"], photo=False, reaction=False)
     _, attachments, reactions = read_all(db)

@@ -198,9 +198,16 @@ def _attachment_note(types, files) -> Optional[str]:
 
 
 def _text_of_message(text, body, types, files) -> Optional[str]:
-    """The text of one message: the text column, then attributedBody, then a note of its attachments."""
+    """The text of one message: the text column, then attributedBody, then a note of its attachments.
+
+    One rule cleans the text of both: the control characters that the decoder
+    drops are dropped from the text column too. Text with nothing left is no
+    text. The ends are not trimmed.
+    """
     if pd.notna(text):
-        return text
+        cleaned = _DROPPED_CONTROLS.sub("", text) if isinstance(text, str) else text
+        if not isinstance(cleaned, str) or cleaned:
+            return cleaned
     if pd.notna(body):
         extracted = extract_text_from_attributed_body(body)
         if extracted:

@@ -77,13 +77,30 @@ def test_an_import_can_start_when_the_one_before_it_has_ended(held_jobs, ended):
     assert second["id"] != first["id"]
 
 
-def test_an_import_and_a_job_of_another_kind_run_together(held_jobs):
+@pytest.mark.parametrize("other", ["export", "semantic"])
+def test_a_report_runs_beside_an_import_or_a_build_of_the_index(held_jobs, other):
     ui_server.create_job("analyze", {"contact": "+15550100"})
-    ui_server.create_job("export", {})
-    ui_server.create_job("semantic", {})
+    ui_server.create_job(other, {})
     ui_server.create_job("analyze", {"contact": "+15550100"})
 
-    assert listed() == [("analyze", "queued"), ("export", "queued"), ("semantic", "queued"), ("analyze", "queued")]
+    assert listed() == [("analyze", "queued"), (other, "queued"), ("analyze", "queued")]
+
+
+@pytest.mark.parametrize("first, second, sentence", [
+    # the index is of one archive: an import during the build would make it out of date at once
+    ("semantic", "export", "The meaning index is being built. Wait until it ends, then import."),
+    ("semantic", "setup_import", "The meaning index is being built. Wait until it ends, then import."),
+    ("export", "semantic", "An import is running. Wait until it ends, then build the index."),
+    ("setup_import", "semantic", "An import is running. Wait until it ends, then build the index."),
+])
+def test_an_import_and_a_build_of_the_index_do_not_run_together(held_jobs, first, second, sentence):
+    ui_server.create_job(first, {})
+
+    with pytest.raises(ui_server.JobRefused) as refused:
+        ui_server.create_job(second, {})
+
+    assert (str(refused.value), refused.value.status) == (sentence, 409)
+    assert listed() == [(first, "queued")]
 
 
 def test_a_second_build_of_the_index_is_refused_in_the_same_way(held_jobs):

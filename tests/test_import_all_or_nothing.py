@@ -402,3 +402,17 @@ def test_one_file_that_cannot_be_put_back_does_not_stop_the_others(archive, tmp_
     assert (folder / "messages_reactions.before-update.csv").read_text(encoding="utf-8") == archive[folder / "messages_reactions.csv"]
     # the earlier messages file stays too: it says that the import did not finish
     assert (folder / "messages.before-update.csv").exists()
+
+
+def test_files_that_a_quit_left_half_written_are_removed_when_an_import_starts(archive, tmp_path):
+    folder = messages_csv(archive).parent
+    for name in ("messages.tmp-export.csv", "messages_attachments.tmp-export.csv"):
+        (folder / name).write_text("half of a file", encoding="utf-8")
+
+    # this import cannot read anything, and still clears what the one before it left
+    job = import_from(tmp_path / "gone.db", messages_csv(archive))
+
+    assert job["status"] == "failed"
+    assert unchanged(archive)
+    assert left_behind(archive) == []
+

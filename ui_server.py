@@ -681,8 +681,11 @@ def export_database(db_path: Path, messages_path: Path) -> dict:
     archive stays beside new messages. A database with no message to keep is
     not imported: the archive would be empty.
     """
-    # what an import before this one could not finish is put back first
-    settle_earlier(archive_files(messages_path))
+    # What an import before this one could not finish is put back first, and
+    # the files that it left half written are removed.
+    targets = archive_files(messages_path)
+    settle_earlier(targets)
+    discard(staging_path(target) for target in targets)
     archive_there = path_exists(messages_path)
     probe = probe_database(db_path)
     stopped = why_unreadable(probe, archive_there)
@@ -700,6 +703,9 @@ def export_database(db_path: Path, messages_path: Path) -> dict:
         raise
     except Exception as exc:  # noqa: BLE001 - the files are as they were, and the reader is told so
         raise writing_stopped(exc, messages_path, archive_there) from exc
+    # the files are in place: nothing after this is a reason to say that the import failed
+    with contextlib.suppress(Exception):
+        forget_previews()
 
     return {
         "messages": len(frames.messages),
@@ -707,6 +713,13 @@ def export_database(db_path: Path, messages_path: Path) -> dict:
         "reactions": len(frames.reactions),
         "messagesPath": str(messages_path),
     }
+
+
+def forget_previews() -> None:
+    """Drop every preview that the server keeps. After an import, none of the earlier archive is shown."""
+    with PREVIEW_CACHE_LOCK:
+        PREVIEW_CACHE.clear()
+    clear_cache_namespace(PREVIEW_CACHE_NAMESPACE)
 
 
 def export_when_free(job_id: str, db_path: Path, messages_path: Path) -> dict:
@@ -722,11 +735,16 @@ def export_when_free(job_id: str, db_path: Path, messages_path: Path) -> dict:
 JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "semantic"})
 IMPORT_ACTIONS = frozenset({"setup_import", "export"})
 UNFINISHED = frozenset({"queued", "running"})
-# Jobs of one group do not run together: each import writes the archive, and
-# each build writes the index. The second one is refused when it is asked for.
+INDEX_ACTIONS = frozenset({"semantic"})
+# Jobs that do not run together: the job that is asked for, the jobs that
+# hold it up, and what the reader is told. Each import writes the archive and
+# each build writes the index. The index is of one archive, so an import
+# during a build would leave the index out of date as soon as it is paid for.
 ONE_AT_A_TIME = (
-    (IMPORT_ACTIONS, "An import is already running. Wait until it ends."),
-    (frozenset({"semantic"}), "A semantic index build is already running."),
+    (IMPORT_ACTIONS, IMPORT_ACTIONS, "An import is already running. Wait until it ends."),
+    (IMPORT_ACTIONS, INDEX_ACTIONS, "The meaning index is being built. Wait until it ends, then import."),
+    (INDEX_ACTIONS, INDEX_ACTIONS, "A semantic index build is already running."),
+    (INDEX_ACTIONS, IMPORT_ACTIONS, "An import is running. Wait until it ends, then build the index."),
 )
 
 
@@ -770,11 +788,10 @@ def check_request(action, payload: dict) -> None:
 
 
 def refuse_a_second(action: str) -> None:
-    """Refuse a job while another of its group is not ended. The caller holds JOBS_LOCK."""
-    for group, sentence in ONE_AT_A_TIME:
-        if action in group and any(
-            job["action"] in group and job["status"] in UNFINISHED for job in JOBS.values()
-        ):
+    """Refuse a job while a job that holds it up is not ended. The caller holds JOBS_LOCK."""
+    unfinished_actions = {job["action"] for job in JOBS.values() if job["status"] in UNFINISHED}
+    for asked, held_up_by, sentence in ONE_AT_A_TIME:
+        if action in asked and unfinished_actions & held_up_by:
             raise JobRefused(sentence)
 
 
@@ -1032,7 +1049,7 @@ def work_job(job_id: str, action: str, payload: dict):
 
                 update_job(job_id, progress={"step": 1, "of": 3, "label": "Reading your Messages database"})
                 append_log(job_id, "Reading Messages" if db_path == LIVE_CHAT_DB else f"Reading the copy at {db_path}")
-                export_when_free(job_id, db_path, messages_path)
+                exported = export_when_free(job_id, db_path, messages_path)
 
                 contacts_skipped = False
                 if include_contacts:
@@ -1049,21 +1066,16 @@ def work_job(job_id: str, action: str, payload: dict):
 
                 update_job(job_id, progress={"step": 3, "of": 3, "label": "Getting your archive ready"})
                 append_log(job_id, "Warming the archive")
+                # The three files are in place, so the import did its work. A
+                # count that fails after that is a warning, not a failed import.
                 try:
-                    df, catalog, _names = cached_messages_bundle(messages_path)
-                    years = read_times(df["timestamp"]).dt.year.dropna()
-                except Exception as exc:
-                    # the three files are in place: the reader is not told that the archive is as it was
-                    raise ImportStopped(
-                        "The archive was written, but Recall could not read it back. Try again."
-                    ) from exc
-                result = {
-                    "messages": int(len(df)),
-                    "conversations": int(len(catalog)),
-                    "firstYear": int(years.min()) if len(years) else None,
-                    "lastYear": int(years.max()) if len(years) else None,
-                    "contactsSkipped": contacts_skipped,
-                }
+                    counted = what_the_archive_holds(messages_path)
+                except Exception:
+                    append_log(job_id, WRITTEN_NOT_COUNTED)
+                    with contextlib.suppress(Exception):
+                        traceback.print_exc(file=sys.__stderr__)
+                    counted = {"messages": exported["messages"], "warning": WRITTEN_NOT_COUNTED}
+                result = {**counted, "contactsSkipped": contacts_skipped}
             elif action == "semantic":
                 messages_path = safe_path(payload.get("messagesPath"), DEFAULT_MESSAGES_CSV)
                 if not path_exists(messages_path):
@@ -1790,6 +1802,25 @@ def archive_summary(messages_path: Path) -> dict:
 
 _PATTERNS_CACHE: dict = {"sig": None, "value": None}
 _PATTERNS_LOCK = threading.Lock()
+
+
+WRITTEN_NOT_COUNTED = "The archive is written. Recall could not read it back to count it."
+
+
+def what_the_archive_holds(messages_path: Path) -> dict:
+    """What an import tells of the archive it wrote: the count that the Overview shows, and the years.
+
+    One count is used everywhere: a message in no conversation is shown
+    nowhere in the app, so it is not counted here either (archive_summary).
+    """
+    summary = archive_summary(messages_path)
+    first, last = summary["firstMessage"], summary["lastMessage"]
+    return {
+        "messages": summary["messages"],
+        "conversations": summary["conversations"],
+        "firstYear": int(first[:4]) if first else None,
+        "lastYear": int(last[:4]) if last else None,
+    }
 
 
 def archive_patterns(messages_path: Path) -> dict:
@@ -3227,9 +3258,7 @@ class RecallHandler(BaseHTTPRequestHandler):
                     "message": summary.get("message") or f"Loaded {summary.get('count', 0):,} contacts.",
                 })
             elif parsed.path == "/api/cache/preview":
-                with PREVIEW_CACHE_LOCK:
-                    PREVIEW_CACHE.clear()
-                clear_cache_namespace(PREVIEW_CACHE_NAMESPACE)
+                forget_previews()
                 send_json(self, 200, {"cleared": True})
             elif parsed.path == "/api/setup/complete":
                 send_json(self, 200, {"setup": write_setup_marker(setup_marker_updates(parse_body(self)))})
