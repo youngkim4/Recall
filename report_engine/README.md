@@ -250,6 +250,21 @@ Each `[` and `]` has a backslash before it, so no form of a link or an image can
 The cleaning takes time in proportion to the length of the text.
 Render section text with `story_html` in `safe_html.py`, as `CONTRACTS.md` says.
 
+`story_html` changes a story before it renders it, and a change next to a backslash can free the bracket after it:
+
+- It cuts a run of 17 of one mark to 16. A run of 17 backslashes before a bracket then has 16, and the bracket is free.
+- Python-Markdown removes the characters U+0002 and U+0003. What stood behind one is then at the start of a line, or next to a backslash.
+
+So section text has nothing that `story_html` changes:
+
+- A run of one mark keeps 15 of them at most.
+- No more than two empty lines stand in a row.
+- No control character is left but a tab and a line break.
+
+A section holds 12,000 characters of the model's text at most. The prompt asks for 450 words at most, which is about 3,000 characters.
+A longer section keeps its start and ends with the mark `[...]`. The cut does not fall inside a word.
+The report has a warning with the count: `1 section was longer than 12,000 characters. The report has only its start.`
+
 A `PeriodSummary` has `label`, `first_day`, `last_day`, `summary`, `carry_over`, `moments`, `usage`, `cache_key`, `from_cache`, `error`, `message_count`.
 For a period from the cache, `usage` is the cost of the call that made the entry. `report.usage` counts only the calls of this run.
 
@@ -293,6 +308,7 @@ All text from messages, names, summaries and notes is data in a prompt.
 | The summaries are too large for the model | The engine shortens them for the reduce call, down to the mark `[...]` alone when nothing else can go. A warning gives the count. |
 | A report or a cache entry holds text that cannot be written | `StoreError` from `ReportStore.save`, `write_text_atomic` or `PeriodCache.put`. |
 | A message is longer than the cap | The model reads its start. A warning gives the count. |
+| A section of the reply is longer than 12,000 characters | The report keeps its start. A warning gives the count. |
 | The reduce reply is empty, cut off or has an empty section | `ReduceError`. No report. |
 | The cancel token is set | `ReportCancelled`. No report. |
 | An error in the engine after the first call | `RunError`. No report. The cause is in `__cause__`. |
@@ -373,11 +389,16 @@ It was checked against `CONTRACTS.md`, `ui_server.py` (`report_contact`, `report
 - `## Summary`. It is the last section and holds the four sections under `###` headings.
 
 In this layout `#`, `[`, `]` and `\` in titles, details, quotes and warnings have a backslash before them.
+A run of backslashes in such a text keeps 7 of them, and a run of another mark keeps 15, so `story_html` cuts nothing there either.
 Text from the model or from a message cannot make a heading, a link or an image.
 
 The server gives everything after `## Summary` to `story_html`, and the page cuts the result into chapters at its headings.
 The four `###` headings are the only headings of the story, so the chapters are always the four sections.
 The server reads the events from `events_timeline_*.csv`, not from `## Key Events`.
+
+`story_html` drops what is past 200,000 characters of a story. A cut there can leave a line of `=` under a line of text, which is a heading.
+The story of a report from `run_report` has 96,100 characters at most: each of the four sections has its cap, and the cleaning makes a text at most twice as long. The cut of `story_html` never applies.
+The cap also bounds the time of `story_html`, which reads a paragraph one more time for each backslash that guards a mark. For the worst story that the cap allows it needs about 2 seconds. For 200,000 characters of guarded brackets it needs about 25 seconds.
 
 `write_text_atomic(path, text)` writes a text file in one step.
 
@@ -394,7 +415,7 @@ This package does not change the server. The wiring step must do these things.
    4. Until the Reports page reads JSON, write the markdown file: `write_text_atomic(out_dir / f"analysis_{sanitize_filename(contact)}.md", render_markdown(report))`.
 4. Write `events_timeline_*.csv` from `report.moments` (columns `date`, `title`, `detail`, `category`, `score`, `quote`): `build_analysis_payload` reads the events from that file. The engine does not write it. When a report has no moment, remove the older events file, as `CONTRACTS.md` says.
 5. Send `ProgressEvent` to the job progress. Keep one `CancelToken` for each job and add a route that calls `cancel()`.
-6. Catch `RunError`, `EmptyConversationError`, `ConfigError` and `SourceError`. All of them are kinds of `ReportEngineError`. After the first model call a run ends only with a `RunError`. Record `error.usage` of a `RunError`. Show `report.warnings` always: a `complete` report can have warnings too (messages that were cut, quotes that were not found, summaries that were shortened). Catch `StoreError` from `ReportStore.save` and `write_text_atomic`.
+6. Catch `RunError`, `EmptyConversationError`, `ConfigError` and `SourceError`. All of them are kinds of `ReportEngineError`. After the first model call a run ends only with a `RunError`. Record `error.usage` of a `RunError`. Show `report.warnings` always: a `complete` report can have warnings too (messages that were cut, quotes that were not found, summaries that were shortened, sections that were cut). Catch `StoreError` from `ReportStore.save` and `write_text_atomic`.
 7. In `preview_payload`, replace `estimate_cost` with `estimate`. Give it the same labeler as the run.
 8. Serve the JSON to the Reports page: the list from `list_reports`, one report from `load_report(...).model_dump(mode="json")`.
 9. Give `since` and `until` as days. The engine includes the whole `until` day, as `within_dates` in `conversation.py` does at `ab20b5e`. The server at `212614a` compared against midnight and dropped that day.
@@ -427,7 +448,8 @@ Use the numbers to set `max_message_chars` and `period_token_budget`.
 venv/bin/python -m pytest tests/report_engine --cov=report_engine --cov-report=term-missing
 ```
 
-`test_contract_markdown.py` holds copies of the readers in `ui_server.py` at `ab20b5e`. Its last test uses the real `story_html` and is skipped until `safe_html` can be imported.
+`story_reader.py` holds copies of the readers in `ui_server.py` and of the steps of `story_html` at `ab20b5e`: the cuts that `story_html` makes before it renders, and the renderer.
+`test_contract_markdown.py`, `test_story_seam.py` and `test_section_cap.py` use them. The tests that use the real `story_html` are skipped until `safe_html` can be imported.
 
 `tests/report_engine/conftest.py` sets a dummy `OPENAI_API_KEY` before any import, removes proxy and address settings from the environment, and blocks all sockets that do not go to the local machine.
 The tests use invented conversations and `FakeLLM` only.
