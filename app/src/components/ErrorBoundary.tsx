@@ -23,8 +23,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     if (this.state.error) {
       return (
         <main className="app-fallback">
-          <h1>Recall hit a UI error</h1>
+          <h1>Recall could not draw this screen</h1>
           <p>{this.state.error.message}</p>
+          <button type="button" className="btn" onClick={() => window.location.reload()}>
+            Reload
+          </button>
         </main>
       )
     }
