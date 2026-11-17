@@ -223,14 +223,14 @@ export function MomentsSkeleton() {
           {[0, 1, 2].map((row) => (
             <li key={row}>
               <div className="row moment">
-                <span>
+                <span className="moment-when">
                   <span className="skeleton">2 years ago today</span>
                 </span>
                 <span className="moment-main">
-                  <span>
+                  <span className="moment-name">
                     <span className="skeleton">Conversation name</span>
                   </span>
-                  <span>
+                  <span className="moment-detail">
                     <span className="skeleton">000 messages that day</span>
                   </span>
                 </span>

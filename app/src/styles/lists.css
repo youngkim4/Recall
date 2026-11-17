@@ -127,12 +127,13 @@
 
   /* ---- ranked rows: place, name, bar, count and share on one grid, so the
      columns line up down the list ---- */
-  /* The name keeps at least 7rem and takes what is left over; the bar takes up
-     to 14rem of the room that remains, and none when there is none. A bar
-     that sized first would squeeze the name out of a narrow column. */
+  /* The name keeps at least 7rem and takes up to 14rem. The bar takes all
+     the room that remains, so a row is filled from one edge to the other,
+     and none when there is none. A bar that sized first would squeeze the
+     name out of a narrow column. */
   .ranked-row {
     display: grid;
-    grid-template-columns: 1.25rem minmax(7rem, 1fr) minmax(0, 14rem) 4.5rem 2.5rem;
+    grid-template-columns: 1.25rem minmax(7rem, 14rem) minmax(0, 1fr) 4.5rem 2.5rem;
     gap: var(--s-3);
   }
 

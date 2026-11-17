@@ -34,6 +34,8 @@ export function YearOfDays({ daily }: { daily: Daily }) {
   // how many years back from the newest the window sits, and the side it came from
   const [view, setView] = useState({ back: 0, slide: 0 })
   const [active, setActive] = useState<string | null>(null)
+  // the day the keyboard last read; the pointer reads a day without saying it aloud
+  const [said, setSaid] = useState<string | null>(null)
   const first = daily.start
   const end = endOf(daily, view.back)
   const weeks = useMemo(() => weeksEnding(end, WEEKS, WEEK_START), [end])
@@ -49,40 +51,43 @@ export function YearOfDays({ daily }: { daily: Daily }) {
   function step(years: number) {
     setView((current) => ({ back: current.back + years, slide: -years }))
     setActive(null)
+    setSaid(null)
   }
 
   return (
     <section className="section" aria-labelledby="days-title">
       <div className="section-head">
-        <h2 id="days-title">By day</h2>
-        {/* the arrows sit on either side of the years they change, and keep their places as the years do */}
-        <span className="stepper">
-          <button
-            type="button"
-            className="icon-btn sm"
-            aria-label="A year earlier"
-            aria-disabled={!canGoEarlier}
-            onClick={() => {
-              if (canGoEarlier) step(1)
-            }}
-          >
-            <ChevronLeftIcon />
-          </button>
-          <span key={period} className="stepper-value swap">
-            {period}
+        <div className="section-title">
+          <h2 id="days-title">By day</h2>
+          {/* the arrows sit on either side of the years they change, and keep their places as the years do */}
+          <span className="stepper">
+            <button
+              type="button"
+              className="icon-btn sm"
+              aria-label="A year earlier"
+              aria-disabled={!canGoEarlier}
+              onClick={() => {
+                if (canGoEarlier) step(1)
+              }}
+            >
+              <ChevronLeftIcon />
+            </button>
+            <span key={period} className="stepper-value swap">
+              {period}
+            </span>
+            <button
+              type="button"
+              className="icon-btn sm"
+              aria-label="A year later"
+              aria-disabled={!canGoLater}
+              onClick={() => {
+                if (canGoLater) step(-1)
+              }}
+            >
+              <ChevronRightIcon />
+            </button>
           </span>
-          <button
-            type="button"
-            className="icon-btn sm"
-            aria-label="A year later"
-            aria-disabled={!canGoLater}
-            onClick={() => {
-              if (canGoLater) step(-1)
-            }}
-          >
-            <ChevronRightIcon />
-          </button>
-        </span>
+        </div>
         <p className="heat-readout">
           {active ? (
             <>
@@ -117,6 +122,7 @@ export function YearOfDays({ daily }: { daily: Daily }) {
                   steps={steps}
                   active={back === view.back ? active : null}
                   onActive={setActive}
+                  onSay={setSaid}
                 />
               )}
             />
@@ -127,8 +133,8 @@ export function YearOfDays({ daily }: { daily: Daily }) {
         </div>
       </div>
       <p className="sr-only" aria-live="polite">
-        {active
-          ? `${pointName(active, 'day')}, ${plural(countOn(daily, active), 'message')}`
+        {said
+          ? `${pointName(said, 'day')}, ${plural(countOn(daily, said), 'message')}`
           : `${formatDate(since)} to ${formatDate(end)}`}
       </p>
     </section>
@@ -141,10 +147,12 @@ type GridProps = {
   steps: HeatSteps
   active: string | null
   onActive: (day: string | null) => void
+  // the day to read aloud, when the keyboard moved to it
+  onSay: (day: string | null) => void
 }
 
 // The 53 weeks that end on a day: the names of the months over the cells.
-function YearGrid({ daily, end, steps, active, onActive }: GridProps) {
+function YearGrid({ daily, end, steps, active, onActive, onSay }: GridProps) {
   const first = daily.start
   const last = lastDay(daily)
   const weeks = useMemo(() => weeksEnding(end, WEEKS, WEEK_START), [end])
@@ -171,7 +179,9 @@ function YearGrid({ daily, end, steps, active, onActive }: GridProps) {
     event.preventDefault()
     // the first press of an arrow lands on the newest day in view
     const wanted = active === null ? end : addDays(active, step)
-    onActive(wanted < since ? since : wanted > end ? end : wanted)
+    const day = wanted < since ? since : wanted > end ? end : wanted
+    onActive(day)
+    onSay(day)
   }
 
   return (

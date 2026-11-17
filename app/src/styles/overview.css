@@ -193,23 +193,21 @@
     border-radius: 0 2px 2px 0;
   }
 
-  /* ---- the page under the tiles. In a narrow workspace it is one column:
-     what is worth opening, then when the messages happen. With room the two
-     are halves side by side, on the lines the tiles set: the same gap, and
-     the middle of the page between the second tile and the third. ---- */
-  .overview-cols {
+  /* ---- a row of the page. In a narrow workspace its parts follow each
+     other. With room they stand side by side and are each as tall as the row,
+     so every card in a row ends on one line. The row under the tiles splits
+     in the middle, on the gap between the second tile and the third, and
+     keeps the tiles' gap. ---- */
+  .page > * + .overview-row,
+  .overview-row > * + *,
+  .overview-side > * + .section {
     margin-top: var(--s-12);
   }
 
-  /* what is inside a half answers to the half, not to the window */
-  .overview-col {
+  /* what is inside a part answers to the part, not to the window */
+  .overview-row > * {
     min-width: 0;
     container: half / inline-size;
-  }
-
-  .overview-col + .overview-col,
-  .overview-col > * + .section {
-    margin-top: var(--s-12);
   }
 
   @container workspace (min-width: 64rem) {
@@ -217,80 +215,140 @@
       gap: var(--s-4);
     }
 
-    .overview-cols {
+    .overview-row {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      align-items: start;
       gap: var(--s-4);
     }
 
-    .overview-col + .overview-col {
+    .overview-row > * + * {
       margin-top: 0;
+    }
+
+    /* a part is a heading over a card; the card takes the height that is left */
+    .overview-row > .section,
+    .overview-side,
+    .overview-side > .section {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .overview-row > .section > .card {
+      flex: 1;
+    }
+
+    /* The ranked list is as long as the room beside the moments. Its card
+       takes the height the column has left, whatever its rows come to, and
+       the list shows the rows that fit (useRowsThatFit reads --fit). Each row
+       then takes an equal share, so the last one ends on the card's edge. */
+    .overview-side > .section:has(> .ranked-card) {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
+    .overview-side .ranked-card {
+      --fit: 1;
+      flex: 1 1 0;
+      min-height: calc(5 * 2.75rem + 4px);
+      overflow: hidden;
+    }
+
+    .overview-side .ranked-card > .rows {
+      height: 100%;
+      grid-auto-rows: minmax(0, 1fr);
+    }
+
+    .overview-side .ranked-card > .rows > li {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .overview-side .ranked-card .row {
+      flex: 1;
+      align-content: center;
+    }
+
+    /* The year of days beside the hours of the week: 53 columns and 24. The
+       row is cut so that a day and an hour come to the same size, and the
+       seven weekdays of both stand on the same lines. Each card spends 4rem
+       on its padding and its weekday names; the gaps between cells take 104px
+       of one and 46px of the other; what is left of the row, less its own
+       1rem gap, is 77 cells, of which the year has 53. */
+    .overview-heat {
+      grid-template-columns: calc((100% - 9rem - 150px) * 53 / 77 + 4rem + 104px) minmax(0, 1fr);
+    }
+
+    /* Side by side the two grids are read as one: an hour may be as small as
+       a day, and the weekdays are named the way the year names them, every
+       second one, in the same size. */
+    .overview-heat .hours > * {
+      --hour: clamp(0.5rem, calc((100cqi - 2rem - 46px) / 24), 1.25rem);
+    }
+
+    .overview-heat .hours-weekdays {
+      font-size: 0.625rem;
+    }
+
+    .overview-heat .hours-weekdays > :nth-child(odd) {
+      visibility: hidden;
     }
   }
 
-  /* The halves arrive part by part, a beat after the tiles. The block that
-     holds them stays still, or its parts would move twice. */
-  .arrive-each > .overview-cols {
-    animation: none;
-  }
-
-  .overview-col > :nth-child(1) {
-    animation-delay: 30ms;
-  }
-
-  .overview-col > :nth-child(2) {
-    animation-delay: 60ms;
-  }
-
-  .overview-col > :nth-child(3) {
-    animation-delay: 90ms;
-  }
-
-  .overview-col > :nth-child(n + 4) {
-    animation-delay: 120ms;
-  }
-
-  /* ---- moments: when on the left, who and what on the right; in a card,
-     with a hairline between one moment and the next ---- */
+  /* ---- moments: who on the left and when at the end of the same line, the
+     way a list of messages is read; under them what was said. In a card, with
+     a hairline between one moment and the next. ---- */
   .card > .moments .row {
     padding-block: var(--s-4);
   }
 
   .moment {
     display: grid;
-    grid-template-columns: 11rem minmax(0, 1fr);
-    align-items: start;
-    gap: var(--s-4);
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'name when'
+      'detail detail';
+    align-items: baseline;
+    column-gap: var(--s-4);
+  }
+
+  /* who and what are read as one thing, and stand in the row's own grid */
+  .moment-main {
+    display: contents;
   }
 
   .moment-when {
+    grid-area: when;
+    font-size: var(--t-small);
+    line-height: var(--lh-body);
     color: var(--text-3);
+    white-space: nowrap;
   }
 
-  /* in a narrow column "when" goes above "who", and the bubble gets the width */
-  @container half (max-width: 38rem) {
+  /* too narrow for both on one line: when goes above who */
+  @container half (max-width: 24rem) {
     .moment {
       grid-template-columns: minmax(0, 1fr);
-      gap: 0;
+      grid-template-areas:
+        'when'
+        'name'
+        'detail';
     }
   }
 
-  .moment-main,
+  /* the detail spans the row, so a bubble's 78% is 78% of the row and not of
+     its own text */
   .moment-detail {
     display: grid;
+    grid-area: detail;
     justify-items: start;
-    min-width: 0;
-  }
-
-  /* the detail spans the column, so a bubble's 78% is 78% of the column and
-     not of its own text */
-  .moment-detail {
     justify-self: stretch;
+    min-width: 0;
   }
 
   /* a row with lines beneath its title sets the title in medium */
   .moment-name {
+    grid-area: name;
+    justify-self: start;
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;

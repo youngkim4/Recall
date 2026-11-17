@@ -25,6 +25,10 @@
     background: var(--them-mark);
   }
 
+  .voice-bar > .unsaid {
+    background: var(--mark);
+  }
+
   .voice-bar > :last-child {
     border-radius: 0 2px 2px 0;
   }
@@ -311,9 +315,18 @@
     display: inline-flex;
     align-items: center;
     align-self: center;
-    /* close beside the heading it belongs to, and no taller than its line */
-    margin: -0.125rem 0 -0.125rem calc(var(--s-1) - var(--s-4));
+    /* no taller than the line it is on */
+    margin-block: -0.125rem;
     color: var(--text-2);
+  }
+
+  /* A heading and the stepper that belongs to it are one thing: 4px apart,
+     and never on two lines, however narrow the window. */
+  .section-title {
+    display: flex;
+    align-items: center;
+    gap: var(--s-1);
+    min-width: 0;
   }
 
   .stepper-value {
@@ -384,9 +397,9 @@
   /* A cell is as wide as lets the 53 weeks end on the card's own edges: the
      width of the block less the weekday names (2rem) and the 52 gaps, over
      53. It is set on what is inside the block, which can measure the block.
-     It stops at 8px, under which a day is too small to point at, and at 14px. */
+     It stops at 8px, under which a day is too small to point at, and at 20px. */
   .days > * {
-    --cell: clamp(0.5rem, calc((100cqi - 2rem - 104px) / 53), 0.875rem);
+    --cell: clamp(0.5rem, calc((100cqi - 2rem - 104px) / 53), 1.25rem);
   }
 
   /* too narrow for the whole year at 8px a day (53 x 8 + 104 + 32 = 560):
@@ -465,19 +478,30 @@
     border-radius: 2.5px;
   }
 
-  /* ---- the hours of the week: a row a weekday, a column an hour ---- */
+  /* ---- the hours of the week: a row a weekday, a column an hour. The names
+     of the hours stand over the grid, as the months stand over the year of
+     days, so that the two grids start on one line when they are side by side. ---- */
   .hours {
     display: grid;
     grid-template-columns: 1.75rem minmax(0, 1fr);
     gap: var(--s-1);
+    container: hours / inline-size;
+  }
+
+  /* An hour is as tall as it is wide where the card allows: the width of the
+     block less the weekday names (2rem) and the 23 gaps, over 24. It is set
+     on what is inside the block, which can measure the block. */
+  .hours > * {
+    --hour: clamp(0.75rem, calc((100cqi - 2rem - 46px) / 24), 1.25rem);
   }
 
   .hours-weekdays {
     display: grid;
-    grid-template-rows: repeat(7, 1rem);
+    grid-row: 2;
+    grid-template-rows: repeat(7, var(--hour));
     row-gap: 2px;
     font-size: var(--t-caption);
-    line-height: 1rem;
+    line-height: var(--hour);
     color: var(--text-3);
   }
 
@@ -489,7 +513,8 @@
   }
 
   .hours-grid {
-    grid-template-rows: repeat(7, 1rem);
+    grid-row: 2;
+    grid-template-rows: repeat(7, var(--hour));
     row-gap: 2px;
   }
 
@@ -498,6 +523,7 @@
   }
 
   .hours-names {
+    grid-row: 1;
     grid-column: 2;
     font-size: var(--t-caption);
     line-height: var(--lh-caption);

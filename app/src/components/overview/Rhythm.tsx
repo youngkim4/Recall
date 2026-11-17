@@ -25,6 +25,8 @@ type Cell = { row: number; hour: number }
 export function Rhythm({ rhythm }: { rhythm: number[][] }) {
   // row is a place in the reader's week, so row 0 is the day their week starts on
   const [active, setActive] = useState<Cell | null>(null)
+  // the hour the keyboard last read; the pointer reads an hour without saying it aloud
+  const [said, setSaid] = useState<Cell | null>(null)
   const steps = useMemo(() => heatSteps(rhythm.flat()), [rhythm])
   const busiest = useMemo(() => busiestHour(rhythm), [rhythm])
   const countAt = (cell: Cell) => rhythm[rowOf(WEEK_ORDER[cell.row])]?.[cell.hour] ?? 0
@@ -51,14 +53,15 @@ export function Rhythm({ rhythm }: { rhythm: number[][] }) {
       row: busiest ? WEEK_ORDER.indexOf((busiest.weekday + 1) % 7) : 0,
       hour: busiest?.hour ?? 0,
     }
-    setActive(
+    const cell =
       active === null
         ? from
         : {
             row: Math.max(0, Math.min(6, from.row + step[0])),
             hour: Math.max(0, Math.min(HOURS - 1, from.hour + step[1])),
-          },
-    )
+          }
+    setActive(cell)
+    setSaid(cell)
   }
 
   if (!busiest) return null
@@ -124,7 +127,7 @@ export function Rhythm({ rhythm }: { rhythm: number[][] }) {
         </div>
       </div>
       <p className="sr-only" aria-live="polite">
-        {active ? `${nameOf(WEEK_ORDER[active.row], active.hour)}, ${plural(countAt(active), 'message')}` : ''}
+        {said ? `${nameOf(WEEK_ORDER[said.row], said.hour)}, ${plural(countAt(said), 'message')}` : ''}
       </p>
     </section>
   )
