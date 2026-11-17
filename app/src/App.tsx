@@ -615,7 +615,14 @@ function App() {
             onOpenSetup={() => void openSetup()}
           />
         ) : activeView === 'jobs' ? (
-          <JobsView jobs={jobs} runningJob={runningJob} contacts={contacts} onRefresh={loadJobs} />
+          <JobsView
+            jobs={jobs}
+            runningJob={runningJob}
+            contacts={contacts}
+            reports={reports}
+            onOpenReport={openReport}
+            onRefresh={loadJobs}
+          />
         ) : activeView === 'settings' ? (
           <SettingsView
             key={`${appliedSettingsPaths.dbPath}\n${appliedSettingsPaths.messagesPath}\n${appliedSettingsPaths.outDir}`}

@@ -1,40 +1,40 @@
-import { useEffect, useMemo } from 'react'
-import { parseDate, relativeTime } from '../../lib/format'
-import { isActiveJob, jobTitle, lastLog, mergeJobs } from '../../lib/jobs'
-import type { Contact, Job } from '../../types'
-import { Truncate } from '../ui/Truncate'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { isActiveJob, mergeJobs } from '../../lib/jobs'
+import type { Contact, Job, ReportFile } from '../../types'
+import { JobDetail } from './JobDetail'
+import { JobList } from './JobList'
 
 type JobsViewProps = {
   jobs: Job[]
   // the report this session started and is following
   runningJob: Job | null
   contacts: Contact[]
+  reports: ReportFile[]
+  onOpenReport: (report: ReportFile) => void
   onRefresh: () => void
 }
 
 // while anything is running the list is read again this often
 const REFRESH_MS = 2000
 
-const STATES: Record<Job['status'], { word: string; tone: string }> = {
-  queued: { word: 'Waiting', tone: 'busy' },
-  running: { word: 'Running', tone: 'busy' },
-  completed: { word: 'Done', tone: 'ok' },
-  failed: { word: 'Failed', tone: 'bad' },
+// the report a finished job wrote, while it is still among the saved reports
+function reportOf(job: Job, reports: ReportFile[]) {
+  const path = job.status === 'completed' ? job.result?.reportPath : undefined
+  return path ? (reports.find((report) => report.path === path) ?? null) : null
 }
 
-// what a job is doing now, or why it stopped
-function detailOf(job: Job) {
-  if (job.status === 'failed') return job.error || lastLog(job.logs) || 'It stopped without saying why'
-  if (!isActiveJob(job)) return ''
-  if (job.progress) return `Step ${job.progress.step} of ${job.progress.of}: ${job.progress.label}`
-  return lastLog(job.logs)
-}
-
-// The work this session has asked for: reports, imports, the index. It keeps
-// itself current while anything is running.
-export function JobsView({ jobs, runningJob, contacts, onRefresh }: JobsViewProps) {
+// The work this session has asked for: reports, imports, the index. The jobs
+// are on the left and the chosen one is on the right: how it stands and what
+// it wrote. In a narrow window the two take turns. It keeps itself current
+// while anything is running.
+export function JobsView({ jobs, runningJob, contacts, reports, onOpenReport, onRefresh }: JobsViewProps) {
   const listed = useMemo(() => mergeJobs(jobs, runningJob), [jobs, runningJob])
   const anyActive = listed.some(isActiveJob)
+  // the job the reader chose; until one is chosen, and when it is gone, the newest
+  const [chosenId, setChosenId] = useState('')
+  // in a narrow window only one of the two panes shows
+  const [pane, setPane] = useState<'list' | 'detail'>('list')
+  const split = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     onRefresh()
@@ -46,6 +46,17 @@ export function JobsView({ jobs, runningJob, contacts, onRefresh }: JobsViewProp
     return () => window.clearInterval(timer)
   }, [anyActive, onRefresh])
 
+  // In a narrow window the pane a press came from is gone once the other
+  // takes its place, and the focus with it. It goes to the way back, or back
+  // to the row of the job that was open. Where both panes show, nothing was
+  // lost and nothing moves.
+  useEffect(() => {
+    const held = document.activeElement
+    const lost = !(held instanceof HTMLElement) || held === document.body || held.offsetParent === null
+    const next = split.current?.querySelector<HTMLElement>(pane === 'detail' ? '.pane-back' : '.job-row[aria-current]')
+    if (lost && next && next.offsetParent !== null) next.focus()
+  }, [pane])
+
   if (!listed.length) {
     return (
       <div className="view">
@@ -56,40 +67,30 @@ export function JobsView({ jobs, runningJob, contacts, onRefresh }: JobsViewProp
     )
   }
 
+  const open = listed.find((job) => job.id === chosenId) ?? listed[0]
+
   return (
-    <div className="view">
-      <div className="page wide arrive">
-        <div className="card">
-          <ul className="rows" role="list">
-            {listed.map((job) => {
-              const state = STATES[job.status]
-              const detail = detailOf(job)
-              const updated = parseDate(job.updatedAt)
-              return (
-                <li key={job.id}>
-                  <div className="row job">
-                    <span className="job-main">
-                      <Truncate className="job-title">{jobTitle(job, contacts)}</Truncate>
-                      {detail ? <span className={job.status === 'failed' ? 'job-detail bad' : 'job-detail'}>{detail}</span> : null}
-                    </span>
-                    <span className={`status ${state.tone}`}>
-                      {isActiveJob(job) ? <span className="spinner" /> : null}
-                      {state.word}
-                    </span>
-                    {updated ? (
-                      <time className="job-when" dateTime={updated.toISOString()}>
-                        {relativeTime(updated.valueOf())}
-                      </time>
-                    ) : (
-                      <span className="job-when" />
-                    )}
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        </div>
-      </div>
+    <div ref={split} className="split jobs-split" data-pane={pane}>
+      <JobList
+        jobs={listed}
+        contacts={contacts}
+        openId={open.id}
+        onShow={(job) => setChosenId(job.id)}
+        onOpen={(job) => {
+          setChosenId(job.id)
+          setPane('detail')
+        }}
+      />
+      <div className="divider" />
+      <JobDetail
+        // another job starts at its own top, and arrives
+        key={open.id}
+        job={open}
+        contacts={contacts}
+        report={reportOf(open, reports)}
+        onOpenReport={onOpenReport}
+        onShowList={() => setPane('list')}
+      />
     </div>
   )
 }

@@ -1,0 +1,250 @@
+/* Jobs: the work asked for on the left, the chosen job on the right: how it
+   stands, the step it is on, how it ended, and what it wrote. */
+
+@layer views {
+  /* the list keeps a width that suits a name with a line under it; the job takes the rest */
+  .jobs-split {
+    --list-w: clamp(20rem, 36%, 30rem);
+  }
+
+  /* a list with no heading over it starts one gutter down */
+  .job-list {
+    padding-top: var(--s-2);
+  }
+
+  /* ---- a job in the list: its name, and when it last changed at the end of
+     the same line; under them how it stands, and what it is doing or why it
+     stopped ---- */
+  .job-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'name when'
+      'standing standing';
+    align-items: baseline;
+    gap: 0.125rem var(--s-3);
+    text-align: left;
+  }
+
+  /* a row with a line beneath its name sets the name in medium */
+  .job-name {
+    grid-area: name;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: var(--w-medium);
+    color: var(--text);
+  }
+
+  .job-when {
+    grid-area: when;
+    font-size: var(--t-small);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+
+  .job-standing {
+    display: flex;
+    grid-area: standing;
+    align-items: center;
+    gap: var(--s-2);
+    min-width: 0;
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+  }
+
+  /* one line; the pane beside the list has all of it */
+  .job-doing {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-3);
+  }
+
+  .job-doing.bad {
+    color: var(--bad);
+  }
+
+  /* ---- the chosen job fills its pane. It is as tall as the pane and no
+     taller, so the card of what it wrote ends on the pane's own inset, the
+     same 32px that is beside it and above it. In a pane too short for that,
+     the pane scrolls. ---- */
+  .job-detail {
+    display: flex;
+    flex-direction: column;
+    max-width: none;
+    min-height: 100%;
+    padding-bottom: var(--page-pad);
+  }
+
+  .job-detail > * {
+    flex: none;
+  }
+
+  /* the way back is as wide as its words, not as the column */
+  .job-detail > .pane-back {
+    align-self: flex-start;
+  }
+
+  /* The status and the way onward stand on the name's line, in its middle:
+     neither makes the line taller, so a job with a report to open starts
+     everything under its name where every other job does. */
+  .job-detail .section-head > .status,
+  .job-detail .section-head > .section-links {
+    align-self: center;
+  }
+
+  .job-times {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 var(--s-4);
+  }
+
+  /* ---- while it runs: the step in words over one mark for each step.
+     Those behind are filled, the one in hand is the strongest, those ahead
+     are the bare track. ---- */
+  .job-progress {
+    margin-top: var(--s-6);
+  }
+
+  .job-steps {
+    display: flex;
+    gap: 2px;
+    height: 0.375rem;
+    margin-top: var(--s-2);
+  }
+
+  .job-steps > i {
+    flex: 1;
+    min-width: 2px;
+    background: var(--heat-0);
+    transition: background-color var(--dur-short) ease;
+  }
+
+  .job-steps > [data-step='done'] {
+    background: var(--heat-3);
+  }
+
+  .job-steps > [data-step='now'] {
+    background: var(--heat-4);
+  }
+
+  .job-steps > :first-child {
+    border-radius: 2px 0 0 2px;
+  }
+
+  .job-steps > :last-child {
+    border-radius: 0 2px 2px 0;
+  }
+
+  /* ---- how it ended: why it stopped, or what it read ---- */
+  .job-detail > .notice {
+    margin-top: var(--s-6);
+  }
+
+  .job-detail > .job-figures + .notice {
+    margin-top: var(--s-3);
+  }
+
+  /* What a job read, as figures: a name over a number. They stand two
+     across, and in a pane with room for it all of them on one line. */
+  .job-figures {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--s-4);
+    margin-top: var(--s-6);
+    padding: var(--s-4);
+  }
+
+  @container detail (min-width: 34rem) {
+    .job-figures {
+      grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+    }
+  }
+
+  .job-figures dt {
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+  }
+
+  .job-figures dd {
+    margin-top: 0.125rem;
+    font-size: var(--t-heading);
+    line-height: var(--lh-heading);
+    font-weight: var(--w-medium);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+  }
+
+  /* two across in a narrow pane, a figure is set a size down so that a span
+     of years stays on one line */
+  @container detail (max-width: 20rem) {
+    .job-figures dd {
+      font-size: var(--t-reading);
+      line-height: var(--lh-body);
+    }
+  }
+
+  /* ---- what it wrote: the card takes the height the pane has left and
+     scrolls inside itself. Never shorter than a few lines. ---- */
+  .job-detail > .job-log {
+    flex: 1 1 12rem;
+    min-height: 12rem;
+    margin-top: var(--s-6);
+    overflow: auto;
+    overscroll-behavior: contain;
+    padding: var(--s-3) var(--s-4);
+    outline-offset: -2px;
+  }
+
+  .job-lines {
+    display: grid;
+    row-gap: var(--s-1);
+  }
+
+  /* the times share one column, as wide as the longest of them */
+  .job-lines.is-timed {
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: var(--s-3);
+  }
+
+  .job-lines.is-timed > li {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+    align-items: baseline;
+  }
+
+  .job-line-time {
+    font-size: var(--t-small);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+
+  .job-line-words {
+    min-width: 0;
+    color: var(--text-2);
+    overflow-wrap: anywhere;
+  }
+
+  /* nothing written: the words stand in the middle of the card */
+  .job-log-empty {
+    display: grid;
+    place-content: center;
+    height: 100%;
+    color: var(--text-3);
+  }
+
+  /* one pane fills the width: its last edge is the 16px its sides have */
+  @container workspace (max-width: 40rem) {
+    .job-detail {
+      padding-bottom: var(--s-4);
+    }
+  }
+}
