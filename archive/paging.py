@@ -43,7 +43,7 @@ def _side(
         clauses.append(f"(m.sent_ns, m.id) {compare} (?, ?)")
     if not include_system:
         clauses.append(rows.VISIBLE)
-    sql = f"{rows.MESSAGE_SELECT} WHERE {' AND '.join(clauses)} ORDER BY m.sent_ns {direction}, m.id {direction} LIMIT ?"
+    sql = f"{rows.PAGED_MESSAGE_SELECT} WHERE {' AND '.join(clauses)} ORDER BY m.sent_ns {direction}, m.id {direction} LIMIT ?"
     parts = [
         conn.execute(sql, (conversation, *(key or ()), limit)).fetchall() for conversation in conversation_keys
     ]
@@ -152,7 +152,7 @@ def _stream_one(
     key: Key | None = None
     while True:
         clauses = fixed if key is None else [*fixed, "(m.sent_ns, m.id) > (?, ?)"]
-        sql = f"{rows.MESSAGE_SELECT} WHERE {' AND '.join(clauses)} ORDER BY m.sent_ns, m.id LIMIT ?"
+        sql = f"{rows.PAGED_MESSAGE_SELECT} WHERE {' AND '.join(clauses)} ORDER BY m.sent_ns, m.id LIMIT ?"
         chunk = connect().execute(sql, (conversation, *time_params, *(key or ()), STREAM_CHUNK)).fetchall()
         for row in chunk:
             yield rows.sort_key(row), rows.message(row)

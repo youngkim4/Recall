@@ -19,18 +19,29 @@ Message = dict[str, Any]
 Conversation = dict[str, Any]
 Person = dict[str, Any]
 
-# columns 0 and 1 are the sort key (sent_ns, id); the rest is the Message
-MESSAGE_SELECT = f"""
+CONVERSATION_INDEX = "messages_by_conversation_time"  # (conversation_id, sent_ns, id, is_from_me, kind)
+TIME_INDEX = "messages_counted_by_time"  # (sent_ns, conversation_id, is_from_me) where kind is not system
+
+
+def _message_select(messages_table: str) -> str:
+    """columns 0 and 1 are the sort key (sent_ns, id); the rest is the Message"""
+    return f"""
 SELECT m.sent_ns, m.id, m.guid, c.chat_identifier, {sql_local_timestamp("m.sent_at")}, m.sent_at,
        m.is_from_me, COALESCE(h.handle, ''), m.text, m.kind,
        (SELECT group_concat(COALESCE(NULLIF(a.mime_type, ''), '{UNKNOWN_MIME_TYPE}'), char(31)
                             ORDER BY a.position, a.id)
           FROM attachments a WHERE a.message_id = m.id),
        m.reply_to_guid, m.edited_at, m.unsent
-  FROM messages m
+  FROM {messages_table}
   JOIN conversations c ON c.id = m.conversation_id
   LEFT JOIN handles h ON h.id = m.sender_handle_id
 """
+
+
+MESSAGE_SELECT = _message_select("messages m")
+# For reads of one conversation in time order. The index is named so that the cost of a page
+# never depends on what the query planner guesses about a young or unanalysed archive.
+PAGED_MESSAGE_SELECT = _message_select(f"messages m INDEXED BY {CONVERSATION_INDEX}")
 
 CONVERSATION_SELECT = """
 SELECT c.chat_identifier, c.is_group, c.title, c.message_count, c.sent_count, c.received_count,

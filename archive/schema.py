@@ -93,7 +93,10 @@ SCHEMA_V1: tuple[str, ...] = (
         last_import_id INTEGER NOT NULL REFERENCES import_runs(id)
     ) STRICT
     """,
-    "CREATE INDEX messages_by_conversation_time ON messages(conversation_id, sent_ns, id)",
+    # One conversation in time order: pages, streams, and its figures without a table read.
+    "CREATE INDEX messages_by_conversation_time ON messages(conversation_id, sent_ns, id, is_from_me, kind)",
+    # Every counted message in time order: figures over the whole archive without a table read.
+    # SQLite does not pick this index by itself for a query with no time range: name it with INDEXED BY.
     """
     CREATE INDEX messages_counted_by_time ON messages(sent_ns, conversation_id, is_from_me)
     WHERE kind != 'system'

@@ -18,6 +18,7 @@ from archive.records import AttachmentRow, MessageRow, ReactionRow
 MESSAGE_FIELDS = ", ".join(MessageRow._fields)
 REACTION_FIELDS = ", ".join(ReactionRow._fields)
 SOURCE_ROWID = MessageRow._fields.index("source_rowid")
+ROWS_PER_INSERT = 400  # 17 values each: far below SQLite's limit of 32,766 bound values
 
 
 class MessageCounts(NamedTuple):
@@ -55,6 +56,21 @@ def merge_message(stored: MessageRow, incoming: MessageRow) -> MessageRow:
     return merged
 
 
+def _insert_messages(conn: sqlite3.Connection, rows: Sequence[tuple[object, ...]]) -> None:
+    """Insert message rows, many rows in each statement.
+
+    The insert trigger writes each row to the full-text index. FTS5 flushes
+    its pending data at every statement that fires a trigger, so one statement
+    for each row would write one index segment for each message. That is
+    about nine times slower.
+    """
+    one_row = f"({_marks(len(MessageRow._fields) + 2)})"
+    head = f"INSERT INTO messages({MESSAGE_FIELDS}, first_import_id, last_import_id) VALUES "
+    for start in range(0, len(rows), ROWS_PER_INSERT):
+        chunk = rows[start : start + ROWS_PER_INSERT]
+        conn.execute(head + ", ".join([one_row] * len(chunk)), [value for row in chunk for value in row])
+
+
 def _stored_messages(conn: sqlite3.Connection, guids: Sequence[str]) -> dict[str, tuple[int, MessageRow]]:
     rows = conn.execute(f"SELECT id, {MESSAGE_FIELDS} FROM messages WHERE guid IN ({_marks(len(guids))})", guids)
     return {row[1]: (int(row[0]), MessageRow._make(row[1:])) for row in rows.fetchall()}
@@ -83,10 +99,7 @@ def write_messages(conn: sqlite3.Connection, run_id: int, rows: Sequence[Message
         else:
             updates.append((*merged[1:], run_id, message_id))
             touched.update((old.conversation_id, merged.conversation_id))
-    conn.executemany(
-        f"INSERT INTO messages({MESSAGE_FIELDS}, first_import_id, last_import_id) VALUES ({_marks(len(MessageRow._fields) + 2)})",
-        inserts,
-    )
+    _insert_messages(conn, inserts)
     assignments = ", ".join(f"{name} = ?" for name in MessageRow._fields[1:])
     conn.executemany(f"UPDATE messages SET {assignments}, last_import_id = ? WHERE id = ?", updates)
     conn.executemany("UPDATE messages SET last_import_id = ?, source_rowid = ? WHERE id = ?", seen)

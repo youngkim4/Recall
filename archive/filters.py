@@ -21,6 +21,9 @@ class Scope:
     where: str
     params: tuple[object, ...]
     matches_nothing: bool = False
+    searches_text: bool = False  # reads message text: the full-text index or a substring test
+    in_conversations: bool = False  # limited to some conversations
+    counts_system: bool = False  # group events are included
 
 
 NOTHING = Scope(joins="", where="0", params=(), matches_nothing=True)
@@ -88,7 +91,19 @@ def time_clauses(lower: int | None, upper: int | None) -> tuple[list[str], list[
 
 
 def in_conversations(keys: tuple[int, ...]) -> str:
+    """SQL that limits `messages m` to some conversations.
+
+    One conversation is written with `=`: SQLite then knows that the index gives time order.
+    """
+    if len(keys) == 1:
+        return f"m.conversation_id = {int(keys[0])}"
     return f"m.conversation_id IN ({', '.join(str(int(key)) for key in keys)})"
+
+
+def substring_clause(needle: str) -> str:
+    """SQL that tests for a needle made by search_query. lower() is skipped when the needle has no letter a-z."""
+    haystack = "lower(m.text)" if any("a" <= char <= "z" for char in needle) else "m.text"
+    return f"instr({haystack}, ?) > 0"
 
 
 def scope(
@@ -126,6 +141,13 @@ def scope(
     if not include_system:
         clauses.append(VISIBLE)
     for needle in text.substrings if text is not None else ():
-        clauses.append("instr(lower(m.text), ?) > 0")
+        clauses.append(substring_clause(needle))
         params.append(needle)
-    return Scope(joins=joins, where=" AND ".join(clauses) or "1", params=tuple(params))
+    return Scope(
+        joins=joins,
+        where=" AND ".join(clauses) or "1",
+        params=tuple(params),
+        searches_text=text is not None,
+        in_conversations=conversations is not None,
+        counts_system=include_system,
+    )

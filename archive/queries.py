@@ -299,7 +299,13 @@ class Archive:
         if group_by is not None:
             check_choice("group_by", group_by, figures.GROUPS)
         parsed = None if text is None else search_module.parse_query(text)
+        lower, upper = day_bounds(since, until)
+        direction = filters.check_flag("from_me", from_me)
+        from_totals = parsed is None and lower is None and upper is None and not include_system
         with self._reading() as conn:
+            if from_totals and group_by in (None, "conversation"):
+                keys = None if conversations is None else conversation_keys(conn, conversations)
+                return figures.count_from_totals(conn, keys, direction, group_by == "conversation")
             where = filters.scope(
                 conn,
                 conversations=conversations,
@@ -309,7 +315,7 @@ class Archive:
                 text=parsed,
                 include_system=include_system,
             )
-            return figures.count(conn, where, group_by)
+            return figures.count(conn, where, group_by, lower, upper)
 
     def stats(
         self,

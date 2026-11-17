@@ -165,6 +165,17 @@ class TestCount:
             for options in ({}, {"from_me": True}, {"conversations": [G]}, {"since": "2024-01-01", "until": "2024-03-09"}):
                 assert harbor.archive.count(text=query, **options) == harbor.archive.search(query, **options)["total"]
 
+    def test_counts_from_stored_totals_equal_counts_from_the_messages(self, harbor: Harbor) -> None:
+        # with no day and no text, count() reads the totals kept on each conversation.
+        # A `since` before the first message forces the same question through the message index.
+        for conversations in (None, [A], [A, B], [G, "+15550109999"], [worlds.HARBOR_EMPTY_ID], []):
+            for from_me in (None, True, False):
+                for group_by in (None, "conversation"):
+                    options = {"conversations": conversations, "from_me": from_me, "group_by": group_by}
+                    quick = harbor.archive.count(**options)  # type: ignore[arg-type]
+                    scanned = harbor.archive.count(since="2001-01-01", **options)  # type: ignore[arg-type]
+                    assert quick == scanned, options
+
     @pytest.mark.parametrize("bad", [{"group_by": "week"}, {"since": "03/10/2024"}, {"until": "2024-3-1"}, {"from_me": 1}])
     def test_bad_arguments_raise_value_error(self, harbor: Harbor, bad: dict[str, object]) -> None:
         with pytest.raises(ValueError):

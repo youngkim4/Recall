@@ -25,9 +25,11 @@ from __future__ import annotations
 from archive.errors import TypedStreamError
 
 __all__ = [
+    "KNOWN_LAYOUTS",
     "TypedStreamError",
     "attributed_body_text",
     "decode_attributed_body",
+    "parse_text",
     "read_integer",
     "read_text",
     "scan_text",
@@ -41,6 +43,21 @@ FIRST_REFERENCE = -110  # 0x92 as a signed byte
 STREAM_VERSION = 4
 BYTE_ORDERS = {b"streamtyped": "little", b"typedstream": "big"}
 BYTES_TYPE_NEW = b"\x84\x01+"
+
+# Everything before the text length, in the two layouts that NSArchiver writes for an attributed
+# string: NSAttributedString with NSString, and the mutable classes. Both are little-endian.
+# A blob that starts with one of them needs no walk through the stream. The tests check these
+# bytes against the fixtures made by Apple's encoder.
+_HEADER = b"\x04\x0bstreamtyped\x81\xe8\x03\x84\x01@\x84\x84\x84"
+_NSOBJECT = b"\x84\x84\x08NSObject\x00\x85\x92\x84\x84\x84"
+KNOWN_LAYOUTS: tuple[bytes, ...] = (
+    _HEADER + b"\x12NSAttributedString\x00" + _NSOBJECT + b"\x08NSString\x01\x94" + BYTES_TYPE_NEW,
+    _HEADER
+    + b"\x19NSMutableAttributedString\x00\x84\x84\x12NSAttributedString\x00"
+    + _NSOBJECT
+    + b"\x0fNSMutableString\x01\x84\x84\x08NSString\x01\x95"
+    + BYTES_TYPE_NEW,
+)
 
 
 def read_integer(data: bytes, offset: int, byteorder: str = "little") -> tuple[int, int]:
@@ -172,6 +189,18 @@ def _utf8(raw: bytes) -> str:
 
 def read_text(blob: bytes | bytearray | memoryview) -> str:
     """Follow the archive structure to the string of the attributed string."""
+    data = _as_bytes(blob)
+    for layout in KNOWN_LAYOUTS:
+        if data.startswith(layout):
+            length, start = read_integer(data, len(layout))
+            if start + length > len(data):
+                raise TypedStreamError("a length points past the end of the data")
+            return _utf8(data[start : start + length])
+    return parse_text(data)
+
+
+def parse_text(blob: bytes | bytearray | memoryview) -> str:
+    """read_text without the shortcut for known layouts: walk the stream object by object."""
     reader = _Reader(_as_bytes(blob))
     reader.header()
     reader.expect_type(b"@")

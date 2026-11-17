@@ -158,7 +158,8 @@ def refresh_totals(conn: sqlite3.Connection, conversation_ids: Iterable[int]) ->
         UPDATE conversations SET (message_count, sent_count, received_count, first_sent_ns, last_sent_ns) = (
             SELECT COUNT(*), COALESCE(SUM(is_from_me), 0), COALESCE(SUM(1 - is_from_me), 0),
                    MIN(sent_ns), MAX(sent_ns)
-              FROM messages WHERE conversation_id = ?1 AND kind != 'system'
+              FROM messages INDEXED BY messages_by_conversation_time
+             WHERE conversation_id = ?1 AND kind != 'system'
         ) WHERE id = ?1
         """,
         [(conversation_id,) for conversation_id in sorted(set(conversation_ids))],

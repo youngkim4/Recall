@@ -12,9 +12,11 @@ from pathlib import Path
 import pytest
 
 from archive.typedstream import (
+    KNOWN_LAYOUTS,
     TypedStreamError,
     attributed_body_text,
     decode_attributed_body,
+    parse_text,
     read_integer,
     read_text,
     scan_text,
@@ -48,6 +50,23 @@ class TestAppleFixtures:
     def test_structured_read_and_marker_scan_agree(self, name: str) -> None:
         assert read_text(blob(name)) == expected_text(name)
         assert scan_text(blob(name)) == expected_text(name)
+
+    @pytest.mark.parametrize("name", fixture_names())
+    def test_walking_the_stream_gives_the_same_text_as_the_known_layout(self, name: str) -> None:
+        data = blob(name)
+        assert sum(1 for layout in KNOWN_LAYOUTS if data.startswith(layout)) == 1
+        assert parse_text(data) == read_text(data) == expected_text(name)
+
+    def test_known_layouts_are_the_bytes_apple_writes(self) -> None:
+        plain, mutable = KNOWN_LAYOUTS
+        assert blob("ascii_1")[: len(plain)] == plain
+        assert blob("mutable_short")[: len(mutable)] == mutable
+        assert plain.endswith(b"NSString\x01\x94\x84\x01+") and mutable.endswith(b"NSString\x01\x95\x84\x01+")
+
+    def test_another_system_version_is_read_by_walking_the_stream(self) -> None:
+        data = blob("ascii_300").replace(b"streamtyped\x81\xe8\x03", b"streamtyped\x81\xe9\x03")
+        assert not any(data.startswith(layout) for layout in KNOWN_LAYOUTS)
+        assert read_text(data) == counter_text(300)
 
     @pytest.mark.parametrize("name", fixture_names())
     def test_manifest_describes_the_expected_text(self, name: str) -> None:
