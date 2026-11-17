@@ -25,8 +25,13 @@ from tests.archive import netguard  # noqa: E402
 
 netguard.install()
 
+from dataclasses import dataclass  # noqa: E402
+from typing import Any  # noqa: E402
+
 import pytest  # noqa: E402
 
+from archive import Archive, import_chat_db  # noqa: E402
+from tests.archive import worlds  # noqa: E402
 from tests.archive.builders import ChatDbBuilder  # noqa: E402
 
 TEST_TIME_ZONE = "America/Los_Angeles"
@@ -69,3 +74,40 @@ def builder(source_path: Path) -> Iterator[ChatDbBuilder]:
         yield made
     finally:
         made.close()
+
+
+@dataclass(frozen=True)
+class Harbor:
+    """The imported "Harbor" history (tests/archive/worlds.py) and an open Archive on it."""
+
+    archive: Archive
+    path: Path
+    guids: dict[str, str]
+
+    def id(self, label: str) -> str:
+        return self.guids[label]
+
+    def labels(self, messages: list[dict[str, Any]]) -> list[str]:
+        names = {guid: label for label, guid in self.guids.items()}
+        return [names[message["id"]] for message in messages]
+
+
+@pytest.fixture(scope="session")
+def harbor_files(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, dict[str, str]]:
+    """Import the Harbor history once. Tests only read it."""
+    folder = tmp_path_factory.mktemp("harbor")
+    source = folder / "source" / "chat.db"
+    source.parent.mkdir()
+    made = ChatDbBuilder(source)
+    world = worlds.build_harbor(made)
+    made.close()
+    archive_path = folder / "data" / "archive.sqlite3"
+    import_chat_db(source, archive_path, contacts=[worlds.ROWAN_CONTACT, worlds.MIRA_CONTACT])
+    return archive_path, dict(world.guids)
+
+
+@pytest.fixture
+def harbor(harbor_files: tuple[Path, dict[str, str]]) -> Iterator[Harbor]:
+    path, guids = harbor_files
+    with Archive.open(path) as archive:
+        yield Harbor(archive, path, guids)

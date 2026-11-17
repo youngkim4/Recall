@@ -20,9 +20,13 @@ from archive.errors import (
     TypedStreamError,
 )
 from archive.importer import ImportResult, import_chat_db
+from archive.paths import default_archive_path
+from archive.queries import Archive
 
 __all__ = [
+    "Archive",
     "ImportResult",
+    "default_archive_path",
     "import_chat_db",
     "ArchiveError",
     "ArchiveNotFoundError",
