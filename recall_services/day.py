@@ -24,19 +24,19 @@ from day_view import DAY_LIMIT
 from recall_services import inputs, messages
 from recall_services.names import Names
 
-_CLOCK = re.compile(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})")
+_CLOCK = re.compile(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(:\d{2})?")
 
 
 def _clock(around: object) -> str | None:
     """`around` as "YYYY-MM-DD HH:MM:SS", or None when it is no such time.
 
     A fraction of a second and a zone are dropped: every time of the archive
-    is the time on the clock.
+    is the time on the clock. A time with no seconds is at second 0.
     """
     if not isinstance(around, str):
         return None
     found = _CLOCK.match(around.strip())
-    return f"{found.group(1)} {found.group(2)}" if found else None
+    return f"{found.group(1)} {found.group(2)}{found.group(3) or ':00'}" if found else None
 
 
 def payload(
