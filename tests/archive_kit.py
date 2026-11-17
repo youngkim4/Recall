@@ -164,14 +164,46 @@ def import_from(db, archive_file, contacts=False, **more):
     return run("setup_import", {**named, "messagesPath": str(archive_file), "includeContacts": contacts, **more})
 
 
-def pulled(archive_file, texts, folder=None):
+def pulled(archive_file, texts):
     """An archive that a pull filled with one message for each text. Gives the archive file."""
     archive_file = Path(archive_file)
-    source = write_database((folder or archive_file.parent) / "filled-from" / "chat.db", texts)
+    source = write_database(archive_file.parent / "filled-from" / "chat.db", texts)
     outcome = places.state_for(archive_file).pull_from_messages(source, None)
     assert outcome.status == "done", outcome.reason
     shutil.rmtree(source.parent)
     return places.archive_path_for(archive_file)
+
+
+def write_only_a_tapback(path):
+    """A Messages database whose one row is a tapback on a message that is not there: no row of it is kept."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.unlink(missing_ok=True)
+    builder = ChatDbBuilder(path)
+    handle = builder.handle(PERSON)
+    thread = builder.chat(PERSON, members=[handle])
+    builder.tapback(thread, "guid-of-a-message-that-is-gone", 2000, when=START, handle=handle)
+    builder.close()
+    return path
+
+
+def emptied(archive_file):
+    """An archive that a pull filled and a later pull emptied: it is there, and it holds no row."""
+    archive_file = pulled(archive_file, ["once here"])
+    source = write_only_a_tapback(archive_file.parent / "emptied-from.db")
+    outcome = places.state_for(archive_file).pull_from_messages(source, None, max_removed_share=1.0)
+    assert outcome.status == "done" and outcome.messages == 0, outcome.reason
+    source.unlink()
+    assert sum(len(rows) for name, rows in picture(archive_file).items() if name in ("messages", "reactions")) == 0
+    return archive_file
+
+
+def not_an_archive(archive_file):
+    """A file at the place of the archive that no archive code can open."""
+    archive_file = Path(archive_file)
+    archive_file.parent.mkdir(parents=True, exist_ok=True)
+    archive_file.write_bytes(b"not an archive, and long enough to be read as a page. " * 40)
+    return archive_file
 
 
 def bridged(export, texts):
