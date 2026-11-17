@@ -120,6 +120,8 @@ WARNING: The story of a report is written by an AI model from the messages of ot
   - Only a first setup can name a copy: the archive file is not there, or it holds no row (`holds_messages`). The copy is read for that import only. With no copy named, the job reads Messages.
   - No other job reads a database. A report is written from the archive as it is.
 - The guide holds the same rule: in an update it offers no other source (`offersCopy` in `app/src/lib/setupGuide.ts`). It says why Messages cannot be read and how to correct that.
+- One test says whether the guide is an update: `holds_messages`. `/api/setup/status` gives it as `export.holdsMessages`, and `isUpdate` in `app/src/lib/setupGuide.ts` reads it. Do not decide this from the list of conversations.
+- Each check of setup names the archive file that the app reads (`messagesPath`): at launch, when the guide opens, and in the guide.
 - Known limit: a reader who works from copies only cannot update from a newer copy. They must remove the archive file first, and then do a first setup from the newer copy.
 - An import does not merge a second source. After an import, the archive holds what the database holds. `merge_export.py` is a hand tool. The app does not call it.
 - `probe_database` in `setup_status.py` knows the database of Messages by the parts of its path (`in_messages_folder`). A folder whose name only starts like the folder of Messages holds a copy.
@@ -152,15 +154,18 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - A failure at any step leaves the three files as they were. When step 5 or step 6 fails, the files that moved are put back from the earlier files.
 - The earlier messages file is the sign of an import that is not finished. It is kept first and removed last.
   - While it is there, the next import first puts each earlier file back, the messages last. This also undoes an import that the end of the process cut off during the moves.
+  - The server does the same for its own archive file when it starts (`settle_default_archive`). An archive at another path is put back by its next import. Until then a request can read new attachments or new reactions beside the earlier messages.
+  - An import that put the archive back and then stopped says "The archive is as it was before the import that did not finish."
   - When it is not there, the import before finished. The next import removes what is left of its earlier files.
 - If an earlier file cannot be put back, it stays beside the archive with the earlier messages file, and the error names it (`ArchiveInParts`). The next import puts it back. An archive that still cannot be put back is not imported over.
 - A request that the server answers during the moves reads a whole file at each of the three places.
   - For a moment it can read new attachments or new reactions beside the earlier messages.
   - It never reads new messages beside earlier attachments or earlier reactions, because the messages move last.
 - When the three files are in place, the import did its work.
-  - The server then drops each preview that it keeps (`forget_previews`), and the guide clears the previews that the browser keeps (`finishOnboarding` in `App.tsx`). No figure of the earlier archive is shown after an import.
+  - The server then drops each preview that it keeps (`forget_previews`), and the guide clears the previews that the browser keeps (`finishOnboarding` in `App.tsx`).
+  - Known limit: `useConversationPreview.ts` holds the figures of the last conversation in memory. After an import, Analyze can show them for that conversation until the server answers.
   - A later step of the job that fails does not make the import a failed one. The job ends as completed, with a plain `warning` in its result and in its log. The Done step shows the warning.
-- An import and the Overview give one count of messages: `what_the_archive_holds` uses `archive_summary`. A message in no conversation is shown nowhere in the app, and it is not counted.
+- An import and the Overview give one count of messages: `what_the_archive_holds` uses `archive_summary`. A message in no conversation is shown nowhere in the app, and it is not counted. When that count fails, the result holds the number of rows that were written, with the warning.
 - A companion file that is a link is replaced by a file.
 - No code lists the folder of the archive. Do not add code that takes a file in that folder for an archive because of its name.
 
@@ -176,7 +181,7 @@ WARNING: The story of a report is written by an AI model from the messages of ot
   - A path (`messagesPath`, `outDir`, and `dbPath` for a `setup_import`) is text that the system can hold.
   - `includeContacts` is `true` or `false`.
 - A body that is not JSON is answered with 400 on each POST route (`BadRequest`).
-- The answer to a new job is a copy of the job as it was made. Its status is `queued`. The answer about a job is a copy too.
+- The answer to a new job is a copy of the job as it was made (`job_copy`). Its status is `queued`. The answer about a job is a copy too. A copy shares no list with the job.
 - A job always ends in the list. `run_job` marks a job as failed when its work is over and the list still says `queued` or `running`. A job that stays in one of these states holds up each later job of its group.
 
 ### What the reader is told
@@ -185,7 +190,7 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 - A busy database (`locked`) is tried. `export_when_free` tries it once more after `BUSY_WAIT_SECONDS`.
 - An import that stops raises `ImportStopped`. Its text is one plain sentence for the reader. `why_unreadable`, `reading_stopped` and `writing_stopped` write the sentences.
   - The sentence holds no text of a query. What a reader raised goes to the log of the server. It does not go to the lines of the job.
-  - The sentence ends with "The archive was not changed." only when there was an archive.
+  - The sentence ends with what is true of the archive (`archive_note`): nothing when there was no archive, "The archive was not changed.", or that the archive was put back.
 - `/api/contacts` answers a busy database with 503 and a database that fails with 500. The error is a plain sentence from `reading_stopped`.
 
 ### What is kept
