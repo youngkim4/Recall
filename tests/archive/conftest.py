@@ -40,7 +40,8 @@ TEST_TIME_ZONE = "America/Los_Angeles"
 @pytest.fixture(autouse=True)
 def _guards() -> Iterator[None]:
     """Fixed time zone and a live socket block for every archive test."""
-    assert netguard.is_installed(), "the socket block was removed"
+    netguard.ensure()
+    assert netguard.blocks_outbound(), "sockets that leave this machine are not blocked"
     previous = os.environ.get("TZ")
     os.environ["TZ"] = TEST_TIME_ZONE
     time.tzset()

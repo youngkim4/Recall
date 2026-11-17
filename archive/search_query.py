@@ -18,15 +18,28 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-_QUOTES = str.maketrans({"“": '"', "”": '"', "„": '"', "‟": '"', "＂": '"'})
+# curly and fullwidth double quotes count as plain double quotes
+_QUOTES = dict.fromkeys((0x201C, 0x201D, 0x201E, 0x201F, 0xFF02), '"')
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 # a phrase in quotes with an optional star, or a run of characters that are not space or quote
 _TERM = re.compile(r'"([^"]*)"(\*?)|([^\s"]+)')
 # scripts that write words without spaces between them
-_UNSPACED = re.compile(
-    "[฀-໿က-႟ᄀ-ᇿក-៿぀-ヿ㄰-㆏ㇰ-ㇿ"
-    "㐀-䶿一-鿿가-힯豈-﫿ｦ-ﾟ\U00020000-\U0003134f]"
+_UNSPACED_RANGES = (
+    (0x0E00, 0x0EFF),  # Thai, Lao
+    (0x1000, 0x109F),  # Myanmar
+    (0x1100, 0x11FF),  # Hangul Jamo
+    (0x1780, 0x17FF),  # Khmer
+    (0x3040, 0x30FF),  # Hiragana, Katakana
+    (0x3130, 0x318F),  # Hangul compatibility Jamo
+    (0x31F0, 0x31FF),  # Katakana phonetic extensions
+    (0x3400, 0x4DBF),  # CJK ideographs, extension A
+    (0x4E00, 0x9FFF),  # CJK ideographs
+    (0xAC00, 0xD7AF),  # Hangul syllables
+    (0xF900, 0xFAFF),  # CJK compatibility ideographs
+    (0xFF66, 0xFF9F),  # halfwidth Katakana
+    (0x20000, 0x3134F),  # CJK ideographs, extensions B to G
 )
+_UNSPACED = re.compile("[" + "".join(f"{chr(first)}-{chr(last)}" for first, last in _UNSPACED_RANGES) + "]")
 _ASCII_LOWER = {code: code + 32 for code in range(ord("A"), ord("Z") + 1)}
 
 

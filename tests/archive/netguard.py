@@ -8,6 +8,8 @@ from typing import Any
 
 _LOCAL_NAMES = frozenset({"", "localhost", "localhost.localdomain", "ip6-localhost"})
 _MARK = "_recall_netguard"
+# TEST-NET-1 (RFC 5737): reserved for documentation, never routed
+PROBE_ADDRESS = ("192.0.2.1", 9)
 
 
 class NetworkBlocked(RuntimeError):
@@ -38,7 +40,7 @@ def _is_local_address(address: object) -> bool:
 
 def _guarded(original: Any, name: str, address_index: int) -> Any:
     def wrapper(self: socket.socket, *args: Any, **kwargs: Any) -> Any:
-        address = args[address_index] if len(args) > address_index else None
+        address = args[address_index] if args else None
         if not _is_local_address(address):
             raise NetworkBlocked(f"socket.{name} to {address!r} is blocked in archive tests")
         return original(self, *args, **kwargs)
@@ -58,15 +60,34 @@ def _guarded_lookup(original: Any, name: str) -> Any:
 
 
 def install() -> None:
-    """Patch the socket module once. Safe to call again."""
-    if is_installed():
-        return
-    socket.socket.connect = _guarded(socket.socket.connect, "connect", 0)  # type: ignore[method-assign]
-    socket.socket.connect_ex = _guarded(socket.socket.connect_ex, "connect_ex", 0)  # type: ignore[method-assign]
-    socket.socket.sendto = _guarded(socket.socket.sendto, "sendto", -1)  # type: ignore[method-assign]
-    socket.getaddrinfo = _guarded_lookup(socket.getaddrinfo, "getaddrinfo")
-    socket.gethostbyname = _guarded_lookup(socket.gethostbyname, "gethostbyname")
+    """Patch the socket module. Safe to call again: a function that is already guarded is left alone."""
+    for name, index in (("connect", 0), ("connect_ex", 0), ("sendto", -1)):
+        current = getattr(socket.socket, name)
+        if not getattr(current, _MARK, False):
+            setattr(socket.socket, name, _guarded(current, name, index))
+    for name in ("getaddrinfo", "gethostbyname"):
+        current = getattr(socket, name)
+        if not getattr(current, _MARK, False):
+            setattr(socket, name, _guarded_lookup(current, name))
 
 
-def is_installed() -> bool:
-    return bool(getattr(socket.socket.connect, _MARK, False)) and bool(getattr(socket.getaddrinfo, _MARK, False))
+def blocks_outbound() -> bool:
+    """True when a connection to another machine is refused before any packet leaves.
+
+    The probe is a UDP connect: it only sets a destination and sends nothing,
+    also when no guard is active. It works with any guard, not only this one.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(PROBE_ADDRESS)
+    except Exception:  # noqa: BLE001 - any refusal counts
+        return True
+    finally:
+        probe.close()
+    return False
+
+
+def ensure() -> None:
+    """Make sure outbound sockets are blocked now, by this guard or by another one."""
+    if not blocks_outbound():
+        install()

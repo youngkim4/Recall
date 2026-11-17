@@ -46,7 +46,9 @@ def merge_message(stored: MessageRow, incoming: MessageRow) -> MessageRow:
     if _is_older_copy(stored, incoming):
         return stored._replace(source_rowid=incoming.source_rowid)
     merged = incoming._replace(
-        sender_handle_id=incoming.sender_handle_id if incoming.sender_handle_id is not None else stored.sender_handle_id,
+        sender_handle_id=incoming.sender_handle_id
+        if incoming.sender_handle_id is not None
+        else stored.sender_handle_id,
         service=incoming.service or stored.service,
         reply_to_guid=incoming.reply_to_guid or stored.reply_to_guid,
         extra=incoming.extra if incoming.extra is not None else stored.extra,
@@ -143,7 +145,9 @@ def write_attachments(conn: sqlite3.Connection, rows: Sequence[AttachmentRow]) -
         return 0
     message_guids = sorted({row.message_guid for row in unique})
     message_ids = dict(
-        conn.execute(f"SELECT guid, id FROM messages WHERE guid IN ({_marks(len(message_guids))})", message_guids).fetchall()
+        conn.execute(
+            f"SELECT guid, id FROM messages WHERE guid IN ({_marks(len(message_guids))})", message_guids
+        ).fetchall()
     )
     guids = [row.guid for row in unique]
     stored = {
@@ -161,10 +165,12 @@ def write_attachments(conn: sqlite3.Connection, rows: Sequence[AttachmentRow]) -
             continue
         old = stored.get(row.guid)
         if old is None:
-            inserts.append((row.guid, message_id, row.position, row.mime_type, row.file_name, row.path, row.total_bytes))
+            inserts.append(
+                (row.guid, message_id, row.position, row.mime_type, row.file_name, row.path, row.total_bytes)
+            )
             continue
         attachment_id, *known = old
-        merged = [new if new is not None else kept for new, kept in zip(row[3:], known)]
+        merged = [new if new is not None else kept for new, kept in zip(row[3:], known, strict=True)]
         if merged != known:
             updates.append((*merged, attachment_id))
     conn.executemany(

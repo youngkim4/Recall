@@ -144,7 +144,10 @@ class TestCount:
         assert harbor.archive.count(conversations=[]) == 0
         assert harbor.archive.count(conversations=["+15550109999"]) == 0
         assert harbor.archive.count(conversations=A) == 10
-        assert rows(harbor.archive.count(conversations=[A, B], group_by="conversation")) == [(A, 10, 5, 5), (B, 2, 1, 1)]
+        assert rows(harbor.archive.count(conversations=[A, B], group_by="conversation")) == [
+            (A, 10, 5, 5),
+            (B, 2, 1, 1),
+        ]
         assert harbor.archive.count(conversations=[], group_by="day") == []
 
     def test_text_uses_the_search_rules(self, harbor: Harbor) -> None:
@@ -162,7 +165,12 @@ class TestCount:
 
     def test_count_with_text_equals_the_search_total(self, harbor: Harbor) -> None:
         for query in ("happy", "clocks change", '"new year"', "bru*", "🎉", "寿司", "?", "nothing-here", "the"):
-            for options in ({}, {"from_me": True}, {"conversations": [G]}, {"since": "2024-01-01", "until": "2024-03-09"}):
+            for options in (
+                {},
+                {"from_me": True},
+                {"conversations": [G]},
+                {"since": "2024-01-01", "until": "2024-03-09"},
+            ):
                 assert harbor.archive.count(text=query, **options) == harbor.archive.search(query, **options)["total"]
 
     def test_counts_from_stored_totals_equal_counts_from_the_messages(self, harbor: Harbor) -> None:
@@ -176,7 +184,9 @@ class TestCount:
                     scanned = harbor.archive.count(since="2001-01-01", **options)  # type: ignore[arg-type]
                     assert quick == scanned, options
 
-    @pytest.mark.parametrize("bad", [{"group_by": "week"}, {"since": "03/10/2024"}, {"until": "2024-3-1"}, {"from_me": 1}])
+    @pytest.mark.parametrize(
+        "bad", [{"group_by": "week"}, {"since": "03/10/2024"}, {"until": "2024-3-1"}, {"from_me": 1}]
+    )
     def test_bad_arguments_raise_value_error(self, harbor: Harbor, bad: dict[str, object]) -> None:
         with pytest.raises(ValueError):
             harbor.archive.count(**bad)  # type: ignore[arg-type]
@@ -282,7 +292,9 @@ class TestParityWithLegacyComputeStats:
 
 
 class TestTies:
-    def test_earliest_day_and_earliest_gap_win(self, builder: ChatDbBuilder, source_path: Path, archive_path: Path) -> None:
+    def test_earliest_day_and_earliest_gap_win(
+        self, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
         rowan = builder.handle(worlds.ROWAN_PHONE)
         chat = builder.chat(worlds.ROWAN_PHONE, members=[rowan])
         for day in (1, 3, 5):

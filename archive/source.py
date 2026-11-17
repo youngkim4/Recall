@@ -90,9 +90,9 @@ def _coerce(value: object, kind: type) -> object:
 
 
 def _message(values: tuple[object, ...]) -> SourceMessage:
-    for value, kind in zip(values, MESSAGE_TYPES):
+    for value, kind in zip(values, MESSAGE_TYPES, strict=True):
         if value is not None and type(value) is not kind:
-            return SourceMessage(*[_coerce(v, k) for v, k in zip(values, MESSAGE_TYPES)])  # type: ignore[arg-type]
+            return SourceMessage(*[_coerce(v, k) for v, k in zip(values, MESSAGE_TYPES, strict=True)])  # type: ignore[arg-type]
     return SourceMessage._make(values)
 
 
@@ -143,7 +143,9 @@ def _backup(path: Path, target: Path, *, immutable: bool, on_step: CopyStep | No
         os.close(os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
         copy = sqlite3.connect(str(target))
         try:
-            progress = None if on_step is None else (lambda _status, remaining, total: on_step(total - remaining, total))
+            progress = (
+                None if on_step is None else (lambda _status, remaining, total: on_step(total - remaining, total))
+            )
             source.backup(copy, pages=COPY_PAGES_PER_STEP, progress=progress)
         finally:
             copy.close()
@@ -270,6 +272,10 @@ class SourceReader:
         return [(int(chat), int(handle)) for chat, handle in rows]
 
     def count_after(self, rowid: int) -> int:
+        """Number of rows with a ROWID above `rowid`."""
+        if rowid <= 0:
+            # with no condition SQLite counts on its smallest index and does not read the table
+            return int(self._conn.execute("SELECT COUNT(*) FROM message").fetchone()[0])
         return int(self._conn.execute("SELECT COUNT(*) FROM message WHERE ROWID > ?", (rowid,)).fetchone()[0])
 
     def top_rows(self, count: int) -> list[tuple[int, str]]:
@@ -294,9 +300,7 @@ class SourceReader:
         if not marks or upto_rowid <= 0:
             return iter(())
         marked = " OR ".join(f"m.{name} > 0" for name in marks)
-        cursor = self._conn.execute(
-            f"{self._select} WHERE m.ROWID <= ? AND ({marked}) ORDER BY m.ROWID", (upto_rowid,)
-        )
+        cursor = self._conn.execute(f"{self._select} WHERE m.ROWID <= ? AND ({marked}) ORDER BY m.ROWID", (upto_rowid,))
         return self._batches(cursor, batch_size)
 
     def attachments_for(self, rowids: Sequence[int]) -> dict[int, list[SourceAttachment]]:

@@ -82,7 +82,7 @@ def read_integer(data: bytes, offset: int, byteorder: str = "little") -> tuple[i
 class _Reader:
     """Walk a typedstream far enough to reach the first string."""
 
-    __slots__ = ("data", "pos", "order", "strings", "objects")
+    __slots__ = ("data", "objects", "order", "pos", "strings")
 
     def __init__(self, data: bytes) -> None:
         self.data = data

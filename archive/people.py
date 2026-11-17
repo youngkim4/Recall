@@ -101,12 +101,12 @@ def _wanted_people(handles: Sequence[HandleRow], groups: Sequence[ContactGroup])
     matched: dict[int, list[int]] = {}
     wanted: list[tuple[str, tuple[int, ...]]] = []
     for row in handles:
-        index = group_of_key.get(row.match_key)
-        if index is None:
+        found = group_of_key.get(row.match_key)
+        if found is None:
             wanted.append(("", (row.id,)))
         else:
-            matched.setdefault(index, []).append(row.id)
-    wanted.extend((groups[index].name, tuple(sorted(ids))) for index, ids in matched.items())
+            matched.setdefault(found, []).append(row.id)
+    wanted.extend((groups[position].name, tuple(sorted(ids))) for position, ids in matched.items())
     return wanted
 
 
@@ -120,7 +120,9 @@ def _reuse_ids(wanted: list[tuple[str, tuple[int, ...]]], owner: Mapping[int, in
             person_id = owner.get(handle_id)
             if person_id is not None:
                 votes[person_id] = votes.get(person_id, 0) + 1
-        free = [person_id for person_id in sorted(votes, key=lambda pid: (-votes[pid], pid)) if person_id not in claimed]
+        free = [
+            person_id for person_id in sorted(votes, key=lambda pid: (-votes[pid], pid)) if person_id not in claimed
+        ]
         chosen = free[0] if free else None
         if chosen is not None:
             claimed.add(chosen)

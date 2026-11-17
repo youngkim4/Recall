@@ -132,14 +132,32 @@ def report_import(label: str, source: Path, counts: Any, data: dict[str, Any]) -
     print(f"  source file: {source.stat().st_size / MIB:.1f} MiB, {counts.source_rows:,} rows")
     print(f"  mode: {data['mode']}, rows seen: {data['rows_seen']:,}, messages added: {data['messages_added']:,}")
     print(f"  time: {data['seconds']:.2f} s ({rate:,.0f} rows/s)")
-    print(f"  peak memory: {data['peak_rss'] / MIB:.1f} MiB (before the import started: {data['baseline_rss'] / MIB:.1f} MiB)")
+    print(
+        f"  peak memory: {data['peak_rss'] / MIB:.1f} MiB (before the import started: {data['baseline_rss'] / MIB:.1f} MiB)"
+    )
 
 
 def check_counts(counts: Any, data: dict[str, Any]) -> None:
-    expected = (counts.source_rows, counts.messages, counts.reactions, counts.system_rows, counts.attachments, counts.blob_texts)
-    found = (data["rows_seen"], data["messages_seen"], data["reactions_seen"], data["system_seen"], data["attachments_added"], data["blob_texts"])
+    expected = (
+        counts.source_rows,
+        counts.messages,
+        counts.reactions,
+        counts.system_rows,
+        counts.attachments,
+        counts.blob_texts,
+    )
+    found = (
+        data["rows_seen"],
+        data["messages_seen"],
+        data["reactions_seen"],
+        data["system_seen"],
+        data["attachments_added"],
+        data["blob_texts"],
+    )
     if expected != found or data["decode_failures"] or data["skipped"]:
-        raise RuntimeError(f"import counts differ from the generator: expected {expected}, found {found}, {data['skipped']}")
+        raise RuntimeError(
+            f"import counts differ from the generator: expected {expected}, found {found}, {data['skipped']}"
+        )
 
 
 def parent(messages: int, compare: list[int]) -> None:

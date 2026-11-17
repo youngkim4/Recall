@@ -110,7 +110,9 @@ class TestLocalSecondsSql:
 
     def test_range_keeps_the_expression_short(self) -> None:
         whole = timeconv.sql_local_seconds("m.sent_ns")
-        one_month = timeconv.sql_local_seconds("m.sent_ns", timeconv.day_start("2024-01-01"), timeconv.day_end("2024-01-31"))
+        one_month = timeconv.sql_local_seconds(
+            "m.sent_ns", timeconv.day_start("2024-01-01"), timeconv.day_end("2024-01-31")
+        )
         assert "CASE" in whole and "CASE" not in one_month
         assert "-28800" in one_month
 
@@ -147,12 +149,21 @@ def reference(moments: list[tuple[int, bool]], pattern: str) -> list[tuple[str, 
 
 class TestGroupedCountsInOtherZones:
     @pytest.mark.parametrize("name", ZONES)
-    def test_buckets_match_python_local_time(self, zone: None, scattered: tuple[Path, list[tuple[int, bool]]], name: str) -> None:
+    def test_buckets_match_python_local_time(
+        self, zone: None, scattered: tuple[Path, list[tuple[int, bool]]], name: str
+    ) -> None:
         archive_path, moments = scattered
         use_zone(name)
         with Archive.open(archive_path) as archive:
-            for group_by, pattern in (("day", "%Y-%m-%d"), ("month", "%Y-%m"), ("year", "%Y"), ("weekday_hour", "weekday_hour")):
-                found = [(row["key"], row["total"], row["sent"], row["received"]) for row in archive.count(group_by=group_by)]
+            for group_by, pattern in (
+                ("day", "%Y-%m-%d"),
+                ("month", "%Y-%m"),
+                ("year", "%Y"),
+                ("weekday_hour", "weekday_hour"),
+            ):
+                found = [
+                    (row["key"], row["total"], row["sent"], row["received"]) for row in archive.count(group_by=group_by)
+                ]
                 assert found == reference(moments, pattern), (name, group_by)
 
     @pytest.mark.parametrize("name", ["America/Los_Angeles", "Australia/Lord_Howe", "Africa/Casablanca"])
@@ -178,7 +189,9 @@ class TestGroupedCountsInOtherZones:
 
 
 class TestClocksGoBack:
-    def test_day_with_25_hours_is_one_bucket(self, builder: ChatDbBuilder, source_path: Path, archive_path: Path) -> None:
+    def test_day_with_25_hours_is_one_bucket(
+        self, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
         rowan = builder.handle(worlds.ROWAN_PHONE)
         chat = builder.chat(worlds.ROWAN_PHONE, members=[rowan])
         # 2024-11-03 in Los Angeles: 01:30 happens twice

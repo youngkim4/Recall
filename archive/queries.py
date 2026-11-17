@@ -25,7 +25,13 @@ from typing import Any
 from archive import connection, figures, filters, paging, rows
 from archive import search as search_module
 from archive.errors import ArchiveError
-from archive.filters import as_id_list, check_choice, check_int, conversation_keys, day_bounds
+from archive.filters import (
+    as_id_list,
+    check_choice,
+    check_int,
+    conversation_keys,
+    day_bounds,
+)
 from archive.paths import default_archive_path
 from archive.rows import Conversation, Message, Person
 
@@ -39,7 +45,7 @@ ID_CHUNK = 500
 class _Slot:
     """One thread's connection. The slot dies with its thread, and the connection is then closed."""
 
-    __slots__ = ("conn", "__weakref__")
+    __slots__ = ("__weakref__", "conn")
 
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
@@ -84,7 +90,9 @@ class Archive:
     def __enter__(self) -> Archive:
         return self
 
-    def __exit__(self, kind: type[BaseException] | None, error: BaseException | None, trace: TracebackType | None) -> None:
+    def __exit__(
+        self, kind: type[BaseException] | None, error: BaseException | None, trace: TracebackType | None
+    ) -> None:
         self.close()
 
     def open_connections(self) -> int:
@@ -131,15 +139,19 @@ class Archive:
 
     def summary(self) -> dict[str, Any]:
         """`{"messages", "conversations", "first_timestamp", "last_timestamp"}` for the whole archive."""
-        total, with_messages, first, last = self._connection().execute(
-            "SELECT COALESCE(SUM(message_count), 0), COALESCE(SUM(message_count > 0), 0),"
-            " MIN(first_sent_ns), MAX(last_sent_ns) FROM conversations"
-        ).fetchone()
+        total, with_messages, first, last = (
+            self._connection()
+            .execute(
+                "SELECT COALESCE(SUM(message_count), 0), COALESCE(SUM(message_count > 0), 0),"
+                " MIN(first_sent_ns), MAX(last_sent_ns) FROM conversations"
+            )
+            .fetchone()
+        )
         return {
             "messages": int(total),
             "conversations": int(with_messages),
-            "first_timestamp": rows._timestamp(first),
-            "last_timestamp": rows._timestamp(last),
+            "first_timestamp": rows.timestamp_from_ns(first),
+            "last_timestamp": rows.timestamp_from_ns(last),
         }
 
     def conversations(
@@ -156,9 +168,11 @@ class Archive:
         return [rows.conversation(row) for row in found.fetchall()]
 
     def conversation(self, conversation_id: str) -> Conversation | None:
-        found = self._connection().execute(
-            f"{rows.CONVERSATION_SELECT} WHERE c.chat_identifier = ?", (conversation_id,)
-        ).fetchone()
+        found = (
+            self._connection()
+            .execute(f"{rows.CONVERSATION_SELECT} WHERE c.chat_identifier = ?", (conversation_id,))
+            .fetchone()
+        )
         return None if found is None else rows.conversation(found)
 
     def people(self) -> list[Person]:

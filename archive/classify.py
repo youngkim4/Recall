@@ -11,12 +11,18 @@
 from __future__ import annotations
 
 from archive.errors import TypedStreamError
-from archive.records import MessageRecord, ReactionRecord, Record, Skipped, SourceMessage
+from archive.records import (
+    MessageRecord,
+    ReactionRecord,
+    Record,
+    Skipped,
+    SourceMessage,
+)
 from archive.tapbacks import split_target, tapback
 from archive.timeconv import apple_to_unix_ns, apple_to_unix_seconds
 from archive.typedstream import decode_attributed_body
 
-OBJECT_REPLACEMENT = "￼"  # stands for an attachment inside the text
+OBJECT_REPLACEMENT = chr(0xFFFC)  # U+FFFC stands for an attachment inside the text
 
 
 def clean_text(text: str | None) -> str:

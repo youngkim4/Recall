@@ -45,7 +45,7 @@ def check_choice(name: str, value: object, choices: Iterable[str]) -> str:
 def check_flag(name: str, value: object) -> bool | None:
     if value is not None and type(value) is not bool:
         raise ValueError(f"{name} must be True, False or None, got {value!r}")
-    return value  # type: ignore[return-value]
+    return None if value is None else bool(value)
 
 
 def as_id_list(name: str, value: object) -> list[str]:
@@ -66,7 +66,9 @@ def conversation_keys(conn: sqlite3.Connection, value: object) -> tuple[int, ...
     if not identifiers:
         return ()
     marks = ", ".join("?" for _ in identifiers)
-    rows = conn.execute(f"SELECT chat_identifier, id FROM conversations WHERE chat_identifier IN ({marks})", identifiers)
+    rows = conn.execute(
+        f"SELECT chat_identifier, id FROM conversations WHERE chat_identifier IN ({marks})", identifiers
+    )
     found = dict(rows.fetchall())
     return tuple(found[identifier] for identifier in identifiers if identifier in found)
 

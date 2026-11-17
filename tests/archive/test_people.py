@@ -5,7 +5,13 @@ from __future__ import annotations
 import pytest
 
 from archive.handles import handle_match_key
-from archive.people import ContactGroup, HandleRow, PersonPlan, contact_groups, plan_people
+from archive.people import (
+    ContactGroup,
+    HandleRow,
+    PersonPlan,
+    contact_groups,
+    plan_people,
+)
 
 PHONE = "+15550100123"
 EMAIL = "rowan@example.com"

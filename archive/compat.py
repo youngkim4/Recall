@@ -72,7 +72,10 @@ def messages_frame(archive: Archive) -> pd.DataFrame:
     only_files = raw["kind"] == "attachment"
     text = raw["text"].where(
         ~only_files,
-        [_attachment_text(types, files) for types, files in zip(raw["attachment_types"], raw["attachment_files"])],
+        [
+            _attachment_text(types, files)
+            for types, files in zip(raw["attachment_types"], raw["attachment_files"], strict=True)
+        ],
     )
     frame = raw.assign(
         timestamp=pd.to_datetime(raw["timestamp"], format=LOCAL_TIMESTAMP_FORMAT),

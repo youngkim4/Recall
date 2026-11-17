@@ -44,9 +44,7 @@ def _side(
     if not include_system:
         clauses.append(rows.VISIBLE)
     sql = f"{rows.PAGED_MESSAGE_SELECT} WHERE {' AND '.join(clauses)} ORDER BY m.sent_ns {direction}, m.id {direction} LIMIT ?"
-    parts = [
-        conn.execute(sql, (conversation, *(key or ()), limit)).fetchall() for conversation in conversation_keys
-    ]
+    parts = [conn.execute(sql, (conversation, *(key or ()), limit)).fetchall() for conversation in conversation_keys]
     if len(parts) == 1:
         return parts[0]
     return list(heapq.merge(*parts, key=rows.sort_key, reverse=older))[:limit]
@@ -54,9 +52,10 @@ def _side(
 
 def _anchor(conn: sqlite3.Connection, conversation_keys: Sequence[int], guid: str) -> Row | None:
     marks = ", ".join("?" for _ in conversation_keys)
-    return conn.execute(
+    found: Row | None = conn.execute(
         f"{rows.MESSAGE_SELECT} WHERE m.guid = ? AND m.conversation_id IN ({marks})", (guid, *conversation_keys)
     ).fetchone()
+    return found
 
 
 def _is_visible(row: Row, include_system: bool) -> bool:
@@ -90,33 +89,33 @@ def page(
     if not conversation_keys:
         return _empty_page()
 
-    def side(key: Key | None, older: bool, count: int) -> list[Row]:
+    def side(key: Key | None, count: int, *, older: bool) -> list[Row]:
         return _side(conn, conversation_keys, key, older=older, limit=count, include_system=include_system)
 
     anchor_visible = False
     anchor_key: Key | None = None
     if not anchors:
-        found = list(reversed(side(None, True, limit)))
+        found = list(reversed(side(None, limit, older=True)))
     else:
         anchor = _anchor(conn, conversation_keys, anchors[0])
         if anchor is None:
             return _empty_page()
         anchor_key, anchor_visible = rows.sort_key(anchor), _is_visible(anchor, include_system)
         if before is not None:
-            found = list(reversed(side(anchor_key, True, limit)))
+            found = list(reversed(side(anchor_key, limit, older=True)))
         elif after is not None:
-            found = side(anchor_key, False, limit)
+            found = side(anchor_key, limit, older=False)
         else:
             middle = [anchor] if anchor_visible else []
-            found = _around(side(anchor_key, True, limit), middle, side(anchor_key, False, limit), limit)
+            found = _around(side(anchor_key, limit, older=True), middle, side(anchor_key, limit, older=False), limit)
 
     if found:
-        has_older = bool(side(rows.sort_key(found[0]), True, 1))
-        has_newer = bool(side(rows.sort_key(found[-1]), False, 1))
+        has_older = bool(side(rows.sort_key(found[0]), 1, older=True))
+        has_newer = bool(side(rows.sort_key(found[-1]), 1, older=False))
     else:
         # nothing on the asked side: the anchor itself, or what lies beyond it, is on the other side
-        has_older = after is not None and (anchor_visible or bool(side(anchor_key, True, 1)))
-        has_newer = before is not None and (anchor_visible or bool(side(anchor_key, False, 1)))
+        has_older = after is not None and (anchor_visible or bool(side(anchor_key, 1, older=True)))
+        has_newer = before is not None and (anchor_visible or bool(side(anchor_key, 1, older=False)))
     return {"messages": [rows.message(row) for row in found], "has_older": has_older, "has_newer": has_newer}
 
 

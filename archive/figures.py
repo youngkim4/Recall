@@ -17,13 +17,20 @@ from typing import Any
 
 from archive.filters import Scope, check_choice, in_conversations, time_clauses
 from archive.rows import CONVERSATION_INDEX, TIME_INDEX, VISIBLE
-from archive.timeconv import NS_PER_SECOND, SECONDS_PER_DAY, SECONDS_PER_HOUR, local_timestamp, sql_local_seconds
+from archive.timeconv import (
+    NS_PER_SECOND,
+    SECONDS_PER_DAY,
+    SECONDS_PER_HOUR,
+    local_timestamp,
+    sql_local_seconds,
+)
 
 GROUPS = ("day", "month", "year", "weekday_hour", "conversation", "sender")
 DAY_KEY_LENGTH = {"day": 10, "month": 7, "year": 4}  # prefix of "YYYY-MM-DD"
 EPOCH_ORDINAL = date(1970, 1, 1).toordinal()
 EPOCH_WEEKDAY = 3  # 1970-01-01 was a Thursday. Monday is 0, like datetime.weekday().
 HOURS_PER_WEEK = 168
+GAP_CHUNK = 10_000
 SUMS = "COUNT(*), COALESCE(SUM(m.is_from_me), 0)"
 Bucket = tuple[str, int, int]
 
@@ -69,7 +76,9 @@ def _summed(buckets: Iterable[Bucket]) -> list[Bucket]:
     return [(key, total, sent) for key, (total, sent) in totals.items()]
 
 
-def _time_buckets(conn: sqlite3.Connection, where: Scope, group_by: str, lower: int | None, upper: int | None) -> list[Bucket]:
+def _time_buckets(
+    conn: sqlite3.Connection, where: Scope, group_by: str, lower: int | None, upper: int | None
+) -> list[Bucket]:
     local = sql_local_seconds("m.sent_ns", _unix(lower), _unix(upper))
     if group_by == "weekday_hour":
         hours = _grouped(conn, where, f"({local} / {SECONDS_PER_HOUR}) % {HOURS_PER_WEEK}", _table(where))
@@ -125,7 +134,9 @@ def count_from_totals(
     """
     if conversation_keys is not None and not conversation_keys:
         return [] if by_conversation else 0
-    limit = "" if conversation_keys is None else f"WHERE id IN ({', '.join(str(int(key)) for key in conversation_keys)})"
+    limit = (
+        "" if conversation_keys is None else f"WHERE id IN ({', '.join(str(int(key)) for key in conversation_keys)})"
+    )
     found = conn.execute(f"SELECT chat_identifier, sent_count, received_count FROM conversations {limit}").fetchall()
     buckets = [
         (str(name), 0 if from_me is False else int(sent), 0 if from_me is True else int(received))
@@ -134,7 +145,29 @@ def count_from_totals(
     if not by_conversation:
         return sum(sent + received for _, sent, received in buckets)
     kept = sorted((bucket for bucket in buckets if bucket[1] + bucket[2]), key=lambda b: (-(b[1] + b[2]), b[0]))
-    return [{"key": name, "total": sent + received, "sent": sent, "received": received} for name, sent, received in kept]
+    return [
+        {"key": name, "total": sent + received, "sent": sent, "received": received} for name, sent, received in kept
+    ]
+
+
+def _longest_gap(moments: sqlite3.Cursor) -> tuple[int, int] | None:
+    """(start, end) of the longest gap between two moments that follow each other. The earliest wins a tie.
+
+    `moments` gives unix seconds in order. The rows are read in chunks: an ordered read with a
+    loop here is twice as fast as a window function in SQL, and it holds no more than one chunk.
+    """
+    longest = -1
+    found: tuple[int, int] | None = None
+    previous: int | None = None
+    while True:
+        chunk = moments.fetchmany(GAP_CHUNK)
+        if not chunk:
+            return found
+        for (moment,) in chunk:
+            if previous is not None and moment - previous > longest:
+                longest = moment - previous
+                found = (previous, moment)
+            previous = moment
 
 
 def _empty_stats(label: object) -> dict[str, Any]:
@@ -171,30 +204,30 @@ def stats(
     if not conversation_keys:
         return _empty_stats(label)
     time_sql, params = time_clauses(lower, upper)
-    where = " AND ".join([in_conversations(tuple(conversation_keys)), *time_sql, *([] if include_system else [VISIBLE])])
+    where = " AND ".join(
+        [in_conversations(tuple(conversation_keys)), *time_sql, *([] if include_system else [VISIBLE])]
+    )
     scoped = f"FROM messages m INDEXED BY {CONVERSATION_INDEX} WHERE {where}"
-    total, sent, first, last = conn.execute(f"SELECT {SUMS}, MIN(m.sent_ns), MAX(m.sent_ns) {scoped}", params).fetchone()
+    total, sent, first, last = conn.execute(
+        f"SELECT {SUMS}, MIN(m.sent_ns), MAX(m.sent_ns) {scoped}", params
+    ).fetchone()
     if not total:
         return _empty_stats(label)
-    local_day = f"{sql_local_seconds('m.sent_ns', _unix(first), _unix(last) + 1)} / {SECONDS_PER_DAY}"
+    first_unix, last_unix = first // NS_PER_SECOND, last // NS_PER_SECOND
+    local_day = f"{sql_local_seconds('m.sent_ns', first_unix, last_unix + 1)} / {SECONDS_PER_DAY}"
     busiest_day, busiest_count, active_days = conn.execute(
         f"SELECT day, n, COUNT(*) OVER () FROM (SELECT {local_day} AS day, COUNT(*) AS n {scoped} GROUP BY day)"
         " ORDER BY n DESC, day ASC LIMIT 1",
         params,
     ).fetchone()
-    gap = conn.execute(
-        f"SELECT previous_at, at FROM (SELECT m.sent_ns / {NS_PER_SECOND} AS at,"
-        f" LAG(m.sent_ns / {NS_PER_SECOND}) OVER (ORDER BY m.sent_ns, m.id) AS previous_at {scoped})"
-        " WHERE previous_at IS NOT NULL ORDER BY at - previous_at DESC, at ASC LIMIT 1",
-        params,
-    ).fetchone()
+    gap = _longest_gap(conn.execute(f"SELECT m.sent_ns / {NS_PER_SECOND} {scoped} ORDER BY m.sent_ns, m.id", params))
     return {
         "conversation": label,
         "total_messages": int(total),
         "sent_count": int(sent),
         "received_count": int(total - sent),
-        "first_timestamp": local_timestamp(first // NS_PER_SECOND),
-        "last_timestamp": local_timestamp(last // NS_PER_SECOND),
+        "first_timestamp": local_timestamp(first_unix),
+        "last_timestamp": local_timestamp(last_unix),
         "active_days": int(active_days),
         "avg_messages_per_day": total / active_days,
         "busiest_day": _day_name(busiest_day),

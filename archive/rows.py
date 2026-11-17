@@ -67,7 +67,7 @@ def _split(joined: str | None) -> list[str]:
     return joined.split(LIST_SEPARATOR) if joined else []
 
 
-def _timestamp(unix_ns: int | None) -> str | None:
+def timestamp_from_ns(unix_ns: int | None) -> str | None:
     return None if unix_ns is None else local_timestamp(unix_ns // 1_000_000_000)
 
 
@@ -101,8 +101,8 @@ def conversation(row: sqlite3.Row | tuple[Any, ...]) -> Conversation:
         "message_count": row[3],
         "sent_count": row[4],
         "received_count": row[5],
-        "first_timestamp": _timestamp(row[6]),
-        "last_timestamp": _timestamp(row[7]),
+        "first_timestamp": timestamp_from_ns(row[6]),
+        "last_timestamp": timestamp_from_ns(row[7]),
         "members": _split(row[8]),
         "person_id": row[9],
     }

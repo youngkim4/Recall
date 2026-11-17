@@ -89,7 +89,9 @@ class TestValues:
 
 
 class TestLegacyCodeRunsOnTheFrame:
-    def test_filter_conversation_and_compute_stats(self, frame: pd.DataFrame, harbor: Harbor, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_filter_conversation_and_compute_stats(
+        self, frame: pd.DataFrame, harbor: Harbor, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         legacy = load_legacy_conversation(monkeypatch)
         for conversation in (A, B, G):
             rows = legacy.filter_conversation(frame, conversation)

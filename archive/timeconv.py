@@ -23,7 +23,7 @@ _DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 def apple_to_unix_ns(value: object) -> int | None:
     """Apple time to UTC unix nanoseconds. None when the value is not a usable date."""
-    if value is None or isinstance(value, (bytes, str)) and not str(value).strip():
+    if value is None or (isinstance(value, (bytes, str)) and not str(value).strip()):
         return None
     try:
         number = int(value)  # type: ignore[call-overload]
@@ -90,7 +90,16 @@ OFFSET_TABLE_START = APPLE_EPOCH_UNIX  # no iMessage is older than 2001
 OFFSET_TABLE_YEARS_AHEAD = 2
 OFFSET_PROBE_STEP = 7 * SECONDS_PER_DAY  # offset changes are weeks apart or more
 # moments whose offsets tell one time zone from another: mid January and mid July of four years
-ZONE_PROBES = (1_105_790_400, 1_121_428_800, 1_326_628_800, 1_342_353_600, 1_547_553_600, 1_563_192_000, 1_705_320_000, 1_721_044_800)
+ZONE_PROBES = (
+    1_105_790_400,
+    1_121_428_800,
+    1_326_628_800,
+    1_342_353_600,
+    1_547_553_600,
+    1_563_192_000,
+    1_705_320_000,
+    1_721_044_800,
+)
 
 OffsetChanges = list[tuple[int, int]]
 _offset_table: tuple[tuple[int, ...], int, OffsetChanges] | None = None
@@ -133,7 +142,7 @@ def offset_changes(lower: int | None = None, upper: int | None = None) -> Offset
     """
     global _offset_table
     now = int(time.time())
-    zone = tuple(utc_offset(probe) for probe in ZONE_PROBES) + (utc_offset(now),)
+    zone = (*(utc_offset(probe) for probe in ZONE_PROBES), utc_offset(now))
     cached = _offset_table
     if cached is None or cached[0] != zone or cached[1] < now + 366 * SECONDS_PER_DAY:
         end = now + OFFSET_TABLE_YEARS_AHEAD * 366 * SECONDS_PER_DAY

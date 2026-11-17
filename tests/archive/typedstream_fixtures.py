@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +23,7 @@ def fixture_names() -> list[str]:
     return sorted(entries())
 
 
-@lru_cache(maxsize=None)
+@cache
 def blob(name: str) -> bytes:
     text = (FIXTURE_DIR / f"{name}.hex").read_text(encoding="ascii")
     return bytes.fromhex("".join(text.split()))

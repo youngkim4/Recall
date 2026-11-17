@@ -10,19 +10,25 @@ import pytest
 
 from archive import timeconv
 from archive.classify import classify, clean_text
-from archive.handles import handle_kind, handle_match_key, is_group_identifier, phone_key
+from archive.handles import (
+    handle_kind,
+    handle_match_key,
+    is_group_identifier,
+    phone_key,
+)
 from archive.records import MessageRecord, ReactionRecord, Skipped, SourceMessage
 from archive.tapbacks import split_target, tapback
 from tests.archive.builders import APPLE_EPOCH_UNIX, apple_time, utc
 from tests.archive.typedstream_fixtures import blob, counter_text
 
 NS = 1_000_000_000
+PLACEHOLDER = chr(0xFFFC)  # the character that stands for an attachment
 MOMENT = utc(2024, 1, 15, 18, 30, 5)
 MOMENT_UNIX = int(MOMENT.timestamp())
 
 
 def source(**changes: object) -> SourceMessage:
-    base: dict[str, object] = {name: None for name in SourceMessage._fields}
+    base: dict[str, object] = dict.fromkeys(SourceMessage._fields)
     base.update(rowid=10, guid="G-10", is_from_me=0, handle_rowid=3, chat_rowid=1, date=apple_time(MOMENT))
     base.update(changes)
     return SourceMessage(**base)  # type: ignore[arg-type]
@@ -51,7 +57,7 @@ class TestAppleDates:
 class TestLocalDays:
     def test_day_bounds_are_local_midnights(self) -> None:
         # the test time zone is America/Los_Angeles
-        assert timeconv.day_start(("2024-01-15")) == int(utc(2024, 1, 15, 8).timestamp())
+        assert timeconv.day_start("2024-01-15") == int(utc(2024, 1, 15, 8).timestamp())
         assert timeconv.day_end("2024-01-15") == int(utc(2024, 1, 16, 8).timestamp())
 
     def test_day_with_a_daylight_saving_change_has_23_hours(self) -> None:
@@ -105,7 +111,7 @@ class TestHandles:
 
     def test_phone_key_uses_the_last_ten_digits(self) -> None:
         assert phone_key("+1 (555) 010-0199") == "p:5550100199"
-        assert phone_key("555 010‑0199") == "p:5550100199"
+        assert phone_key(f"555{chr(0xA0)}010{chr(0x2011)}0199") == "p:5550100199"  # no-break space and hyphen
         assert phone_key("5550100199") == "p:5550100199"
         assert phone_key("26296") == "p:26296"
         assert phone_key("no digits") is None
@@ -161,8 +167,8 @@ class TestTapbacks:
 
 class TestCleanText:
     def test_attachment_placeholders_and_outer_space_are_removed(self) -> None:
-        assert clean_text("￼") == ""
-        assert clean_text("￼￼ Look at this \n") == "Look at this"
+        assert clean_text(PLACEHOLDER) == ""
+        assert clean_text(f"{PLACEHOLDER}{PLACEHOLDER} Look at this \n") == "Look at this"
         assert clean_text("line one\nline two") == "line one\nline two"
         assert clean_text("nul\x00byte") == "nulbyte"
         assert clean_text(None) == ""

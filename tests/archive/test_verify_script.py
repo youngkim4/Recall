@@ -15,7 +15,17 @@ from tests.archive.legacy import REPO_ROOT
 from tests.archive.typedstream_fixtures import blob, expected_text
 
 SCRIPT = REPO_ROOT / "scripts" / "verify_archive_import.py"
-BLOB_ROWS = ("ascii_127", "korean", "part_attribute", "tab_and_spaces", "ascii_128", "ascii_255", "emoji_end_130", "ascii_256", "ascii_300")
+BLOB_ROWS = (
+    "ascii_127",
+    "korean",
+    "part_attribute",
+    "tab_and_spaces",
+    "ascii_128",
+    "ascii_255",
+    "emoji_end_130",
+    "ascii_256",
+    "ascii_300",
+)
 NUMBER_LINE = re.compile(r"^  [a-z0-9 ,()]+: \d+(\.\d+)?$")
 HEADER_LINE = re.compile(r"^[a-z ()]+$")
 

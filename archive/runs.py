@@ -34,7 +34,13 @@ def finish_run(
 ) -> None:
     conn.execute(
         "UPDATE import_runs SET status = 'ok', mode = ?, finished_at = ?, counts = ?, checkpoints = ? WHERE id = ?",
-        (mode, finished_at, json.dumps(counts, sort_keys=True), json.dumps([list(pair) for pair in checkpoints]), run_id),
+        (
+            mode,
+            finished_at,
+            json.dumps(counts, sort_keys=True),
+            json.dumps([list(pair) for pair in checkpoints]),
+            run_id,
+        ),
     )
 
 

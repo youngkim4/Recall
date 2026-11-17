@@ -287,9 +287,7 @@ def _finish(conn: sqlite3.Connection, run: _Run, groups: Sequence[ContactGroup] 
     directory.drop_unused_people(conn)
 
 
-def _run_import(
-    conn: sqlite3.Connection, run: _Run, groups: Sequence[ContactGroup] | None, full: bool
-) -> None:
+def _run_import(conn: sqlite3.Connection, run: _Run, groups: Sequence[ContactGroup] | None, full: bool) -> None:
     """Everything inside the transaction."""
     run.check_stop()
     run.run_id = runs.start_run(conn, str(run.source), run.mode, run.started_at)
@@ -355,7 +353,9 @@ def _after_commit(conn: sqlite3.Connection) -> None:
 
 
 def _result(run: _Run, status: str, run_id: int, counts: Mapping[str, int]) -> ImportResult:
-    skipped = {name[len("skipped_") :]: value for name, value in counts.items() if name.startswith("skipped_") and value}
+    skipped = {
+        name[len("skipped_") :]: value for name, value in counts.items() if name.startswith("skipped_") and value
+    }
     return ImportResult(
         run_id=run_id,
         status=status,

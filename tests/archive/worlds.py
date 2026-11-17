@@ -57,32 +57,90 @@ def build_lake(b: ChatDbBuilder) -> Lake:
     group = lake.chats["group"] = b.chat(GROUP_ID, display_name=GROUP_TITLE, members=[rowan, mira, tessa])
 
     # one-to-one, phone number
-    lake.add(b, "saturday", b.message(phone, when=utc(2024, 1, 15, 18, 0), text="Are we still on for Saturday?", handle=rowan))
-    lake.add(b, "dinner", b.message(phone, when=utc(2024, 1, 15, 18, 1), body=blob("part_attribute"), from_me=True, handle=rowan))
+    lake.add(
+        b,
+        "saturday",
+        b.message(phone, when=utc(2024, 1, 15, 18, 0), text="Are we still on for Saturday?", handle=rowan),
+    )
+    lake.add(
+        b,
+        "dinner",
+        b.message(phone, when=utc(2024, 1, 15, 18, 1), body=blob("part_attribute"), from_me=True, handle=rowan),
+    )
     photo = b.message(phone, when=utc(2024, 1, 15, 18, 2), body=blob("attachment_only"), handle=rowan)
     b.attachment(photo, mime_type="image/heic", transfer_name="IMG_0042.HEIC", total_bytes=2_048_000)
     lake.add(b, "photo", photo)
-    view = b.message(phone, when=utc(2024, 1, 15, 18, 3), body=blob("attachment_with_caption"), from_me=True, handle=rowan)
+    view = b.message(
+        phone, when=utc(2024, 1, 15, 18, 3), body=blob("attachment_with_caption"), from_me=True, handle=rowan
+    )
     b.attachment(view, mime_type="image/jpeg", transfer_name="view.jpeg", total_bytes=512_000)
     lake.add(b, "view", view)
     lake.add(b, "love_dinner", b.tapback(phone, lake.guids["dinner"], 2000, when=utc(2024, 1, 15, 18, 4), handle=rowan))
-    lake.add(b, "like_saturday", b.tapback(phone, lake.guids["saturday"], 2001, when=utc(2024, 1, 15, 18, 5), from_me=True, handle=rowan))
-    lake.add(b, "unlike_saturday", b.tapback(phone, lake.guids["saturday"], 3001, when=utc(2024, 1, 15, 18, 6), from_me=True, handle=rowan))
+    lake.add(
+        b,
+        "like_saturday",
+        b.tapback(phone, lake.guids["saturday"], 2001, when=utc(2024, 1, 15, 18, 5), from_me=True, handle=rowan),
+    )
+    lake.add(
+        b,
+        "unlike_saturday",
+        b.tapback(phone, lake.guids["saturday"], 3001, when=utc(2024, 1, 15, 18, 6), from_me=True, handle=rowan),
+    )
     lake.add(b, "long", b.message(phone, when=utc(2024, 1, 16, 2, 0), body=blob("ascii_300"), handle=rowan))
 
     # one-to-one, email address
     lake.add(b, "laptop", b.message(email, when=utc(2024, 2, 1, 20, 0), text="Sent from my laptop", handle=rowan_mail))
-    lake.add(b, "gotit", b.message(email, when=utc(2024, 2, 1, 20, 5), text="Got it", from_me=True, handle=rowan_mail, reply_to=lake.guids["laptop"]))
+    lake.add(
+        b,
+        "gotit",
+        b.message(
+            email,
+            when=utc(2024, 2, 1, 20, 5),
+            text="Got it",
+            from_me=True,
+            handle=rowan_mail,
+            reply_to=lake.guids["laptop"],
+        ),
+    )
 
     # group
-    lake.add(b, "renamed", b.message(group, when=utc(2024, 3, 1, 17, 0), handle=rowan, item_type=2, group_title=GROUP_TITLE))
+    lake.add(
+        b, "renamed", b.message(group, when=utc(2024, 3, 1, 17, 0), handle=rowan, item_type=2, group_title=GROUP_TITLE)
+    )
     lake.add(b, "canoe", b.message(group, when=utc(2024, 3, 1, 17, 1), text="Who brings the canoe?", handle=mira))
     lake.add(b, "ican", b.message(group, when=utc(2024, 3, 1, 17, 2), text="I can", handle=tessa))
     lake.add(b, "great", b.message(group, when=utc(2024, 3, 1, 17, 3), text="Great", from_me=True))
-    lake.add(b, "fire_great", b.tapback(group, lake.guids["great"], 2006, when=utc(2024, 3, 1, 17, 4), handle=tessa, prefix="bp:", emoji="🔥", text=None))
-    lake.add(b, "jackets", b.message(group, when=utc(2024, 3, 1, 17, 10), text="Bring life jackets", handle=mira, edited=utc(2024, 3, 1, 17, 12)))
-    lake.add(b, "unsent", b.message(group, when=utc(2024, 3, 1, 17, 15), handle=tessa, retracted=utc(2024, 3, 1, 17, 16)))
-    lake.add(b, "added", b.message(group, when=utc(2024, 3, 1, 17, 20), handle=rowan, item_type=1, group_action_type=0, other_handle=tessa))
+    lake.add(
+        b,
+        "fire_great",
+        b.tapback(
+            group,
+            lake.guids["great"],
+            2006,
+            when=utc(2024, 3, 1, 17, 4),
+            handle=tessa,
+            prefix="bp:",
+            emoji="🔥",
+            text=None,
+        ),
+    )
+    lake.add(
+        b,
+        "jackets",
+        b.message(
+            group, when=utc(2024, 3, 1, 17, 10), text="Bring life jackets", handle=mira, edited=utc(2024, 3, 1, 17, 12)
+        ),
+    )
+    lake.add(
+        b, "unsent", b.message(group, when=utc(2024, 3, 1, 17, 15), handle=tessa, retracted=utc(2024, 3, 1, 17, 16))
+    )
+    lake.add(
+        b,
+        "added",
+        b.message(
+            group, when=utc(2024, 3, 1, 17, 20), handle=rowan, item_type=1, group_action_type=0, other_handle=tessa
+        ),
+    )
     b.commit()
     return lake
 
@@ -128,7 +186,13 @@ def build_harbor(b: ChatDbBuilder) -> Lake:
     say("g15", crew, la(2024, 1, 1, 0, 0, 30), "Happy new year 🎉", None)
     w.add(b, "g15_like", b.tapback(crew, w.guids["g15"], 2001, when=la(2024, 1, 1, 0, 1), handle=mira))
     w.add(b, "g15_laugh", b.tapback(crew, w.guids["g15"], 2003, when=la(2024, 1, 1, 0, 2), handle=mira))
-    w.add(b, "g15_fire", b.tapback(crew, w.guids["g15"], 2006, when=la(2024, 1, 1, 0, 3), handle=tessa, prefix="bp:", emoji="🔥", text=None))
+    w.add(
+        b,
+        "g15_fire",
+        b.tapback(
+            crew, w.guids["g15"], 2006, when=la(2024, 1, 1, 0, 3), handle=tessa, prefix="bp:", emoji="🔥", text=None
+        ),
+    )
     w.add(b, "g15_love", b.tapback(crew, w.guids["g15"], 2000, when=la(2024, 1, 1, 0, 4), from_me=True))
     say("g18", crew, la(2024, 2, 14, 18, 0), "今日は寿司を食べました", mira)
     say("g19", crew, la(2024, 2, 14, 18, 1), "오늘 학교에서 만나요", None)

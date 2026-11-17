@@ -77,7 +77,7 @@ class TestAppleFixtures:
 
     def test_every_required_length_has_a_fixture(self) -> None:
         lengths = {entry["utf8_bytes"] for entry in entries().values()}
-        assert REQUIRED_BYTE_LENGTHS <= lengths
+        assert lengths >= REQUIRED_BYTE_LENGTHS
 
     def test_required_kinds_of_text_have_a_fixture(self) -> None:
         assert expected_text("emoji_end").endswith("🎉")
@@ -119,8 +119,8 @@ class TestAppleFixtures:
         assert decode_attributed_body(blob("cjk_end_256")).endswith("語")
 
     def test_attachment_placeholder_is_kept_by_the_decoder(self) -> None:
-        assert decode_attributed_body(blob("attachment_only")) == "￼"
-        assert decode_attributed_body(blob("attachment_with_caption")) == "￼Look at this view"
+        assert decode_attributed_body(blob("attachment_only")) == chr(0xFFFC)
+        assert decode_attributed_body(blob("attachment_with_caption")) == chr(0xFFFC) + "Look at this view"
 
     def test_empty_string(self) -> None:
         assert decode_attributed_body(blob("empty")) == ""

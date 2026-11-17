@@ -70,7 +70,7 @@ def writer(archive_path: Path) -> sqlite3.Connection:
 class TestOpenWriter:
     def test_new_file_has_the_latest_schema(self, writer: sqlite3.Connection) -> None:
         assert _version(writer) == len(migrate.MIGRATIONS) >= 1
-        assert EXPECTED_TABLES <= _tables(writer)
+        assert _tables(writer) >= EXPECTED_TABLES
         assert writer.execute("PRAGMA application_id").fetchone()[0] == APPLICATION_ID
 
     def test_wal_mode_and_foreign_keys(self, writer: sqlite3.Connection) -> None:
@@ -280,3 +280,17 @@ class TestSqliteFeatures:
         with pytest.raises(SqliteFeatureError, match="FTS5"):
             connection.open_writer(archive_path)
         assert not archive_path.exists()
+
+
+class TestOpenFailuresAreArchiveErrors:
+    def test_parent_that_is_a_file(self, tmp_path: Path) -> None:
+        blocker = tmp_path / "not-a-folder"
+        blocker.write_text("x", encoding="utf-8")
+        with pytest.raises(ArchiveError, match="cannot open the archive"):
+            connection.open_writer(blocker / "archive.sqlite3")
+
+    def test_archive_path_that_is_a_folder(self, tmp_path: Path) -> None:
+        with pytest.raises(ArchiveError):
+            connection.open_writer(tmp_path)
+        with pytest.raises(ArchiveError):
+            connection.open_reader(tmp_path)

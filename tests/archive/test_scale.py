@@ -14,7 +14,11 @@ import pytest
 
 from archive import Archive, connection, import_chat_db, ledger
 from archive import importer as importer_module
-from tests.archive.inspect_archive import fts_is_consistent, scalar, totals_match_messages
+from tests.archive.inspect_archive import (
+    fts_is_consistent,
+    scalar,
+    totals_match_messages,
+)
 from tests.archive.synthetic import SyntheticCounts, build_synthetic_chat_db
 
 MIB = 1024 * 1024
@@ -49,7 +53,12 @@ def test_synthetic_import_finds_every_row(tmp_path: Path) -> None:
     assert scalar(archive_path, "SELECT SUM(message_count) FROM conversations") == counts.messages
     assert totals_match_messages(archive_path) and fts_is_consistent(archive_path)
     again = import_chat_db(source, archive_path, full=True)
-    assert (again.messages_added, again.messages_updated, again.reactions_added, again.attachments_added) == (0, 0, 0, 0)
+    assert (again.messages_added, again.messages_updated, again.reactions_added, again.attachments_added) == (
+        0,
+        0,
+        0,
+        0,
+    )
 
 
 def test_python_memory_of_an_import_does_not_grow_with_the_row_count(tmp_path: Path) -> None:

@@ -23,7 +23,8 @@ NEWEST = "m.sent_ns DESC, m.id DESC"
 # here: the query also has a window function, and FTS5 functions do not work across one.
 ORDER_SQL = {"newest": NEWEST, "oldest": "m.sent_ns ASC, m.id ASC", "relevance": f"messages_fts.rank, {NEWEST}"}
 # highlight() puts these around each match. A text that has one of them is read with the next pair.
-MARKERS = (("﷐", "﷑"), ("﷒", "﷓"), ("\x01", "\x02"))
+# U+FDD0 to U+FDD3 are Unicode noncharacters: no valid text has them.
+MARKERS = ((chr(0xFDD0), chr(0xFDD1)), (chr(0xFDD2), chr(0xFDD3)), ("\x01", "\x02"))
 
 
 def utf16_ranges(text: str, ranges: Sequence[Sequence[int]]) -> list[list[int]]:

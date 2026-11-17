@@ -146,14 +146,19 @@ class TestPaging:
         rowan = builder.handle(worlds.ROWAN_PHONE)
         chat = builder.chat(worlds.ROWAN_PHONE, members=[rowan])
         for index in range(120):
-            builder.message(chat, when=utc(2024, 1, 1, 12, index // 60, index % 60), text=f"ping number {index}", handle=rowan)
+            builder.message(
+                chat, when=utc(2024, 1, 1, 12, index // 60, index % 60), text=f"ping number {index}", handle=rowan
+            )
         builder.commit()
         import_chat_db(source_path, archive_path)
         with Archive.open(archive_path) as archive:
             result = archive.search("ping")
             assert result["total"] == 120 and len(result["hits"]) == 50
             assert result["hits"][0]["message"]["text"] == "ping number 119"
-            assert archive.search("ping", order="oldest", limit=3, offset=118)["hits"][-1]["message"]["text"] == "ping number 119"
+            assert (
+                archive.search("ping", order="oldest", limit=3, offset=118)["hits"][-1]["message"]["text"]
+                == "ping number 119"
+            )
 
     @pytest.mark.parametrize("bad", [{"limit": -1}, {"offset": -1}, {"order": "random"}, {"limit": "5"}])
     def test_bad_arguments_raise_value_error(self, harbor: Harbor, bad: dict[str, object]) -> None:
@@ -167,11 +172,18 @@ class TestOrder:
         assert found(harbor, "happy", order="newest") == ["g15", "g14", "g13"]
         assert found(harbor, "happy", order="oldest") == ["g13", "g14", "g15"]
 
-    def test_relevance_puts_the_better_match_first(self, builder: ChatDbBuilder, source_path: Path, archive_path: Path) -> None:
+    def test_relevance_puts_the_better_match_first(
+        self, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
         rowan = builder.handle(worlds.ROWAN_PHONE)
         chat = builder.chat(worlds.ROWAN_PHONE, members=[rowan])
         builder.message(chat, when=utc(2024, 1, 1, 12), text="tea tea tea", handle=rowan)
-        builder.message(chat, when=utc(2024, 1, 2, 12), text="we could have tea with milk and sugar after the long walk home", handle=rowan)
+        builder.message(
+            chat,
+            when=utc(2024, 1, 2, 12),
+            text="we could have tea with milk and sugar after the long walk home",
+            handle=rowan,
+        )
         builder.message(chat, when=utc(2024, 1, 3, 12), text="no match here", handle=rowan)
         builder.commit()
         import_chat_db(source_path, archive_path)
@@ -239,7 +251,9 @@ class TestRanges:
         assert marked(harbor.archive.search("year 🎉")["hits"][0]) == ["year", "🎉"]
         assert marked(harbor.archive.search("학교 오늘")["hits"][0]) == ["오늘", "학교"]
 
-    def test_ranges_count_code_points_after_an_emoji(self, builder: ChatDbBuilder, source_path: Path, archive_path: Path) -> None:
+    def test_ranges_count_code_points_after_an_emoji(
+        self, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
         rowan = builder.handle(worlds.ROWAN_PHONE)
         chat = builder.chat(worlds.ROWAN_PHONE, members=[rowan])
         builder.message(chat, when=utc(2024, 1, 1, 12), text="🎉 party 🎉 time, party time", handle=rowan)
@@ -260,10 +274,14 @@ class TestRanges:
         assert list(result["hits"][0]) == ["message", "ranges"]
         assert result["hits"][0]["message"]["conversation"] == G
 
-    def test_text_with_the_marker_characters_still_gives_right_ranges(self, builder: ChatDbBuilder, source_path: Path, archive_path: Path) -> None:
+    def test_text_with_the_marker_characters_still_gives_right_ranges(
+        self, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
         rowan = builder.handle(worlds.ROWAN_PHONE)
         chat = builder.chat(worlds.ROWAN_PHONE, members=[rowan])
-        builder.message(chat, when=utc(2024, 1, 1, 12), text="odd ﷐ text ﷑ with markers", handle=rowan)
+        builder.message(
+            chat, when=utc(2024, 1, 1, 12), text=f"odd {chr(0xFDD0)} text {chr(0xFDD1)} with markers", handle=rowan
+        )
         builder.commit()
         import_chat_db(source_path, archive_path)
         with Archive.open(archive_path) as archive:

@@ -115,7 +115,9 @@ def import_lines(result: ImportResult, seconds: float) -> list[tuple[str, float]
 def check_lines(counts: Counter[str]) -> list[tuple[str, float]]:
     names = ["legacy decoder loaded", "rows checked", "read by structure", "read by marker scan", "not readable"]
     for bucket in BUCKETS:
-        names.extend(f"{bucket}, {what}" for what in ("rows", "legacy length differs", "differs after the same cleanup"))
+        names.extend(
+            f"{bucket}, {what}" for what in ("rows", "legacy length differs", "differs after the same cleanup")
+        )
     return [(name, counts[name]) for name in names]
 
 
@@ -126,7 +128,9 @@ def print_section(title: str, lines: list[tuple[str, float]]) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Import a Messages database into a temporary archive. Print numbers only.")
+    parser = argparse.ArgumentParser(
+        description="Import a Messages database into a temporary archive. Print numbers only."
+    )
     parser.add_argument("--db", default=str(DEFAULT_DB), help="path to chat.db (default: ~/Library/Messages/chat.db)")
     db_path = Path(parser.parse_args().db).expanduser()
     try:

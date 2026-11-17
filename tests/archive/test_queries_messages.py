@@ -94,7 +94,9 @@ class TestIterMessages:
     def test_day_range_includes_all_of_both_days(self, harbor: Harbor) -> None:
         one_day = harbor.archive.iter_messages(A, since="2024-03-10", until="2024-03-10")
         assert harbor.labels(list(one_day)) == ["a5", "a6", "a7", "a8", "a9"]
-        assert harbor.labels(list(harbor.archive.iter_messages(A, since="2024-03-09", until="2024-03-10"))) == A_ALL[3:9]
+        assert (
+            harbor.labels(list(harbor.archive.iter_messages(A, since="2024-03-09", until="2024-03-10"))) == A_ALL[3:9]
+        )
         assert harbor.labels(list(harbor.archive.iter_messages(A, since="2024-03-11"))) == ["a10"]
         assert harbor.labels(list(harbor.archive.iter_messages(A, until="2024-03-08"))) == ["a1", "a2", "a3"]
         assert list(harbor.archive.iter_messages(A, since="2024-04-01")) == []
@@ -202,7 +204,9 @@ class TestMessagesPages:
         with_events = harbor.archive.messages(A, limit=2, include_system=True)
         assert harbor.labels(with_events["messages"]) == ["a10", "a_event"]
         assert harbor.archive.messages(A, after=harbor.id("a10"))["has_newer"] is False
-        assert harbor.archive.messages(A, after=harbor.id("a10"), include_system=True)["messages"][0]["kind"] == "system"
+        assert (
+            harbor.archive.messages(A, after=harbor.id("a10"), include_system=True)["messages"][0]["kind"] == "system"
+        )
 
     def test_unknown_conversation_or_anchor_gives_an_empty_page(self, harbor: Harbor) -> None:
         assert harbor.archive.messages("+15550109999") == EMPTY_PAGE
@@ -253,8 +257,14 @@ class TestContext:
 
     def test_group_events_only_on_request(self, harbor: Harbor) -> None:
         assert harbor.labels(harbor.archive.context(harbor.id("g13"), radius=1)) == ["g13", "g14"]
-        assert harbor.labels(harbor.archive.context(harbor.id("g13"), radius=1, include_system=True)) == ["g_renamed", "g13", "g14"]
-        assert harbor.archive.context(harbor.id("g_renamed"), radius=1) == harbor.archive.context(harbor.id("g13"), radius=0)
+        assert harbor.labels(harbor.archive.context(harbor.id("g13"), radius=1, include_system=True)) == [
+            "g_renamed",
+            "g13",
+            "g14",
+        ]
+        assert harbor.archive.context(harbor.id("g_renamed"), radius=1) == harbor.archive.context(
+            harbor.id("g13"), radius=0
+        )
 
     def test_bad_radius_raises(self, harbor: Harbor) -> None:
         with pytest.raises(ValueError):

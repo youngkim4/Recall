@@ -71,9 +71,7 @@ def file_uri(path: Path, **options: str) -> str:
 
 
 def _connect(target: str, *, uri: bool, same_thread: bool = True) -> sqlite3.Connection:
-    return sqlite3.connect(
-        target, uri=uri, isolation_level=None, timeout=BUSY_SECONDS, check_same_thread=same_thread
-    )
+    return sqlite3.connect(target, uri=uri, isolation_level=None, timeout=BUSY_SECONDS, check_same_thread=same_thread)
 
 
 def _create_private_file(path: Path) -> None:
@@ -98,9 +96,21 @@ def _check_identity(conn: sqlite3.Connection, path: Path) -> None:
 
 
 def open_writer(path: Path) -> sqlite3.Connection:
-    """Open the archive for writing. Create it and apply migrations when needed."""
+    """Open the archive for writing. Create it and apply migrations when needed.
+
+    Every failure is an ArchiveError.
+    """
     require_sqlite_features()
     path = Path(path)
+    try:
+        return _open_writer(path)
+    except ArchiveError:
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        raise ArchiveError(f"cannot open the archive at {path}: {exc}") from exc
+
+
+def _open_writer(path: Path) -> sqlite3.Connection:
     _create_private_file(path)
     conn = _connect(str(path), uri=False)
     try:
@@ -137,6 +147,15 @@ def open_reader(path: Path) -> sqlite3.Connection:
     path = Path(path)
     if not path.is_file():
         raise ArchiveNotFoundError(f"no archive at {path}")
+    try:
+        return _open_reader(path)
+    except ArchiveError:
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        raise ArchiveError(f"cannot open the archive at {path}: {exc}") from exc
+
+
+def _open_reader(path: Path) -> sqlite3.Connection:
     conn = connect_reader(path)
     try:
         _check_identity(conn, path)

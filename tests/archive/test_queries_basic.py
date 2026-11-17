@@ -31,7 +31,12 @@ class TestOpen:
 
     def test_writable_open_creates_an_empty_archive(self, archive_path: Path) -> None:
         with Archive.open(archive_path, readonly=False) as archive:
-            assert archive.summary() == {"messages": 0, "conversations": 0, "first_timestamp": None, "last_timestamp": None}
+            assert archive.summary() == {
+                "messages": 0,
+                "conversations": 0,
+                "first_timestamp": None,
+                "last_timestamp": None,
+            }
             assert archive.conversations() == []
             assert archive.people() == []
         with Archive.open(archive_path) as archive:
@@ -39,7 +44,6 @@ class TestOpen:
 
     def test_default_path_is_under_the_data_folder(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         import recall_paths
-
         from archive import default_archive_path
 
         assert default_archive_path() == recall_paths.SAVES_DIR / "archive.sqlite3"
@@ -199,7 +203,11 @@ class TestReactions:
 
 class TestThreads:
     def test_queries_from_many_threads_agree(self, harbor: Harbor) -> None:
-        expected = (harbor.archive.summary(), harbor.archive.search("happy")["total"], harbor.archive.count(group_by="day"))
+        expected = (
+            harbor.archive.summary(),
+            harbor.archive.search("happy")["total"],
+            harbor.archive.count(group_by="day"),
+        )
         results: list[object] = []
         errors: list[BaseException] = []
 
@@ -207,7 +215,11 @@ class TestThreads:
             try:
                 for _ in range(20):
                     results.append(
-                        (harbor.archive.summary(), harbor.archive.search("happy")["total"], harbor.archive.count(group_by="day"))
+                        (
+                            harbor.archive.summary(),
+                            harbor.archive.search("happy")["total"],
+                            harbor.archive.count(group_by="day"),
+                        )
                     )
                     list(harbor.archive.iter_messages(A))
             except BaseException as exc:  # noqa: BLE001 - reported below

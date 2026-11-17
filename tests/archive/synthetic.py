@@ -74,7 +74,9 @@ def _directory(builder: ChatDbBuilder, rng: random.Random) -> tuple[list[int], l
     return chats, members
 
 
-def _rows(messages: int, chats: list[int], members: list[list[int]], rng: random.Random, tally: dict[str, int]) -> Iterator[tuple]:
+def _rows(
+    messages: int, chats: list[int], members: list[list[int]], rng: random.Random, tally: dict[str, int]
+) -> Iterator[tuple]:
     """Yield ("message" | "link" | "attachment" | "file_link", values) in ROWID order."""
     weights = [1 / (rank + 1) ** 1.1 for rank in range(len(chats))]
     blobs = [blob(name) for name in BLOB_NAMES]
@@ -112,7 +114,26 @@ def _rows(messages: int, chats: list[int], members: list[list[int]], rng: random
         if text is not None and rng.random() < 0.01:
             edited = _apple_ns(now + 120)
         reply_to = recent.get(chat) if rng.random() < 0.02 else None
-        yield "message", (rowid, guid, text, body, handle, int(from_me), _apple_ns(now), "iMessage", 0, None, 0, reply_to, edited, retracted, None)
+        yield (
+            "message",
+            (
+                rowid,
+                guid,
+                text,
+                body,
+                handle,
+                int(from_me),
+                _apple_ns(now),
+                "iMessage",
+                0,
+                None,
+                0,
+                reply_to,
+                edited,
+                retracted,
+                None,
+            ),
+        )
         yield "link", (chat, rowid)
         made += 1
         tally["messages"] += 1
@@ -121,17 +142,65 @@ def _rows(messages: int, chats: list[int], members: list[list[int]], rng: random
             attachment_rowid += 1
             tally["attachments"] += 1
             name = f"IMG_{attachment_rowid:07d}.HEIC"
-            yield "attachment", (attachment_rowid, f"at_{attachment_rowid:012d}", f"~/Library/Messages/Attachments/{name}", "image/heic", name, 1_000_000 + attachment_rowid)
+            yield (
+                "attachment",
+                (
+                    attachment_rowid,
+                    f"at_{attachment_rowid:012d}",
+                    f"~/Library/Messages/Attachments/{name}",
+                    "image/heic",
+                    name,
+                    1_000_000 + attachment_rowid,
+                ),
+            )
             yield "file_link", (rowid, attachment_rowid)
         if rng.random() < 0.06:
             rowid += 1
             tally["reactions"] += 1
-            yield "message", (rowid, _guid(rowid), "Loved an invented message", None, rng.choice(crew), 0, _apple_ns(now + 5), "iMessage", 0, f"p:0/{guid}", 2000 + rng.randint(0, 5), None, 0, 0, None)
+            yield (
+                "message",
+                (
+                    rowid,
+                    _guid(rowid),
+                    "Loved an invented message",
+                    None,
+                    rng.choice(crew),
+                    0,
+                    _apple_ns(now + 5),
+                    "iMessage",
+                    0,
+                    f"p:0/{guid}",
+                    2000 + rng.randint(0, 5),
+                    None,
+                    0,
+                    0,
+                    None,
+                ),
+            )
             yield "link", (chat, rowid)
         if len(crew) > 1 and rng.random() < 0.01:
             rowid += 1
             tally["system_rows"] += 1
-            yield "message", (rowid, _guid(rowid), None, None, rng.choice(crew), 0, _apple_ns(now + 9), "iMessage", 2, None, 0, None, 0, 0, "Invented Group Name")
+            yield (
+                "message",
+                (
+                    rowid,
+                    _guid(rowid),
+                    None,
+                    None,
+                    rng.choice(crew),
+                    0,
+                    _apple_ns(now + 9),
+                    "iMessage",
+                    2,
+                    None,
+                    0,
+                    None,
+                    0,
+                    0,
+                    "Invented Group Name",
+                ),
+            )
             yield "link", (chat, rowid)
 
 
