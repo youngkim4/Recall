@@ -71,8 +71,13 @@ def record_ended_run(
 
 
 def _checkpoints(conn: sqlite3.Connection) -> list[tuple[int, str]]:
+    # A full pull makes the archive equal to its source, so a mark of an earlier run can name
+    # rows that the pull removed. Only the last full pull and the runs after it are trusted.
     rows = conn.execute(
-        "SELECT checkpoints FROM import_runs WHERE status = 'ok' ORDER BY id DESC LIMIT ?", (RUNS_CHECKED_FOR_MARK,)
+        "SELECT checkpoints FROM import_runs WHERE status = 'ok' AND id >= COALESCE("
+        "(SELECT MAX(id) FROM import_runs WHERE status = 'ok' AND mode = 'full'), 0)"
+        " ORDER BY id DESC LIMIT ?",
+        (RUNS_CHECKED_FOR_MARK,),
     ).fetchall()
     pairs: set[tuple[int, str]] = set()
     for (text,) in rows:

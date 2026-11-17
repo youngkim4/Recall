@@ -23,7 +23,7 @@ with Archive.open(archive_path) as archive:
 - Stored time is UTC. Local time is the time zone of the process. It is made only when a row is shown or a day is turned into a range.
 - A message has one kind: `text`, `attachment` or `system`.
 - A tapback is a reaction. It is never a message and it is never counted.
-- A group event (`item_type` other than 0) is kind `system`. It is never counted. A query returns it only with `include_system=True`.
+- A group event (`item_type` other than 0) is kind `system`. It is never counted. A list, a search or a count returns it only with `include_system=True`. A lookup by id returns it.
 - A conversation id is `chat_identifier`. It matches exactly, never in part. An id of `chat` followed by digits only is a group. Any other id is one person.
 - A message that the source links to no chat belongs to no conversation. It is stored, and its `conversation` is `""`. No conversation lists it or counts it. A query returns it only on an explicit request. See "Messages with no conversation".
 - The package uses only the standard library. `archive/compat.py` is the one module that imports pandas.
@@ -69,13 +69,20 @@ The safety valve: when the source lacks more than `max_removed_share` of the sto
 
 ### Incremental run
 
-`full=False` reads less and removes no message. It cannot see a message that the source deleted. It reads three sets of rows:
+`full=False` reads less. It cannot see a message that the source deleted, so it does not remove one. It reads three sets of rows:
 
 1. Rows with a ROWID above the mark of an earlier run.
 2. Rows with a ROWID up to 2,000 below that mark. A recent row can still change: an attachment arrives late.
 3. Every older row with an edit or unsend mark.
 
-ROWIDs change when Messages rebuilds its database. Each run stores the guids of its 8 highest ROWIDs. A later run trusts a mark only when the source has the same guid at that ROWID. If no mark fits, the run is a full pull. A row that was skipped and that the source fills in later, more than 2,000 ROWIDs below the mark, is read only by a full pull.
+What an incremental run leaves as it is:
+
+- A message, a tapback, a member, a conversation or a handle that the source removed.
+- An old row that changed with no edit or unsend mark (a late attachment, a new chat link, a text that the source filled in). Only a full pull reads it again.
+
+One exception: a row that changed its kind is stored one time, as its new kind, also in an incremental run.
+
+ROWIDs change when Messages rebuilds its database. Each run stores the guids of its 8 highest ROWIDs. A later run trusts a mark only when the source has the same guid at that ROWID. Only the marks of the last full pull and of the runs after it are used: a full pull can remove the rows that an older mark names. If no mark fits, the run is a full pull. A row that was skipped and that the source fills in later, more than 2,000 ROWIDs below the mark, is read only by a full pull.
 
 ### Arguments, result and errors
 
@@ -150,6 +157,9 @@ The bridge loads ONE legacy export (`messages.csv` from `parse_imessage.py`) int
 
 - An archive that holds anything is refused with `ArchiveNotEmptyError`.
 - A later `import_chat_db` replaces every row that the bridge loaded. That first pull is always a full pull, and bridge rows do not count for the safety valve. Message ids change in that pull. Conversation ids do not.
+- A merged export (`merge_export.py`) also holds rows that the database no longer has, with ids above 1,000,000,000. The bridge loads them. The first pull from the database removes them: the database is the truth.
+- A bridge archive has no group events, no unsent messages, no edit marks, no reply links and no reactions. It has no conversation and no handle without a message.
+- A row with a time at or before 2001-01-01 UTC has no date: reason `no_date`. The old exporter wrote that time for a row with no date.
 - A row gets the id `legacy:<ROWID>`. `message_by_source_rowid()` resolves the ROWID.
 - The export has no member list. The members of a conversation are the senders seen in it, plus the handle that names a one-to-one conversation.
 - The export does not mark tapbacks. A row whose whole text is an English tapback phrase is stored as kind `system`: it is hidden by default and is not counted. `ImportResult.counts["reaction_phrases"]` is their number. A real text of that exact form is hidden too. The phrases are:
@@ -227,7 +237,7 @@ Additions to the contract. None of them changes a name, an argument or a shape:
 - `include_empty=False` on `conversations`. A conversation with no message is listed only on request. `summary()["conversations"]` counts the same set.
 - `iter_messages`, `messages`, `stats` and `day` also accept a list of conversation ids. The result is one thread in time order. Use it with `Person["conversations"]` to show the phone thread and the email thread of one person as one.
 - `message(message_id)` returns one Message or `None`.
-- `message_by_source_rowid(rowid)` returns the Message that had this ROWID in the database of the last pull, or `None`. Saved chats of the current app hold ROWIDs. The answer is right only while the Messages database is the one that the ROWID came from: a rebuilt database numbers its rows again. The ROWID of a tapback gives `None`.
+- `message_by_source_rowid(rowid)` returns the Message that had this ROWID in the database of the last pull, or `None`. Saved chats of the current app hold ROWIDs. The answer is right only while the Messages database is the one that the ROWID came from: a rebuilt database numbers its rows again. The ROWID of a tapback gives `None`. In an archive that the bridge loaded, the ROWID of a tapback phrase gives that row, of kind `system`.
 - `messages(..., oldest=True)` gives the oldest page: the start of the conversation. It cannot be given with an anchor.
 - `day(conversation_id, day, *, limit=200, offset=None, around=None)` gives one local day. See "day".
 - `conversations` in `search` and `count` is a list of ids. One id as a string is also accepted. `[]` matches nothing.
@@ -339,13 +349,13 @@ Differences from `ConversationStats`:
 - Each requested id is a key. A message with no reaction has `[]`.
 - `kind` is `love`, `like`, `dislike`, `laugh`, `emphasis`, `question`, `emoji` or `sticker`.
 - A reaction of kind `emoji` has one more key, `emoji`.
-- One person has at most one reaction on a message: the last one. A removed tapback is not listed.
+- One person has at most one reaction on a message: the last one. A removed tapback is not listed. A person is the contact: two tapbacks from two handles of one contact are one reaction. Each tapback with no sender is listed.
 - A reaction with no sender in the source has `sender` `""`. Use `is_from_me` to tell it from an own reaction.
 
 ### Local time
 
 - `Message["timestamp"]` comes from SQLite's `localtime`. Days and hours of `count()`, `stats()` and `day()` come from a table of the UTC offset changes of the local zone from 2001 to 2200.
-- The two agree for dates up to 2037. For a later date (a wrong device clock) they can differ by the daylight-saving hour, because SQLite maps such a year to an earlier one.
+- The two agree for dates up to 2037. For a later date (a wrong device clock) they can differ by the daylight-saving hour, because SQLite maps such a year to an earlier one. For the same reason the bridge can give back a time stamp after 2037 one hour off.
 
 ## Bridge to the CSV world
 
@@ -358,6 +368,7 @@ Differences from the export:
 - `message_id` is the guid.
 - Tapbacks and group events are not rows.
 - An unsent message with no text is not a row.
+- A message that is only attachments has the `[Attachment] ...` label of the old exporter as its text. The current exporter writes the placeholder U+FFFC for most of these rows.
 - `sender` is the writer. It is missing for an own message. The export had the handle of the other person on own one-to-one messages.
 - `attachment_types` and `attachment_files` have one item for each attachment, also when the source has no mime type or no path. The export left such items out.
 

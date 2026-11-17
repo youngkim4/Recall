@@ -344,14 +344,16 @@ class Archive:
                 chunk = ids[start : start + filters.ID_CHUNK]
                 marks = ", ".join("?" for _ in chunk)
                 events = conn.execute(
-                    "SELECT r.target_guid, r.is_from_me, r.sender_handle_id, r.kind, r.emoji, r.removed,"
-                    " COALESCE(h.handle, '') FROM reactions r INDEXED BY reactions_by_target"
+                    "SELECT r.target_guid, r.is_from_me, h.person_id, r.kind, r.emoji, r.removed,"
+                    " COALESCE(h.handle, ''), r.id FROM reactions r INDEXED BY reactions_by_target"
                     " LEFT JOIN handles h ON h.id = r.sender_handle_id"
                     f" WHERE r.target_guid IN ({marks}) ORDER BY r.sent_ns, r.id",
                     chunk,
                 )
                 for event in events.fetchall():
-                    who = "me" if event[1] else event[2]
+                    # one person can write from a phone and from an email address: the person is the key.
+                    # A tapback with no sender is its own key: two of them can be two people.
+                    who = "me" if event[1] else event[2] if event[2] is not None else ("no sender", event[7])
                     latest[event[0]].pop(who, None)  # a later event moves the person to the end
                     latest[event[0]][who] = event
         return {

@@ -353,6 +353,24 @@ class TestOddFiles:
         assert result.messages_added == 1
         assert result.skipped == {"bad_row": 2}
 
+    def test_a_row_at_or_before_the_start_of_apple_time_has_no_date(
+        self, export_path: Path, archive_path: Path
+    ) -> None:
+        result = self.load(
+            export_path,
+            archive_path,
+            [
+                line(1, "2024-04-07 10:00:00", "dated"),
+                line(2, "2000-12-31 16:00:00", "the exporter wrote this time for a row with no date"),
+                line(3, "1999-07-04 00:30:00", "before any message"),
+            ],
+        )
+
+        assert result.messages_added == 1
+        assert result.skipped == {"no_date": 2}
+        with Archive.open(archive_path) as archive:
+            assert archive.summary()["first_timestamp"] == "2024-04-07 10:00:00"
+
     def test_a_quote_that_is_never_closed_is_an_error_and_not_one_long_text(
         self, export_path: Path, archive_path: Path
     ) -> None:

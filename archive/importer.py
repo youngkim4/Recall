@@ -271,6 +271,8 @@ def _pull(conn: sqlite3.Connection, run: Run, reader: SourceReader, full: bool, 
     if is_full:
         _prune_directory(conn, run, chats, source_handles)
         run.touched.update(directory.conversation_ids(conn))  # a full pull counts every total again
+    elif run.counts["messages_removed"]:  # a message became a tapback: the tapbacks on it have no target now
+        run.counts["reactions_removed"] += mirror.drop_orphan_tapbacks(conn)
 
 
 def _run_import(

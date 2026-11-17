@@ -344,3 +344,28 @@ class TestReviewCases:
         assert archive.conversation(broken) is None
         assert archive.messages([broken])["messages"] == []
         assert archive.reactions([broken]) == {"a?": []}
+
+    def test_one_person_has_one_tapback_also_from_two_handles(
+        self, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
+        phone, email = builder.handle(MIRA), builder.handle("mira@example.com")
+        group = builder.chat(GROUP, members=[phone, email])
+        target = builder.message(group, when=la(2024, 6, 1, 9), text="see you at the dock", from_me=True)
+        guid = builder.guid_of(target)
+        builder.tapback(group, guid, 2000, when=la(2024, 6, 1, 9, 1), handle=phone)
+        builder.tapback(group, guid, 2001, when=la(2024, 6, 1, 9, 2), handle=email)
+        builder.tapback(group, guid, 2003, when=la(2024, 6, 1, 9, 3), handle=0)
+        builder.tapback(group, guid, 2004, when=la(2024, 6, 1, 9, 4), handle=0)
+        builder.commit()
+        contact = {"name": "Mira Dane", "phones": [MIRA], "emails": ["mira@example.com"]}
+        import_chat_db(source_path, archive_path, contacts=[contact])
+
+        with Archive.open(archive_path) as opened:
+            found = opened.reactions(guid)[guid]
+
+        # the phone and the email are one person: the last tapback stays. Two tapbacks with no sender stay two.
+        assert [(item["kind"], item["sender"]) for item in found] == [
+            ("like", "mira@example.com"),
+            ("laugh", ""),
+            ("emphasis", ""),
+        ]

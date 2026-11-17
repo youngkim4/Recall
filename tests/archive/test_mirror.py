@@ -289,6 +289,65 @@ class TestRowsThatChangeTheirKind:
         assert query(archive_path, "SELECT kind FROM reactions") == [("laugh",)]
 
 
+class TestMarksAndKindChangesOfAnIncrementalRun:
+    def test_a_mark_from_before_the_last_full_pull_is_not_trusted(
+        self,
+        builder: ChatDbBuilder,
+        source_path: Path,
+        archive_path: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        chat_with_notes(builder, 12)
+        guids = [builder.guid_of(rowid) for rowid in range(1, 13)]
+        import_chat_db(source_path, archive_path)
+        # an older state of the same database: the same rows, without the last four
+        older_path = tmp_path / "older" / "chat.db"
+        older_path.parent.mkdir()
+        older = ChatDbBuilder(older_path)
+        handle = older.handle(PAT)
+        chat = older.chat(PAT, members=[handle])
+        for index, guid in enumerate(guids[:8]):
+            older.message(
+                chat,
+                when=START + timedelta(minutes=index),
+                text=f"note {index}",
+                handle=handle,
+                guid=guid,
+                rowid=index + 1,
+            )
+        older.close()
+        assert import_chat_db(older_path, archive_path, max_removed_share=1).messages_removed == 4
+        monkeypatch.setattr(importer_module, "OVERLAP_ROWS", 2)
+
+        result = import_chat_db(source_path, archive_path, full=False)
+
+        assert result.mode == "incremental"
+        assert stored_texts(archive_path) == [f"note {index}" for index in range(12)]  # rows 9 to 12 are back
+
+    def test_a_message_that_becomes_a_tapback_leaves_no_tapback_without_a_target(
+        self, builder: ChatDbBuilder, source_path: Path, archive_path: Path
+    ) -> None:
+        chat, handle, rowids = chat_with_notes(builder, 6)
+        target, flipped = builder.guid_of(rowids[0]), builder.guid_of(rowids[5])
+        builder.tapback(chat, flipped, 2000, when=START + timedelta(hours=1), handle=handle)
+        builder.commit()
+        import_chat_db(source_path, archive_path)
+        assert scalar(archive_path, "SELECT COUNT(*) FROM reactions") == 1
+
+        builder.raw.execute(
+            "UPDATE message SET associated_message_type = 2001, associated_message_guid = ? WHERE ROWID = ?",
+            (f"p:0/{target}", rowids[5]),
+        )
+        builder.commit()
+        result = import_chat_db(source_path, archive_path, full=False)
+
+        assert result.mode == "incremental"
+        assert (result.messages_removed, result.reactions_removed, result.reactions_added) == (1, 1, 1)
+        assert query(archive_path, "SELECT guid, target_guid FROM reactions") == [(flipped, target)]
+        assert totals_match_messages(archive_path) and fts_is_consistent(archive_path)
+
+
 class TestSafetyValve:
     def test_a_pull_that_would_remove_too_much_stops_and_changes_nothing(
         self, builder: ChatDbBuilder, source_path: Path, archive_path: Path

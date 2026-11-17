@@ -41,7 +41,7 @@ from archive.people import ContactGroup, contact_groups
 from archive.records import AttachmentRow, MessageRow
 from archive.run_control import ImportResult, Progress, Run
 from archive.schema import INDEXED_TEXT_CHARS
-from archive.timeconv import NS_PER_SECOND, local_to_unix
+from archive.timeconv import APPLE_EPOCH_UNIX, NS_PER_SECOND, local_to_unix
 
 __all__ = ["import_legacy_csv"]
 
@@ -225,7 +225,7 @@ def _message(conn: sqlite3.Connection, run: Run, known: _Directory, row: Mapping
     if not number.isascii() or not number.isdigit() or int(number) > MAX_INT or direction not in _TRUE | _FALSE:
         return "bad_row"
     sent = local_to_unix(row["timestamp"])
-    if sent is None:
+    if sent is None or sent <= APPLE_EPOCH_UNIX:  # the exporter wrote the start of Apple time for a row with no date
         return "no_date"
     has_files = bool(row["attachment_types"] or row["attachment_files"])
     content = _content(row["text"], has_files)
@@ -281,7 +281,8 @@ def _store_batch(
     written = ledger.write_messages(conn, run.run_id, messages)
     counts["messages_added"] += written.messages_added
     counts["system_added"] += written.system_added
-    counts["messages_updated"] += written.messages_updated + written.system_updated
+    counts["messages_updated"] += written.messages_updated
+    counts["system_updated"] += written.system_updated
     run.touched.update(written.conversations)
     files = [record for _, records in kept.values() for record in records]
     counts["attachments_added"] += ledger.write_attachments(conn, [row.guid for row in messages], files).added
