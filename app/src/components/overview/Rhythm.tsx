@@ -67,7 +67,7 @@ export function Rhythm({ rhythm }: { rhythm: number[][] }) {
   if (!busiest) return null
 
   return (
-    <section className="section" aria-labelledby="hours-title">
+    <section className="section ruled" aria-labelledby="hours-title">
       <div className="section-head">
         <h2 id="hours-title">By hour</h2>
         <p className="heat-readout">
@@ -84,7 +84,7 @@ export function Rhythm({ rhythm }: { rhythm: number[][] }) {
           )}
         </p>
       </div>
-      <div className="card card-pad">
+      <div className="heat">
         <div className="hours">
           <div className="hours-weekdays" aria-hidden="true">
             {WEEK_ORDER.map((weekday) => (

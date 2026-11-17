@@ -55,7 +55,7 @@ export function YearOfDays({ daily }: { daily: Daily }) {
   }
 
   return (
-    <section className="section" aria-labelledby="days-title">
+    <section className="section ruled" aria-labelledby="days-title">
       <div className="section-head">
         <div className="section-title">
           <h2 id="days-title">By day</h2>
@@ -102,7 +102,7 @@ export function YearOfDays({ daily }: { daily: Daily }) {
           ) : null}
         </p>
       </div>
-      <div className="card card-pad">
+      <div className="heat">
         <div className="days">
           <div className="days-weekdays" aria-hidden="true">
             {WEEK_ORDER.map((weekday, row) => (

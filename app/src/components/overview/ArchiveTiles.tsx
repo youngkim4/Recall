@@ -57,7 +57,7 @@ export function ArchiveTiles({ archive, months, waiting, ranked, onOpenSetup }: 
 
   return (
     <section className="tiles" aria-label="The archive in figures">
-      <div className="tile card">
+      <div className="tile">
         <p className="tile-label">Messages</p>
         <p className="tile-value">{formatNumber(archive.messages)}</p>
         <div className="tile-picture" aria-hidden="true">
@@ -73,7 +73,7 @@ export function ArchiveTiles({ archive, months, waiting, ranked, onOpenSetup }: 
         <p className="tile-note">{aDay(archive.messages, days)}</p>
       </div>
 
-      <div className="tile card">
+      <div className="tile">
         <p className="tile-label">You wrote</p>
         <p className="tile-value">
           {sent + received > 0 ? (
@@ -94,7 +94,7 @@ export function ArchiveTiles({ archive, months, waiting, ranked, onOpenSetup }: 
         <p className="tile-note">{sent + received > 0 ? `${formatNumber(sent)} messages` : ''}</p>
       </div>
 
-      <div className="tile card">
+      <div className="tile">
         <p className="tile-label">Conversations</p>
         <p className="tile-value">{formatNumber(archive.conversations)}</p>
         <div className="tile-picture" aria-hidden="true">
@@ -110,7 +110,7 @@ export function ArchiveTiles({ archive, months, waiting, ranked, onOpenSetup }: 
         </p>
       </div>
 
-      <div className="tile card">
+      <div className="tile">
         <p className="tile-label">Imported through</p>
         <p className="tile-value">{last ? formatDate(last) : ''}</p>
         <div className="tile-picture" aria-hidden="true">
@@ -136,7 +136,7 @@ export function ArchiveTilesSkeleton() {
   return (
     <div className="tiles" aria-hidden="true">
       {['Messages', 'You wrote', 'Conversations', 'Imported through'].map((label) => (
-        <div key={label} className="tile card">
+        <div key={label} className="tile">
           <p className="tile-label">{label}</p>
           <p className="tile-value">
             <span className="skeleton">000,000</span>

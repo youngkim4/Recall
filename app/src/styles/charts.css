@@ -240,10 +240,35 @@
     color: var(--text-3);
   }
 
+  /* In the heading of an open section the figures stand at the end of the
+     line. The day or month that is picked out stands before them, in the
+     room the line has left over: it asks for none of its own, so picking
+     one out never sends the figures to another line. With too little room
+     it is cut short. */
+  .section-head > .readout {
+    margin-left: auto;
+  }
+
+  .section-head > .readout-when {
+    flex: 1 1 0;
+    min-width: 0;
+    margin-left: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: end;
+  }
+
   /* the bar under the figures re-balances as a day or month is picked out */
   .voices > .voice-bar {
     height: 0.5rem;
     margin-top: var(--s-2);
+  }
+
+  /* under a heading that holds the figures, the bar is the first thing: the
+     heading's own band gives it its room. So it is for the chart, where
+     nobody wrote and there is no bar. */
+  .voices > :is(.voice-bar, .voices-skeleton-bar, .activity):first-child {
+    margin-top: 0;
   }
 
   .voices > .voice-bar > span {
@@ -384,8 +409,8 @@
   }
 
   /* ---- a year of days: a column a week, cells 2px apart, the whole year
-     from one edge of its card to the other. The weekday names keep their
-     place; in a card too narrow for the year the newest weeks stay in view
+     from one edge of its block to the other. The weekday names keep their
+     place; in a block too narrow for the year the newest weeks stay in view
      and the oldest slide out of it. ---- */
   .days {
     display: grid;
@@ -394,7 +419,7 @@
     container: days / inline-size;
   }
 
-  /* A cell is as wide as lets the 53 weeks end on the card's own edges: the
+  /* A cell is as wide as lets the 53 weeks end on the block's own edges: the
      width of the block less the weekday names (2rem) and the 52 gaps, over
      53. It is set on what is inside the block, which can measure the block.
      It stops at 8px, under which a day is too small to point at, and at 20px. */
@@ -488,7 +513,7 @@
     container: hours / inline-size;
   }
 
-  /* An hour is as tall as it is wide where the card allows: the width of the
+  /* An hour is as tall as it is wide where the block allows: the width of the
      block less the weekday names (2rem) and the 23 gaps, over 24. It is set
      on what is inside the block, which can measure the block. */
   .hours > * {

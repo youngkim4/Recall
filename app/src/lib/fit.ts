@@ -1,7 +1,14 @@
-// How many whole rows of one height a box has room for. A row that misses by
-// less than a pixel counts: heights are measured in fractions of one. It is
-// never fewer than `fewest`, whatever the box.
+// the most a row gives up of its own height so that one more row is shown
+const SQUEEZE = 0.05
+
+// How many rows a box shows when its rows share its height equally. It is
+// the count that leaves a row nearest its own height: one more row is shown
+// when each row is then a twentieth shorter at most. So the rows of a list
+// that is fitted to a box are never plainly taller than the rows of a list
+// beside it. It is never fewer than `fewest`, whatever the box.
 export function rowsThatFit(boxHeight: number, rowHeight: number, fewest: number) {
   if (!(rowHeight > 0) || !Number.isFinite(boxHeight)) return fewest
-  return Math.max(fewest, Math.floor((boxHeight + 1) / rowHeight))
+  const whole = Math.floor(boxHeight / rowHeight)
+  const oneMore = boxHeight / (whole + 1) >= rowHeight * (1 - SQUEEZE)
+  return Math.max(fewest, oneMore ? whole + 1 : whole)
 }

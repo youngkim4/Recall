@@ -72,25 +72,14 @@
     background: var(--fill-active);
   }
 
-  /* in a reading column the fill reaches 8px past both edges, which keeps the
-     row's words on the same edge as the heading above them */
-  .rows.bleed {
-    margin-inline: calc(var(--s-2) * -1);
-  }
-
-  /* ---- card: a surface that holds one thing. Its edge is a shadow and not
-     a border: a hairline ring with a tight lift under it. A ring of this kind
-     sits on any background and takes no room in the layout; in dark the ring
-     alone is the edge. ---- */
+  /* ---- card: one thing set apart from the page. It stands on the page's
+     own ground, and its edge is a shadow and not a border: a hairline ring
+     with a tight lift under it. A ring of this kind sits on any background
+     and takes no room in the layout; in dark the ring alone is the edge. ---- */
   .card {
     border-radius: var(--r-lg);
-    background: var(--bg-raised);
+    background: var(--bg-card);
     box-shadow: var(--shadow-raised);
-  }
-
-  /* a card around a figure keeps it 16px from every edge */
-  .card-pad {
-    padding: var(--s-4);
   }
 
   /* Rows in a card reach its edges, 16px in from them, with a hairline
@@ -125,16 +114,42 @@
     border-end-end-radius: var(--r-lg);
   }
 
+  /* ---- ruled rows: an open list, with no card around it. A hairline stands
+     over every row, over the first one too, where it parts the list from its
+     heading. A row is one band: 12px, a line, 12px. Under the pointer its
+     fill reaches 8px past the words on both sides, so the words keep the
+     edge of the column and the hairlines end where the words do. ---- */
+  .rows.ruled {
+    gap: 0;
+  }
+
+  .rows.ruled > li {
+    border-top: 1px solid var(--line);
+  }
+
+  .rows.ruled .row {
+    width: calc(100% + var(--s-4));
+    margin-inline: calc(var(--s-2) * -1);
+    padding: var(--s-3) var(--s-2);
+    outline-offset: -2px;
+  }
+
   /* ---- ranked rows: place, name, bar, count and share on one grid, so the
      columns line up down the list ---- */
   /* The name keeps at least 7rem and takes up to 14rem. The bar takes all
      the room that remains, so a row is filled from one edge to the other,
-     and none when there is none. A bar that sized first would squeeze the
-     name out of a narrow column. */
+     and never less than 4rem: a bar shorter than that says nothing. A list
+     too narrow for such a bar shows none (below). */
   .ranked-row {
     display: grid;
-    grid-template-columns: 1.25rem minmax(7rem, 14rem) minmax(0, 1fr) 4.5rem 2.5rem;
+    grid-template-columns: 1.25rem minmax(7rem, 14rem) minmax(4rem, 1fr) 4.5rem 2.5rem;
     gap: var(--s-3);
+  }
+
+  /* a ranked list answers to its own width, wherever it stands */
+  .ranked-list,
+  .people {
+    container: ranked / inline-size;
   }
 
   .ranked-place,
@@ -157,9 +172,9 @@
     font-size: var(--t-small);
   }
 
-  /* In a pane too narrow for a bar beside each name, the columns that are
-     left would not fit either: the bar's place goes to the name. */
-  @container detail (max-width: 20rem) {
+  /* In a list too narrow for a bar of 4rem beside a name of 7rem (22.25rem
+     with the other columns and the gaps), the bar's place goes to the name. */
+  @container ranked (max-width: 22.5rem) {
     .ranked-row {
       grid-template-columns: 1.25rem minmax(0, 1fr) 4.5rem 2.5rem;
     }
@@ -171,11 +186,13 @@
 
   /* ---- facts: a label and what it comes to. The label column is the width
      of the Overview's, so second columns start on the same line across views. ---- */
+  /* a fact is one band of an open list: a hairline over it, 12px, a line, 12px */
   .facts > div {
     display: grid;
     grid-template-columns: 11rem minmax(0, 1fr);
     gap: var(--s-4);
-    padding: var(--s-2) 0;
+    padding: var(--s-3) 0;
+    border-top: 1px solid var(--line);
   }
 
   .facts dt {

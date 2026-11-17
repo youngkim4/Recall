@@ -22,7 +22,7 @@ export function RecentReports({ reports, onOpenReport, onViewAll, onChooseConver
   const recent = reports.filter((report) => report.kind === 'md').slice(0, SHOWN)
 
   return (
-    <section className="section" aria-labelledby="reports-title">
+    <section className="section ruled" aria-labelledby="reports-title">
       <div className="section-head">
         <h2 id="reports-title">Recent reports</h2>
         {recent.length ? (
@@ -34,20 +34,18 @@ export function RecentReports({ reports, onOpenReport, onViewAll, onChooseConver
         ) : null}
       </div>
       {recent.length ? (
-        <div className="card">
-          <ul className="rows" role="list">
-            {recent.map((report) => (
-              <li key={report.path}>
-                <button type="button" className="row" onClick={() => onOpenReport(report)}>
-                  <span className="row-main">
-                    <Truncate className="row-title">{reportTitle(report)}</Truncate>
-                  </span>
-                  <span className="row-end">{writtenOn(report)}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+        <ul className="rows ruled" role="list">
+          {recent.map((report) => (
+            <li key={report.path}>
+              <button type="button" className="row" onClick={() => onOpenReport(report)}>
+                <span className="row-main">
+                  <Truncate className="row-title">{reportTitle(report)}</Truncate>
+                </span>
+                <span className="row-end">{writtenOn(report)}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
       ) : (
         <div className="empty">
           <p>No reports yet</p>

@@ -1,5 +1,6 @@
 /* Overview: how large the archive is, what is worth opening today, and when
-   the messages happen. */
+   the messages happen. The page is open: its parts stand on the page's own
+   ground, set apart by space and by hairlines. Only the moments are a card. */
 
 @layer views {
   /* ---- lead: what an empty archive says, set large ---- */
@@ -11,19 +12,16 @@
   }
 
   /* ---- tiles: the archive in four figures, each over a small picture of
-     itself. Every tile has the same four rows, so the figures, the pictures
-     and the lines under them each share a line across the row. ---- */
+     itself. Every figure has the same four rows, so the figures, the pictures
+     and the lines under them each share a line across the row.
+     A figure and its neighbour part with a hairline. The first has no room
+     before it and the last none after it, so the row keeps the page's two
+     edges. The room on each side of a line is half the gap between the two
+     columns under the row: beside the middle line a figure ends, and the next
+     one starts, where those columns do. ---- */
   .tiles {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: var(--s-3);
-  }
-
-  /* too narrow for four: two rows of two */
-  @container workspace (max-width: 46rem) {
-    .tiles {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
   }
 
   .tile {
@@ -31,7 +29,35 @@
     /* a name, a figure, a picture, and one line about it */
     grid-template-rows: auto auto auto auto;
     min-width: 0;
-    padding: var(--s-4);
+    /* the line takes 1px of the room before a figure */
+    padding-inline: calc(var(--s-5) - 1px) var(--s-5);
+    border-left: 1px solid var(--line);
+  }
+
+  .tile:first-child {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .tile:last-child {
+    padding-right: 0;
+  }
+
+  /* too narrow for four: two rows of two, and the pattern starts again in each row */
+  @container workspace (max-width: 46rem) {
+    .tiles {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      row-gap: var(--s-6);
+    }
+
+    .tile:nth-child(odd) {
+      padding-left: 0;
+      border-left: 0;
+    }
+
+    .tile:nth-child(even) {
+      padding-right: 0;
+    }
   }
 
   .tile-label,
@@ -98,13 +124,14 @@
     height: 0.375rem;
   }
 
-  /* A window as narrow as a phone: one tile a row, its figure beside its
-     name. A name and a figure too long to share the line keep all their
-     letters: the figure goes under the name, still on the right. */
+  /* A window as narrow as a phone: one figure a row, in the band of a ruled
+     row, its figure beside its name. A name and a figure too long to share
+     the line keep all their letters: the figure goes under the name, still
+     on the right. */
   @container workspace (max-width: 26rem) {
     .tiles {
       grid-template-columns: minmax(0, 1fr);
-      gap: var(--s-2);
+      row-gap: 0;
     }
 
     .tile {
@@ -112,7 +139,20 @@
       flex-wrap: wrap;
       align-items: baseline;
       column-gap: var(--s-3);
-      padding: var(--s-3) var(--s-4);
+      padding: var(--s-3) 0;
+      border-left: 0;
+    }
+
+    .tile + .tile {
+      border-top: 1px solid var(--line);
+    }
+
+    .tile:first-child {
+      padding-top: 0;
+    }
+
+    .tile:last-child {
+      padding-bottom: 0;
     }
 
     .tile-label {
@@ -193,15 +233,16 @@
     border-radius: 0 2px 2px 0;
   }
 
-  /* ---- a row of the page. In a narrow workspace its parts follow each
-     other. With room they stand side by side and are each as tall as the row,
-     so every card in a row ends on one line. The row under the tiles splits
-     in the middle, on the gap between the second tile and the third, and
-     keeps the tiles' gap. ---- */
-  .page > * + .overview-row,
+  /* ---- the blocks of the page: the figures, then rows of sections. One
+     block is 32px from the next, and the figures are 32px under the strip:
+     the same room above them as below. In a narrow workspace the parts of a
+     row follow each other. With room they stand side by side, 40px apart,
+     and are each as tall as the row. The row under the figures splits in the
+     middle, on the hairline between the second figure and the third. ---- */
+  .overview > * + .overview-row,
   .overview-row > * + *,
   .overview-side > * + .section {
-    margin-top: var(--s-12);
+    margin-top: var(--s-8);
   }
 
   /* what is inside a part answers to the part, not to the window */
@@ -211,21 +252,17 @@
   }
 
   @container workspace (min-width: 64rem) {
-    .tiles {
-      gap: var(--s-4);
-    }
-
     .overview-row {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: var(--s-4);
+      gap: var(--s-10);
     }
 
     .overview-row > * + * {
       margin-top: 0;
     }
 
-    /* a part is a heading over a card; the card takes the height that is left */
+    /* a part is a heading over what it holds, which takes the height that is left */
     .overview-row > .section,
     .overview-side,
     .overview-side > .section {
@@ -237,24 +274,26 @@
       flex: 1;
     }
 
-    /* The ranked list is as long as the room beside the moments. Its card
+    /* The ranked list is as long as the room beside the moments. Its box
        takes the height the column has left, whatever its rows come to, and
        the list shows the rows that fit (useRowsThatFit reads --fit). Each row
-       then takes an equal share, so the last one ends on the card's edge. */
-    .overview-side > .section:has(> .ranked-card) {
+       then takes an equal share, so the last one ends where the box does.
+       The box cuts what is under it and not what is beside it: a row's fill
+       reaches past the words. */
+    .overview-side > .section:has(> .ranked-list) {
       flex: 1 1 auto;
       min-height: 0;
     }
 
-    .overview-side .ranked-card {
+    .overview-side .ranked-list {
       --fit: 1;
       flex: 1 1 0;
-      min-height: calc(5 * 2.75rem + 4px);
-      overflow: hidden;
+      min-height: calc(5 * 2.75rem + 5px);
+      overflow-y: clip;
     }
 
-    /* as many equal rows as fit; a list with fewer leaves the rest of the card empty */
-    .overview-side .ranked-card > .rows {
+    /* as many equal rows as fit; a list with fewer leaves the rest of the box empty */
+    .overview-side .ranked-list > .rows {
       height: 100%;
       grid-template-rows: repeat(var(--rows, 5), minmax(0, 1fr));
     }
@@ -264,28 +303,34 @@
       flex: 1;
     }
 
-    .overview-side > .section:only-child > .card {
-      flex: 1;
-    }
-
-    .overview-side .ranked-card > .rows > li {
+    .overview-side .ranked-list > .rows > li {
       display: flex;
       flex-direction: column;
     }
 
-    .overview-side .ranked-card .row {
+    /* a row takes its share of the box, a little more or less than its own
+       height, and its line stands in the middle of it */
+    .overview-side .ranked-list .row {
       flex: 1;
       align-content: center;
+      min-height: 0;
+      padding-block: 0;
+    }
+
+    /* The column ends on a line, as the card beside it does: the last list
+       in it is closed with a hairline. */
+    .overview-side > .section:last-child .rows.ruled > li:last-child {
+      border-bottom: 1px solid var(--line);
     }
 
     /* The year of days beside the hours of the week: 53 columns and 24. The
        row is cut so that a day and an hour come to the same size, and the
-       seven weekdays of both stand on the same lines. Each card spends 4rem
-       on its padding and its weekday names; the gaps between cells take 104px
-       of one and 46px of the other; what is left of the row, less its own
-       1rem gap, is 77 cells, of which the year has 53. */
+       seven weekdays of both stand on the same lines. Each block spends 2rem
+       on its weekday names; the gaps between cells take 104px of one and 46px
+       of the other; what is left of the row, less its own 2.5rem gap, is 77
+       cells, of which the year has 53. */
     .overview-heat {
-      grid-template-columns: calc((100% - 9rem - 150px) * 53 / 77 + 4rem + 104px) minmax(0, 1fr);
+      grid-template-columns: calc((100% - 6.5rem - 150px) * 53 / 77 + 2rem + 104px) minmax(0, 1fr);
     }
 
     /* Side by side the two grids are read as one: an hour may be as small as
@@ -306,11 +351,11 @@
 
   /* ---- moments: who on the left and when at the end of the same line, the
      way a list of messages is read; under them what was said. In a card, with
-     a hairline between one moment and the next. ---- */
-  .card > .moments .row {
-    padding-block: var(--s-4);
-  }
-
+     a hairline between one moment and the next. A moment takes the card's own
+     row: 12px over and under its lines and 16px beside them, which look the
+     same distance from the card's edge, since a line of words keeps 5px
+     clear over its capitals. The lines of a moment follow each other with no
+     gap, so a quoted message has the same room above it as below. ---- */
   .moment {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -318,7 +363,7 @@
       'name when'
       'detail detail';
     align-items: baseline;
-    column-gap: var(--s-4);
+    gap: 0 var(--s-4);
   }
 
   /* who and what are read as one thing, and stand in the row's own grid */

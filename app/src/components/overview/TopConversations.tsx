@@ -23,11 +23,12 @@ const rowHeight = (rem: number) => 2.75 * rem + 1
 // The busiest conversations as a ranked table. Each row carries its count and
 // its share of the whole archive; the bar is drawn against the largest and
 // split into what you sent and what you received, where the list says which
-// is which. Alone in a column it shows
-// eight; in a card stretched to the height of what stands beside it, it shows
-// as many as that height holds, so the card ends where its neighbor ends.
+// is which. It is an open list: a hairline over each row and no card. Alone
+// in a column it shows eight; in a box stretched to the height of what stands
+// beside it, it shows as many as that height holds, so it ends where its
+// neighbor ends.
 export function TopConversations({ ranked, archive, onSelectContact, onViewAll }: TopConversationsProps) {
-  const [card, shown] = useRowsThatFit(rowHeight, SHOWN, FEWEST)
+  const [box, shown] = useRowsThatFit(rowHeight, SHOWN, FEWEST)
   const rows = ranked.slice(0, shown)
   if (!rows.length) return null
 
@@ -35,7 +36,7 @@ export function TopConversations({ ranked, archive, onSelectContact, onViewAll }
   const total = Math.max(1, archive.messages)
 
   return (
-    <section className="section" aria-labelledby="top-title">
+    <section className="section ruled" aria-labelledby="top-title">
       <div className="section-head">
         <h2 id="top-title">Most messages</h2>
         <VoiceLegend />
@@ -45,9 +46,9 @@ export function TopConversations({ ranked, archive, onSelectContact, onViewAll }
           </button>
         </span>
       </div>
-      <div ref={card} className="card ranked-card">
+      <div ref={box} className="ranked-list">
         {/* the list keeps room for the rows that fit, so a short list keeps its rows at their own height */}
-        <ol className="rows" role="list" style={{ '--rows': shown } as CSSProperties}>
+        <ol className="rows ruled" role="list" style={{ '--rows': shown } as CSSProperties}>
           {rows.map((contact, index) => {
             const count = messageCount(contact)
             const voices = voicesOf(contact)
@@ -85,17 +86,22 @@ export function TopConversations({ ranked, archive, onSelectContact, onViewAll }
   )
 }
 
-// stands in for the list while the conversations are read: the same heading
-// over a card of the fewest rows the list ever shows
+// Stands in for the list while the conversations are read: the same heading,
+// over as many rows as the list will show in the room it has.
 export function TopConversationsSkeleton() {
+  const [box, shown] = useRowsThatFit(rowHeight, SHOWN, FEWEST)
   return (
-    <section className="section" aria-hidden="true">
+    <section className="section ruled" aria-hidden="true">
       <div className="section-head">
         <h2>Most messages</h2>
+        <VoiceLegend />
+        <span className="section-links">
+          <span className="skeleton">All 0,000 conversations</span>
+        </span>
       </div>
-      <div className="card ranked-card">
-        <ol className="rows" role="list">
-          {Array.from({ length: FEWEST }, (_, row) => (
+      <div ref={box} className="ranked-list">
+        <ol className="rows ruled" role="list" style={{ '--rows': shown } as CSSProperties}>
+          {Array.from({ length: shown }, (_, row) => (
             <li key={row}>
               <div className="row ranked-row">
                 <span className="ranked-place">{row + 1}</span>

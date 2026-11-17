@@ -35,13 +35,8 @@ const loadPatterns = (messagesPath: string) => recallApi.overview({ messagesPath
 // stands in for the chart of months while it loads
 function MonthsWaiting() {
   return (
-    <div className="section" aria-hidden="true">
-      <div className="section-head">
-        <h2>By month</h2>
-      </div>
-      <div className="card card-pad">
-        <VoicesSkeleton />
-      </div>
+    <div className="section ruled" aria-hidden="true">
+      <VoicesSkeleton heading={<h2>By month</h2>} />
     </div>
   )
 }
@@ -49,8 +44,9 @@ function MonthsWaiting() {
 // The archive at a glance, in rows. How much it holds. Then what is worth
 // opening: today's moments, with the busiest conversations and the recent
 // reports beside them. Then when the messages happen: by month, and under
-// that by day and by hour. In a wide window the things of a row stand side
-// by side and end on one line; in a narrow one they follow each other.
+// that by day and by hour. The page is open: a hairline over each section and
+// no card but the moments. In a wide window the things of a row stand side by
+// side and end on one line; in a narrow one they follow each other.
 export function OverviewView({
   defaults,
   archive,
@@ -82,7 +78,7 @@ export function OverviewView({
   if (loading && !archive) {
     return (
       <div className="view">
-        <div className="page wide" aria-busy="true">
+        <div className="page wide overview" aria-busy="true">
           <p className="sr-only" role="status">
             Reading your archive
           </p>
@@ -114,7 +110,7 @@ export function OverviewView({
 
   return (
     <div className="view">
-      <div className="page wide arrive-each">
+      <div className="page wide overview arrive-each">
         <ArchiveTiles
           archive={archive}
           months={patterns.state === 'ready' ? patterns.value.monthly : null}
@@ -165,19 +161,15 @@ export function OverviewView({
             </button>
           </p>
         ) : patterns.value.monthly.length ? (
-          <section className="section" aria-labelledby="months-title">
-            <div className="section-head">
-              <h2 id="months-title">By month</h2>
-            </div>
-            <div className="card card-pad">
-              <VoicesOverTime
-                points={patterns.value.monthly}
-                unit="month"
-                sent={voices.sent}
-                received={voices.received}
-                them="Everyone else"
-              />
-            </div>
+          <section className="section ruled" aria-labelledby="months-title">
+            <VoicesOverTime
+              heading={<h2 id="months-title">By month</h2>}
+              points={patterns.value.monthly}
+              unit="month"
+              sent={voices.sent}
+              received={voices.received}
+              them="Everyone else"
+            />
           </section>
         ) : null}
 

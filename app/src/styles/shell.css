@@ -280,10 +280,10 @@
     }
   }
 
-  /* more room above a heading than below it */
+  /* one block is 32px from the next, on every page */
   .page > * + .section,
   .detail > * + .section {
-    margin-top: var(--s-12);
+    margin-top: var(--s-8);
   }
 
   /* 8px to the first row and 8px of row inset: the heading sits one row
@@ -319,6 +319,28 @@
 
   .section-head .meta {
     color: var(--text-3);
+  }
+
+  /* ---- ruled section: the open way to set a section apart. A hairline
+     stands over it, and its heading takes one band under that: 12px, a line
+     of 20px, 12px. A row of a ruled list is the same band (lists.css), so a
+     heading, the rows under it and the lines between them keep one rhythm.
+     A card under the heading starts where a first row's line would. ---- */
+  .section.ruled {
+    border-top: 1px solid var(--line);
+  }
+
+  .section.ruled > .section-head {
+    min-height: 2.75rem;
+    margin-bottom: 0;
+    padding-block: var(--s-3);
+  }
+
+  /* one line where a list would be: it stands in the band of a first row */
+  .section.ruled > .section-note {
+    margin-top: 0;
+    padding-block: var(--s-3);
+    border-top: 1px solid var(--line);
   }
 
   /* ---- split: list pane and detail pane, each scrolling on its own ---- */

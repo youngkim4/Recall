@@ -3,8 +3,10 @@ import { rowsThatFit } from './fit'
 
 // How many rows a list shows. At rest it is `atRest`. Where the style sheet
 // gives the list's box a height from outside (it sets --fit on the box, and
-// the box does not grow with its rows), it is as many rows as that height
-// holds, and never fewer than `fewest`. rowHeight gives the height of one
+// the box does not grow with its rows), it is the count that leaves a row
+// nearest its own height (rowsThatFit), and never fewer than `fewest`. The
+// rows of such a box share its height, so one more row makes each a little
+// shorter and none is cut off. rowHeight gives the height of one
 // row in pixels for the size of a rem; pass the same function each time.
 // The first thing it returns is the ref for the box: a box that is put on
 // the page later than the list's first drawing is measured from then on.

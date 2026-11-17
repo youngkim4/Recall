@@ -1,6 +1,7 @@
-import { useId, useMemo } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { contactTitle } from '../../lib/conversations'
 import { formatDate, plural } from '../../lib/format'
+import { readShape, storeShape } from '../../lib/keptShape'
 import type { Contact, MemoriesPayload } from '../../types'
 import { Truncate } from '../ui/Truncate'
 
@@ -45,6 +46,11 @@ type Moment = {
   at?: string | null
   quotedId?: string
 }
+
+// the name the list's shape is remembered under, from one drawing to the next
+const SHAPE = 'moments'
+// with no shape remembered, what stands in for the list has this many rows
+const ROWS_AT_FIRST = 3
 
 function yearsAgoToday(years: number) {
   return years === 1 ? 'A year ago today' : `${years} years ago today`
@@ -102,6 +108,34 @@ export function Moments({
 }: MomentsProps) {
   const moments = useMemo(() => (memories ? buildMoments(memories) : []), [memories])
   const loaded = useMemo(() => new Map(contacts.map((contact) => [contact.chat_id, contact])), [contacts])
+  const list = useRef<HTMLUListElement>(null)
+  const answered = memories !== null
+  const count = moments.length
+
+  // The room the list takes is remembered as it was last drawn, so that
+  // what stands in for it the next time takes the same room. An answer
+  // with no moments is remembered as empty. No answer at all changes nothing.
+  useLayoutEffect(() => {
+    if (!answered) return
+    const element = list.current
+    if (!element) {
+      storeShape(SHAPE, { rows: 0, height: 0 })
+      return
+    }
+    // measured now, and again whenever the list changes size; a height that
+    // has not changed is not handed on a second time
+    let last = -1
+    const keep = () => {
+      const height = element.getBoundingClientRect().height
+      if (height === last) return
+      last = height
+      storeShape(SHAPE, { rows: count, height })
+    }
+    keep()
+    const observer = new ResizeObserver(keep)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [answered, count])
 
   // a moment can come from a conversation outside the loaded list; it is named
   // and opened the same way
@@ -116,7 +150,7 @@ export function Moments({
   }
 
   return (
-    <section className="section" aria-labelledby="moments-title">
+    <section className="section ruled" aria-labelledby="moments-title">
       <div className="section-head">
         <h2 id="moments-title">Moments</h2>
         <span className="section-links">
@@ -130,7 +164,7 @@ export function Moments({
       </div>
       {moments.length ? (
         <div className="card">
-          <ul className="rows moments" role="list">
+          <ul ref={list} className="rows moments" role="list">
             {moments.map((moment) => (
               <MomentRow
                 key={moment.key}
@@ -210,35 +244,52 @@ function MomentQuote({ text, fromMe }: { text: string; fromMe: boolean | null })
   )
 }
 
-// stands in for the list while it loads; the sections below wait with it, so
-// nothing already on the page is pushed down when the moments arrive
+// Stands in for the list while it loads. It takes the room the list took
+// the last time it was drawn: as many rows, spread over the same height. So
+// nothing on the page moves when the moments arrive: not the sections under
+// it, and not the lists beside it, which are as long as it is tall. A day
+// that had no moments is stood in for by the one line it had.
 export function MomentsSkeleton() {
+  // read once, when it is put on the page
+  const [shape] = useState(() => readShape(SHAPE))
+  const rows = shape ? shape.rows : ROWS_AT_FIRST
+
   return (
-    <section className="section" aria-hidden="true">
+    <section className="section ruled" aria-hidden="true">
       <div className="section-head">
         <h2>Moments</h2>
+        <span className="section-links">
+          <span className="skeleton">Replay first words</span>
+          <span className="skeleton">Make a card</span>
+        </span>
       </div>
-      <div className="card">
-        <ul className="rows moments" role="list">
-          {[0, 1, 2].map((row) => (
-            <li key={row}>
-              <div className="row moment">
-                <span className="moment-when">
-                  <span className="skeleton">2 years ago today</span>
-                </span>
-                <span className="moment-main">
-                  <span className="moment-name">
-                    <span className="skeleton">Conversation name</span>
+      {rows ? (
+        <div className="card">
+          <ul className="rows moments" role="list" style={shape ? { minHeight: shape.height } : undefined}>
+            {Array.from({ length: rows }, (_, row) => (
+              <li key={row}>
+                <div className="row moment">
+                  <span className="moment-when">
+                    <span className="skeleton">2 years ago today</span>
                   </span>
-                  <span className="moment-detail">
-                    <span className="skeleton">000 messages that day</span>
+                  <span className="moment-main">
+                    <span className="moment-name">
+                      <span className="skeleton">Conversation name</span>
+                    </span>
+                    <span className="moment-detail">
+                      <span className="skeleton">000 messages that day</span>
+                    </span>
                   </span>
-                </span>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="section-note">
+          <span className="skeleton">Nothing from this day in earlier years</span>
+        </p>
+      )}
     </section>
   )
 }

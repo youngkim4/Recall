@@ -21,6 +21,9 @@
     --bg: light-dark(#ffffff, #1c1c1e);
     --bg-rail: light-dark(#f5f5f7, #131315);
     --bg-raised: light-dark(#ffffff, #2c2c2e);
+    /* a card in the page stands on the page's own ground, and its ring is
+       its edge. The lighter fill is for controls and for layers that float. */
+    --bg-card: var(--bg);
     /* fills are translucent, so each one steps from the surface beneath it */
     --fill-hover: light-dark(rgb(120 120 128 / 0.08), rgb(120 120 128 / 0.16));
     --fill-active: light-dark(rgb(120 120 128 / 0.16), rgb(120 120 128 / 0.28));
@@ -76,9 +79,10 @@
     /* ---- elevation ----
        raised: a hairline ring and a tight lift, for controls.
        pop: the same ring with real depth, for surfaces that float.
-       In dark the lift is the lighter surface itself, so the shadows drop out. */
-    --ring: light-dark(rgb(60 60 67 / 0.12), rgb(235 235 245 / 0.1));
-    --ring-hover: light-dark(rgb(60 60 67 / 0.2), rgb(235 235 245 / 0.18));
+       In dark the shadows drop out and the ring alone is the edge, so it is
+       a step firmer than the hairlines it holds. */
+    --ring: light-dark(rgb(60 60 67 / 0.12), rgb(235 235 245 / 0.15));
+    --ring-hover: light-dark(rgb(60 60 67 / 0.2), rgb(235 235 245 / 0.24));
     --lift-near: light-dark(rgb(0 0 0 / 0.06), transparent);
     --lift-far: light-dark(rgb(0 0 0 / 0.04), transparent);
     --drop-near: light-dark(rgb(0 0 0 / 0.08), rgb(0 0 0 / 0.32));
