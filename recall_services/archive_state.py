@@ -142,6 +142,14 @@ def _holds_pull(archive: Archive) -> bool:
     return bool(found) and not str(found[0]["id"]).startswith(LEGACY_PREFIX)
 
 
+def _stat_of(path: Path) -> tuple[int, int] | None:
+    try:
+        found = path.stat()
+    except OSError:
+        return None
+    return (found.st_mtime_ns, found.st_size)
+
+
 def _place(named: object) -> Path | None:
     """The path that a caller named, or None when the text is no path."""
     try:
@@ -242,6 +250,15 @@ class ArchiveState:
 
     def exists(self) -> bool:
         return self.path.is_file()
+
+    def file_mark(self) -> tuple[Any, ...]:
+        """What tells one content of the archive file from another, also after a start of the server.
+
+        The place, and the write time and size of the database and of the file
+        in which SQLite keeps the newest writes. The mark can change while the
+        content is the same; it does not stay the same when the content changed.
+        """
+        return (str(self.path), _stat_of(self.path), _stat_of(self.path.with_name(self.path.name + "-wal")))
 
     # -- the read handle -----------------------------------------------------
 

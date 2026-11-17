@@ -38,13 +38,16 @@ from typing import Any
 
 import pandas as pd
 
-from archive import compat
+from archive import Archive, compat
 from message_text import ATTACHMENT_PLACEHOLDER
 from recall_services import archive_state
 from recall_services.archive_state import ArchiveState
 
 ATTACHMENT_COLUMNS = ("message_id", "chat_id", "mime_type", "is_from_me", "timestamp", "category")
 REACTION_COLUMNS = ("message_id", "chat_id", "reaction_type", "is_add", "is_from_me", "timestamp")
+# the kinds that the exporter of today reads and that `compute_reaction_stats` counts
+REACTION_KINDS = frozenset({"love", "like", "dislike", "laugh", "emphasis", "question"})
+_ONLY_FILES_KIND = "attachment"
 
 _lock = threading.Lock()
 _held: weakref.WeakKeyDictionary[ArchiveState, tuple[tuple[Any, ...], pd.DataFrame]] = weakref.WeakKeyDictionary()
@@ -59,20 +62,30 @@ def _old_label(types: object, files: object) -> str:
     return compat.ATTACHMENT_LABEL
 
 
-def _as_the_export_of_today(raw: pd.DataFrame) -> pd.DataFrame:
+def _typed_labels(raw: pd.DataFrame, archive: Archive) -> pd.Series:
+    """True for a row whose text is the bare label and that a person typed: its kind is not `attachment`.
+
+    The frame of archive.compat has no kind. The bare label is rare, so each
+    such row is looked up.
+    """
+    bare = raw["text"] == compat.ATTACHMENT_LABEL
+    typed = {
+        message_id
+        for message_id in raw.loc[bare, "message_id"]
+        if (archive.message(message_id) or {}).get("kind") != _ONLY_FILES_KIND
+    }
+    return raw["message_id"].isin(typed)
+
+
+def _as_the_export_of_today(raw: pd.DataFrame, archive: Archive) -> pd.DataFrame:
     labels = [_old_label(types, files) for types, files in zip(raw["attachment_types"], raw["attachment_files"])]
-    only_files = raw["text"] == pd.Series(labels, index=raw.index, dtype=object)
+    only_files = (raw["text"] == pd.Series(labels, index=raw.index, dtype=object)) & ~_typed_labels(raw, archive)
     return raw.assign(text=raw["text"].where(~only_files, ATTACHMENT_PLACEHOLDER))
 
 
 def _key(state: ArchiveState) -> tuple[Any, ...]:
-    """What one state of the archive is known by: its place, its generation and its file."""
-    try:
-        found = state.path.stat()
-        on_disk: tuple[int, int] | None = (found.st_mtime_ns, found.st_size)
-    except OSError:
-        on_disk = None
-    return (str(state.path), state.generation, on_disk)
+    """What one state of the archive is known by: its generation and the mark of its files."""
+    return (state.generation, state.file_mark())
 
 
 def messages_frame(state: ArchiveState | None = None) -> pd.DataFrame:
@@ -88,7 +101,8 @@ def messages_frame(state: ArchiveState | None = None) -> pd.DataFrame:
         held = _held.get(chosen)
         if held is not None and held[0] == key:
             return held[1]
-        made = _as_the_export_of_today(compat.messages_frame(chosen.archive()))
+        archive = chosen.archive()
+        made = _as_the_export_of_today(compat.messages_frame(archive), archive)
         _held[chosen] = (key, made)
         return made
 
@@ -136,8 +150,11 @@ def reactions_frame(
     """One row for each tapback that stands on a message of one conversation.
 
     A person has at most one tapback on a message, the last one, and a
-    tapback that was taken back is no row. The days of `since` and `until`
-    are the days of the messages.
+    tapback that was taken back is no row. The export file of today held one
+    row for each tapback that was ever added. A tapback with any emoji or
+    with a sticker is no row: the exporter of today does not read those, and
+    the figures have no place for them. The days of `since` and `until` are
+    the days of the messages.
     """
     archive = state.archive()
     messages = archive.iter_messages(conversation_id, since=since, until=until) if conversation_id else ()
@@ -153,5 +170,6 @@ def reactions_frame(
         }
         for message_id, tapbacks in archive.reactions(list(sent_at)).items()
         for tapback in tapbacks
+        if tapback["kind"] in REACTION_KINDS
     ]
     return _stamped(rows, REACTION_COLUMNS)
