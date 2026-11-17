@@ -1,17 +1,22 @@
-/* Search: the words to find, where to look, and what was found. */
+/* Search: the words to find and what they found, and beside the matches the
+   day around the one that is chosen. */
 
 @layer views {
-  /* stays in reach while the matches scroll under it */
+  /* the list keeps a width that suits a message; the day takes the rest */
+  .search-split {
+    --list-w: clamp(20rem, 42%, 34rem);
+  }
+
+  /* 16px in, the title's edge; the matches under it scroll on their own */
+  .search-head {
+    flex: none;
+    padding: var(--s-4) var(--s-4) var(--s-2);
+  }
+
   .search-bar {
-    position: sticky;
-    top: 0;
-    z-index: 1;
     display: flex;
     align-items: center;
     gap: var(--s-2);
-    margin-block: calc(var(--s-3) * -1);
-    padding-block: var(--s-3);
-    background: var(--bg);
   }
 
   .search-bar > .search {
@@ -39,14 +44,62 @@
   /* how many were found; the line keeps its place when it is empty */
   .search-status {
     min-height: var(--lh-body);
-    margin-top: var(--s-6);
+    margin-top: var(--s-3);
     color: var(--text-3);
   }
 
-  /* a row's fill reaches 8px past the column, so its words stay on the column's edge */
+  /* a row's fill starts 8px from the pane's edge, so its words stand on the 16px line */
   .hits {
     display: grid;
     gap: 1px;
-    margin: var(--s-2) calc(var(--s-2) * -1) 0;
+  }
+
+  /* the match whose day is open */
+  .hit[data-picked] {
+    background: var(--fill-active);
+  }
+
+  /* ---- the day beside the matches: whose conversation it is, the day, and
+     its messages, which scroll under the two lines above them ---- */
+  .search-day {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .search-day > .pane-empty {
+    grid-row: 1 / -1;
+  }
+
+  /* where a window shows one pane at a time, the list in view hides the day;
+     said here because the grid above would bring it back */
+  @container workspace (max-width: 40rem) {
+    .search-split[data-pane='list'] > .search-day {
+      display: none;
+    }
+  }
+
+  /* The name stands level with the search field beside it: the same 16px
+     above and below a line 40px tall. */
+  .search-day-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--s-3);
+    min-height: calc(var(--control-h-lg) + var(--s-4) * 2);
+    padding: var(--s-2) var(--s-4);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .search-day-head h2 {
+    min-width: 0;
+    font-size: var(--t-body);
+    line-height: var(--lh-body);
+  }
+
+  /* the way back to the matches takes a line of its own above the name, and is as wide as its words */
+  .search-day-head > .pane-back {
+    grid-column: 1 / -1;
+    justify-self: start;
+    margin-bottom: var(--s-1);
   }
 }
