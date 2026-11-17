@@ -1,7 +1,9 @@
 """Guards shared by the tests of the joined branch.
 
-`install()` runs before any project import. It does three things:
-- sets a dummy OPENAI_API_KEY (load_dotenv can find a real .env above a worktree)
+`install()` runs before any project import. It does four things:
+- sets a dummy OPENAI_API_KEY
+- makes load_dotenv do nothing: openai_client.py calls it with no path when the
+  data folder has no .env, and it then walks up to a real .env above a worktree
 - points RECALL_DATA_DIR at a temp folder, so no default path reaches real data
 - blocks every socket that leaves this machine (loopback stays open)
 
@@ -20,6 +22,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+import dotenv
 import pytest
 
 from tests.archive import netguard
@@ -49,12 +52,18 @@ _CLIENT_SETTINGS = (
 _data_dir: str | None = None
 
 
+def _read_no_dotenv(*_args: object, **_kwargs: object) -> bool:
+    """Stands in for dotenv.load_dotenv: no file is looked for and none is read."""
+    return False
+
+
 def install() -> Path:
     """Set the guards and return the temp data folder. Safe to call again."""
     global _data_dir
     os.environ["OPENAI_API_KEY"] = DUMMY_KEY
     for name in _CLIENT_SETTINGS:
         os.environ.pop(name, None)
+    dotenv.load_dotenv = _read_no_dotenv  # type: ignore[assignment]
     if _data_dir is None:
         _data_dir = tempfile.mkdtemp(prefix="recall-joined-tests-")
         atexit.register(shutil.rmtree, _data_dir, True)

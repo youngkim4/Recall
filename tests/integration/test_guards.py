@@ -17,6 +17,23 @@ def test_the_key_is_a_dummy() -> None:
     assert os.environ["OPENAI_API_KEY"] == guards.DUMMY_KEY
 
 
+def test_no_dotenv_file_is_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import dotenv
+
+    planted = tmp_path / ".env"
+    planted.write_text("RECALL_PLANTED_VALUE=1\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert dotenv.load_dotenv() is False
+    assert dotenv.load_dotenv(planted) is False
+    assert "RECALL_PLANTED_VALUE" not in os.environ
+
+
+def test_importing_the_model_client_reads_no_key() -> None:
+    import openai_client  # noqa: F401  calls load_dotenv when it loads
+
+    assert os.environ["OPENAI_API_KEY"] == guards.DUMMY_KEY
+
+
 def test_no_client_setting_points_somewhere_else() -> None:
     for name in ("OPENAI_BASE_URL", "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"):
         assert name not in os.environ
