@@ -261,12 +261,12 @@ So section text has nothing that `story_html` cuts or removes:
 - A run of one mark keeps 15 of them at most.
 - No more than two empty lines stand in a row.
 - No control character is left but a tab and a line break.
-- A section has 8,000 characters at most, so the story of four sections has 32,100 characters at most.
+- A section has 8,000 characters at most, so the story of four sections has 32,700 characters at most.
 
 The cap counts the text as the report holds it, after the cleaning. The cleaning can make a text twice as long, because each backslash that it adds counts.
 The prompt asks for 450 words at most in a section, which is about 3,000 characters.
-A longer section keeps its start and ends with the mark `[...]`. The text holds the mark as `\[...\]`, as it holds each bracket. The cut does not fall inside a word.
-The report has a warning with the count: `1 section was longer than 8,000 characters. The report has only its start.`
+A longer section keeps its start and ends with the mark `[...]`. The text holds the mark as `\[...\]`, as it holds each bracket. The cut goes back to the start of a word. A word longer than 64 characters is cut inside.
+The report has a warning with the count: `1 section was cut to 8,000 characters. The report has only its start.`
 A section with no text after the cleaning stops the run with `ReduceError`, also when the reply was long.
 
 A `PeriodSummary` has `label`, `first_day`, `last_day`, `summary`, `carry_over`, `moments`, `usage`, `cache_key`, `from_cache`, `error`, `message_count`.
@@ -404,7 +404,7 @@ The server reads the events from `events_timeline_*.csv`, not from `## Key Event
 
 `story_html` at `3563549` has a limit on the length of a story and two limits on the work.
 
-- Length: it drops what is past 60,000 characters (`STORY_LIMIT`). `render_markdown` cuts a section that is over the cap, also in a report that was made by hand. So a story with the four titles of the engine has 32,100 characters at most, and this cut does not apply to it.
+- Length: it drops what is past 60,000 characters (`STORY_LIMIT`). `render_markdown` cuts a section that is over the cap, and a title that is longer than 80 characters, also in a report that was made by hand. So a story has 32,700 characters at most, and this cut does not apply to it. With the four titles of the engine a story has 32,100 characters at most.
 - Work: it estimates the work of the renderer before it starts (`STORY_WORK_LIMIT`), and it stops the renderer after 0.3 seconds of processor time (`STORY_SECONDS`). A story past one of the two is shown as plain paragraphs.
 
 A test reads `STORY_LIMIT` from `safe_html` where that module can be imported. It fails when the longest story of the engine is more than three quarters of that limit. Then lower `MAX_SECTION_CHARS` in `markdown.py`.
