@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import Any, Callable, Generator, Iterator, Optional
 
 from .cancel import CancelToken
+from .digest_fit import MIN_DIGEST_TOKENS
 from .errors import ChatEngineError
 from .ports import LLM, ChatArchive, DigestSource, Labeler, MeaningSearch
 from .render import estimate_tokens
@@ -34,7 +35,7 @@ class EngineConfig:
     result_tokens: the most one tool result may hold.
     total_tool_tokens: the most all tool results of one question may hold.
     history_tokens: the most the earlier turns of the chat may hold.
-    digest_tokens: the most one conversation digest may hold. It has this budget of its own.
+    digest_tokens: the most one conversation digest may hold. It has this budget of its own, at least 600.
     digest_usd_limit: a digest that costs more to build is not built.
     timezone: the name shown in the prompt; "" takes the zone of the clock.
     count_tokens: a tokenizer; the default is a cautious estimate.
@@ -58,12 +59,14 @@ class EngineConfig:
             raise ValueError("model is required")
         for name in (
             "max_output_tokens", "max_steps", "max_calls_per_step", "result_tokens", "total_tool_tokens",
-            "max_message_chars", "digest_tokens",
+            "max_message_chars",
         ):
             if int(getattr(self, name)) < 1:
                 raise ValueError(f"{name} must be at least 1")
         if self.history_tokens < 0:
             raise ValueError("history_tokens must not be negative")
+        if int(self.digest_tokens) < MIN_DIGEST_TOKENS:  # less does not hold the header, the notes and a few periods
+            raise ValueError(f"digest_tokens must be at least {MIN_DIGEST_TOKENS}")
         if not float(self.digest_usd_limit) >= 0:  # also refuses a value that is not a number
             raise ValueError("digest_usd_limit must not be negative")
 

@@ -282,7 +282,8 @@ class QuestionTurn:
                 return
             own = prepared.own_budget  # a lookup with a budget of its own does not spend from the question's
             outcome = prepared.run(self._allowance() if own is None else own)
-            self._ran.add(key)
+            if not prepared.answers_repeats:
+                self._ran.add(key)
             self._totals["tool_calls"] += 1
             self._record(call.name, outcome, seeded=False, spends=own is None)
             self._answer(call, outcome.text)

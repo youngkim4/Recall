@@ -72,19 +72,33 @@ def test_the_status_line_says_whether_periods_must_be_built() -> None:
     )
 
 
-def test_a_message_the_archive_does_not_hold_or_the_scope_does_not_allow_is_dropped_without_a_word() -> None:
+def test_a_message_the_archive_does_not_hold_or_of_another_conversation_is_passed_over_without_a_word() -> None:
     story = [
         period(
             "2021", "2021-03-04", "2021-03-04", 4, "A lease.",
-            [moment("2021-03-04", "Signed", "It is signed.", "", ["gone", "j1", "a2", "b1"])],
+            [moment("2021-03-04", "Signed", "It is signed.", "", ["gone", "a2", "b1"])],
         )
     ]
     bench = bench_for(story, scope=Scope(conversations=(MAYA_PHONE, MAYA_EMAIL)))
     outcome = bench.run("conversation_digest", conversation=bench.alias(MAYA_PHONE))
     assert [m["id"] for m in bench.registry.messages()] == ["a2"]  # b1 is in the scope, in another conversation
-    assert "sourdough" not in outcome.text and "lease scan" not in outcome.text and "gone" not in outcome.text
+    assert "lease scan" not in outcome.text and "gone" not in outcome.text and "Outside the scope" not in outcome.text
+    assert "- 2021-03-04 · Signed: It is signed." in outcome.text
     assert "m1 18:22 Maya Okafor: yes!! the lease got signed btw" in outcome.text
-    assert not [a for a in bench.read("message") if a["message_id"] not in {"gone", "j1", "a2", "b1"}]
+    assert [a["message_id"] for a in bench.read("message")] == ["gone", "a2", "b1"]
+
+
+def test_a_moment_with_more_messages_than_are_checked_is_shown_only_when_the_scope_is_open() -> None:
+    ids = ["a2", "a3", "a4", *[f"gone{n}" for n in range(30)]]
+    many = moment("2021-03-04", "Many", "Long.", "", ids)
+    story = [period("2021", "2021-03-04", "2021-03-04", 4, "A lease.", [many])]
+    free = bench_for(story)
+    assert "- 2021-03-04 · Many: Long." in free.run("conversation_digest", conversation=free.alias(MAYA_PHONE)).text
+    assert len(free.read("message")) == 24 and len(free.registry) == 3
+    scoped = bench_for(story, scope=Scope(conversations=(MAYA_PHONE,)))
+    text = scoped.run("conversation_digest", conversation=scoped.alias(MAYA_PHONE)).text
+    assert "Many" not in text and "[Outside the scope and not shown: 1 moment.]" in text
+    assert scoped.read("message") == []
 
 
 def test_a_quote_is_shown_only_when_a_shown_message_of_its_moment_holds_it() -> None:
@@ -150,7 +164,7 @@ def test_the_scope_of_the_user_limits_the_conversation_and_the_days() -> None:
     ]
     assert "The landlord raises the rent." in outcome.text
     assert "Maya signs a lease" not in outcome.text and "Christmas" not in outcome.text
-    assert "[2 periods reach outside the days of the scope and are not shown.]" in outcome.text
+    assert "[Outside the scope and not shown: 2 periods.]" in outcome.text
     assert [m["id"] for m in dated.registry.messages()] == ["a7"]
 
 
@@ -160,14 +174,16 @@ def test_a_moment_outside_the_days_of_the_scope_is_dropped() -> None:
             "2023", "2023-07-11", "2023-07-11", 3, "The rent goes up.",
             [
                 moment("2021-03-04", "An old lease", "From another year.", "the lease got signed btw", ["a2"]),
-                moment("2023-07-11", "Rent goes up", "Fifty more.", "", ["a7", "a2"]),
+                moment("2023-07-11", "Rent goes up", "Fifty more.", "", ["a7"]),
             ],
         )
     ]
     bench = bench_for(story, scope=Scope(since="2023-01-01"))
     outcome = bench.run("conversation_digest", conversation=bench.alias(MAYA_PHONE))
     assert "An old lease" not in outcome.text and "lease got signed" not in outcome.text
+    assert "[Outside the scope and not shown: 1 moment.]" in outcome.text
     assert [m["id"] for m in bench.registry.messages()] == ["a7"]
+    assert bench.read("message") == [{"message_id": "a7"}]  # the moment of another day is not even read
 
 
 def test_a_failure_of_the_port_is_one_plain_line(caplog: pytest.LogCaptureFixture) -> None:

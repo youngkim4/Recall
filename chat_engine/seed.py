@@ -12,12 +12,11 @@ by a message that holds its words, so the model starts from the pattern.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Sequence, cast
 
 from .directory import Directory, Entry
-from .handles import MIN_PHONE_DIGITS
+from .handles import DIGITS_RE, MIN_PHONE_DIGITS, YEAR_RE, is_dates
 from .labeler import handle_spans
 from .ports import ArchiveSummary
 from .search import SearchRequest
@@ -38,8 +37,6 @@ _BOOSTED = 8
 _LIST_TOKENS = 700
 _FIGURES_TOKENS = 1500  # room for every row a count by conversation shows
 ALL_YEARS = (1990, 2099)
-_YEAR_RE = re.compile(r"(?<![0-9])(?:199[0-9]|20[0-9]{2})(?![0-9])")
-_DIGITS_RE = re.compile(r"[0-9]+")
 
 
 @dataclass(frozen=True)
@@ -89,7 +86,7 @@ def _worth_a_search(token: str) -> bool:
 def archive_years(summary: ArchiveSummary) -> tuple[int, int]:
     """The first and the last year the archive holds. With no dated message: every year."""
     first, last = (str(summary.get(key) or "")[:4] for key in ("first_timestamp", "last_timestamp"))
-    if _YEAR_RE.fullmatch(first) and _YEAR_RE.fullmatch(last):
+    if YEAR_RE.fullmatch(first) and YEAR_RE.fullmatch(last):
         return int(first), int(last)
     return ALL_YEARS
 
@@ -108,7 +105,7 @@ def question_period(
         span = question[start:end]
         masked = redact is not None and redact(span) != span
         kept = f"{kept[:start]} {'' if masked else _years_beside_a_handle(span)} {kept[end:]}"
-    years = sorted(year for year in map(int, _YEAR_RE.findall(kept)) if held[0] <= year <= held[1])
+    years = sorted(year for year in map(int, YEAR_RE.findall(kept)) if held[0] <= year <= held[1])
     if not years:
         return None, None
     return f"{years[0]}-01-01", f"{years[-1]}-12-31"
@@ -122,26 +119,18 @@ def _years_beside_a_handle(span: str) -> str:
     """
     if "@" in span or "+" in span:
         return ""
-    if _is_dates(span):
+    if is_dates(span):
         return span
     parts = span.split()
     years: list[str] = []
     for end in (-1, 0):
-        while len(parts) > 1 and _YEAR_RE.fullmatch(parts[end]) and _digit_count(parts) - 4 >= MIN_PHONE_DIGITS:
+        while len(parts) > 1 and YEAR_RE.fullmatch(parts[end]) and _digit_count(parts) - 4 >= MIN_PHONE_DIGITS:
             years.append(parts.pop(end))
     return " ".join(years)
 
 
 def _digit_count(parts: Sequence[str]) -> int:
-    return sum(len(run) for part in parts for run in _DIGITS_RE.findall(part))
-
-
-def _is_dates(span: str) -> bool:
-    """Years and short numbers, like 2016-2019 or 2016-06-01: a period or a date, not a phone number."""
-    runs = _DIGITS_RE.findall(span)
-    return any(_YEAR_RE.fullmatch(run) for run in runs) and all(
-        _YEAR_RE.fullmatch(run) or len(run) <= 2 for run in runs
-    )
+    return sum(len(run) for part in parts for run in DIGITS_RE.findall(part))
 
 
 def named_entries(directory: Directory, names: Sequence[str]) -> list[Entry]:
