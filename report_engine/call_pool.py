@@ -27,7 +27,7 @@ from report_engine.ratelimit import TokenBudget
 SLOT_POLL_SECONDS = 0.05
 
 
-def _checked_slots(value: object) -> int:
+def checked_slots(value: object) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
         raise ConfigError("max_parallel must be a whole number, one or more")
     return value
@@ -43,7 +43,8 @@ class CallPool:
         tokens_per_minute: int | None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        self._max_parallel = _checked_slots(max_parallel)
+        self._max_parallel = checked_slots(max_parallel)
+        self._tokens_per_minute = tokens_per_minute
         self._slots = threading.BoundedSemaphore(self._max_parallel)
         self._lock = threading.Lock()
         self._budget = TokenBudget(tokens_per_minute, clock)
@@ -55,6 +56,10 @@ class CallPool:
     @property
     def max_parallel(self) -> int:
         return self._max_parallel
+
+    @property
+    def tokens_per_minute(self) -> int | None:
+        return self._tokens_per_minute
 
     @property
     def sent(self) -> int:
