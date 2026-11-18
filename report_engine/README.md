@@ -223,6 +223,10 @@ The key does not hold the notes from earlier periods. A change in an old period 
 The key does not hold the reasoning effort. To force a new run, call `PeriodCache.clear()`.
 
 A failed period has no cache entry. The next run tries it again.
+
+A run reads the cache one time at its start. Just before it sends a period that was not there, it looks that key up one more time.
+A period that another run saved meanwhile is taken from the cache, and no request is sent. A report run and a digest for chat both do this (`_held` in `map_step.py`).
+Two runs pay for one period twice only when both send it before one of them saved it.
 The cache file holds summaries and quotes. The engine sets its mode to `0600`. Keep it with the archive.
 
 ## The report
@@ -448,7 +452,16 @@ The numbers of a period are the numbers of its map call in `estimate` for a repo
 To limit the cost of a digest:
 
 - Give a span. Fewer periods overlap it. A span that starts after periods that the cache does not hold fills no entry for a report: a later report reads those periods again.
-- Give `max_new_periods`. A digest that needs more model calls raises `DigestTooLarge` before any call. The error has `periods`, `periods_cached`, `new_periods` and `limit`. With `max_new_periods=0` a digest reads the cache only.
+- Give `max_new_periods`. A digest never sends more map requests than this number. With `max_new_periods=0` a digest reads the cache only.
+
+The limit holds in two places:
+
+1. Before the first request, the digest counts the periods that are not in the cache. When they are more than the limit, it raises `DigestTooLarge`. Nothing was sent, and the error has no `usage`.
+2. `Caller` counts each request that it sends (`max_calls`). The cache can hold less than the first count said: a read fails, or an entry is gone. Then the digest stops before the request that would pass the limit, and raises `DigestTooLarge` with the `usage` of the run. The periods that were read are in the cache.
+
+A request counts when it is sent: a reply that can not be used counts, and a request that the port fails counts too.
+The error has `periods`, `periods_cached`, `new_periods`, `limit` and `usage`. After a stop in the middle, `new_periods` is the least number of periods that needed a request.
+With no `max_new_periods` a digest has no limit.
 
 A digest reads and counts the whole conversation each time, also when the cache holds each period.
 
@@ -459,7 +472,8 @@ A digest reads and counts the whole conversation each time, also when the cache 
 | A period fails | It is counted in `periods_failed`. It has no cache entry. The next digest tries it again. |
 | All periods of the span fail | `AllPeriodsFailed`. No digest. |
 | The cancel token is set | `ReportCancelled`. The periods that were read stay in the cache. |
-| More new periods than `max_new_periods` | `DigestTooLarge`. No model call. |
+| More new periods than `max_new_periods`, at the check before the first call | `DigestTooLarge` with no `usage`. No model call. |
+| The limit is reached in the middle, because the cache held less than the check counted | `DigestTooLarge` with `usage`. At most `max_new_periods` calls were made. What was read stays in the cache. |
 | An error in the engine after the first call | `RunError`. The cause is in `__cause__`. |
 
 Before the first call a digest raises the errors of a report: `EmptyConversationError`, `SourceError` and `ConfigError`.
