@@ -295,25 +295,29 @@ Guards. The tool applies them in this order:
 
 - One question calls `digest` at most 3 times (`DIGESTS_PER_QUESTION` in `tool_limits.py`). The prompt and the tool description take the number from the same constant.
 - So one question reads at most 3 times `digest_parts_limit` periods: 6 with the defaults.
+- One question calls `estimate` at most 6 times (`DIGEST_ESTIMATES_PER_QUESTION`, two for each digest). Each estimate plans a whole conversation. After that the model gets "This question already asked for 6 digests. Answer from what you have, or use the other tools."
+- One question calls `prepare` at most one time for a conversation and its days, and so at most 6 times in all.
 - The cost line counts the periods to build only when the estimate gives more periods than cached periods. If not, the line gives the cost alone.
 
 A long conversation:
 
 - A conversation with more periods to read than the parts limit is not read inside the question. Each period is one model call, and the turn can not be stopped while a tool runs.
 - The tool calls `DigestSource.prepare` when the source has it. `prepare` starts the reading outside the question. It returns True when the reading started or already runs.
-- Started: the model gets one line. It says how many periods are not read yet, that Recall reads them now in the background, and that the story is not ready for this question. It tells the model to answer from the other tools and to tell the user that a fuller answer is possible in a few minutes. Status: "Starting to read your whole conversation with NAME in the background".
+- Started: the model gets one line. It says how many periods are not read yet, that Recall reads them now in the background, and that the story is not ready for this question. It tells the model to answer from the other tools and to tell the user that a fuller answer is possible in a few minutes. Status: "Starting to read your conversation with NAME in the background".
 - Not started: the line says how many periods are not read yet and how many one question reads, with the advice to narrow the days. Status: "Your conversation with NAME is too long to read inside one question".
 - A source with no `prepare`, a `prepare` that returns anything but True, and a `prepare` that fails are all "not started". A failure is logged by its class only.
-- These refusals are not kept. A later call asks for the estimate again: the reading in the background can be done by then.
+- The line is kept for the question. A call for the same conversation and the same days gets the same line again, and the source is asked for nothing: no `estimate` and no `prepare`. Narrower days or other days are a new call.
+- Such a refusal does not count as one of the 3 digests of a question: it read nothing and it cost nothing. The limit on `estimate` calls bounds what a model that asks again and again can make the source do.
 - `digest_parts_limit=0` reads only a story that is read already.
 
 Cost:
 
 - The `usd` of each `digest` result is added to `usage["digest_usd"]` of the question. It is a float. It is 0.0 when nothing was read now or the source did not name a cost.
-- The figure is counted when the source returns. A cancel or a failure after that does not lose it. A cancelled question has it in its payload, as the other figures.
+- The figure is counted when the source returns. A cancel after that does not lose it. A cancelled question has it in its payload, as the other figures.
+- When `digest` raises, the engine adds the `usd` of the error (`getattr(error, "usd", 0.0)`): a source that paid for a call that then failed says so there. The step then reads "Could not read the story of your conversation with NAME, about $0.02 was spent". An error with no `usd` adds nothing.
 - `digest_usd` is in the usage only when the engine has a digest source. With no source the usage has the six figures it always had.
 - The step of a digest that was read now names the cost: "Read the story of your conversation with NAME: 3 periods, about $0.01". Below half a cent it says "less than $0.01".
-- A `usd` that is not a finite number, or is negative, counts as not known.
+- A `usd` that is not a finite number, is negative, or is a bool counts as not known. This holds for a result and for an error.
 
 Budget:
 
@@ -330,6 +334,7 @@ Budget:
 Other rules:
 
 - Status line: "Reading your whole conversation with NAME" when periods must be built. "Recalling your conversation with NAME" when all are cached.
+- A status line and the step of a started reading name the days when the call has days, and then do not say "whole": "Reading your conversation with NAME (from 2021-01-01)", "Starting to read your conversation with NAME (2021-01-01 to 2021-12-31) in the background". The days are those that go to the source, cut down to the scope.
 - The days of the call are cut down to the scope before they go to the source.
 - A period that reaches outside the days of the scope is not shown, because its summary covers days outside the scope. A moment with a day outside the scope is dropped. One note counts both: "[Outside the scope and not shown: 2 periods, 1 moment.]".
 - A period in a wrong form counts as a period that failed. A note says how many periods are missing.
@@ -338,7 +343,8 @@ Other rules:
 - The tool answers a repeat itself (`Prepared.answers_repeats`). It compares the conversation and the days, not the text of the arguments:
   - After a digest that was shown: the answer of a repeated lookup. The source is not asked again.
   - After a failure: "The digest of ... could not be built earlier in this question. It is not tried again." The source is not asked again.
-  - After a refusal for cost: the tool asks for the cost again, because a narrower digest in between can make the wide one cheaper.
+  - After a refusal for cost: the tool asks for the cost again, because a narrower digest in between can make the wide one cheaper. The limit on `estimate` calls bounds this.
+  - After a refusal because the conversation is too long: the kept line. See "A long conversation".
 - When less than 300 tokens of `total_tool_tokens` are left, no lookup runs. This applies to a digest too.
 
 The prompt, with `conversation_digest` offered, holds one procedure for a pattern question. It takes the place of the three steps of the base prompt:

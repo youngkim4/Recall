@@ -9,6 +9,11 @@ The guards, in their order: the scope, a repeat, the estimate, the number of
 periods that are not read yet, the cost. A conversation with more periods to
 read than one question reads is not read here: the source is asked to read it
 in the background (`prepare`), and the model is told to go on without it.
+
+One question asks the source for little: `prepare` one time for a
+conversation and its days, `estimate` at most
+`DIGEST_ESTIMATES_PER_QUESTION` times, `digest` at most `DIGESTS_PER_QUESTION`
+times. A repeat gets the line that the first call got.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ from .render import time_key
 from .scope import parse_day
 from .tool_args import ToolInputError, day_arg, text_arg
 from .tool_context import Prepared, ToolContext, ToolOutcome, plural
-from .tool_limits import DIGESTS_PER_QUESTION
+from .tool_limits import DIGEST_ESTIMATES_PER_QUESTION, DIGESTS_PER_QUESTION
 from .verify import is_quote_of
 
 logger = logging.getLogger(__name__)
@@ -37,6 +42,7 @@ _FAILED_BEFORE = (
 )
 _AGAIN = "This digest is above already. Use what it shows, or answer."
 _TOO_MANY = "This question already read {count} conversations whole. Answer from them, or read around a moment."
+_TOO_MANY_ASKED = "This question already asked for {count} digests. Answer from what you have, or use the other tools."
 _TOO_COSTLY = (
     "Reading {title} whole would cost about ${usd:.2f}{missing}. That is above the limit of ${limit:.2f}, "
     "so nothing was built. Narrow the days with since and until, or use the other tools."
@@ -89,26 +95,45 @@ def prepare_digest(ctx: ToolContext, arguments: Mapping[str, Any]) -> Prepared:
         return _prepared(ctx, "", lambda budget: again, repeated=True)
     if before == _FAILED_STATE:
         return _prepared(ctx, "", lambda budget: _answer(ctx, request, "failed before"))
-    if ctx.digests_built >= DIGESTS_PER_QUESTION:
-        text = _TOO_MANY.format(count=DIGESTS_PER_QUESTION)
-        refused = ToolOutcome(text, "Did not read another conversation whole", ok=False)
+    if request.key in ctx.digests_long:  # too long before: the same line, and the source is asked for nothing
+        kept = ctx.digests_long[request.key]
+        return _prepared(ctx, "", lambda budget: kept)
+    refused = _too_many(ctx)
+    if refused is not None:
         return _prepared(ctx, "", lambda budget: refused)
     cost = _estimate(ctx, request)
     if cost is None:
         ctx.digests_asked[request.key] = _FAILED_STATE
         return _prepared(ctx, "", lambda budget: _answer(ctx, request, "failed"))
-    # the two refusals below are not kept: the reading in the background or a narrower digest changes the estimate
     if cost["periods"] - cost["periods_cached"] > ctx.memory.digest_parts_limit:
         return _too_long(ctx, request, cost)
-    if cost["usd"] > ctx.memory.digest_usd_limit:
+    if cost["usd"] > ctx.memory.digest_usd_limit:  # not kept: a narrower digest can make this one cheaper
         return _prepared(ctx, "", lambda budget: _too_costly(ctx, request, cost))
     if cost["periods"] <= 0:
         ctx.digests_asked[request.key] = _SHOWN
         return _prepared(ctx, "", lambda budget: _written(ctx, request, Built("ok"), budget))
-    label = ctx.book.label(request.conversation)
+    named = _named(ctx, request)
     cached = cost["periods_cached"] >= cost["periods"]
-    status = f"Recalling your conversation with {label}" if cached else f"Reading your whole conversation with {label}"
+    whole = "" if request.since or request.until else "whole "
+    status = f"Recalling your {named}" if cached else f"Reading your {whole}{named}"
     return _prepared(ctx, status, _lookup(ctx, request))
+
+
+def _too_many(ctx: ToolContext) -> Optional[ToolOutcome]:
+    """The refusal when the question has used up its digests or its estimates. None when it has not."""
+    if ctx.digests_built >= DIGESTS_PER_QUESTION:
+        text = _TOO_MANY.format(count=DIGESTS_PER_QUESTION)
+        return ToolOutcome(text, "Did not read another conversation whole", ok=False)
+    if ctx.digest_estimates >= DIGEST_ESTIMATES_PER_QUESTION:  # each estimate plans a whole conversation
+        text = _TOO_MANY_ASKED.format(count=DIGEST_ESTIMATES_PER_QUESTION)
+        return ToolOutcome(text, "Did not ask for another digest", ok=False)
+    return None
+
+
+def _named(ctx: ToolContext, request: DigestRequest) -> str:
+    """ "conversation with Maya Okafor (from 2021-01-01)", for a status line and a step."""
+    days = ctx.when(request.since, request.until).lstrip(", ")
+    return f"conversation with {ctx.book.label(request.conversation)}" + (f" ({days})" if days else "")
 
 
 def _prepared(
@@ -124,6 +149,7 @@ def _title(ctx: ToolContext, request: DigestRequest) -> str:
 
 def _estimate(ctx: ToolContext, request: DigestRequest) -> Optional[DigestCost]:
     """The cost of the digest, in the right form. None when the source fails."""
+    ctx.digest_estimates += 1
     try:
         cost = ctx.memory.digests.estimate(  # type: ignore[union-attr]
             request.conversation, since=request.since, until=request.until
@@ -154,20 +180,25 @@ def _too_costly(ctx: ToolContext, request: DigestRequest, cost: DigestCost) -> T
 
 
 def _too_long(ctx: ToolContext, request: DigestRequest, cost: DigestCost) -> Prepared:
-    """A story with more periods to read than one question reads. Its reading is started outside the question."""
+    """A story with more periods to read than one question reads. Its reading is started outside the question.
+
+    The source is asked one time. The line is kept: a repeat in this question gets it again.
+    """
     count = cost["periods"] - cost["periods_cached"]
     missing = f"{plural(count, 'period')} {'is' if count == 1 else 'are'}"
     label = ctx.book.label(request.conversation)
     if _start_reading(ctx, request):
         text = _STARTED.format(title=_title(ctx, request), missing=missing)
-        words = f"your whole conversation with {label} in the background"
-        started = ToolOutcome(text, f"Started to read {words}", ok=False)
-        return _prepared(ctx, f"Starting to read {words}", lambda budget: started)
-    limit = plural(ctx.memory.digest_parts_limit, "period")
-    text = _NOT_STARTED.format(title=_title(ctx, request), missing=missing, limit=limit)
-    refused = ToolOutcome(text, f"Did not read the conversation with {label}: {missing} not read yet", ok=False)
-    status = f"Your conversation with {label} is too long to read inside one question"
-    return _prepared(ctx, status, lambda budget: refused)
+        words = f"your {_named(ctx, request)} in the background"
+        outcome = ToolOutcome(text, f"Started to read {words}", ok=False)
+        status = f"Starting to read {words}"
+    else:
+        limit = plural(ctx.memory.digest_parts_limit, "period")
+        text = _NOT_STARTED.format(title=_title(ctx, request), missing=missing, limit=limit)
+        outcome = ToolOutcome(text, f"Did not read the conversation with {label}: {missing} not read yet", ok=False)
+        status = f"Your conversation with {label} is too long to read inside one question"
+    ctx.digests_long[request.key] = outcome
+    return _prepared(ctx, status, lambda budget: outcome)
 
 
 def _start_reading(ctx: ToolContext, request: DigestRequest) -> bool:
@@ -207,43 +238,48 @@ def _build(ctx: ToolContext, request: DigestRequest) -> Built:
             request.conversation, since=request.since, until=request.until, cancel=cancel
         )
     except Exception as error:
+        usd = _amount(getattr(error, "usd", None))  # a call that was paid for and then failed says what it cost
+        ctx.digest_usd += usd or 0.0
         if cancel.cancelled:
             return Built("stopped")
         logger.warning("the digest source failed: %s", type(error).__name__)
-        return Built("failed")
-    usd = _spent(result)
+        return Built("failed", usd=usd)
+    usd = _amount(result.get("usd") if isinstance(result, Mapping) else None)
     ctx.digest_usd += usd or 0.0  # counted at once: a cancel or a failure after this does not lose what was paid
     if cancel.cancelled:
         return Built("stopped")
     if not isinstance(result, Mapping) or not isinstance(result.get("periods"), (list, tuple)):
         logger.warning("the digest source gave an answer in the wrong form")
-        return Built("failed")
+        return Built("failed", usd=usd)
     periods = [_period(row) for row in result["periods"]]
     kept = tuple(period for period in periods if period is not None)
     return Built("ok", kept, _whole(result.get("periods_failed")) + len(periods) - len(kept), usd)
 
 
-def _spent(result: object) -> Optional[float]:
-    """The cost that a digest names, when it is an amount. None when the source did not say."""
-    usd = result.get("usd") if isinstance(result, Mapping) else None
+def _amount(usd: object) -> Optional[float]:
+    """A cost that the source names, when it is an amount: a finite number of at least 0. None when it is not."""
     known = isinstance(usd, (int, float)) and not isinstance(usd, bool) and math.isfinite(usd) and usd >= 0
     return float(usd) if known else None  # type: ignore[arg-type]
 
 
-def _answer(ctx: ToolContext, request: DigestRequest, state: str) -> ToolOutcome:
-    """The outcome of a digest that gave no periods: "stopped", "failed" or "failed before"."""
+def _answer(ctx: ToolContext, request: DigestRequest, state: str, usd: Optional[float] = None) -> ToolOutcome:
+    """The outcome of a digest that gave no periods: "stopped", "failed" or "failed before".
+
+    `usd` is what a digest that failed now cost: the step names it.
+    """
     if state == "stopped":
         return ToolOutcome("", "Stopped before the conversation was read", ok=False)
     label = ctx.book.label(request.conversation)
     line = _FAILED if state == "failed" else _FAILED_BEFORE
     text = line.format(title=ctx.book.title(request.conversation))
-    return ToolOutcome(text, f"Could not read the story of your conversation with {label}", ok=False)
+    spent = f"{_cost(usd)} was spent" if usd else ""
+    return ToolOutcome(text, f"Could not read the story of your conversation with {label}{spent}", ok=False)
 
 
 def _written(ctx: ToolContext, request: DigestRequest, built: Built, budget: int) -> ToolOutcome:
     """The digest as a result. Before every read of the archive the cancel token is looked at."""
     if built.state != "ok" or ctx.memory.cancel.cancelled:
-        return _answer(ctx, request, built.state if built.state != "ok" else "stopped")
+        return _answer(ctx, request, built.state if built.state != "ok" else "stopped", built.usd)
     ctx.listed()  # the labeler knows every handle of the archive before a summary is masked
     inside = [period for period in built.periods if _in_scope(ctx, period.first_day, period.last_day)]
     periods, moments_outside = [], 0
