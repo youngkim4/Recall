@@ -43,3 +43,36 @@ class ListSource:
     def messages(self, conversation_id: str) -> Iterator[SourceMessage]:
         self.reads += 1
         yield from (dict(message) for message in self._conversations[conversation_id])  # type: ignore[misc]
+
+
+class ScriptedEmbedder:
+    """A fixed embedder that fails as a script says.
+
+    `script` maps the number of a call (from 1) to an error to raise, or it is
+    a function of (call number, texts) that returns an error or None.
+    `sizes` holds the number of texts of each call, failed ones too.
+    """
+
+    def __init__(self, script: object = None, *, dimensions: int = 16, model: str = "scripted-1") -> None:
+        from meaning_index.fake_embedder import FakeEmbedder
+
+        self._inner = FakeEmbedder(dimensions=dimensions, model=model)
+        self._script = script or {}
+        self.model = model
+        self.dimensions = dimensions
+        self.sizes: list[int] = []
+        self.answered: list[tuple[str, ...]] = []
+
+    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+        self.sizes.append(len(texts))
+        number = len(self.sizes)
+        error = self._script(number, texts) if callable(self._script) else self._script.get(number)  # type: ignore[union-attr]
+        if error is not None:
+            raise error
+        self.answered.append(tuple(texts))
+        return self._inner.embed(texts)
+
+    @property
+    def texts(self) -> list[str]:
+        """Every text that got a vector, in order."""
+        return [text for call in self.answered for text in call]
