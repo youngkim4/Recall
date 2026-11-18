@@ -40,7 +40,7 @@ from meaning_index.store_files import usable_meta
 from recall_services import digests, keys, meaning, models, reports
 from recall_services.names import Names
 from report_engine import CancelToken as ReportCancelToken
-from report_engine import PeriodCache, ReportOptions, Runtime, StoreError
+from report_engine import PeriodCache, ReportOptions, Runtime
 from report_engine.chat_digest import MomentNote, PeriodNote
 from report_engine.tokens import TokenCounter
 
@@ -314,7 +314,7 @@ def _meaning_port(store: IndexStore, factory: EmbedderFactory | None) -> Meaning
     port = MeaningPort(store, factory)
     try:
         ready = _kept_for(store).index(store) is not None
-    except (MeaningIndexError, OSError, ValueError) as error:
+    except Exception as error:  # noqa: BLE001 - whatever a folder raises, the question goes on by words
         logger.warning("the index can not be used (%s); chat searches by words only", type(error).__name__)
         return None
     return port if ready else None
@@ -328,7 +328,7 @@ def _digest_port(archive: Archive, names: Names, settings: DigestSettings) -> Di
         models.model_info(port.model.strip() or models.default_id())
         if notes.exists():  # a check makes no file: the first digest makes the notes
             PeriodCache(notes)
-    except (models.ModelChoiceError, models.ModelFactsError, StoreError) as error:
+    except Exception as error:  # noqa: BLE001 - a model that can not be run, notes that can not be opened
         logger.warning("a digest can not be built (%s); chat has no digest", type(error).__name__)
         return None
     return port

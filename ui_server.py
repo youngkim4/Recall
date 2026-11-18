@@ -613,14 +613,18 @@ def pull_into_archive(action: str, payload: dict) -> PullDone:
 JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge", "meaning"})
 # each of these writes the archive
 IMPORT_ACTIONS = frozenset({"setup_import", "export", "bridge"})
+# this one reads the whole archive into the index for the search by meaning
+INDEX_ACTIONS = frozenset({"meaning"})
+INDEX_IS_BUILT = "The index for the search by meaning is being built. Wait until it ends."
+IMPORT_FIRST = "An import is running. Wait until it ends, then build the index."
 UNFINISHED = frozenset({"queued", "running"})
 # Jobs that do not run together: the job that is asked for, the jobs that
 # hold it up, and what the reader is told.
 ONE_AT_A_TIME = (
     (IMPORT_ACTIONS, IMPORT_ACTIONS, ALREADY_RUNNING),
-    # the index for the search by meaning is built from the whole archive: no import writes the archive meanwhile
-    (IMPORT_ACTIONS | {"meaning"}, frozenset({"meaning"}), "The index for the search by meaning is being built. Wait until it ends."),
-    (frozenset({"meaning"}), IMPORT_ACTIONS, "An import is running. Wait until it ends, then build the index."),
+    # the index is built from the whole archive: no import writes the archive meanwhile
+    (IMPORT_ACTIONS | INDEX_ACTIONS, INDEX_ACTIONS, INDEX_IS_BUILT),
+    (INDEX_ACTIONS, IMPORT_ACTIONS, IMPORT_FIRST),
 )
 
 
