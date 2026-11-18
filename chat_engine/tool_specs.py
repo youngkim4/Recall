@@ -95,9 +95,9 @@ DIGEST_SPEC = ToolSpec(
     "of messages, a summary, and the moments that matter with the messages that back them. Every "
     "message line has a reference such as m12: cite it, or read around it. Use it for a question about "
     "one person or one conversation as a whole: what the relationship is like, how it changed, what "
-    "happened in a year. A summary is not a quote. A long conversation that is not read yet is read in "
-    "the background: the tool says so, and the story is ready for a later question. Give days to read a "
-    f"part of the conversation. One question builds at most {DIGESTS_PER_QUESTION} digests.",
+    "happened in a year. A summary is not a quote. A conversation that is too long to read inside one "
+    "question is not read: the tool says so. Give days to read a part of the conversation. One question "
+    f"builds at most {DIGESTS_PER_QUESTION} digests.",
     _schema(
         {
             "conversation": {"type": "string", "description": "A conversation alias such as c3."},

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable
+from dataclasses import dataclass, replace
+from typing import AbstractSet, Any, Callable
 
 from .errors import ModelError
 from .ports import ToolCall
@@ -63,3 +63,24 @@ def no_answer(reply: Reply) -> ModelError:
     else:
         message = "The model gave no answer."
     return ModelError(message, detail=f"stop_reason={reply.stop_reason} forced={reply.forced}")
+
+
+def unique_calls(calls: list[ToolCall], taken: AbstractSet[str]) -> tuple[tuple[ToolCall, ...], bool]:
+    """Every call with an id that no earlier call of the question has. True when an id had to change.
+
+    A changed id no longer matches the items of the provider, so the caller
+    drops those and the call goes back in its plain form.
+    """
+    used = set(taken)
+    unique: list[ToolCall] = []
+    renamed = False
+    for call in calls:
+        call_id = call.id
+        number = len(used)
+        while not call_id or call_id in used:
+            number += 1
+            call_id = f"call_{number}"
+        used.add(call_id)
+        renamed = renamed or call_id != call.id
+        unique.append(call if call_id == call.id else replace(call, id=call_id))
+    return tuple(unique), renamed

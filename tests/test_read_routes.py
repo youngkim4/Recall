@@ -318,6 +318,8 @@ def test_a_found_message_has_the_shape_the_app_reads(named, server):
         "text": "pizza on friday?",
         "attachment": "",
         "isFromMe": False,
+        # where the word is in `text`, in UTF-16 units
+        "ranges": [[9, 15]],
     }]
 
 
@@ -368,9 +370,11 @@ def test_a_day_is_opened_from_a_search_hit_at_the_message_that_was_found(long_da
     assert (day["contact"], day["day"], day["total"]) == (AVERY, LONG_DAY, LONG_DAY_MESSAGES)
     # a part of the long day, with the found message in it
     assert len(day["messages"]) == 200 and 0 < day["offset"] <= 300
+    # the same message, without the ranges that only a search result has
+    shown = {key: value for key, value in hit.items() if key != "ranges"}
     found = [message for message in day["messages"] if message["messageId"] == hit["messageId"]]
-    assert found == [hit]
-    assert day["messages"].index(hit) == 300 - day["offset"]
+    assert found == [shown]
+    assert day["messages"].index(shown) == 300 - day["offset"]
     assert (day["previousDay"], day["nextDay"]) == ("2024-03-01", "2024-03-05")
 
 

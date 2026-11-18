@@ -6,6 +6,7 @@ import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from archive.narrow import ATTACHMENT_CHOICES, KINDS, attachment_clause, kind_clause
 from archive.rows import FILED, UNFILED, VISIBLE
 from archive.search_query import ParsedQuery
 from archive.timeconv import NS_PER_SECOND, day_end, day_start
@@ -128,6 +129,14 @@ def substring_clause(needle: str) -> str:
     return f"instr({haystack}, ?) > 0"
 
 
+def narrow_clauses(kind: str | None, attachments: str | None) -> list[str]:
+    """Checked SQL for the kind of conversation and the attachments. None is no filter."""
+    clauses = [] if kind is None else [kind_clause(check_choice("kind", kind, KINDS))]
+    if attachments is not None:
+        clauses.append(attachment_clause(check_choice("attachments", attachments, ATTACHMENT_CHOICES)))
+    return clauses
+
+
 def scope(
     conn: sqlite3.Connection,
     *,
@@ -138,15 +147,19 @@ def scope(
     text: ParsedQuery | None = None,
     include_system: bool = False,
     no_conversation: bool = False,
+    kind: str | None = None,
+    attachments: str | None = None,
 ) -> Scope:
     """Build the FROM and WHERE parts for a filtered query.
 
     A message with no conversation is outside every scope. `no_conversation=True`
     is the one way to ask for those messages, and then for those only.
+    `kind` and `attachments` are the filters of archive/narrow.py.
     """
     lower, upper = day_bounds(since, until)
     direction = check_flag("from_me", from_me)
     check_bool("include_system", include_system)
+    narrowing = narrow_clauses(kind, attachments)
     if check_bool("no_conversation", no_conversation) and conversations is not None:
         raise ValueError("no_conversation=True cannot be given with conversations")
     if text is not None and text.is_empty:
@@ -172,6 +185,7 @@ def scope(
         clauses.append(f"m.is_from_me = {int(direction)}")
     if not include_system:
         clauses.append(VISIBLE)
+    clauses.extend(narrowing)
     for needle in text.substrings if text is not None else ():
         clauses.append(substring_clause(needle))
         params.append(needle)

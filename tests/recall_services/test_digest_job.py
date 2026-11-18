@@ -25,7 +25,10 @@ def lines(updates: list[dict[str, Any]]) -> list[str]:
     return [update["log"] for update in updates if update.get("log")]
 
 
-def test_the_job_reads_every_part_with_the_digest_model_and_gives_the_counts_and_the_cost(desk: Desk) -> None:
+def test_the_job_reads_every_part_with_the_digest_model_and_gives_the_counts_and_the_cost(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 2)  # Mina has four parts: more than a question reads
     seen: list[str] = []
     model = FakeLLM()
 

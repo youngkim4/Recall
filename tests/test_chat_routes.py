@@ -94,6 +94,44 @@ def test_the_answer_without_a_stream_is_the_same_payload(server, archive_file, m
     assert payload["answer"] == "Someone in the group wrote it [1]." and payload["question"] == QUESTION
 
 
+def digest_of_the_garden(monkeypatch, parts):
+    """Chat gets a scripted digest source; the model asks for the story of the garden, then answers."""
+    from chat_engine.fake_digests import FakeDigests, period
+    from chat_engine.fake_llm import call
+    from recall_services import memory
+
+    story = [period(f"P{n}", f"2024-04-0{n + 1}", f"2024-04-0{n + 1}", 3, f"Part {n}.") for n in range(parts)]
+    digests = FakeDigests({world.GARDEN: story}, usd=0.01)
+    monkeypatch.setattr(memory, "ports", lambda _archive, _names: {"meaning": None, "digests": digests})
+    scripted(monkeypatch, [call("conversation_digest", "d1", conversation=world.GARDEN_TITLE)], say("They mended it."))
+    return digests
+
+
+def test_the_stream_passes_the_progress_of_a_digest_to_the_app(server, archive_file, monkeypatch):
+    digest_of_the_garden(monkeypatch, 2)
+    events = stream(server, {"messagesPath": archive_file, "question": QUESTION, "contact": world.GARDEN})
+    told = [event for event in events if event["type"] == "progress"]
+    assert [(event["part"], event["of"], event["label"], event["state"]) for event in told] == [
+        (1, 2, "P0", "start"), (1, 2, "P0", "done"), (2, 2, "P1", "start"), (2, 2, "P1", "done"),
+    ]
+    assert all(event["tool"] == "conversation_digest" and event["conversation"] for event in told)
+    assert events[-1]["type"] == "done" and events[-1]["payload"]["memory"] == {"notReady": []}
+    assert not [job for job in ui_server.list_jobs() if job["action"] == "digest"]  # a question starts no job
+
+
+def test_the_answer_without_a_stream_has_no_progress_and_names_what_is_not_read(server, archive_file, monkeypatch):
+    from recall_services import memory
+
+    digests = digest_of_the_garden(monkeypatch, 3)
+    monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 2)
+    body = {"messagesPath": archive_file, "question": QUESTION, "contact": world.GARDEN}
+    status, payload = post(server, "/api/ask", body)
+    assert status == 200 and payload["answer"] == "They mended it." and "type" not in payload
+    assert payload["memory"] == {"notReady": [world.GARDEN]}
+    assert [name for name, _ in digests.calls] == ["estimate"]
+    assert not [job for job in ui_server.list_jobs() if job["action"] == "digest"]
+
+
 def test_no_handle_that_is_not_saved_goes_to_the_model(server, archive_file, monkeypatch):
     llm = scripted(monkeypatch, cite(FLAT_TIRE))
     stream(server, {"messagesPath": archive_file, "question": QUESTION})

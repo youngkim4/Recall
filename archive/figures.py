@@ -25,13 +25,15 @@ from archive.timeconv import (
     sql_local_seconds,
 )
 
-GROUPS = ("day", "month", "year", "weekday_hour", "conversation", "sender")
+GROUPS = ("day", "week", "month", "year", "weekday", "hour", "weekday_hour", "conversation", "sender")
 OWNER_KEY = ""  # count(group_by="sender"): the owner's messages
 UNKNOWN_SENDER_KEY = "unknown"  # received messages that have no sender in the source
 DAY_KEY_LENGTH = {"day": 10, "month": 7, "year": 4}  # prefix of "YYYY-MM-DD"
 EPOCH_ORDINAL = date(1970, 1, 1).toordinal()
 EPOCH_WEEKDAY = 3  # 1970-01-01 was a Thursday. Monday is 0, like datetime.weekday().
 HOURS_PER_WEEK = 168
+HOURS_PER_DAY = 24
+DAYS_PER_WEEK = 7
 GAP_CHUNK = 10_000
 SUMS = "COUNT(*), COALESCE(SUM(m.is_from_me), 0)"
 Bucket = tuple[str, int, int]
@@ -78,20 +80,38 @@ def _summed(buckets: Iterable[Bucket]) -> list[Bucket]:
     return [(key, total, sent) for key, (total, sent) in totals.items()]
 
 
+def _time_key_sql(local: str, group_by: str) -> str:
+    """SQL for the number of a time bucket: a local hour or day since 1970, or a place in the week."""
+    if group_by == "weekday_hour":
+        return f"({local} / {SECONDS_PER_HOUR}) % {HOURS_PER_WEEK}"
+    if group_by == "hour":
+        return f"({local} / {SECONDS_PER_HOUR}) % {HOURS_PER_DAY}"
+    if group_by == "weekday":
+        return f"({local} / {SECONDS_PER_DAY} + {EPOCH_WEEKDAY}) % {DAYS_PER_WEEK}"
+    return f"{local} / {SECONDS_PER_DAY}"
+
+
+def _time_name(group_by: str, number: int) -> str:
+    """The key of a time bucket from its number. A week is named by its Monday."""
+    if group_by == "weekday_hour":
+        return f"{(EPOCH_WEEKDAY + number // HOURS_PER_DAY) % DAYS_PER_WEEK}-{number % HOURS_PER_DAY:02d}"
+    if group_by == "hour":
+        return f"{number:02d}"
+    if group_by == "weekday":
+        return str(number)
+    if group_by == "week":
+        return _day_name(number - (number + EPOCH_WEEKDAY) % DAYS_PER_WEEK)
+    return _day_name(number)[: DAY_KEY_LENGTH[group_by]]
+
+
 def _time_buckets(
     conn: sqlite3.Connection, where: Scope, group_by: str, lower: int | None, upper: int | None
 ) -> list[Bucket]:
     # With no day range the whole offset table is used: a group event or a message with no
     # conversation can lie outside the time range that the totals of the conversations give.
     local = sql_local_seconds("m.sent_ns", _unix(lower), _unix(upper))
-    if group_by == "weekday_hour":
-        hours = _grouped(conn, where, f"({local} / {SECONDS_PER_HOUR}) % {HOURS_PER_WEEK}", _table(where))
-        named = [(f"{(EPOCH_WEEKDAY + hour // 24) % 7}-{hour % 24:02d}", total, sent) for hour, total, sent in hours]
-    else:
-        days = _grouped(conn, where, f"{local} / {SECONDS_PER_DAY}", _table(where))
-        length = DAY_KEY_LENGTH[group_by]
-        named = _summed((_day_name(day)[:length], total, sent) for day, total, sent in days)
-    return sorted(named)
+    found = _grouped(conn, where, _time_key_sql(local, group_by), _table(where))
+    return sorted(_summed((_time_name(group_by, int(number)), total, sent) for number, total, sent in found))
 
 
 def _sender_key(key: int, handles: dict[int, str]) -> str:

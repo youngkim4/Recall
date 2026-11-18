@@ -22,11 +22,11 @@ def _ask_digest(request: Any) -> list:
     return [call("conversation_digest", "d1", conversation=alias)]
 
 
-@pytest.mark.parametrize(("prepare", "words"), [(True, "in the background"), (False, "one question reads at most")])
-def test_a_repeat_after_a_long_story_gets_the_kept_line_and_asks_the_source_for_nothing(
-    prepare: bool, words: str
-) -> None:
-    bench = bench_for(digest_parts_limit=2, prepare=prepare)
+TOO_LONG = "too long to read inside one question"
+
+
+def test_a_repeat_after_a_long_story_gets_the_kept_line_and_asks_the_source_for_nothing() -> None:
+    bench = bench_for(digest_parts_limit=2)
     alias = bench.alias(MAYA_PHONE)
     first = bench.run("conversation_digest", conversation=alias)
     bench.box.context.memory.digests._cached = 3  # the estimate would now be another: it is not asked again
@@ -34,8 +34,8 @@ def test_a_repeat_after_a_long_story_gets_the_kept_line_and_asks_the_source_for_
         again = bench.prepare("conversation_digest", conversation=alias, **arguments)
         outcome = again.run(again.own_budget)
         assert not again.repeated and again.status == ""
-        assert words in outcome.text and (outcome.text, outcome.summary) == (first.text, first.summary)
-    assert [name for name, _ in bench.box.context.memory.digests.calls] == ["estimate", "prepare"]
+        assert TOO_LONG in outcome.text and (outcome.text, outcome.summary) == (first.text, first.summary)
+    assert [name for name, _ in bench.box.context.memory.digests.calls] == ["estimate"]
     assert bench.box.context.digests_built == 0
 
 
@@ -48,7 +48,7 @@ def test_other_days_of_a_long_story_are_a_new_call() -> None:
     assert narrower.status == "Reading your conversation with Maya Okafor (from 2023-01-01)"
     assert narrower.run(narrower.own_budget).ok
     names = [name for name, _ in bench.box.context.memory.digests.calls]
-    assert names == ["estimate", "prepare", "estimate", "digest"]
+    assert names == ["estimate", "estimate", "digest"]
 
 
 def test_one_question_asks_for_a_handful_of_estimates_at_most() -> None:
@@ -60,15 +60,15 @@ def test_one_question_asks_for_a_handful_of_estimates_at_most() -> None:
     ]
     names = [name for name, _ in digests.calls]
     assert DIGEST_ESTIMATES_PER_QUESTION == 6 == 2 * DIGESTS_PER_QUESTION
-    assert names.count("estimate") == 6 and names.count("prepare") == 6 and names.count("digest") == 0
-    assert all("in the background" in outcome.text for outcome in outcomes[:6])
+    assert names.count("estimate") == 6 and names.count("digest") == 0 and len(names) == 6
+    assert all(TOO_LONG in outcome.text for outcome in outcomes[:6])
     for outcome in outcomes[6:]:
         assert not outcome.ok and outcome.text == (
             "This question already asked for 6 digests. Answer from what you have, or use the other tools."
         )
         assert outcome.summary == "Did not ask for another digest"
     kept = bench.run("conversation_digest", conversation=alias, since="2020-01-03")
-    assert "in the background" in kept.text and len(digests.calls) == 12
+    assert TOO_LONG in kept.text and len(digests.calls) == 6
 
 
 def test_a_digest_that_is_too_costly_is_estimated_a_handful_of_times_at_most() -> None:
@@ -88,11 +88,12 @@ def test_one_question_of_many_identical_calls_asks_the_source_one_time() -> None
         alias = alias_of_line(last_user(request), "Maya Okafor · direct, phone")
         return [call("conversation_digest", f"d{len(request.messages)}-{n}", conversation=alias) for n in range(8)]
 
-    engine, fake, _ = engine_with([step] * 8 + [say("Later.")], digests=digests)
+    engine, fake, _ = engine_with([step] * 8 + [say("From the figures.")], digests=digests, digest_parts_limit=2)
     result = engine.ask("What is it like with Maya?")
-    assert [name for name, _ in digests.calls] == ["estimate", "prepare"]
+    assert [name for name, _ in digests.calls] == ["estimate"]
     assert result["usage"]["tool_calls"] == 64 and result["usage"]["digest_usd"] == 0.0
-    assert all("in the background" in text for text in tool_results(fake.requests[8]))
+    assert all(TOO_LONG in text for text in tool_results(fake.requests[8]))
+    assert result["memory"] == {"notReady": [MAYA_PHONE]}
 
 
 @pytest.mark.parametrize(
@@ -149,5 +150,5 @@ def test_a_status_line_names_the_days_of_the_call_and_says_whole_only_without_da
     whole = "whole " if not days else ""
     assert status(usd=0.1) == f"Reading your {whole}conversation with Maya Okafor{words}"
     assert status(cached=True) == f"Recalling your conversation with Maya Okafor{words}"
-    started = status(digest_parts_limit=2)
-    assert started == f"Starting to read your conversation with Maya Okafor{words} in the background"
+    # a story too long for one question: the status names no days, and says nothing is read
+    assert status(digest_parts_limit=2) == "Your conversation with Maya Okafor is too long to read inside one question"

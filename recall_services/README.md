@@ -33,7 +33,8 @@ Ask for `state.archive()` and for `names.cached(...)` at the start of each reque
 |---|---|
 | `/api/defaults` (models) | `models.defaults_payload()` |
 | `/api/contacts` | `conversations.payload(archive, saved, limit, messages_path)` |
-| `/api/search` | `search.payload(archive, saved, query, contact, limit, offset, as_you_type=True)` |
+| `/api/search` | `search.answer(archive, saved, query_string)`, which calls `search.payload(archive, saved, query, contact, limit, offset, as_you_type=..., filters=..., order=...)` |
+| `/api/stats` | `stats.answer(archive, saved, query_string)`, which calls `stats.payload(archive, saved, filters, words=..., by=..., limit=..., prefix=...)` |
 | `/api/day` | `day.payload(archive, saved, contact, day, around, offset, limit)` |
 | `/api/ask/stream` | `chat.stream(question, contact, model, history, cancel, archive=..., names=..., use_ai=...)` |
 | `/api/ask` | `chat.ask(...)`, the same arguments |
@@ -47,7 +48,7 @@ Ask for `state.archive()` and for `names.cached(...)` at the start of each reque
 | job `memory` | `memory_prep.run(on_progress, cancel, archive=..., names=...)` |
 | the reading of the memory after an import | `memory_prep.read_before(archive)`, `memory_prep.payload(archive, names)`, `memory_prep.worth_starting(found, read_before=True)` |
 | several digests at once | `digests.call_pool(model, max_parallel)`, then `digests.build(..., pool=pool)` in each thread |
-| the two optional ports of the chat engine | `memory.ports(archive, names, start_digest=...)` |
+| the two optional ports of the chat engine | `memory.ports(archive, names)` |
 | the saved report of a report file | `reports.saved_report(contact, report_text)` |
 | the moments of a report | `reports.moments_for(report, archive)` |
 | a story that the server shows plain | `reports.shown_plain(report_text)` |
@@ -124,14 +125,118 @@ A group that nobody named gets a name from its saved people. Two differences fro
 - A member who never wrote is a person of the group. The export knew only the writers.
 - A person with two handles stands where the busier handle stands. The export rule added both.
 
+## Search and counts
+
+`search.py` answers `/api/search`. `stats.py` answers `/api/stats`. Both read the filters of `search_filters.py`.
+
+### Filters
+
+Each filter is optional. All of them are combined with AND. A value of a filter, of `order`, `prefix` or `by` that is not allowed is a `ValueError` with one sentence, and the route answers 400 with it: `{"error": "kind must be direct, group or empty."}`. That sentence never repeats the value. A `limit` or an `offset` that is no whole number gives the error of `inputs.whole`, as before: `limit must be a whole number, got 'many'`.
+
+| Parameter | Values |
+|---|---|
+| `contacts` | conversation ids, comma separated. `contact` (one id) still works and is added first. An id matches whole. An unknown id matches nothing. |
+| `since`, `until` | local days, `YYYY-MM-DD`, both included. A `since` after `until` matches nothing. |
+| `from` | `me`, `them` or empty |
+| `kind` | `direct`, `group` or empty |
+| `attachments` | `any`, `none`, `image`, `video`, `audio`, `other` or empty |
+| `query` | the words. A star is always a prefix. |
+| `prefix` | `false`: every word is whole. Send it for whole words. `true`: the last word is a prefix. No `prefix` (or an empty one): `true`, the search of the app of today as the reader types. |
+| `order` | `/api/search` only: `newest` (default), `oldest`, `relevance` |
+
+- The kind of an attachment comes from its mime type: `image/*`, `video/*`, `audio/*`. `other` is every other type and an attachment with no type. A GIF is an image.
+- `any` is a message with one attachment record or more. A message of kind `attachment` with no record (an old export) is `none`.
+- A message with an image and a video is in `image` and in `video`.
+- `relevance` with no words is `newest`, and `order` in the payload says `newest`.
+
+### `/api/search`
+
+```json
+{
+  "query": "hi",
+  "contact": "",
+  "count": 2,
+  "total": 2,
+  "offset": 0,
+  "results": [
+    {
+      "messageId": "…", "chatId": "…", "displayName": "…", "senderName": "…",
+      "timestamp": "2025-01-03 19:30:00", "sender": "…", "text": "this is which hi",
+      "attachment": "", "isFromMe": true,
+      "ranges": [[14, 16]]
+    }
+  ],
+  "filters": {"contacts": [], "since": "", "until": "", "from": "", "kind": "", "attachments": ""},
+  "order": "newest",
+  "prefix": false
+}
+```
+
+- That answer is for `query=hi&prefix=false`: the word "hi" only, not "this", "which", "hit" or "him". With no `prefix`, `prefix` is `true` and "hit" and "him" match too ("this" and "which" never: a prefix is the start of a word).
+- `prefix` says what the search applied.
+
+- `filters` holds every key. A filter that was not applied is `""` or `[]`. `contacts` holds `contact` too.
+- `ranges` are `[start, end)` in UTF-16 units of `text`, as JavaScript counts. They are the ranges that the index matched: a prefix marks the whole word. They follow the shown text: no outer space, no attachment placeholder. A word after the cut of a long text (600 characters) has no range. A range across the cut stops at the cut.
+- With no words, `ranges` is `[]`.
+- No words and a filter list the messages of the filter, newest first. `total` counts all of them. The pages have no depth limit.
+- Typed text with no word (`*`, `""`) matches nothing, also with a filter. `/api/stats` counts 0 for it.
+
+### `/api/stats`
+
+```json
+{
+  "by": "person",
+  "query": "pizza",
+  "prefix": false,
+  "filters": {"contacts": [], "since": "", "until": "", "from": "", "kind": "", "attachments": ""},
+  "totals": {"total": 5, "sent": 1, "received": 4},
+  "first": "2025-01-01",
+  "last": "2025-01-05",
+  "rows": [
+    {"key": "+15550000001", "label": "Avery Stone", "total": 2, "sent": 1, "received": 1,
+     "conversations": ["+15550000001"]}
+  ],
+  "rowsTotal": 3
+}
+```
+
+- `by`: `day`, `week`, `month`, `year`, `weekday`, `hour`, `weekday_hour`, `person`, `conversation`, or empty. Empty gives `rows` `[]` and the totals only.
+- `totals` covers the whole filtered set. `first` and `last` are its first and last local day, or `null` when the set is empty. `received` is the count of the archive. In the archive every message is sent or received (`is_from_me` is 0 or 1), so its `received` is `total` less `sent`; the service adds the counts of the archive and never works one out itself.
+- `rowsTotal` is the number of rows before `limit`.
+- `prefix` reads as on `/api/search`: no `prefix` is `true`. Send `prefix=false` to count whole words only.
+- Time rows: `{"key", "label", "total", "sent", "received"}`.
+  - `day` (`YYYY-MM-DD`), `week` (the Monday, `YYYY-MM-DD`), `month` (`YYYY-MM`), `year` (`YYYY`): every bucket from `since` to `until`, in time order. With no `since`, the range starts at `first`. With no `until`, it ends at `last`. The range never goes past the first or the last day of the archive. An empty bucket is a row of zeros. The label is the key.
+  - `weekday` (`0` is Monday to `6`, label `Monday`), `hour` (`00` to `23`, label `09:00`), `weekday_hour` (`W-HH`, label `Monday 09:00`): every bucket, always.
+  - With an empty set and no `since` or `until`, `day` to `year` have no row.
+- People rows: the time row and `conversations`, the ids that the row counts.
+  - `conversation`: one row per conversation.
+  - `person`: one row per person. The phone thread and the email thread of one person are one row: the archive joins handles of one contact record (`Conversation["person_id"]`). A group is its own row. The key is the id of the busiest thread in the set.
+  - The label is `conversation_label(names.conversation(record), id)` from `conversation.py`: the words of `conversationName` in the app. A saved name, a group name, "Unnamed group", "Number ending in 1234", or an email address as it is. No full phone number of a person who is not saved.
+  - The busiest come first (a tie: the key). `limit` is 50 by default, held between 1 and 500.
+- One answer reads one state of the archive (`Archive.snapshot()`): the totals and the rows agree also while an import commits.
+- `GET /api/stats/words` (the most used words) is not built. On the invented archive below, a count of the words of every message took 3.9 s in Python (2.4 s of it to read the texts), and `fts5vocab` with a filter of one year took 1.7 s. Both miss the limit of 2 s.
+
+### Speed
+
+Measured on an invented archive of 545,000 messages and 1,400 conversations (`tests/archive/synthetic.py` with 1,300 people and 100 groups, 2017 to 2037), on the Mac of the build, best of three:
+
+- `/api/stats` on the whole archive: 212 ms (`person`) to 626 ms (`year`). The total alone: 235 ms. A grouping by time makes two counts: the days, and the grouping.
+- `/api/stats` with filters (one year, `from=me&kind=group`, `attachments=image`, a word): 6 ms to 244 ms.
+- `/api/search` with words: 27 ms to 88 ms, also with filters and with `prefix=true`. With no words and a filter: 16 ms (one year) to 506 ms (`attachments=none`, 490,673 messages).
+
+
 ## Chat
 
 - A "user" row of the history can hold `contact`: the conversation that its question was asked of.
 - A row with no `contact` was asked of everything. Its answer does not go to a question that has a scope.
 - A question over 8,000 characters is the error `question_too_long`.
 - `cancel` is a `CancelToken` that the route makes for each request.
-- The engine gets the two ports of `memory.ports(archive, names, start_digest=...)`. See "The two ports of chat".
-- `chat.stream(..., start_digest=...)` takes the function of the server that reads a long conversation outside the question.
+- The engine gets the two ports of `memory.ports(archive, names)`. See "The two ports of chat".
+- No question starts a reading outside itself. `chat.stream` takes no function of the server for it.
+- While a digest is read inside the question, `chat.stream` gives one `progress` event for each change of a part:
+  `{"type": "progress", "tool": "conversation_digest", "conversation": <label as shown>, "part": i, "of": n, "label": <period label>, "state": "start"|"done"|"cached"|"failed"}`.
+  The events come after the status line of the digest and before `done`. `/api/ask/stream` writes each one as a `data:` frame. `chat.ask` and `/api/ask` drop them.
+- With a digest source, the payload has `memory`: `{"notReady": [conversation ids]}`. These are the conversations whose story had more parts that are not read yet than one question reads (`DIGEST_PARTS_LIMIT`). Nothing reads them by itself: the app can offer it. With no digest source (no key, or the local answer) the payload has no `memory`.
 
 ## The index of meanings
 
@@ -227,7 +332,7 @@ Known limits:
 
 ## The two ports of chat
 
-`memory.ports(archive, names, start_digest=None)` gives `{"meaning": ..., "digests": ...}` for `ChatEngine`. `chat.py` calls it for each question that uses the model.
+`memory.ports(archive, names)` gives `{"meaning": ..., "digests": ...}` for `ChatEngine`. `chat.py` calls it for each question that uses the model.
 
 | Port | Class | None when |
 |---|---|---|
@@ -252,12 +357,14 @@ With a port that is None the engine does not offer its tool. A reason goes to th
 `DigestPort`:
 
 - `estimate` and `digest` pass the conversation and the days to `digests.estimate` and `digests.build`.
-- `digest` reads at most `DIGEST_PARTS_LIMIT` (2) parts that are not read yet. It gives that number to `digests.build` as `max_new_periods`. A digest that needs more raises `too_many_parts`. When the check before the first call refuses it, no call is made. The report engine can also stop a digest at the limit after calls that were paid for: the failure then carries their usage, and `usd` and the spend line say what they cost. Do not take a refusal to mean that nothing was paid: look at the usage. `chat.py` gives the engine the same constant (`EngineConfig.digest_parts_limit` in `_events`), so the two can not differ.
+- `digest` reads at most `DIGEST_PARTS_LIMIT` (12) parts that are not read yet. It gives that number to `digests.build` as `max_new_periods`. A digest that needs more raises `too_many_parts`. When the check before the first call refuses it, no call is made. The report engine can also stop a digest at the limit after calls that were paid for: the failure then carries their usage, and `usd` and the spend line say what they cost. Do not take a refusal to mean that nothing was paid: look at the usage. `chat.py` gives the engine the same constant (`EngineConfig.digest_parts_limit` in `_events`), so the two can not differ.
 - `digest` returns `usd`: the cost of the usage of the run. The log `recall.spend` gets one line with counts and the cost. `log_to_the_server_log` in `ui_server.py` lets that line through.
 - A digest that was paid for and failed, or that was stopped, says what it cost too. `digest` takes the usage from the failure of `digests.build` (`ReportFailure.usage`), writes the line `a digest inside a question gave nothing (<code>): N model calls, X USD`, sets `usd` on the failure and raises the same failure again. A failure before any call has no usage: its `usd` is 0.0 and it leaves no line.
 - One lock for the archive path, the conversation and the model is held around the build (`digest_lock`). A second question waits and then finds the parts read. A question that is cancelled while it waits stops waiting (`DigestStopped`).
 - The model port of a digest inside a question has a timeout of 120 seconds and one more try (`question_llm`, `DIGEST_TIMEOUT_SECONDS`, `DIGEST_RETRIES`). A report job keeps 300 seconds and two more tries.
-- `prepare` calls the `start_digest` function of the server and returns its answer. With none given, or when it fails, the answer is False.
+- `digest` tells its `progress` callback each change of a part (`progress_relay`): a map event of the report engine with the state `start`, `done`, `cached` or `failed` becomes `{"part": index, "of": total, "label": period, "state": state}`. The events `prepare`, `waiting`, `reduce` and `done` of the run are not told.
+- One question reads the parts of one conversation one at a time, in order: the carry-over notes of a part go to the next part. `digest` gives `digests.build` no `pool`.
+- Nothing here starts a `digest` job.
 - The cancel token of chat sets a cancel token of the report engine (`_report_cancel`). The two classes have the same name and are not the same class.
 - A `ReportFailure` is raised. The engine then prints its one line for a digest that failed.
 - `DIGEST_MODEL` is the model of a digest: `gpt-6-luna`. The digest only sums up the periods. The chat model answers and checks against the messages.
@@ -270,8 +377,8 @@ A test gives `store`, `embedder_factory` and `digest` (`DigestSettings`) to `mem
 
 Known limits:
 
-- A reader who leaves during a digest inside a question does not stop it: the turn gives no event while a tool runs. It reads 2 parts at most.
-- A question and the `digest` job do not share a lock. A part is paid for twice only when two runs send it at the same moment, before either has saved it; so a question beside a `digest` job pays again for at most the parts of its own limit (2), and two runs with no limit pay again only for the parts whose calls overlap. In the worst case two runs with no limit that move in step each pay for every part, because nothing marks a part as being read. The mechanism: just before a part is sent, its key is looked up one more time (`report_engine/map_step.py`, for a report run too).
+- A reader who leaves or cancels during a digest inside a question stops it before its next part. The part that is sent is paid for.
+- A question and the `digest` job do not share a lock. A part is paid for twice only when two runs send it at the same moment, before either has saved it; so a question beside a `digest` job pays again for at most the parts of its own limit (12), and two runs with no limit pay again only for the parts whose calls overlap. In the worst case two runs with no limit that move in step each pay for every part, because nothing marks a part as being read. The mechanism: just before a part is sent, its key is looked up one more time (`report_engine/map_step.py`, for a report run too).
 - The clock times in a transcript are local times. After a change of the time zone of the Mac the parts of a digest are new, and they are read and paid for again.
 - A digest under a scope with days can pay for a period that is then not shown. The app sets no days in a scope today.
 
@@ -279,13 +386,11 @@ Known limits:
 
 `digest_job.run(conversation_id, since, until, on_progress, archive=..., names=...)` reads one conversation for chat, outside a question. The `digest` job of the server calls it.
 
-- It uses `DIGEST_MODEL`, so a later question finds the parts in the notes. It has no limit of parts, and the model port of a report.
+- It uses `DIGEST_MODEL`, so a question finds the parts in the notes. It has no limit of parts, and the model port of a report.
 - The result has `conversation`, `periods`, `periodsBuilt`, `periodsCached`, `periodsFailed`, `usd` and `usage`.
 - A listener gets `{"progress": {"step", "of", "label"}}` and a line under `log`, as in a report job. A line holds the label of a part and counts.
 - A failure is a `DigestFailure`: a `ReportFailure` with the code of the failure of `digests.build`, its usage, and a sentence of this job (`sentence_of`). No sentence names a report. A missing conversation and a bad day are a ValueError.
-- `digest_starter` in `ui_server.py` makes the `start_digest` function of one question. It starts a `digest` job for the archive of the question.
-- The starter says True when the job started, or when a `digest` job of the same archive, conversation and days already runs.
-- The starter starts nothing when the last job of the same archive, conversation and days failed, or read no new part while parts failed. Each question would pay for the same parts again. An import that changed the archive, and a new start of the server, let the reading start again.
+- The job starts only when a request asks for it. No question starts it.
 
 The sentences of a `digest` job that failed:
 
@@ -484,8 +589,8 @@ Each one has a test that states it.
 - `reactions_frame` holds the six classic kinds of tapback. A tapback with any emoji or a sticker is no row.
 - A message that was unsent is a row of the archive with no text. It counts in the list, in a day and in a search with no words. `messages_frame` has no row for it. `tests/recall_services/test_frame_edges.py` states this open seam.
 - `around` of a day must be written as `YYYY-MM-DD HH:MM` or longer. Other forms give the start of the day.
-- A search matches whole words. `piz` does not find `pizza`; `piz*` does. `as_you_type=True` makes the last word a prefix.
-- A search with no words and no conversation gives nothing.
+- The route reads the last word as a prefix unless the request says `prefix=false`: then `piz` does not find `pizza`, and `piz*` does. The service matches whole words unless `as_you_type=True`.
+- A search with no words and no filter gives nothing. With a filter it lists the messages of the filter.
 - `sender` of an own message is `""`. The export held the handle of the other person there.
 - `senderName` is set only for a received message in a group.
 - A chat answer has no `terms`, and no keyword answer takes the place of an answer that failed.

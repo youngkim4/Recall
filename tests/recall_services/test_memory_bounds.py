@@ -14,6 +14,7 @@ from chat_engine.cancel import CancelToken
 from recall_services import digests, memory, models, reports
 from report_engine import PeriodCache, StoreError
 from report_engine.chat_digest import DigestTooLarge
+from report_engine.control import ProgressEvent
 from report_engine.fake_llm import FakeCall, FakeLLM, completed
 from report_engine.models import Usage
 from report_engine.openai_llm import OpenAIResponsesLLM
@@ -36,8 +37,11 @@ def bounded(desk: Desk, llm: Any = None, **more: Any) -> memory.DigestPort:
 # --- the limit of parts ------------------------------------------------------------
 
 
-def test_a_digest_inside_a_question_reads_at_most_two_parts_that_are_not_read_yet(desk: Desk) -> None:
-    assert memory.DIGEST_PARTS_LIMIT == 2
+def test_a_digest_inside_a_question_reads_at_most_its_limit_of_parts_that_are_not_read_yet(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert memory.DIGEST_PARTS_LIMIT == 12
+    monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 2)  # Mina has four parts
     model = FakeLLM()
     asked = bounded(desk, model)
     with pytest.raises(digests.ReportFailure) as refused:
@@ -63,7 +67,7 @@ def test_the_limit_of_memory_reaches_the_digest_as_its_most_new_parts(
     bounded(desk).digest(MINA, cancel=CancelToken(), **JANUARY)
     monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 1)
     bounded(desk).digest(MINA, cancel=CancelToken(), **JANUARY)
-    assert seen == [2, 1]
+    assert seen == [12, 1]
 
 
 # --- the cost ----------------------------------------------------------------------
@@ -179,34 +183,59 @@ def test_a_digest_of_the_app_is_read_through_the_port_of_a_question(desk: Desk, 
     assert asked_for == [memory.DIGEST_MODEL] and len(model.calls) == 1
 
 
-# --- a long conversation is read outside the question ------------------------------
+# --- the progress of each part, and nothing started outside the question -----------
+
+PARTS = ["Jan 2023", "Feb 2023", "Mar 2023", "Apr 2023"]
 
 
-def test_prepare_asks_the_server_to_read_the_conversation_and_says_whether_it_started(desk: Desk) -> None:
-    asked: list[tuple[Any, ...]] = []
-
-    def start(conversation: str, since: str | None, until: str | None) -> bool:
-        asked.append((conversation, since, until))
-        return conversation == MINA
-
-    found = bounded(desk, start_digest=start)
-    assert found.prepare(MINA, since="2023-01-01", until=None) is True
-    assert found.prepare("another", since=None, until=None) is False
-    assert asked == [(MINA, "2023-01-01", None), ("another", None, None)]
-
-
-def test_with_no_way_to_start_it_prepare_says_no(desk: Desk) -> None:
-    assert bounded(desk).prepare(MINA, **ALL) is False
+def test_the_digest_tells_each_part_as_the_report_engine_reads_it(desk: Desk) -> None:
+    asked = bounded(desk)
+    told: list[Any] = []
+    asked.digest(MINA, cancel=CancelToken(), progress=told.append, **ALL)
+    assert told == [
+        {"part": number, "of": 4, "label": label, "state": state}
+        for number, label in enumerate(PARTS, start=1)
+        for state in ("start", "done")
+    ]
+    again: list[Any] = []
+    asked.digest(MINA, cancel=CancelToken(), progress=again.append, **JANUARY)
+    assert again == [{"part": 1, "of": 1, "label": "Jan 2023", "state": "cached"}]
+    asked.digest(MINA, cancel=CancelToken(), **JANUARY)  # with no one to tell, nothing is told
 
 
-def test_a_start_that_fails_is_a_no_and_never_an_error_of_the_question(
-    desk: Desk, caplog: pytest.LogCaptureFixture
-) -> None:
-    def start(*_args: Any) -> bool:
-        raise RuntimeError(f"a fault that names {MINA}")
+def test_a_part_that_fails_is_told_as_failed(desk: Desk) -> None:
+    told: list[Any] = []
+    with pytest.raises(digests.ReportFailure):
+        bounded(desk, FakeLLM(refused_by_the_model)).digest(MINA, cancel=CancelToken(), progress=told.append, **JANUARY)
+    assert told == [
+        {"part": 1, "of": 1, "label": "Jan 2023", "state": "start"},
+        {"part": 1, "of": 1, "label": "Jan 2023", "state": "failed"},
+    ]
 
-    assert bounded(desk, start_digest=start).prepare(MINA, **ALL) is False
-    assert "RuntimeError" in caplog.text and MINA not in caplog.text
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        ProgressEvent(step="prepare", state="start"),
+        ProgressEvent(step="prepare", state="done", total=4),
+        ProgressEvent(step="map", state="waiting", period="Jan 2023", index=1, total=4),
+        ProgressEvent(step="map", state="start", period=None, index=1, total=4),
+        ProgressEvent(step="reduce", state="start"),
+        ProgressEvent(step="done", state="done", total=4),
+    ],
+)
+def test_only_a_change_of_a_part_is_told(event: ProgressEvent) -> None:
+    told: list[Any] = []
+    memory.progress_relay(told.append)(event)
+    assert told == []
+
+
+def test_no_question_starts_a_reading_outside_itself(desk: Desk) -> None:
+    assert not hasattr(bounded(desk), "prepare")
+    assert list(inspect.signature(memory.ports).parameters) == [
+        "archive", "names", "store", "embedder_factory", "digest",
+    ]  # fmt: skip
+    assert list(inspect.signature(memory.DigestPort).parameters) == ["archive", "names", "settings"]
 
 
 # --- a digest that was paid for and gave nothing -----------------------------------
@@ -254,9 +283,10 @@ def test_a_digest_that_is_cancelled_after_a_part_says_what_that_part_cost(
 
 
 def test_a_digest_that_failed_before_any_call_cost_nothing_and_leaves_no_line(
-    desk: Desk, caplog: pytest.LogCaptureFixture
+    desk: Desk, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     caplog.set_level(logging.INFO, logger=memory.SPEND_LOG)
+    monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 2)  # Mina has four parts
     with pytest.raises(digests.ReportFailure) as told:
         bounded(desk, FakeLLM()).digest(MINA, cancel=CancelToken(), **ALL)
     assert (told.value.code, told.value.usd) == ("too_many_parts", 0.0) and spend_lines(caplog) == []
@@ -324,6 +354,7 @@ def test_notes_that_fail_at_the_second_read_do_not_let_a_question_pay_for_more_t
         return real(self, keys, touch)
 
     monkeypatch.setattr(PeriodCache, "get_many", flaky)
+    monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 2)
     caplog.clear()
     with pytest.raises(digests.ReportFailure) as told:
         bounded(desk, model).digest(MINA, cancel=CancelToken(), **ALL)
