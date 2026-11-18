@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import threading
 import time
@@ -11,7 +12,10 @@ import pytest
 
 from chat_engine.cancel import CancelToken
 from recall_services import digests, memory, models, reports
+from report_engine import PeriodCache, StoreError
+from report_engine.chat_digest import DigestTooLarge
 from report_engine.fake_llm import FakeCall, FakeLLM, completed
+from report_engine.models import Usage
 from report_engine.openai_llm import OpenAIResponsesLLM
 from tests.recall_services.report_world import MODEL, Desk
 from tests.recall_services.test_memory_digests import port, settings
@@ -256,3 +260,72 @@ def test_a_digest_that_failed_before_any_call_cost_nothing_and_leaves_no_line(
     with pytest.raises(digests.ReportFailure) as told:
         bounded(desk, FakeLLM()).digest(MINA, cancel=CancelToken(), **ALL)
     assert (told.value.code, told.value.usd) == ("too_many_parts", 0.0) and spend_lines(caplog) == []
+
+
+# --- a digest that is stopped at the limit after it paid ---------------------------
+
+STOPPED_IN_THE_MIDDLE = (
+    "This conversation has more parts that are not read yet than the 2 that can be read now. "
+    "What was read is kept. Choose fewer dates."
+)
+# the report engine counts each request of a digest and stops before the one that passes the limit
+ENGINE_STOPS_IN_THE_MIDDLE = "usage" in inspect.signature(DigestTooLarge.__init__).parameters
+
+
+def too_large_after(calls: int, cost_usd: float) -> DigestTooLarge:
+    """The error of a digest that the report engine stopped at the limit, after it paid for some calls."""
+    error = DigestTooLarge(4, 1, 2)  # after a stop, `new_periods` is the limit and one: no count of what is left
+    error.usage = Usage(input_tokens=900, output_tokens=40, cost_usd=cost_usd, calls=calls)
+    return error
+
+
+def test_a_digest_that_stops_at_the_limit_after_paid_calls_says_what_they_cost(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger=memory.SPEND_LOG)
+
+    def stops(**_more: Any) -> Any:
+        raise too_large_after(calls=2, cost_usd=0.0123)
+
+    monkeypatch.setattr(digests, "conversation_digest", stops)
+    with pytest.raises(digests.ReportFailure) as told:
+        bounded(desk).digest(MINA, cancel=CancelToken(), **ALL)
+    failure = told.value
+    assert (failure.code, str(failure)) == ("too_many_parts", STOPPED_IN_THE_MIDDLE)
+    assert failure.usage["calls"] == 2 and failure.usd == pytest.approx(0.0123)
+    assert spend_lines(caplog) == ["a digest inside a question gave nothing (too_many_parts): 2 model calls, 0.0123 USD"]
+
+
+def test_the_job_keeps_the_usage_of_a_digest_that_stopped_after_paid_calls(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from recall_services import digest_job
+
+    monkeypatch.setattr(digests, "conversation_digest", lambda **_more: (_ for _ in ()).throw(too_large_after(1, 0.5)))
+    with pytest.raises(digest_job.DigestFailure) as told:
+        digest_job.run(MINA, **desk.more())
+    assert told.value.code == "too_many_parts" and told.value.usage["cost_usd"] == 0.5
+
+
+@pytest.mark.skipif(not ENGINE_STOPS_IN_THE_MIDDLE, reason="waits for the report engine: a digest that stops at the limit")
+def test_notes_that_fail_at_the_second_read_do_not_let_a_question_pay_for_more_than_its_limit(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Every part is in the notes, and the read of the run fails: the digest pays for two parts and stops."""
+    caplog.set_level(logging.INFO, logger=memory.SPEND_LOG)
+    model = FakeLLM()
+    port(desk, model).digest(MINA, cancel=CancelToken(), **ALL)
+    assert len(model.calls) == 4
+    real = PeriodCache.get_many
+
+    def flaky(self: Any, keys: Any, touch: bool = False) -> Any:
+        if touch:  # the read of the run; the read of the limit check has touch=False
+            raise StoreError("period cache failed: database is locked")
+        return real(self, keys, touch)
+
+    monkeypatch.setattr(PeriodCache, "get_many", flaky)
+    caplog.clear()
+    with pytest.raises(digests.ReportFailure) as told:
+        bounded(desk, model).digest(MINA, cancel=CancelToken(), **ALL)
+    assert len(model.calls) - 4 <= memory.DIGEST_PARTS_LIMIT
+    assert told.value.usd > 0 and len(spend_lines(caplog)) == 1

@@ -154,6 +154,27 @@ def test_a_digest_over_the_limit_of_new_parts_is_refused_before_any_call(desk: D
     assert str(one).startswith("This conversation has 1 part that is not read yet, and 0 can be read now.")
 
 
+def test_a_digest_that_the_engine_stopped_at_the_limit_after_paid_calls_keeps_its_usage_and_names_no_count(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After a stop in the middle the error does not know how many parts are left: the sentence gives no such number."""
+    from report_engine.chat_digest import DigestTooLarge
+    from report_engine.models import Usage
+
+    def stops(**_more: Any) -> Any:
+        error = DigestTooLarge(4, 1, 2)
+        error.usage = Usage(input_tokens=900, output_tokens=40, cost_usd=0.0123, calls=2)
+        raise error
+
+    monkeypatch.setattr(digests, "conversation_digest", stops)
+    failure = expect_failure(desk, FakeLLM(), "too_many_parts", max_new_periods=2)
+    assert str(failure) == (
+        "This conversation has more parts that are not read yet than the 2 that can be read now. "
+        "What was read is kept. Choose fewer dates."
+    )
+    assert failure.usage == {"input_tokens": 900, "cached_input_tokens": 0, "output_tokens": 40, "cost_usd": 0.0123, "calls": 2}
+
+
 def test_a_limit_of_new_parts_lets_a_digest_through_that_is_under_it(desk: Desk) -> None:
     reports.run(MINA, MODEL, "2023-01-01", "2023-01-31", **desk.more())
     model = FakeLLM()
