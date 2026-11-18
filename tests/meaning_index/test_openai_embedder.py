@@ -254,6 +254,6 @@ def test_a_build_waits_the_time_that_the_service_names(folder: Path) -> None:
         count_tokens=words,
         sleep=slept.append,
     )
-    assert slept == [11.0, 11.0]
+    assert (sum(slept), max(slept), len(slept)) == (22.0, 1.0, 22)
     assert result.embedded == 5
     assert len(client.embeddings.calls) == 3

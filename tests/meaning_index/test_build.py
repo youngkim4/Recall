@@ -205,7 +205,7 @@ def test_a_rate_limit_waits_through_the_sleep_that_the_caller_gives(folder: Path
     slept: list[float] = []
     embedder = ScriptedEmbedder({1: EmbeddingRateLimited("wait", retry_after_s=12.0)})
     result = build(ListSource(small()), folder, embedder, sleep=slept.append)
-    assert slept == [12.0]
+    assert (sum(slept), max(slept)) == (12.0, 1.0)
     assert result.embedded == 6
 
 

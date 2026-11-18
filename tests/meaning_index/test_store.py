@@ -226,15 +226,15 @@ def test_a_segments_file_with_fewer_rows_than_its_build_names_is_no_index(folder
     assert store.read() is None
 
 
-def test_a_segments_file_with_a_row_missing_in_the_middle_is_a_typed_error(folder: Path) -> None:
+def test_a_segments_file_with_a_row_missing_in_the_middle_is_no_index(folder: Path) -> None:
     store = make(folder)
     fill(store)
     conn = sqlite3.connect(folder / "segments.sqlite3")
     conn.execute('DELETE FROM segments WHERE "row" = 2')
     conn.commit()
     conn.close()
-    with pytest.raises(StoreError):
-        store.read()
+    assert store.read() is None
+    assert store.status().state == "none"
 
 
 def test_a_folder_with_odd_characters_in_its_name_is_read(tmp_path: Path) -> None:

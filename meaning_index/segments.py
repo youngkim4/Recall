@@ -2,8 +2,9 @@
 
 A segment is a run of consecutive messages. A new segment starts after a gap
 of more than GAP_MINUTES, when the segment holds MAX_MESSAGES, or when its
-text reaches MAX_CHARS. The text is the day on the first line, then one line
-for each message: `Me: ...` or `Them: ...`. No name and no handle is added.
+text reaches MAX_CHARS. The text is the day of the earliest message on the
+first line, then one line for each message: `Me: ...` or `Them: ...`. No name
+and no handle is added.
 
 A change to a rule here changes the ids and the content hashes: the next build
 then embeds every segment again.
@@ -82,7 +83,8 @@ def _line(message: SourceMessage) -> str:
 
 def _close(conversation_id: str, held: Sequence[_Open]) -> CutSegment:
     ids = [message_id for message_id, _, _ in held]
-    first_stamp, last_stamp = held[0][1], held[-1][1]
+    stamps = [stamp for _, stamp, _ in held]
+    first_stamp, last_stamp = min(stamps), max(stamps)  # a source can give a time that goes back
     text = "\n".join([first_stamp[:DAY_LENGTH], *(line for _, _, line in held)])
     return CutSegment(
         segment_id=segment_id(conversation_id, ids),

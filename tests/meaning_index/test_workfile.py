@@ -76,16 +76,18 @@ def test_rows_that_do_not_fit_the_hashes_are_refused(tmp_path: Path) -> None:
         work.put([A], unit(1, 4))
 
 
-def test_a_file_that_is_no_database_is_read_as_empty_and_a_repair_removes_it(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_a_file_that_is_no_database_is_not_read_and_not_written_until_a_repair_removes_it(tmp_path: Path) -> None:
     path = tmp_path / "work.sqlite3"
     path.write_bytes(b"this is no database at all, only invented bytes" * 40)
     work = WorkFile(path, 8)
-    assert work.hashes() == frozenset()
-    assert caplog.records
+    with pytest.raises(StoreError):
+        work.hashes()
+    with pytest.raises(StoreError):
+        work.get_many([A])
     with pytest.raises(StoreError):
         work.put([A], unit(1, 8))
+    with pytest.raises(StoreError):
+        work.check_writable()
     work.repair()
     assert not path.exists()
     work.put([A], unit(1, 8))

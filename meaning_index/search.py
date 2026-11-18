@@ -19,6 +19,7 @@ import numpy as np
 from meaning_index.errors import StoreError
 from meaning_index.shapes import IndexMeta, SearchHit, Segment
 from meaning_index.store import IndexStore
+from meaning_index.store_files import all_finite
 
 DEFAULT_LIMIT = 20
 SCORE_CHUNK = 4096
@@ -57,11 +58,20 @@ def _id_list(value: object) -> list[str]:
 
 
 class MeaningIndex:
-    """One loaded index. `segments[n]` belongs to row `n` of `vectors`."""
+    """One loaded index. `segments[n]` belongs to row `n` of `vectors`.
 
-    def __init__(self, meta: IndexMeta, segments: Sequence[Segment], vectors: np.ndarray) -> None:
+    A vector with a value that is no number is refused: a search would lose
+    hits. Give `checked=True` only when the vectors were checked before, as
+    `IndexStore.read` checks them.
+    """
+
+    def __init__(
+        self, meta: IndexMeta, segments: Sequence[Segment], vectors: np.ndarray, *, checked: bool = False
+    ) -> None:
         if vectors.shape != (len(segments), meta.dimensions):
             raise ValueError("the vectors do not fit the segments and the dimensions")
+        if not checked and not all_finite(vectors):
+            raise ValueError("the vectors hold a value that is no number")
         self._meta = meta
         self._segments = tuple(segments)
         self._vectors = vectors
@@ -78,7 +88,7 @@ class MeaningIndex:
         stored = store.read()
         if stored is None:
             return None
-        return cls(stored.meta, stored.segments, stored.vectors)
+        return cls(stored.meta, stored.segments, stored.vectors, checked=True)
 
     @property
     def meta(self) -> IndexMeta:
@@ -96,16 +106,20 @@ class MeaningIndex:
         return len(self._segments)
 
     def _query(self, vector: object) -> np.ndarray:
+        """The query at unit length. The length is worked out in float64, on values scaled to 1 at most."""
         try:
-            query = np.asarray(vector, dtype=np.float32)
+            query = np.asarray(vector, dtype=np.float64)
         except (TypeError, ValueError):
             raise ValueError("the query must be a vector of numbers") from None
         if query.shape != (self.dimensions,):
             raise ValueError(f"the query must have {self.dimensions} dimensions")
-        length = float(np.linalg.norm(query))
-        if not np.isfinite(query).all() or length == 0.0:
+        if not np.isfinite(query).all():
+            raise ValueError("the query must hold numbers only: no NaN and no infinite value")
+        largest = float(np.max(np.abs(query), initial=0.0))
+        if largest == 0.0:
             raise ValueError("the query must be a vector with a length")
-        return query / length
+        scaled = query / largest
+        return (scaled / np.linalg.norm(scaled)).astype(np.float32)
 
     def _chosen(self, conversations: object, since: str | None, until: str | None) -> np.ndarray | None:
         """The rows that pass the filters, in order. None means every row."""
