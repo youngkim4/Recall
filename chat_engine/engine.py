@@ -54,7 +54,7 @@ class EngineConfig:
     count_tokens: Callable[[str], int] = estimate_tokens
     digest_tokens: int = 24_000
     digest_usd_limit: float = 0.5
-    digest_parts_limit: int = 2
+    digest_parts_limit: int = 12
 
     def __post_init__(self) -> None:
         if not str(self.model or "").strip():

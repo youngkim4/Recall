@@ -7,11 +7,13 @@ spend from the budget of the other lookups.
 
 The guards, in their order: the scope, a repeat, the estimate, the number of
 periods that are not read yet, the cost. A conversation with more periods to
-read than one question reads is not read here: the source is asked to read it
-in the background (`prepare`), and the model is told to go on without it.
+read than one question reads is not read: the model is told to go on without
+it, and the payload names it (`ToolBox.memory_payload`). Nothing is started.
 
-One question asks the source for little: `prepare` one time for a
-conversation and its days, `estimate` at most
+The call to the source is the `fetch` of the lookup: the turn runs it beside
+the stream, and each report of the source becomes a `progress` event.
+
+One question asks the source for little: `estimate` at most
 `DIGEST_ESTIMATES_PER_QUESTION` times, `digest` at most `DIGESTS_PER_QUESTION`
 times. A repeat gets the line that the first call got.
 """
@@ -23,12 +25,13 @@ import math
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping, Optional
 
+from .digest_progress import progress_events
 from .digest_text import Moment, Notes, Period, write_digest
-from .ports import DigestCost, Message
+from .ports import DigestCost, DigestProgressCallback, Message
 from .render import time_key
 from .scope import parse_day
 from .tool_args import ToolInputError, day_arg, text_arg
-from .tool_context import Prepared, ToolContext, ToolOutcome, plural
+from .tool_context import Fetch, Prepared, ToolContext, ToolOutcome, plural
 from .tool_limits import DIGEST_ESTIMATES_PER_QUESTION, DIGESTS_PER_QUESTION
 from .verify import is_quote_of
 
@@ -47,14 +50,9 @@ _TOO_COSTLY = (
     "Reading {title} whole would cost about ${usd:.2f}{missing}. That is above the limit of ${limit:.2f}, "
     "so nothing was built. Narrow the days with since and until, or use the other tools."
 )
-_LONG = "The story of {title} is long: {missing} not read yet"
-_STARTED = (
-    f"{_LONG}. Recall reads them now in the background, so the story is not ready for this question. "
-    "Answer from the other tools, and tell the user that a fuller answer is possible in a few minutes."
-)
-_NOT_STARTED = (
-    f"{_LONG}, and one question reads at most {{limit}}. "
-    "Narrow the days with since and until, or use the other tools."
+_NOT_READY = (
+    "The story of {title} is not read yet, and it is too long to read inside one question: "
+    "{missing} not read yet, and one question reads at most {limit}. Answer from the other tools."
 )
 _SHOWN, _FAILED_STATE = "shown", "failed"
 
@@ -116,7 +114,9 @@ def prepare_digest(ctx: ToolContext, arguments: Mapping[str, Any]) -> Prepared:
     cached = cost["periods_cached"] >= cost["periods"]
     whole = "" if request.since or request.until else "whole "
     status = f"Recalling your {named}" if cached else f"Reading your {whole}{named}"
-    return _prepared(ctx, status, _lookup(ctx, request))
+    ctx.listed()  # the labeler knows every handle of the archive before a report of the source is masked
+    run, fetch = _lookup(ctx, request)
+    return replace(_prepared(ctx, status, run), fetch=fetch)
 
 
 def _too_many(ctx: ToolContext) -> Optional[ToolOutcome]:
@@ -180,62 +180,53 @@ def _too_costly(ctx: ToolContext, request: DigestRequest, cost: DigestCost) -> T
 
 
 def _too_long(ctx: ToolContext, request: DigestRequest, cost: DigestCost) -> Prepared:
-    """A story with more periods to read than one question reads. Its reading is started outside the question.
+    """A story with more periods to read than one question reads. Nothing is read, and nothing is started.
 
-    The source is asked one time. The line is kept: a repeat in this question gets it again.
+    The line is kept: a repeat in this question gets it again, and the
+    payload of the question names the conversation.
     """
     count = cost["periods"] - cost["periods_cached"]
     missing = f"{plural(count, 'period')} {'is' if count == 1 else 'are'}"
     label = ctx.book.label(request.conversation)
-    if _start_reading(ctx, request):
-        text = _STARTED.format(title=_title(ctx, request), missing=missing)
-        words = f"your {_named(ctx, request)} in the background"
-        outcome = ToolOutcome(text, f"Started to read {words}", ok=False)
-        status = f"Starting to read {words}"
-    else:
-        limit = plural(ctx.memory.digest_parts_limit, "period")
-        text = _NOT_STARTED.format(title=_title(ctx, request), missing=missing, limit=limit)
-        outcome = ToolOutcome(text, f"Did not read the conversation with {label}: {missing} not read yet", ok=False)
-        status = f"Your conversation with {label} is too long to read inside one question"
+    limit = plural(ctx.memory.digest_parts_limit, "period")
+    text = _NOT_READY.format(title=_title(ctx, request), missing=missing, limit=limit)
+    outcome = ToolOutcome(text, f"Did not read the conversation with {label}: {missing} not read yet", ok=False)
     ctx.digests_long[request.key] = outcome
+    status = f"Your conversation with {label} is too long to read inside one question"
     return _prepared(ctx, status, lambda budget: outcome)
 
 
-def _start_reading(ctx: ToolContext, request: DigestRequest) -> bool:
-    """Ask the source to read the conversation outside the question. False when it has no way, or fails."""
-    start = getattr(ctx.memory.digests, "prepare", None)
-    if not callable(start):
-        return False
-    try:
-        return start(request.conversation, since=request.since, until=request.until) is True
-    except Exception as error:  # the question goes on with the other tools
-        logger.warning("the reading of a digest in the background did not start: %s", type(error).__name__)
-        return False
-
-
-def _lookup(ctx: ToolContext, request: DigestRequest) -> Callable[[int], ToolOutcome]:
-    """The lookup of one digest. The source is asked one time, also when the result is written twice."""
+def _lookup(ctx: ToolContext, request: DigestRequest) -> tuple[Callable[[int], ToolOutcome], Fetch]:
+    """The lookup of one digest, and its fetch. The source is asked one time, also when the result is written twice."""
     built: list[Built] = []
+
+    def fetch(report: DigestProgressCallback) -> None:
+        if not built:
+            built.append(_build(ctx, request, report))
 
     def run(budget: int) -> ToolOutcome:
         if not built:
-            built.append(_build(ctx, request))
-            if built[0].state != "stopped":
-                ctx.digests_asked[request.key] = _SHOWN if built[0].state == "ok" else _FAILED_STATE
+            built.append(_build(ctx, request, None))
+        if built[0].state != "stopped":
+            ctx.digests_asked[request.key] = _SHOWN if built[0].state == "ok" else _FAILED_STATE
         return _written(ctx, request, built[0], budget)
 
-    return run
+    told = progress_events(ctx.book.label(request.conversation))
+    return run, Fetch(fetch, told)  # type: ignore[arg-type]
 
 
-def _build(ctx: ToolContext, request: DigestRequest) -> Built:
-    """Ask the source. After a cancel nothing more is read: the question ends."""
+def _build(ctx: ToolContext, request: DigestRequest, report: Optional[DigestProgressCallback]) -> Built:
+    """Ask the source. After a cancel nothing more is read: the question ends.
+
+    It reads nothing of the archive: the turn can run it on another thread.
+    """
     cancel = ctx.memory.cancel
     if cancel.cancelled:
         return Built("stopped")
     ctx.digests_built += 1
     try:
         result = ctx.memory.digests.digest(  # type: ignore[union-attr]
-            request.conversation, since=request.since, until=request.until, cancel=cancel
+            request.conversation, since=request.since, until=request.until, cancel=cancel, progress=report
         )
     except Exception as error:
         usd = _amount(getattr(error, "usd", None))  # a call that was paid for and then failed says what it cost

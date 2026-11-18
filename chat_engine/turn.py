@@ -33,7 +33,8 @@ from .seed import archive_years, plan_seed
 from .session import ChatSession, Turn
 from .tool_context import Memory, ToolOutcome
 from .tools import ToolBox
-from .turn_parts import TOO_MANY, Event, Reply, TurnSettings, no_answer, status
+from .turn_fetch import run_beside
+from .turn_parts import TOO_MANY, Event, Reply, TurnSettings, no_answer, status, unique_calls
 
 MIN_RESULT_TOKENS = 300  # with less left, a lookup has no room for an answer worth a step
 _CARRIED_TOKENS = 1200
@@ -194,7 +195,8 @@ class QuestionTurn:
         if tail:
             shown.append(tail)
             yield {"type": "delta", "text": tail}
-        unique, renamed = self._unique(calls)
+        unique, renamed = unique_calls(calls, self._call_ids)
+        self._call_ids.update(call.id for call in unique)
         return Reply(
             text="".join(raw),
             shown="".join(shown),
@@ -211,25 +213,6 @@ class QuestionTurn:
         """A reference the answer may cite: a shown message inside the scope of this question."""
         message = self._session.registry.get(ref)
         return message is not None and self._box.context.allows(message)
-
-    def _unique(self, calls: list[ToolCall]) -> tuple[tuple[ToolCall, ...], bool]:
-        """Every call of the question with an id of its own. True when an id had to change.
-
-        A changed id no longer matches the items of the provider, so the
-        caller drops those and the call goes back in its plain form.
-        """
-        unique: list[ToolCall] = []
-        renamed = False
-        for call in calls:
-            call_id = call.id
-            number = len(self._call_ids)
-            while not call_id or call_id in self._call_ids:
-                number += 1
-                call_id = f"call_{number}"
-            self._call_ids.add(call_id)
-            renamed = renamed or call_id != call.id
-            unique.append(call if call_id == call.id else replace(call, id=call_id))
-        return tuple(unique), renamed
 
     def _outbound(self) -> list[ChatMessage]:
         """Every message the model gets passes here: no raw handle goes out."""
@@ -280,6 +263,8 @@ class QuestionTurn:
                 yield status(prepared.status)
             if self._cancel.cancelled:
                 return
+            if prepared.fetch is not None:  # slow work: its progress reaches the stream while it runs
+                yield from run_beside(prepared.fetch, self._cancel)
             own = prepared.own_budget  # a lookup with a budget of its own does not spend from the question's
             outcome = prepared.run(self._allowance() if own is None else own)
             if not prepared.answers_repeats:
@@ -389,6 +374,7 @@ class QuestionTurn:
             cancelled=reply.cancelled,
             truncated=reply.stop_reason == "length",
         )
+        payload = {**payload, **self._box.memory_payload()}  # nothing is added with no digest source
         if not reply.cancelled:
             cited = frozenset(reply.order)
             answer = stored_form(reply.text, cited.__contains__)
