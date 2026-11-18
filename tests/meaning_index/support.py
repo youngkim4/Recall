@@ -100,3 +100,19 @@ def unit(count: int, dimensions: int, seed: int = 7) -> "np.ndarray":
 
     rows = np.random.default_rng(seed).standard_normal((count, dimensions))
     return (rows / np.linalg.norm(rows, axis=1, keepdims=True)).astype("<f2")
+
+
+def notes(count: int, *, prefix: str = "n", word: str = "note") -> list[SourceMessage]:
+    """`count` messages three hours apart: each one is a segment of its own."""
+    return [msg(f"{prefix}{n}", stamp(n * 180), f"{word} {n}", n % 2 == 1) for n in range(count)]
+
+
+def cut_texts(source: ListSource) -> list[str]:
+    """The text of every segment of a source, in the order of a build."""
+    from meaning_index.segments import cut_segments
+
+    return [
+        segment.text
+        for conversation in source.conversation_ids()
+        for segment in cut_segments(conversation, source.messages(conversation))
+    ]
