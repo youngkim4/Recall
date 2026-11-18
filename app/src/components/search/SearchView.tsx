@@ -6,6 +6,7 @@ import { dayOfMessage } from '../../lib/dayParts'
 import { formatNumber, plural } from '../../lib/format'
 import { rovingKeyDown } from '../../lib/roving'
 import { scopeChoices } from '../../lib/scope'
+import { keepFound, type Found } from '../../lib/searchFound'
 import type { Contact, Defaults, SearchResult } from '../../types'
 import { BookmarkIcon, ChevronLeftIcon } from '../Icons'
 import { DayReader } from '../ui/DayReader'
@@ -22,12 +23,11 @@ type SearchViewProps = {
 
 // the newest matches are listed; the count says how many there are in all
 const SHOWN = 80
-// typing pauses this long before the archive is searched
+// typing pauses this long before the archive is searched, the last word as the start of a word
 const WAIT_MS = 250
+// and stops this long before it is searched again for whole words
+const WHOLE_MS = 900
 const FEWEST_LETTERS = 2
-
-// what was found, and the search it answers
-type Found = { key: string; results: SearchResult[]; total: number }
 
 // What tells one row of the list from another. A saved message is known by
 // its conversation, time and words (bookmarkId), and two messages can share
@@ -57,24 +57,30 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
   const scopes = useMemo(() => scopeChoices(contacts), [contacts])
   const savedIds = useMemo(() => new Set(saved.map(bookmarkId)), [saved])
 
+  // Two asks for each search: soon after a key, with the last word as the
+  // start of a word, and when typing has stopped, for whole words, so "hi"
+  // settles on the word "hi" and not "hit" (keepFound says which stays).
   useEffect(() => {
     if (!messagesPath || !searching) return
     let cancelled = false
-    const timer = window.setTimeout(() => {
+    const ask = (whole: boolean) =>
       recallApi
-        .search({ messagesPath, query: term, contact: scope, limit: SHOWN })
+        .search({ messagesPath, query: term, contact: scope, limit: SHOWN, prefix: !whole })
         .then((response) => {
           if (cancelled) return
-          setFound({ key, results: response.results ?? [], total: response.total ?? response.count })
+          const next = { key, whole, results: response.results ?? [], total: response.total ?? response.count }
+          setFound((shown) => keepFound(shown, next))
           setFailedFor('')
         })
         .catch(() => {
           if (!cancelled) setFailedFor(key)
         })
-    }, WAIT_MS)
+    const typed = window.setTimeout(() => void ask(false), WAIT_MS)
+    const stopped = window.setTimeout(() => void ask(true), WHOLE_MS)
     return () => {
       cancelled = true
-      window.clearTimeout(timer)
+      window.clearTimeout(typed)
+      window.clearTimeout(stopped)
     }
   }, [messagesPath, searching, term, scope, key, attempt])
 

@@ -1,8 +1,17 @@
 import type { ReactNode } from 'react'
 import { isOutbound, messageSource } from '../../lib/conversations'
 import { formatDateTime } from '../../lib/format'
-import { splitByTerm } from '../../lib/highlight'
+import { splitByRanges, splitByTerm } from '../../lib/highlight'
 import type { SearchResult } from '../../types'
+
+// What to pick out: the ranges the server matched, when it sent them, so
+// "hi" does not light up inside "this"; from an older server, the term
+// wherever it stands. A message with no text has nothing to pick out.
+function marked(message: SearchResult, words: string, term: string) {
+  if (!message.text || !term) return splitByTerm(words, '')
+  if (Array.isArray(message.ranges)) return splitByRanges(words, message.ranges)
+  return splitByTerm(words, term)
+}
 
 type MessageHitProps = {
   message: SearchResult
@@ -53,7 +62,7 @@ export function MessageHit({
             {messageSource(message)}, {formatDateTime(message.timestamp)}
           </span>
           <span className={`bubble clamp${isOutbound(message) ? ' you' : ''}`}>
-            {splitByTerm(words, message.text ? term : '').map((segment, at) =>
+            {marked(message, words, term).map((segment, at) =>
               segment.match ? <mark key={at}>{segment.text}</mark> : segment.text,
             )}
           </span>

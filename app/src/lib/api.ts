@@ -123,7 +123,15 @@ export const recallApi = {
   jobs: () => request<{ jobs: Job[] }>('/api/jobs'),
 
   // offset is the place of the first match to give, for the matches after the first answer
-  search: (input: { messagesPath: string; query: string; contact?: string; limit?: number; offset?: number }) =>
+  // prefix: true reads the last word as the start of a word, false takes every word whole
+  search: (input: {
+    messagesPath: string
+    query: string
+    contact?: string
+    limit?: number
+    offset?: number
+    prefix?: boolean
+  }) =>
     request<SearchResponse>(
       `/api/search${queryString({
         messagesPath: input.messagesPath,
@@ -131,6 +139,7 @@ export const recallApi = {
         contact: input.contact,
         limit: input.limit ?? 60,
         offset: input.offset,
+        prefix: input.prefix,
       })}`,
     ),
 

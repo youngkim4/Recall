@@ -238,6 +238,10 @@ export type SearchResult = {
   text: string
   attachment?: string
   isFromMe?: boolean | number | string
+  // From a search: the ranges of `text` the words matched, [start, end) in
+  // UTF-16 units. Empty for a search with no words; missing from an older
+  // server and from anything that is not a search.
+  ranges?: Array<[number, number]>
 }
 
 // One day of one conversation. A very long day is given in part.
