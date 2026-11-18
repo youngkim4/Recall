@@ -19,6 +19,7 @@ from .render import time_key
 from .scope import parse_day
 from .tool_args import ToolInputError, day_arg, text_arg
 from .tool_context import Prepared, ToolContext, ToolOutcome, plural
+from .verify import is_quote_of
 
 logger = logging.getLogger(__name__)
 DIGESTS_PER_QUESTION = 3  # each digest can cost money: one question builds at most this many
@@ -179,7 +180,11 @@ def _in_scope(ctx: ToolContext, *days: str) -> bool:
 
 
 def _with_evidence(ctx: ToolContext, request: DigestRequest, period: Period) -> Period:
-    """The period with the messages of its moments read from the archive. A moment outside the scope goes."""
+    """The period with the messages of its moments read from the archive.
+
+    A moment outside the days of the scope goes. A quote stays only when a
+    message of its moment holds it: the answer check would flag any other.
+    """
     moments = []
     for moment in period.moments:
         if not _in_scope(ctx, moment.date):
@@ -190,7 +195,9 @@ def _with_evidence(ctx: ToolContext, request: DigestRequest, period: Period) -> 
             if message is None or message["conversation"] != request.conversation or not ctx.allows(message):
                 continue  # dropped without a word
             found[str(message["id"])] = message
-        moments.append(replace(moment, messages=tuple(sorted(found.values(), key=time_key))))
+        messages = tuple(sorted(found.values(), key=time_key))
+        held = is_quote_of(moment.quote, [str(message.get("text") or "") for message in messages])
+        moments.append(replace(moment, messages=messages, quote=moment.quote if messages and held else ""))
     return replace(period, moments=tuple(moments))
 
 

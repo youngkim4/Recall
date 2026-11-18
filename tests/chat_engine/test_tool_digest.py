@@ -117,17 +117,26 @@ def test_a_message_the_archive_does_not_hold_or_the_scope_does_not_allow_is_drop
     assert not [a for a in bench.read("message") if a["message_id"] not in {"gone", "j1", "a2", "b1"}]
 
 
-def test_a_quote_is_shown_only_with_a_message_of_its_moment() -> None:
+def test_a_quote_is_shown_only_when_a_shown_message_of_its_moment_holds_it() -> None:
     story = [
         period(
             "2021", "2021-03-04", "2021-03-04", 4, "A lease.",
-            [moment("2021-03-04", "Signed", "It is signed.", "nobody can check this", ["gone"])],
+            [
+                moment("2021-03-04", "Signed", "It is signed.", "nobody can check this", ["gone"]),
+                moment("2021-03-04", "Congrats", "You cheer.", "the lease got signed btw", ["a3"]),
+                moment("2021-03-04", "The move", "A date.", "We move in on the  FIRST of April", ["a4"]),
+            ],
         )
     ]
     bench = bench_for(story)
     outcome = bench.run("conversation_digest", conversation=bench.alias(MAYA_PHONE))
-    assert "- 2021-03-04 · Signed: It is signed." in outcome.text
-    assert "nobody can check this" not in outcome.text and len(bench.registry) == 0
+    lines = [line for line in outcome.text.splitlines() if line.startswith("- ")]
+    assert lines == [
+        "- 2021-03-04 · Signed: It is signed.",  # no message of the moment is shown
+        "- 2021-03-04 · Congrats: You cheer.",  # the message of the moment does not hold the quote
+        '- 2021-03-04 · The move: A date. Quote: "We move in on the FIRST of April"',  # held, as the answer check reads
+    ]
+    assert [m["id"] for m in bench.registry.messages()] == ["a3", "a4"]
 
 
 def test_a_digest_above_the_cost_limit_is_not_built() -> None:
@@ -407,3 +416,58 @@ def test_a_digest_that_does_not_fit_after_the_masking_leaves_no_message_register
     assert not outcome.ok and outcome.text.startswith("The result does not fit.")
     assert len(bench.registry) == 0
     assert [name for name, _ in bench.box.context.memory.digests.calls] == ["estimate", "digest"]
+
+
+def test_the_quote_rule_of_the_digest_is_the_rule_of_the_answer_check() -> None:
+    from chat_engine.verify import is_quote_of, unverified_quotes
+
+    sources = ["yes!! the lease got signed btw", "we move in on the first of April"]
+    for quote in ("the lease got signed btw", "We move in on the FIRST of April", "yes!! ... signed btw", "short"):
+        assert is_quote_of(quote, sources) and unverified_quotes(f"“{quote}”", sources) == []
+    for quote in ("the lease never got signed", "the lease got signed ... first of April"):
+        assert not is_quote_of(quote, sources) and unverified_quotes(f"“{quote}”", sources) == [quote]
+
+
+def test_a_moment_with_no_day_is_shown_only_when_the_scope_has_no_days() -> None:
+    row = {
+        "label": "2023", "first_day": "2023-07-11", "last_day": "2023-07-11", "messages": 3, "summary": "Rent.",
+        "moments": [{"date": "in July", "title": "Rent goes up", "detail": "", "quote": "", "message_ids": ["a7"]}],
+    }
+    nameless = {key: value for key, value in row.items() if key != "label"}
+    cost = {"periods": 2, "periods_cached": 2, "usd": 0}
+    result = {"periods": [row, nameless], "periods_failed": 0}
+    free = MemoryBench(digests=_Odd(cost, result))
+    text = free.run("conversation_digest", conversation=free.alias(MAYA_PHONE)).text
+    assert "- Rent goes up\n2023-07-11\nm1 09:05 Maya Okafor: fifty more a month" in text
+    assert "[1 period could not be built and is missing.]" in text
+    dated = MemoryBench(digests=_Odd(cost, result), scope=Scope(since="2023-01-01"))
+    text = dated.run("conversation_digest", conversation=dated.alias(MAYA_PHONE)).text
+    assert "Rent goes up" not in text and "Rent." in text and len(dated.registry) == 0
+
+
+def test_a_tokenizer_that_counts_a_text_differently_later_leaves_no_message_without_its_line() -> None:
+    from chat_engine.render import Limits
+
+    seen: list[str] = []
+
+    def count(text: str) -> int:
+        if text.startswith("- "):
+            seen.append(text)
+        late = text.startswith("- ") and len(seen) > 3  # the three moments were counted for the plan
+        return estimate_tokens(text) * (500 if late else 1)
+
+    bench = bench_for(limits=Limits(count_tokens=count), digest_tokens=2000)
+    outcome = bench.run("conversation_digest", conversation=bench.alias(MAYA_PHONE))
+    assert "The landlord raises the rent." in outcome.text and "Rent goes up" not in outcome.text
+    assert outcome.text.splitlines()[-1].startswith("[Cut to fit: 3 moments are not shown.")
+    assert len(bench.registry) == 0 and shown_refs(outcome.text) == set()
+
+
+def test_a_summary_is_masked_before_it_is_measured_so_the_masks_do_not_break_the_budget() -> None:
+    story = [period("2025", "2025-01-15", "2025-01-16", 3, "call 720-555-0199 " * 100)]
+    bench = MemoryBench(digests=FakeDigests({UNSAVED_PHONE: story}), digest_tokens=800)
+    outcome = bench.run("conversation_digest", conversation=bench.alias(UNSAVED_PHONE))
+    assert estimate_tokens("call 720-555-0199 " * 100) < 800 < estimate_tokens("call a number ending in 0199 " * 100)
+    assert outcome.ok and estimate_tokens(outcome.text) <= 800
+    assert outcome.text.count("call a number ending in 0199") > 50 and " [cut]" in outcome.text
+    assert "720" not in outcome.text

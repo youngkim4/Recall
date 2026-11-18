@@ -238,3 +238,31 @@ def test_a_result_that_does_not_fit_after_the_masking_leaves_no_message_register
     assert not outcome.ok and outcome.text.startswith("The result does not fit.")
     assert len(bench.registry) == 0
     assert len(port.calls) == 1  # the result was written twice; the port was asked one time
+
+
+def test_an_exchange_with_no_message_inside_the_scope_is_left_out() -> None:
+    port = FakeMeaning([hit(JONAS_PHONE, "j1", "j4")])  # it starts in 2024 and ends in 2026
+    bench = MemoryBench(meaning=port, scope=Scope(since="2025-01-01", until="2025-12-31"))
+    outcome = bench.run("search_messages", query="zzz", match="meaning")
+    assert outcome.text.endswith("nothing found.") and len(bench.registry) == 0
+
+
+def test_a_word_hit_next_to_an_exchange_joins_it() -> None:
+    port = FakeMeaning([hit(JONAS_PHONE, "j2", "j3")])
+    bench = MemoryBench(meaning=port)
+    outcome = bench.run("search_messages", query="starter", match="meaning")
+    lines = [line for line in outcome.text.splitlines() if line[:1] == "m"]
+    assert lines == [
+        "m1 12:00 Jonas Weber: sourdough starter is alive  <<< match",
+        "m2 12:01 You: you named it??",
+        "m3 12:02 Jonas Weber: its name is Clint Yeastwood",
+    ]
+    assert "1 exchange, best first." in outcome.text and "more exchange" not in outcome.text
+
+
+def test_a_hit_outside_the_conversations_of_the_call_is_dropped() -> None:
+    port = FakeMeaning([JONAS_2024, MAYA_2021])  # the call names Maya; the port returns Jonas by mistake
+    bench = MemoryBench(meaning=port)
+    outcome = bench.run("search_messages", query="zzz", match="meaning", conversations=[bench.alias(MAYA_PHONE)])
+    assert "the lease got signed" in outcome.text and "Clint Yeastwood" not in outcome.text
+    assert all(m["conversation"] == MAYA_PHONE for m in bench.registry.messages())

@@ -47,7 +47,7 @@ _SEARCH_MEANING = (
     ' Set match to "meaning" to find exchanges by what they are about, when you do not know the '
     "words: an apology, a plan, good news, a fight. Then query is a short description of the exchange, "
     'such as "we made up after a fight" or "planning a trip together". The result is whole exchanges, '
-    "best first, found by meaning and by words together; limit counts exchanges, and from_me does not apply."
+    "best first, found by meaning and by words together; limit counts exchanges, and from_me must be null."
 )
 
 
