@@ -5,13 +5,16 @@ import { contactTitle, conversationName } from '../../lib/conversations'
 import { dayOfMessage } from '../../lib/dayParts'
 import { formatNumber, plural } from '../../lib/format'
 import { rovingKeyDown } from '../../lib/roving'
+import { loadPatterns } from '../../lib/overviewLoads'
 import { scopeChoices } from '../../lib/scope'
+import { NO_FILTERS, filterParams, filtersKey, filtersSet, shownWord, type SearchFilters } from '../../lib/searchFilters'
 import { keepFound, type Found } from '../../lib/searchFound'
+import { useLoad } from '../../lib/useLoad'
 import type { Contact, Defaults, SearchResult } from '../../types'
 import { BookmarkIcon, ChevronLeftIcon } from '../Icons'
 import { DayReader } from '../ui/DayReader'
-import { ListPicker } from '../ui/ListPicker'
 import { MessageHit } from '../ui/MessageHit'
+import { SearchFilterBar, SearchSort } from './SearchFilterBar'
 import { SearchField } from '../ui/SearchField'
 import { Truncate } from '../ui/Truncate'
 
@@ -42,7 +45,9 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
   const messagesPath = defaults?.messagesPath ?? ''
   const list = useRef<HTMLUListElement>(null)
   const [query, setQuery] = useState('')
-  const [scope, setScope] = useState('')
+  const [filters, setFilters] = useState<SearchFilters>(NO_FILTERS)
+  // the days of the archive, for the calendar of the date filter (kept from the Overview)
+  const { load: patterns } = useLoad(messagesPath, loadPatterns)
   const [found, setFound] = useState<Found | null>(null)
   const [failedFor, setFailedFor] = useState('')
   const [attempt, setAttempt] = useState(0)
@@ -51,21 +56,32 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
   const [pickedId, setPickedId] = useState('')
   const [pane, setPane] = useState<'list' | 'detail'>('list')
 
-  const term = query.trim()
-  const searching = term.length >= FEWEST_LETTERS
-  const key = `${term}\n${scope}`
+  const typed = query.trim()
+  const hasWords = typed.length >= FEWEST_LETTERS
+  const term = hasWords ? typed : ''
+  // words, or a filter with no words: then the filter lists the messages it lets through
+  const narrowed = filtersSet(filters)
+  const searching = hasWords || narrowed
+  const key = `${term}\n${filtersKey(filters)}`
   const scopes = useMemo(() => scopeChoices(contacts), [contacts])
   const savedIds = useMemo(() => new Set(saved.map(bookmarkId)), [saved])
 
   // Two asks for each search: soon after a key, with the last word as the
   // start of a word, and when typing has stopped, for whole words, so "hi"
   // settles on the word "hi" and not "hit" (keepFound says which stays).
+  // A search of filters alone has no words to read either way, and asks once.
   useEffect(() => {
     if (!messagesPath || !searching) return
     let cancelled = false
     const ask = (whole: boolean) =>
       recallApi
-        .search({ messagesPath, query: term, contact: scope, limit: SHOWN, prefix: !whole })
+        .search({
+          messagesPath,
+          query: term,
+          limit: SHOWN,
+          prefix: term ? !whole : undefined,
+          filters: filterParams(filters, Boolean(term)),
+        })
         .then((response) => {
           if (cancelled) return
           const next = { key, whole, results: response.results ?? [], total: response.total ?? response.count }
@@ -75,14 +91,14 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
         .catch(() => {
           if (!cancelled) setFailedFor(key)
         })
-    const typed = window.setTimeout(() => void ask(false), WAIT_MS)
-    const stopped = window.setTimeout(() => void ask(true), WHOLE_MS)
+    const soon = window.setTimeout(() => void ask(!term), WAIT_MS)
+    const stopped = term ? window.setTimeout(() => void ask(true), WHOLE_MS) : 0
     return () => {
       cancelled = true
-      window.clearTimeout(typed)
+      window.clearTimeout(soon)
       window.clearTimeout(stopped)
     }
-  }, [messagesPath, searching, term, scope, key, attempt])
+  }, [messagesPath, searching, term, filters, key, attempt])
 
   // while the next answer is on its way, the last one stays up
   const settled = found?.key === key
@@ -143,9 +159,11 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
       : !settled
         ? 'Searching'
         : found.total === 0
-          ? `No messages match “${term}”`
+          ? term
+            ? `No messages match “${term}”`
+            : 'No messages match these filters'
           : found.total > found.results.length
-            ? `${plural(found.total, 'message')}, the newest ${formatNumber(found.results.length)} shown`
+            ? `${plural(found.total, 'message')}, the ${shownWord(filters, Boolean(term))} ${formatNumber(found.results.length)} shown`
             : plural(found.total, 'message')
 
   return (
@@ -163,15 +181,13 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
               disabled={!messagesPath}
               onKeyDown={handleSearchKey}
             />
-            <ListPicker
-              label="Conversations to search"
-              value={scope}
-              options={scopes}
-              onChange={setScope}
-              searchPlaceholder="Search conversations"
-              emptyText="No conversations match"
-            />
           </div>
+          <SearchFilterBar
+            filters={filters}
+            onChange={setFilters}
+            scopes={scopes}
+            daily={patterns.state === 'ready' ? patterns.value.daily : null}
+          />
 
           {failed ? (
             <p className="search-status" role="alert">
@@ -181,9 +197,18 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
               </button>
             </p>
           ) : (
-            <p className="search-status" role="status">
-              {status}
-            </p>
+            <div className="search-status-row">
+              <p className="search-status" role="status">
+                {status}
+              </p>
+              {searching ? (
+                <SearchSort
+                  order={filters.order}
+                  onChange={(order) => setFilters({ ...filters, order })}
+                  hasWords={hasWords}
+                />
+              ) : null}
+            </div>
           )}
         </div>
 
@@ -205,7 +230,7 @@ export function SearchView({ defaults, contacts, onSelectContact }: SearchViewPr
                   <li key={`${id}\n${index}`}>
                     <MessageHit
                       message={message}
-                      term={searching ? term : ''}
+                      term={term}
                       picked={id === currentId}
                       onOpen={() => {
                         setPickedId(id)

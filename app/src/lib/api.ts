@@ -17,6 +17,7 @@ import type {
 } from '../types'
 import { ApiError, apiErrorFrom } from './apiError'
 import { readFrame, takeFrames } from './askEvents'
+import type { SearchFilters } from './searchFilters'
 
 const apiBase = import.meta.env.VITE_RECALL_API_BASE?.replace(/\/$/, '') ?? ''
 
@@ -123,7 +124,9 @@ export const recallApi = {
   jobs: () => request<{ jobs: Job[] }>('/api/jobs'),
 
   // offset is the place of the first match to give, for the matches after the first answer
-  // prefix: true reads the last word as the start of a word, false takes every word whole
+  // prefix: true reads the last word as the start of a word, false takes every
+  // word whole. filters: only those that are set (filterParams); with no words
+  // and a filter, the search lists the messages the filter lets through.
   search: (input: {
     messagesPath: string
     query: string
@@ -131,12 +134,14 @@ export const recallApi = {
     limit?: number
     offset?: number
     prefix?: boolean
+    filters?: Partial<SearchFilters>
   }) =>
     request<SearchResponse>(
       `/api/search${queryString({
+        ...input.filters,
         messagesPath: input.messagesPath,
         query: input.query,
-        contact: input.contact,
+        contact: input.contact ?? input.filters?.contact,
         limit: input.limit ?? 60,
         offset: input.offset,
         prefix: input.prefix,

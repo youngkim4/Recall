@@ -25,6 +25,57 @@
     min-width: 0;
   }
 
+  /* The filters under the field, after Slack's search: quiet buttons in one
+     row, the sort at its end. The first button's fill starts on the field's
+     edge. A narrow pane wraps the row. */
+  .search-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-1);
+    margin-top: var(--s-2);
+  }
+
+  .search-filters > .filter {
+    display: contents;
+  }
+
+  /* a filter that is set is filled in the colour of the theme, so what narrows the list shows at a glance */
+  .search-filters > .filter[data-set] > .picker {
+    color: var(--you-ink);
+    background: color-mix(in oklab, var(--you) 12%, transparent);
+  }
+
+  .search-filters > .filter[data-set] > .picker > .icon,
+  .search-filters > .filter[data-set] .picker-label {
+    color: inherit;
+  }
+
+  .search-filters-reset {
+    padding-inline: var(--s-2);
+  }
+
+  /* how many were found, and at the end of that line the order of the
+     matches; the sort's button stands out of the line's height, so the rows
+     under it do not move when it comes and goes */
+  .search-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-2);
+    margin-top: var(--s-3);
+    min-height: var(--lh-body);
+  }
+
+  .search-status-row > .search-status {
+    margin-top: 0;
+    min-width: 0;
+  }
+
+  .search-status-row > .picker {
+    margin-block: calc((var(--lh-body) - var(--control-h)) / 2);
+  }
+
   /* the one thing this page is for is set a size up */
   .search-lg > .field {
     height: var(--control-h-lg);

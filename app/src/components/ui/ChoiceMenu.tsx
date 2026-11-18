@@ -1,17 +1,11 @@
 import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { PanelAlign } from '../../lib/anchor'
+import type { Choice } from '../../lib/choice'
 import { stepIndex } from '../../lib/roving'
 import { usePanel } from '../../lib/usePanel'
 import { CheckIcon, ChevronDownIcon } from '../Icons'
 
-export type Choice = {
-  value: string
-  label: string
-  // a quiet word beside the label, such as the name of the model behind a level
-  meta?: string
-  // what choosing it means, in a few words
-  note?: string
-}
+export type { Choice }
 
 type ChoiceMenuProps = {
   // what is being set: "Quality". Shown in the button ahead of the value.
@@ -26,13 +20,25 @@ type ChoiceMenuProps = {
   // a control of its own under the choices, about the choice in use: it stays
   // in the panel, and Tab goes on to it
   extra?: ReactNode
+  // set for a filter: with nothing chosen (the value ''), the button says only
+  // what it filters, "From", and the value shows once one is chosen
+  bare?: boolean
 }
 
 // A quiet button that names a setting and its value, and opens a short menu
 // of the choices: each with a line about what it means, and a check on the
 // one in use. The arrow keys move through it, Return chooses, Escape or a
 // click outside closes it and focus goes back to the button.
-export function ChoiceMenu({ label, value, choices, onChange, align = 'start', quietLabel, extra }: ChoiceMenuProps) {
+export function ChoiceMenu({
+  label,
+  value,
+  choices,
+  onChange,
+  align = 'start',
+  quietLabel,
+  extra,
+  bare,
+}: ChoiceMenuProps) {
   const id = useId()
   const [active, setActive] = useState(0)
   const menu = useRef<HTMLUListElement>(null)
@@ -87,11 +93,17 @@ export function ChoiceMenu({ label, value, choices, onChange, align = 'start', q
         aria-expanded={open}
         aria-label={`${label}: ${current?.label ?? value}`}
       >
-        {quietLabel ? null : <span className="picker-label">{label}</span>}
-        {/* a new value fades in over the old one */}
-        <span key={value} className="picker-value swap">
-          {current?.label ?? value}
-        </span>
+        {bare && !value ? (
+          <span className="picker-value">{label}</span>
+        ) : (
+          <>
+            {quietLabel ? null : <span className="picker-label">{label}</span>}
+            {/* a new value fades in over the old one */}
+            <span key={value} className="picker-value swap">
+              {current?.label ?? value}
+            </span>
+          </>
+        )}
         <ChevronDownIcon />
       </button>
       <div
