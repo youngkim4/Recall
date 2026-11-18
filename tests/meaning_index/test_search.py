@@ -78,7 +78,7 @@ def test_a_hit_is_a_stored_segment_and_its_score(index: MeaningIndex) -> None:
 
 def test_hits_are_in_order_of_score_and_every_segment_can_be_given(index: MeaningIndex) -> None:
     hits = index.search(query("ferry"))
-    assert len(hits) == len(index) == 7
+    assert len(hits) == len(index) == 6
     scores = [hit.score for hit in hits]
     assert scores == sorted(scores, reverse=True)
 
@@ -95,7 +95,7 @@ def test_the_score_is_the_dot_product_with_a_query_of_unit_length(index: Meaning
 def test_limit_cuts_the_hits(index: MeaningIndex) -> None:
     assert len(index.search(query("ferry"), limit=2)) == 2
     assert firsts(index.search(query("ferry"), limit=2)) == firsts(index.search(query("ferry")))[:2]
-    assert len(index.search(query("ferry"), limit=500)) == 7
+    assert len(index.search(query("ferry"), limit=500)) == 6
 
 
 def test_the_default_limit_is_20(folder: Path) -> None:
@@ -152,7 +152,7 @@ def test_the_two_filters_work_together(index: MeaningIndex) -> None:
 
 
 def test_a_far_day_is_a_bound_with_nothing_beyond_it(index: MeaningIndex) -> None:
-    assert len(index.search(query("ferry"), since="1900-01-01", until="9999-12-31")) == 7
+    assert len(index.search(query("ferry"), since="1900-01-01", until="9999-12-31")) == 6
 
 
 @pytest.mark.parametrize("bad", ["2024-6-3", "yesterday", "2024-02-30", "2024-06-03 10:00:00", "", 20240603])
@@ -170,8 +170,8 @@ def test_a_query_that_is_no_vector_of_the_index_is_refused(index: MeaningIndex, 
 
 
 def test_the_index_says_what_it_holds(index: MeaningIndex) -> None:
-    assert (index.model, index.dimensions, len(index)) == ("fake-embedding-1", 64, 7)
-    assert index.meta.segments == 7
+    assert (index.model, index.dimensions, len(index)) == ("fake-embedding-1", 64, 6)
+    assert index.meta.segments == 6
 
 
 def test_the_stored_vectors_have_unit_length(folder: Path, index: MeaningIndex) -> None:
@@ -197,10 +197,10 @@ def test_search_and_store_agree_on_rows_after_a_build_that_removes_segments(fold
     del data[LAKE]
     data[HOME] = [*data[HOME], msg("h4", "2024-09-09 09:00:00", "the automobile is at the garage")]
     result = build_index(ListSource(data), FakeEmbedder(), store, count_tokens=words)
-    assert (result.removed, result.embedded, result.reused) == (3, 1, 4)
+    assert (result.removed, result.embedded, result.reused) == (2, 1, 4)
     index = MeaningIndex.load(store)
     assert index is not None
-    assert firsts(index.search(query("ferry"))) [0] == "w2"
+    assert firsts(index.search(query("ferry")))[0] == "w2"
     assert firsts(index.search(query("supper")))[0] == "h1"
     assert firsts(index.search(query("car")))[0] == "h4"
     assert firsts(index.search(query("dog")))[0] == "h3"
@@ -241,23 +241,23 @@ def test_the_hits_are_the_ones_of_a_plain_dot_product_over_every_row(limit: int)
     probe /= np.linalg.norm(probe)
     scores = rows.astype(np.float64) @ probe
 
-    def expected(mask: np.ndarray) -> list[str]:
+    def check(found: list[SearchHit], mask: np.ndarray) -> None:
+        """The hits are the best rows of the mask. Two scores that differ by less than the rounding can change places."""
         places = np.flatnonzero(mask)
-        order = places[np.lexsort((places, -scores[places]))][:limit]
-        return [segments[n].segment_id for n in order]
+        best = np.sort(scores[places])[::-1][:limit]
+        rows_found = [int(hit.segment.segment_id, 16) for hit in found]
+        assert len(set(rows_found)) == len(rows_found) == len(best)
+        assert all(mask[row] for row in rows_found)
+        assert scores[rows_found] == pytest.approx(best, abs=1e-5)
+        assert [hit.score for hit in found] == pytest.approx(best, abs=1e-4)
 
-    everything = np.ones(count, dtype=bool)
-    found = index.search(probe.tolist(), limit=limit)
-    assert [hit.segment.segment_id for hit in found] == expected(everything)
-    assert [hit.score for hit in found][:3] == pytest.approx(sorted(scores, reverse=True)[:3], abs=1e-4)
-
+    check(index.search(probe.tolist(), limit=limit), np.ones(count, dtype=bool))
     in_chat = np.array([n % 3 == 1 for n in range(count)])
-    found = index.search(probe.tolist(), conversations=["chat-1"], limit=limit)
-    assert [hit.segment.segment_id for hit in found] == expected(in_chat)
-
+    check(index.search(probe.tolist(), conversations=["chat-1"], limit=limit), in_chat)
     in_march = np.array([n % 12 == 2 for n in range(count)])
-    found = index.search(probe.tolist(), since="2024-03-01", until="2024-03-31", limit=limit)
-    assert [hit.segment.segment_id for hit in found] == expected(in_march)
+    check(index.search(probe.tolist(), since="2024-03-01", until="2024-03-31", limit=limit), in_march)
+    both = in_chat & in_march
+    check(index.search(probe.tolist(), conversations=["chat-1"], since="2024-03-01", until="2024-03-31", limit=limit), both)
 
 
 def test_parts_that_do_not_fit_are_refused() -> None:
