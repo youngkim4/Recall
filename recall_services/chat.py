@@ -214,7 +214,10 @@ def _events(
             return
         config = models.chat_config(model.strip() or models.default_id())
         settings = EngineConfig(model=config.model, max_output_tokens=config.max_output_tokens)
-        engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock)
+        from recall_services import memory  # loaded with the first question; a test puts its own `memory.ports`
+
+        ports = memory.ports(archive, names)  # the search by meaning and the digest, each None when it can not work
+        engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock, **ports)
         answering = engine.stream(asked.question, scope=asked.scope, session=_session(history), cancel=cancel)
     except engine_errors.ChatEngineError as error:
         yield _failure(error.to_event(), config)
