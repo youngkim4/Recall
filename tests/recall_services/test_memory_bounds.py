@@ -11,7 +11,7 @@ import pytest
 
 from chat_engine.cancel import CancelToken
 from recall_services import digests, memory, models, reports
-from report_engine.fake_llm import FakeCall, FakeLLM
+from report_engine.fake_llm import FakeCall, FakeLLM, completed
 from report_engine.openai_llm import OpenAIResponsesLLM
 from tests.recall_services.report_world import MODEL, Desk
 from tests.recall_services.test_memory_digests import port, settings
@@ -203,3 +203,56 @@ def test_a_start_that_fails_is_a_no_and_never_an_error_of_the_question(
 
     assert bounded(desk, start_digest=start).prepare(MINA, **ALL) is False
     assert "RuntimeError" in caplog.text and MINA not in caplog.text
+
+
+# --- a digest that was paid for and gave nothing -----------------------------------
+
+
+def refused_by_the_model(call: FakeCall) -> Any:
+    return completed(call, None, text="", status="refused")  # paid, and no result
+
+
+def spend_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [record.getMessage() for record in caplog.records if record.name == memory.SPEND_LOG]
+
+
+def test_a_digest_that_was_paid_for_and_failed_says_what_it_cost(desk: Desk, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger=memory.SPEND_LOG)
+    model = FakeLLM(refused_by_the_model)
+    with pytest.raises(digests.ReportFailure) as told:
+        bounded(desk, model).digest(MINA, cancel=CancelToken(), **TWO_MONTHS)
+    failure = told.value
+    assert failure.code == "model_error" and len(model.calls) == 2
+    assert failure.usd > 0 and failure.usd == failure.usage["cost_usd"]
+    assert spend_lines(caplog) == [
+        f"a digest inside a question gave nothing (model_error): 2 model calls, {failure.usd:.4f} USD"
+    ]
+    assert MINA not in caplog.text
+
+
+def test_a_digest_that_is_cancelled_after_a_part_says_what_that_part_cost(
+    desk: Desk, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger=memory.SPEND_LOG)
+    token = CancelToken()
+
+    def stops(_call: FakeCall) -> Any:
+        token.cancel()
+        return None
+
+    model = FakeLLM(stops)
+    with pytest.raises(digests.ReportFailure) as told:
+        bounded(desk, model).digest(MINA, cancel=token, **TWO_MONTHS)
+    assert told.value.code == "cancelled" and len(model.calls) == 1 and told.value.usd > 0
+    assert spend_lines(caplog) == [
+        f"a digest inside a question gave nothing (cancelled): 1 model calls, {told.value.usd:.4f} USD"
+    ]
+
+
+def test_a_digest_that_failed_before_any_call_cost_nothing_and_leaves_no_line(
+    desk: Desk, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger=memory.SPEND_LOG)
+    with pytest.raises(digests.ReportFailure) as told:
+        bounded(desk, FakeLLM()).digest(MINA, cancel=CancelToken(), **ALL)
+    assert (told.value.code, told.value.usd) == ("too_many_parts", 0.0) and spend_lines(caplog) == []

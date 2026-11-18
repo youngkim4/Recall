@@ -147,10 +147,8 @@ def test_a_digest_over_the_limit_of_new_parts_is_refused_before_any_call(desk: D
     reports.run(MINA, MODEL, "2023-01-01", "2023-01-31", **desk.more())
     model = FakeLLM()
     failure = expect_failure(desk, model, "too_many_parts", max_new_periods=2)
-    assert str(failure) == (
-        "This conversation has 3 parts that are not read yet, and 2 can be read now. "
-        "Choose fewer dates, or run a report on the conversation first."
-    )
+    # a report helps only when it was run with the model of the digest: the sentence does not advise one
+    assert str(failure) == "This conversation has 3 parts that are not read yet, and 2 can be read now. Choose fewer dates."
     assert model.calls == [] and failure.usage is None
     one = expect_failure(desk, model, "too_many_parts", max_new_periods=0, since="2023-02-01", until="2023-02-28")
     assert str(one).startswith("This conversation has 1 part that is not read yet, and 0 can be read now.")
