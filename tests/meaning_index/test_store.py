@@ -348,3 +348,60 @@ def test_a_folder_that_can_not_be_made_is_a_typed_error(tmp_path: Path) -> None:
     blocker.write_text("x", encoding="utf-8")
     with pytest.raises(StoreError), make(blocker / "meaning").building():
         pass
+
+
+def test_a_failure_of_the_caller_inside_a_build_is_not_taken_for_a_failure_of_the_store(folder: Path) -> None:
+    store = make(folder)
+    with pytest.raises(OSError) as caught, store.building():
+        raise OSError("the caller failed")
+    assert not isinstance(caught.value, StoreError)
+    with store.building():
+        pass
+
+
+def test_a_disk_that_refuses_the_new_files_is_a_typed_error(folder: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = make(folder)
+    fill(store)
+    before = content(folder)
+
+    def refuse(path: object, meta: object) -> None:
+        raise OSError("no space left")
+
+    monkeypatch.setattr(store_files, "write_meta", refuse)
+    with pytest.raises(StoreError), store.building():
+        store.replace("model-b", 8, [kept(n) for n in range(4)], [unit(4, 8)])
+    assert content(folder) == before
+    assert not list(folder.glob("*.new"))
+
+
+def test_a_repair_that_fails_is_a_typed_error(folder: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = make(folder)
+    torn(folder, store, 1)
+
+    def refuse(source: object, target: object) -> None:
+        raise OSError("the disk said no")
+
+    monkeypatch.setattr(store_files.os, "replace", refuse)
+    with pytest.raises(StoreError), store.building():
+        pass
+
+
+def test_a_segments_file_with_fewer_rows_than_its_build_names_is_no_index(folder: Path) -> None:
+    store = make(folder)
+    fill(store)
+    conn = sqlite3.connect(folder / "segments.sqlite3")
+    conn.execute('DELETE FROM segments WHERE "row" = 4')
+    conn.commit()
+    conn.close()
+    assert store.read() is None
+
+
+def test_a_segments_file_with_a_row_missing_in_the_middle_is_a_typed_error(folder: Path) -> None:
+    store = make(folder)
+    fill(store)
+    conn = sqlite3.connect(folder / "segments.sqlite3")
+    conn.execute('DELETE FROM segments WHERE "row" = 2')
+    conn.commit()
+    conn.close()
+    with pytest.raises(StoreError):
+        store.read()
