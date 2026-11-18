@@ -33,7 +33,8 @@ Ask for `state.archive()` and for `names.cached(...)` at the start of each reque
 |---|---|
 | `/api/defaults` (models) | `models.defaults_payload()` |
 | `/api/contacts` | `conversations.payload(archive, saved, limit, messages_path)` |
-| `/api/search` | `search.payload(archive, saved, query, contact, limit, offset, as_you_type=True)` |
+| `/api/search` | `search.answer(archive, saved, query_string)`, which calls `search.payload(archive, saved, query, contact, limit, offset, as_you_type=..., filters=..., order=...)` |
+| `/api/stats` | `stats.answer(archive, saved, query_string)`, which calls `stats.payload(archive, saved, filters, words=..., by=..., limit=..., prefix=...)` |
 | `/api/day` | `day.payload(archive, saved, contact, day, around, offset, limit)` |
 | `/api/ask/stream` | `chat.stream(question, contact, model, history, cancel, archive=..., names=..., use_ai=...)` |
 | `/api/ask` | `chat.ask(...)`, the same arguments |
@@ -119,6 +120,90 @@ A group that nobody named gets a name from its saved people. Two differences fro
 
 - A member who never wrote is a person of the group. The export knew only the writers.
 - A person with two handles stands where the busier handle stands. The export rule added both.
+
+## Search and counts
+
+`search.py` answers `/api/search`. `stats.py` answers `/api/stats`. Both read the filters of `search_filters.py`.
+
+### Filters
+
+Each filter is optional. All of them are combined with AND. A value that is not allowed is a `ValueError` with one sentence, and the route answers 400 with it: `{"error": "kind must be direct, group or empty."}`. The sentence never repeats the value.
+
+| Parameter | Values |
+|---|---|
+| `contacts` | conversation ids, comma separated. `contact` (one id) still works and is added first. An id matches whole. An unknown id matches nothing. |
+| `since`, `until` | local days, `YYYY-MM-DD`, both included. A `since` after `until` matches nothing. |
+| `from` | `me`, `them` or empty |
+| `kind` | `direct`, `group` or empty |
+| `attachments` | `any`, `none`, `image`, `video`, `audio`, `other` or empty |
+| `query` | the words. `prefix=true` makes the last word a prefix. Default `false`. A star is always a prefix. |
+| `order` | `/api/search` only: `newest` (default), `oldest`, `relevance` |
+
+- The kind of an attachment comes from its mime type: `image/*`, `video/*`, `audio/*`. `other` is every other type and an attachment with no type. A GIF is an image.
+- `any` is a message with one attachment record or more. A message of kind `attachment` with no record (an old export) is `none`.
+- A message with an image and a video is in `image` and in `video`.
+- `relevance` with no words is `newest`.
+
+### `/api/search`
+
+```json
+{
+  "query": "hi",
+  "contact": "",
+  "count": 2,
+  "total": 2,
+  "offset": 0,
+  "results": [
+    {
+      "messageId": "…", "chatId": "…", "displayName": "…", "senderName": "…",
+      "timestamp": "2025-01-03 19:30:00", "sender": "…", "text": "this is which hi",
+      "attachment": "", "isFromMe": true,
+      "ranges": [[14, 16]]
+    }
+  ],
+  "filters": {"contacts": [], "since": "", "until": "", "from": "", "kind": "", "attachments": ""},
+  "order": "newest",
+  "prefix": false
+}
+```
+
+- `filters` holds every key. A filter that was not applied is `""` or `[]`. `contacts` holds `contact` too.
+- `ranges` are `[start, end)` in UTF-16 units of `text`, as JavaScript counts. They are the ranges that the index matched: a prefix marks the whole word. They follow the shown text: no outer space, no attachment placeholder. A word after the cut of a long text (600 characters) has no range. A range across the cut stops at the cut.
+- With no words, `ranges` is `[]`.
+- No words and a filter list the messages of the filter, newest first. `total` counts all of them. The pages have no depth limit.
+
+### `/api/stats`
+
+```json
+{
+  "by": "person",
+  "query": "pizza",
+  "prefix": false,
+  "filters": {"contacts": [], "since": "", "until": "", "from": "", "kind": "", "attachments": ""},
+  "totals": {"total": 5, "sent": 1, "received": 4},
+  "first": "2025-01-01",
+  "last": "2025-01-05",
+  "rows": [
+    {"key": "+15550000001", "label": "Avery Stone", "total": 2, "sent": 1, "received": 1,
+     "conversations": ["+15550000001"]}
+  ],
+  "rowsTotal": 3
+}
+```
+
+- `by`: `day`, `week`, `month`, `year`, `weekday`, `hour`, `weekday_hour`, `person`, `conversation`, or empty. Empty gives `rows` `[]` and the totals only.
+- `totals` covers the whole filtered set. `first` and `last` are its first and last local day, or `null` when the set is empty. `received` is read from the archive, never worked out from `total`.
+- `rowsTotal` is the number of rows before `limit`.
+- Time rows: `{"key", "label", "total", "sent", "received"}`.
+  - `day` (`YYYY-MM-DD`), `week` (the Monday, `YYYY-MM-DD`), `month` (`YYYY-MM`), `year` (`YYYY`): every bucket from `since` to `until`, in time order. With no `since`, the range starts at `first`. With no `until`, it ends at `last`. The range never goes past the first or the last day of the archive. An empty bucket is a row of zeros. The label is the key.
+  - `weekday` (`0` is Monday to `6`, label `Monday`), `hour` (`00` to `23`, label `09:00`), `weekday_hour` (`W-HH`, label `Monday 09:00`): every bucket, always.
+  - With an empty set and no `since` or `until`, `day` to `year` have no row.
+- People rows: the time row and `conversations`, the ids that the row counts.
+  - `conversation`: one row per conversation.
+  - `person`: one row per person. The phone thread and the email thread of one person are one row: the archive joins handles of one contact record (`Conversation["person_id"]`). A group is its own row. The key is the id of the busiest thread in the set.
+  - The label is `conversation_label(names.conversation(record), id)` from `conversation.py`: the words of `conversationName` in the app. A saved name, a group name, "Unnamed group", "Number ending in 1234", or an email address as it is. No full phone number of a person who is not saved.
+  - The busiest come first (a tie: the key). `limit` is 50 by default, held between 1 and 500.
+- `GET /api/stats/words` (the most used words) is not built. See the README of the archive for the time it needs.
 
 ## Chat
 
@@ -342,8 +427,8 @@ Each one has a test that states it.
 - `reactions_frame` holds the six classic kinds of tapback. A tapback with any emoji or a sticker is no row.
 - A message that was unsent is a row of the archive with no text. It counts in the list, in a day and in a search with no words. `messages_frame` has no row for it. `tests/recall_services/test_frame_edges.py` states this open seam.
 - `around` of a day must be written as `YYYY-MM-DD HH:MM` or longer. Other forms give the start of the day.
-- A search matches whole words. `piz` does not find `pizza`; `piz*` does. `as_you_type=True` makes the last word a prefix.
-- A search with no words and no conversation gives nothing.
+- A search matches whole words. `piz` does not find `pizza`; `piz*` does. `prefix=true` (`as_you_type=True`) makes the last word a prefix.
+- A search with no words and no filter gives nothing. With a filter it lists the messages of the filter.
 - `sender` of an own message is `""`. The export held the handle of the other person there.
 - `senderName` is set only for a received message in a group.
 - A chat answer has no `terms`, and no keyword answer takes the place of an answer that failed.

@@ -251,6 +251,9 @@ Additions to the contract. None of them changes a name, an argument or a shape:
 - A reaction of kind `emoji` has one more key, `emoji`.
 - `summary()` has one more key, `messages_without_conversation`.
 - `no_conversation=False` on `iter_messages`, `search` and `count`. See "Messages with no conversation".
+- `kind=None` and `attachments=None` on `search` and `count`. See "Kind and attachments".
+- `browse=False` on `search`. With `browse=True` a query with no words lists every message of the filters, with `ranges` `[]`. The order is `newest` or `oldest`; `relevance` is `newest`.
+- `group_by` of `count` also takes `week`, `weekday` and `hour`.
 
 Argument checks: a number that is not an `int` in range, or a flag that is not a `bool`, raises `ValueError`. An id that is not text raises `TypeError`. `limit` has no upper bound below 2^63: `messages()` and `context()` read the page into memory, so use `iter_messages()` for a whole conversation.
 
@@ -279,6 +282,16 @@ The source can hold a message with no row in `chat_message_join`. A real export 
 - `message(id)` and `message_by_source_rowid(rowid)` return such a message: the caller named it. `context(id)` gives that message alone.
 - `compat.messages_frame()` has these messages with a missing `chat_id`, as the export has.
 - When a later pull finds a chat for the message, the message moves into that conversation.
+
+### Kind and attachments
+
+`archive/narrow.py` holds the SQL of two filters of `search` and `count`. None is no filter.
+
+- `kind`: `direct` (a conversation with one person) or `group`.
+- `attachments`: `any` (one attachment record or more), `none` (no record), or a kind: `image`, `video`, `audio` (the family of the mime type, in any case), `other` (every other type, and no type).
+- A message with an image and a video is in `image` and in `video`.
+- Any other value raises `ValueError`.
+- A count with these filters still reads only an index: the clauses use `m.id` and `m.conversation_id`.
 
 ### day()
 
@@ -311,7 +324,7 @@ The source can hold a message with no row in `chat_message_join`. A real export 
 - A trailing `*` is a prefix: `fam*`, `"good mor"*`.
 - Case and diacritics do not matter.
 - Text that a user typed never raises. Each term goes to FTS5 as a quoted string. `AND`, `OR`, `NOT`, `NEAR`, brackets and colons are plain words.
-- An empty query gives `{"total": 0, "hits": []}`. A query never lists messages without a term: use `iter_messages()` for that.
+- An empty query gives `{"total": 0, "hits": []}`. A query lists messages without a term only with `browse=True`.
 - A query is cut to 1,000 characters and 32 terms. A character that cannot be stored (a lone surrogate) is read as `?`.
 - `total` is every match. `hits` is the page.
 - `order` is `newest`, `oldest` or `relevance`. The relevance order is the rank of the full-text index, then the newest first. It is the archive's own order: it can differ from another search and it can change.
@@ -323,7 +336,8 @@ The index splits text on spaces, punctuation, symbols and emoji. A word next to 
 
 - With no `group_by`, the result is an int.
 - `text` uses the rules of `search()`. `count(text=q)` is equal to `search(q)["total"]`.
-- Keys: `day` is `YYYY-MM-DD`, `month` is `YYYY-MM`, `year` is `YYYY`. All are local time.
+- Keys: `day` is `YYYY-MM-DD`, `week` is the Monday that starts the week (`YYYY-MM-DD`), `month` is `YYYY-MM`, `year` is `YYYY`. All are local time.
+- `weekday` is `W`, 0 for Monday to 6 for Sunday. `hour` is `HH`, `00` to `23`.
 - `weekday_hour` is `W-HH`. `W` is 0 for Monday to 6 for Sunday, as `datetime.weekday()`. `HH` is the local hour, `00` to `23`.
 - `conversation` keys are conversation ids.
 - `sender` keys are handles. The key `""` is the owner. The key `unknown` holds received messages that have no sender in the source.
