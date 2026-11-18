@@ -11,8 +11,10 @@ import {
   type ChatMessage,
   type SavedChat,
 } from './chatMessages'
+import { startWork, withProgress, withStatus, workSummary, type Work } from './chatWork'
 
 export type { ChatMessage, SavedChat } from './chatMessages'
+export type { Work } from './chatWork'
 
 // Module-level chat store. Lives outside React so an in-flight request keeps
 // running (and its answer still saves) when the user navigates away from Chat,
@@ -34,7 +36,8 @@ type ChatState = {
   activeChatId: string | null
   pending: Record<string, boolean>
   errors: Record<string, string>
-  status: Record<string, string>
+  // what the server is doing for each chat that waits on an answer, until the answer starts
+  work: Record<string, Work>
 }
 
 // A question that is being answered: the id the server knows it by, and the
@@ -80,7 +83,7 @@ let state: ChatState = {
   activeChatId: null,
   pending: {},
   errors: {},
-  status: {},
+  work: {},
 }
 
 // the question that each chat is waiting on, by the id of the chat
@@ -125,7 +128,7 @@ export const chatStore = {
     recallApi.cancelAsk(run.requestId).catch(() => undefined)
     const chats = inChat(state.chats, chatId, (messages) => settled(messages, true))
     persist(chats)
-    set({ chats, pending: omitKey(state.pending, chatId), status: omitKey(state.status, chatId) })
+    set({ chats, pending: omitKey(state.pending, chatId), work: omitKey(state.work, chatId) })
   },
 
   // a chat deleted while it waits on an answer ends that question first
@@ -137,7 +140,7 @@ export const chatStore = {
       chats,
       pending: omitKey(state.pending, id),
       errors: omitKey(state.errors, id),
-      status: omitKey(state.status, id),
+      work: omitKey(state.work, id),
       activeChatId: state.activeChatId === id ? null : state.activeChatId,
     })
   },
@@ -190,8 +193,13 @@ export const chatStore = {
       activeChatId: targetId,
       pending: { ...state.pending, [targetId]: true },
       errors: omitKey(state.errors, targetId),
-      status: { ...state.status, [targetId]: 'Thinking…' },
+      work: { ...state.work, [targetId]: startWork(now) },
     })
+    // the steps of this question as they are now; they stay until the answer
+    // is whole, since a reset can take the streamed text away and work goes on
+    const workNow = () => state.work[targetId] ?? startWork(now)
+    const changeWork = (change: (work: Work) => Work) =>
+      set({ work: { ...state.work, [targetId]: change(workNow()) } })
 
     // False once the question was stopped, its chat deleted, or another
     // question asked in its place: what still arrives for it changes nothing.
@@ -212,14 +220,16 @@ export const chatStore = {
         },
         {
           onStatus: (said) => {
-            if (mine()) set({ status: { ...state.status, [targetId]: said } })
+            if (mine()) changeWork((work) => withStatus(work, said))
           },
+          onProgress: (part) => {
+            if (mine()) changeWork((work) => withProgress(work, part))
+          },
+          // the first piece opens the answer with the work so far, "Worked for 6s"
           onDelta: (delta) => {
             if (!mine()) return
-            set({
-              chats: inChat(state.chats, targetId, (messages) => withDelta(messages, answerId, delta)),
-              status: omitKey(state.status, targetId),
-            })
+            const work = workSummary(workNow(), Date.now())
+            set({ chats: inChat(state.chats, targetId, (messages) => withDelta(messages, answerId, delta, work)) })
           },
           onReset: () => {
             if (mine()) set({ chats: inChat(state.chats, targetId, (messages) => withoutMessage(messages, answerId)) })
@@ -229,12 +239,18 @@ export const chatStore = {
       )
       if (!mine()) return
       running = omitKey(running, targetId)
-      const answered = inChat(state.chats, targetId, (messages) => withAnswer(messages, answerId, payload), Date.now())
+      const work = workSummary(workNow(), Date.now())
+      const answered = inChat(
+        state.chats,
+        targetId,
+        (messages) => withAnswer(messages, answerId, payload, work),
+        Date.now(),
+      )
       persist(answered)
       set({
         chats: answered,
         pending: omitKey(state.pending, targetId),
-        status: omitKey(state.status, targetId),
+        work: omitKey(state.work, targetId),
       })
     } catch (error) {
       // stopped or deleted: stop() already left the chat in order
@@ -246,7 +262,7 @@ export const chatStore = {
       set({
         chats: ended,
         pending: omitKey(state.pending, targetId),
-        status: omitKey(state.status, targetId),
+        work: omitKey(state.work, targetId),
         // the server's sentence, as it is
         errors: { ...state.errors, [targetId]: errorSentence(error, NO_ANSWER) },
       })

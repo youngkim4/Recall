@@ -9,6 +9,10 @@ export type AskEvent =
   // far was a note of the model and not the answer: it is cleared.
   | { type: 'status'; text: string; reset: boolean }
   | { type: 'delta'; text: string }
+  // a part of a conversation that is read inside the question: started, or
+  // passed ("done", "cached", "failed"). The name and period it also carries
+  // are not taken: the status line before it already says what is read.
+  | { type: 'progress'; part: number; of: number; state: string }
   | { type: 'done'; payload: AskResponse }
   // body is the whole event, as the server sent it
   | { type: 'error'; code: string; error: string; retryAfter: number | undefined; body: unknown }
@@ -47,6 +51,11 @@ export function readFrame(frame: string): AskEvent | null {
     return event.text || event.reset ? event : null
   }
   if (data.type === 'delta') return text(data.text) ? { type: 'delta', text: text(data.text) } : null
+  if (data.type === 'progress') {
+    const { part, of } = data
+    if (typeof part !== 'number' || typeof of !== 'number') return null
+    return { type: 'progress', part, of, state: text(data.state) }
+  }
   if (data.type === 'done') {
     return data.payload && typeof data.payload === 'object' ? { type: 'done', payload: data.payload as AskResponse } : null
   }

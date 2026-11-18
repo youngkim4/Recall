@@ -1,6 +1,7 @@
 // The messages of a chat and the changes an answer makes to them. Nothing
 // here keeps state or talks to the server: chatStore.ts does both.
 import type { AskResponse } from '../types'
+import type { WorkSummary } from './chatWork.ts'
 
 export type ChatMessage = {
   id: string
@@ -14,6 +15,9 @@ export type ChatMessage = {
   streaming?: boolean
   // the reader stopped the answer before it ended
   stopped?: boolean
+  // On an answer: how long the work before it took and its steps, shown as
+  // "Worked for 6s" over it. An answer of an older build has none.
+  work?: WorkSummary
 }
 
 export type SavedChat = {
@@ -42,10 +46,12 @@ export function historyRows(messages: ChatMessage[], turns = HISTORY_TURNS): His
   )
 }
 
-// The next piece of an answer: the first one opens the answer, the others grow it.
-export function withDelta(messages: ChatMessage[], id: string, delta: string): ChatMessage[] {
+// The next piece of an answer: the first one opens the answer, with the work
+// done before it; the others grow it.
+export function withDelta(messages: ChatMessage[], id: string, delta: string, work?: WorkSummary): ChatMessage[] {
   if (!messages.some((message) => message.id === id)) {
-    return [...messages, { id, role: 'assistant', content: delta, streaming: true }]
+    const opened: ChatMessage = { id, role: 'assistant', content: delta, streaming: true }
+    return [...messages, work ? { ...opened, work } : opened]
   }
   return messages.map((message) => (message.id === id ? { ...message, content: message.content + delta } : message))
 }
@@ -56,12 +62,14 @@ export function withoutMessage(messages: ChatMessage[], id: string): ChatMessage
 }
 
 // The whole answer, in the place of what was streamed. It is shown as the
-// server gave it.
-export function withAnswer(messages: ChatMessage[], id: string, payload: AskResponse): ChatMessage[] {
-  const whole: ChatMessage = { id, role: 'assistant', content: payload.answer, response: payload }
-  return messages.some((message) => message.id === id)
-    ? messages.map((message) => (message.id === id ? whole : message))
-    : [...messages, whole]
+// server gave it, and keeps the work its first piece came with; an answer
+// with no streamed text takes the work it is given.
+export function withAnswer(messages: ChatMessage[], id: string, payload: AskResponse, work?: WorkSummary): ChatMessage[] {
+  const streamed = messages.find((message) => message.id === id)
+  const kept = streamed?.work ?? work
+  const answer: ChatMessage = { id, role: 'assistant', content: payload.answer, response: payload }
+  const whole = kept ? { ...answer, work: kept } : answer
+  return streamed ? messages.map((message) => (message.id === id ? whole : message)) : [...messages, whole]
 }
 
 // An answer that ended before it was whole keeps its text and is no longer

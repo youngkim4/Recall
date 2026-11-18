@@ -9,6 +9,8 @@ type LampProps = {
   max: boolean
   // false on a step that asks for no thinking at all: the candle is out
   lit: boolean
+  // the size is the style sheet's: "lamp" beside the slider, a smaller one beside a step of work
+  className?: string
 }
 
 // the lamp is drawn this many times a second; a flame needs no more
@@ -43,7 +45,7 @@ function colorsOf(element: HTMLElement): LampColors {
 // burns full with sparks on the last step (lib/lamp.ts). On a step that asks
 // for no thinking the candle is out and smokes. It flares for a moment when
 // the step changes. With motion reduced it is one still frame.
-export function Lamp({ level, max, lit }: LampProps) {
+export function Lamp({ level, max, lit, className = 'lamp' }: LampProps) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const flareFrom = useRef(0)
   const palette = usePageAttribute('data-palette')
@@ -87,5 +89,5 @@ export function Lamp({ level, max, lit }: LampProps) {
     }
   }, [level, max, lit, palette, dark])
 
-  return <canvas ref={canvas} className="lamp" width={LAMP.cols} height={LAMP.rows} aria-hidden="true" />
+  return <canvas ref={canvas} className={className} width={LAMP.cols} height={LAMP.rows} aria-hidden="true" />
 }

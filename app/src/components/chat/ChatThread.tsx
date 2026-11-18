@@ -1,19 +1,21 @@
 import { answerNotes } from '../../lib/answerNotes'
 import { bookmarkId } from '../../lib/bookmarks'
-import type { ChatMessage } from '../../lib/chatStore'
+import type { ChatMessage, Work } from '../../lib/chatStore'
 import { plural } from '../../lib/format'
 import type { SearchResult } from '../../types'
 import { ChevronRightIcon } from '../Icons'
 import { Disclosure } from '../ui/Disclosure'
 import { MessageHit } from '../ui/MessageHit'
 import { AnswerBody } from './AnswerBody'
+import { WorkDone, Working } from './Working'
 
 type ChatThreadProps = {
   messages: ChatMessage[]
   // messages newer than this arrive with a short rise; older ones are just there
   openedAt: number
   waiting: boolean
-  waitingStatus: string
+  // the steps of the question being answered, while the answer has not started
+  work: Work | undefined
   // set where the cited messages stand in a pane beside the thread: the pane's
   // id, the answer whose messages it shows, and whether the pane is open (put
   // away, the control under an answer brings it back). Null where each
@@ -34,7 +36,7 @@ export function ChatThread({
   messages,
   openedAt,
   waiting,
-  waitingStatus,
+  work,
   beside,
   onShowCited,
   openKey,
@@ -58,7 +60,12 @@ export function ChatThread({
         const citations = message.response?.citations ?? []
         const keywordOnly = message.response?.mode === 'local' && citations.length > 0
         return (
-          <article key={message.id} className="answer" aria-busy={message.streaming || undefined}>
+          <article
+            key={message.id}
+            className={`answer${fresh ? ' is-new' : ''}`}
+            aria-busy={message.streaming || undefined}
+          >
+            {message.work ? <WorkDone work={message.work} /> : null}
             <AnswerBody text={message.content} streaming={message.streaming} />
             {keywordOnly ? (
               <p className="answer-note">AI answer unavailable. These are keyword matches.</p>
@@ -100,16 +107,7 @@ export function ChatThread({
         )
       })}
 
-      {waiting ? (
-        <div className="chat-waiting is-new" role="status">
-          <span className="typing" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
-          <span>{waitingStatus || 'Thinking…'}</span>
-        </div>
-      ) : null}
+      {waiting ? <Working work={work} /> : null}
     </div>
   )
 }

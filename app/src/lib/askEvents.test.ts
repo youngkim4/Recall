@@ -22,6 +22,15 @@ test('a status says what the server is doing', () => {
   })
 })
 
+test('a part of a conversation being read is progress', () => {
+  assert.deepEqual(
+    readFrame(frame({ type: 'progress', tool: 'conversation_digest', conversation: 'A', part: 2, of: 4, label: 'May', state: 'done' })),
+    { type: 'progress', part: 2, of: 4, state: 'done' },
+  )
+  // progress with no numbers carries nothing to show
+  assert.equal(readFrame(frame({ type: 'progress', part: 'two', of: 4, state: 'done' })), null)
+})
+
 test('a status can say that the text so far was not the answer', () => {
   assert.deepEqual(readFrame(frame({ type: 'status', text: 'Searching again', reset: true })), {
     type: 'status',

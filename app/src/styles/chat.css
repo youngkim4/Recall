@@ -177,7 +177,7 @@
   }
 
   .chat-column > .answer,
-  .chat-column > .chat-waiting {
+  .chat-column > .working {
     margin-top: var(--s-4);
   }
 
@@ -237,6 +237,173 @@
   @keyframes caret-blink {
     50% {
       opacity: 0;
+    }
+  }
+
+  /* While an answer is written, each word that comes fades in, as the words
+     of ChatGPT and Claude do; the words before it are already there. */
+  .answer-body[data-streaming] .w {
+    animation: word-in 420ms var(--ease-out) backwards;
+  }
+
+  @keyframes word-in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  /* ---- the work before an answer ----
+     The step the server is on, with a light passing through its words, after
+     ChatGPT and Copilot, and the lamp lit beside it in the place of Claude's
+     spark. The steps before it stand above it, quiet, each with a check. */
+  .working {
+    display: grid;
+    gap: var(--s-2);
+  }
+
+  .work-now {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-width: 0;
+  }
+
+  /* the lamp of the slider in cells of 1px: 22 by 20, sharp on a Retina screen */
+  .work-lamp {
+    flex: none;
+    width: 22px;
+    height: 20px;
+    image-rendering: pixelated;
+  }
+
+  /* A soft band of light passes through the words, slowly: the user found a
+     fast or bright pulse too much. The band is the text's own colour, so it
+     works in every theme. */
+  .shimmer {
+    background-image: linear-gradient(
+      100deg,
+      var(--text-3) 0 38%,
+      var(--text) 50%,
+      var(--text-3) 62% 100%
+    );
+    background-size: 260% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    animation: shimmer 2.4s linear infinite;
+  }
+
+  @keyframes shimmer {
+    from {
+      background-position: 100% 0;
+    }
+    to {
+      background-position: 0% 0;
+    }
+  }
+
+  .work-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .work-steps {
+    display: grid;
+    gap: var(--s-1);
+    color: var(--text-3);
+  }
+
+  /* a step that is done comes in under the ones before it */
+  .work-step {
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    min-width: 0;
+    transition:
+      opacity var(--dur-short) var(--ease-out),
+      translate var(--dur-short) var(--ease-out);
+
+    @starting-style {
+      opacity: 0;
+      translate: 0 calc(-0.25rem * var(--travel));
+    }
+  }
+
+  /* the check stands where the lamp stands, so the words of every step start on one line */
+  .work-step > .icon {
+    flex: none;
+    width: 22px;
+    color: var(--you-ink);
+  }
+
+  .work-step > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* a conversation read part by part: a thin bar under the step, filled to the parts read */
+  .work-parts {
+    display: flex;
+    align-items: center;
+    gap: var(--s-3);
+    padding-left: calc(22px + var(--s-2));
+  }
+
+  .work-bar {
+    position: relative;
+    flex: 1;
+    max-width: 16rem;
+    height: 3px;
+    overflow: hidden;
+    border-radius: var(--r-full);
+    background: var(--fill-track);
+  }
+
+  .work-bar > i {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: color-mix(in oklab, var(--you), var(--you-far) calc(var(--done) * 100%));
+    transform-origin: left;
+    scale: var(--done) 1;
+    transition: scale var(--dur-long) var(--ease-out);
+  }
+
+  .work-count {
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* over an answer that has started: "Worked for 6s", which opens to the steps */
+  .work-done {
+    margin-bottom: var(--s-2);
+  }
+
+  .work-done .disclosure-toggle {
+    color: var(--text-3);
+  }
+
+  .work-done .work-steps {
+    padding-block: var(--s-1) var(--s-2);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .work-done .disclosure-toggle:hover {
+      color: var(--text);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .shimmer {
+      animation: none;
+      background-image: none;
+      color: var(--text-2);
+    }
+
+    .answer-body[data-streaming] .w {
+      animation: none;
     }
   }
 
@@ -367,13 +534,6 @@
       background: var(--fill-hover);
       color: var(--text);
     }
-  }
-
-  .chat-waiting {
-    display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    color: var(--text-3);
   }
 
   /* ---- composer ---- */

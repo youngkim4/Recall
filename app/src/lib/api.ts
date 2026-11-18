@@ -17,6 +17,7 @@ import type {
 } from '../types'
 import { ApiError, apiErrorFrom } from './apiError'
 import { readFrame, takeFrames } from './askEvents'
+import type { PartEvent } from './chatWork'
 import type { SearchFilters } from './searchFilters'
 
 const apiBase = import.meta.env.VITE_RECALL_API_BASE?.replace(/\/$/, '') ?? ''
@@ -77,6 +78,8 @@ type AskStreamHandlers = {
   onDelta?: (text: string) => void
   // the text that the deltas gave so far was not the answer: clear it
   onReset?: () => void
+  // a part of a conversation read inside the question
+  onProgress?: (part: PartEvent) => void
 }
 
 function askBody(input: AskInput) {
@@ -200,6 +203,7 @@ export const recallApi = {
         if (event.reset) handlers.onReset?.()
         if (event.text) handlers.onStatus?.(event.text)
       } else if (event.type === 'delta') handlers.onDelta?.(event.text)
+      else if (event.type === 'progress') handlers.onProgress?.(event)
       else if (event.type === 'done') finalPayload = event.payload
       else throw new ApiError(event.error, { status: 0, code: event.code, body: event.body, retryAfter: event.retryAfter })
     }

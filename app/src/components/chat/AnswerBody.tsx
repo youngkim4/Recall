@@ -2,15 +2,30 @@ import type { ReactNode } from 'react'
 
 const INLINE_PATTERN = /(\*\*[^*]+\*\*|\[\d+\])/g
 
+// While an answer is written, each word is a span of its own with a key that
+// holds from one piece to the next: only the words that just came are new to
+// the page, and they fade in (chat.css). A word cut between two pieces keeps
+// its key and grows in place. Spaces stay plain text.
+function wordsOf(text: string, keyBase: string, streaming: boolean): ReactNode {
+  if (!streaming) return text
+  return text.split(/(\s+)/).map((piece, index) =>
+    !piece || /^\s+$/.test(piece) ? piece : (
+      <span key={`${keyBase}-w${index}`} className="w">
+        {piece}
+      </span>
+    ),
+  )
+}
+
 // Inline formatter: **bold** and [n] citation markers. A marker attaches to
 // the word before it with no space, and markers that sit side by side are
 // separated by a comma so "[1][2]" cannot be read as twelve.
-function renderInline(text: string, keyBase: string): ReactNode[] {
+function renderInline(text: string, keyBase: string, streaming = false): ReactNode[] {
   const parts = text.replace(/\s+(\[\d+\])/g, '$1').split(INLINE_PATTERN)
   return parts.map((part, index) => {
     if (!part) return null
     const bold = /^\*\*([^*]+)\*\*$/.exec(part)
-    if (bold) return <strong key={`${keyBase}-b${index}`}>{bold[1]}</strong>
+    if (bold) return <strong key={`${keyBase}-b${index}`}>{wordsOf(bold[1], `${keyBase}-b${index}`, streaming)}</strong>
     const cite = /^\[(\d+)\]$/.exec(part)
     if (cite) {
       // split() leaves an empty string between two adjacent markers
@@ -21,7 +36,7 @@ function renderInline(text: string, keyBase: string): ReactNode[] {
         </sup>
       )
     }
-    return <span key={`${keyBase}-t${index}`}>{part}</span>
+    return <span key={`${keyBase}-t${index}`}>{wordsOf(part, `${keyBase}-t${index}`, streaming)}</span>
   })
 }
 
@@ -32,7 +47,7 @@ export function AnswerBody({ text, streaming = false }: { text: string; streamin
   const blocks = text.trim().split(/\n{2,}/).filter(Boolean)
   const caret = streaming ? <span className="caret" aria-hidden="true" /> : null
   return (
-    <div className="answer-body">
+    <div className="answer-body" data-streaming={streaming || undefined}>
       {blocks.map((block, blockIndex) => {
         const lines = block.split('\n')
         const isLastBlock = blockIndex === blocks.length - 1
@@ -42,7 +57,7 @@ export function AnswerBody({ text, streaming = false }: { text: string; streamin
             <ul key={`block-${blockIndex}`}>
               {lines.map((line, lineIndex) => (
                 <li key={`block-${blockIndex}-item-${lineIndex}`}>
-                  {renderInline(line.replace(/^\s*[-*]\s+/, ''), `block-${blockIndex}-${lineIndex}`)}
+                  {renderInline(line.replace(/^\s*[-*]\s+/, ''), `block-${blockIndex}-${lineIndex}`, streaming)}
                   {isLastBlock && lineIndex === lines.length - 1 ? caret : null}
                 </li>
               ))}
@@ -53,7 +68,7 @@ export function AnswerBody({ text, streaming = false }: { text: string; streamin
           <p key={`block-${blockIndex}`}>
             {lines.map((line, lineIndex) => (
               <span key={`block-${blockIndex}-line-${lineIndex}`}>
-                {renderInline(line, `block-${blockIndex}-${lineIndex}`)}
+                {renderInline(line, `block-${blockIndex}-${lineIndex}`, streaming)}
                 {lineIndex < lines.length - 1 ? <br /> : null}
               </span>
             ))}

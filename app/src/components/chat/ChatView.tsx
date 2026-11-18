@@ -64,7 +64,7 @@ export function ChatView({
   citesClosed,
   onCitesClosedChange,
 }: ChatViewProps) {
-  const { chats, activeChatId, pending, errors, status } = useSyncExternalStore(
+  const { chats, activeChatId, pending, errors, work } = useSyncExternalStore(
     chatStore.subscribe,
     chatStore.getState,
   )
@@ -92,8 +92,9 @@ export function ChatView({
   const messages = activeChat?.messages ?? []
   const isPending = activeChatId ? Boolean(pending[activeChatId]) : false
   const error = activeChatId ? errors[activeChatId] ?? '' : ''
-  const pendingStatus = activeChatId ? status[activeChatId] ?? '' : ''
-  // once the answer starts streaming, the growing text replaces the typing dots
+  // the steps of the question this chat waits on
+  const pendingWork = activeChatId ? work[activeChatId] : undefined
+  // once the answer starts streaming, its text takes the place of the steps of work
   const isStreaming = isPending && messages.some((message) => message.streaming)
   const hasArchive = Boolean(defaults?.messagesPath && defaults.hasMessages)
   const isEmpty = messages.length === 0
@@ -236,7 +237,7 @@ export function ChatView({
                 messages={messages}
                 openedAt={openedAt}
                 waiting={isPending && !isStreaming}
-                waitingStatus={pendingStatus}
+                work={pendingWork}
                 beside={citedHere ? { paneId: citesId, answerId: citedHere.id, open: !citesClosed } : null}
                 onShowCited={(id) => {
                   setChosen({ id, among: citing.length })

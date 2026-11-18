@@ -189,3 +189,19 @@ test('a store that does not hold chats reads as no chats', () => {
   assert.deepEqual(readSavedChats('{"a":1}'), [])
   assert.deepEqual(readSavedChats('[null, 7, "text", {"id": "chat-1"}, {"id": 3, "messages": []}]'), [])
 })
+
+test('an answer keeps how long the work before it took, from its first piece to its whole text', () => {
+  const work = { seconds: 4, steps: ['Reading your archive'] }
+  const opened = withDelta([asked('q', '')], 'assistant-1', 'In ', work)
+  assert.deepEqual(opened[1].work, work)
+  // a later piece does not change it
+  const grown = withDelta(opened, 'assistant-1', 'August.', { seconds: 9, steps: [] })
+  assert.deepEqual(grown[1].work, work)
+  assert.deepEqual(withAnswer(grown, 'assistant-1', answer())[1].work, work)
+})
+
+test('an answer with no streamed text takes the work it is given', () => {
+  const work = { seconds: 2, steps: ['Searching'] }
+  assert.deepEqual(withAnswer([asked('q', '')], 'assistant-1', answer(), work)[1].work, work)
+  assert.equal(withAnswer([asked('q', '')], 'assistant-1', answer())[1].work, undefined)
+})
