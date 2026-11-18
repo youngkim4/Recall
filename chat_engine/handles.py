@@ -47,6 +47,9 @@ _DASHES = "-\u2010\u2011\u2012\u2013\u2014\u2212"
 _INSIDE_A_NUMBER = frozenset(" \t\n\r\u00a0." + _DASHES)  # marks between the groups of one number
 _LOCAL_JOINTS = frozenset(["", " ", "\u00a0", ".", *_DASHES])  # between the three and the four digits of a local form
 
+YEAR_RE = re.compile(r"(?<![0-9])(?:199[0-9]|20[0-9]{2})(?![0-9])")  # a year that an archive can hold
+DIGITS_RE = re.compile(r"[0-9]+")
+
 Value = TypeVar("Value")
 
 
@@ -158,6 +161,14 @@ def handle_spans(text: object) -> list[tuple[int, int]]:
     spans = [match.span() for match in EMAIL_RE.finditer(source)]
     spans.extend(match.span() for match in PHONE_SPAN_RE.finditer(source))
     return sorted(spans)
+
+
+def is_dates(span: str) -> bool:
+    """Years and short numbers, like 2016-2019 or 2016-06-01: a period or a date, not a phone number."""
+    runs = DIGITS_RE.findall(span)
+    return any(YEAR_RE.fullmatch(run) for run in runs) and all(
+        YEAR_RE.fullmatch(run) or len(run) <= 2 for run in runs
+    )
 
 
 class PhoneIndex(Generic[Value]):
