@@ -416,7 +416,7 @@ Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `rec
 - The `meaning` job and an import do not run together, and two `meaning` jobs do not run together (`ONE_AT_A_TIME`). The second one is refused with a plain sentence.
 - After an import that changed the archive, the server starts one `meaning` job when the archive has an index (`refresh_meaning_index`, called by `run_job`). With no index it starts nothing: the first build is the choice of the reader. That job is made by `create_job`, so the same rule holds for it.
 - The server does not spend on the index without a word. `refresh_meaning_index` takes the estimate first, and starts the job only when `meaning.small_enough` says yes: `newSegments` is at most 2,000, or at most 10 percent of the segments, whichever is more (`REFRESH_SEGMENTS`, `REFRESH_SHARE`). Above that it starts nothing, and the state is `behind`. A `meaning` job that a reader starts always builds.
-- Known limit: a `meaning` job can not be stopped, and an import waits for it.
+- Known limit: a `meaning` job can not be stopped, and an import waits for it. The same holds for a `digest` job.
 - `run_job` looks at the index after the import has ended in the list. A slow look or a fault there does not delay or fail the import.
 - A failure of a build is a `MeaningFailure`. The job tells its sentence and its code.
 
