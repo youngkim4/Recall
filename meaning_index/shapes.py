@@ -64,17 +64,22 @@ class IndexStatus:
 
 @dataclass(frozen=True)
 class BuildEstimate:
-    """What a build would do now. `tokens` and `usd` are for the segments to embed."""
+    """What a build would do now. `tokens` and `usd` are for the texts that the build would send.
+
+    `upper_bound` is True when the work file of a stopped build could not be
+    read. The build can then cost less than the estimate says, and never more.
+    """
 
     segments: int
     new_segments: int
     tokens: int
     usd: float
+    upper_bound: bool = False
 
 
 @dataclass(frozen=True)
 class BuildResult:
-    """What a build did. `segments` is `embedded` plus `reused`."""
+    """What a build did. Every count is a count of segments, and `segments` is `embedded` plus `reused`."""
 
     segments: int
     embedded: int

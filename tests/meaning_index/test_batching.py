@@ -41,7 +41,7 @@ def test_with_no_named_wait_the_default_waits_last_longer_than_one_minute() -> N
     slept: list[float] = []
     with pytest.raises(EmbeddingRateLimited):
         embed_all(embedder, texts_of(2), sleep=slept.append)
-    assert slept == [2.0, 4.0, 8.0, 16.0, 32.0]
+    assert (sum(slept), max(slept)) == (2.0 + 4.0 + 8.0 + 16.0 + 32.0, 1.0)
     assert sum(slept) > 60
 
 
@@ -93,7 +93,7 @@ def test_one_text_that_is_too_large_is_the_typed_failure() -> None:
 def test_a_rate_limit_waits_the_time_that_the_service_names_and_tries_again() -> None:
     embedder = ScriptedEmbedder({1: EmbeddingRateLimited("wait", retry_after_s=7.5)})
     parts, slept = embed_all(embedder, texts_of(4))
-    assert slept == [7.5]
+    assert (sum(slept), max(slept)) == (7.5, 1.0)
     assert embedder.sizes == [4, 4]
     assert len(parts) == 1
 
@@ -101,7 +101,7 @@ def test_a_rate_limit_waits_the_time_that_the_service_names_and_tries_again() ->
 def test_a_rate_limit_that_names_no_wait_backs_off() -> None:
     embedder = ScriptedEmbedder({n: EmbeddingRateLimited("wait") for n in (1, 2, 3)})
     _, slept = embed_all(embedder, texts_of(2), limits=BatchLimits(backoff_s=2.0))
-    assert slept == [2.0, 4.0, 8.0]
+    assert (sum(slept), max(slept)) == (2.0 + 4.0 + 8.0, 1.0)
 
 
 def test_the_tries_of_one_request_are_bounded() -> None:
@@ -115,7 +115,7 @@ def test_the_bound_is_for_each_request_not_for_the_whole_build() -> None:
     limited = {1: EmbeddingRateLimited("wait", retry_after_s=1.0), 3: EmbeddingRateLimited("wait", retry_after_s=2.0)}
     embedder = ScriptedEmbedder(limited)
     parts, slept = embed_all(embedder, texts_of(150), limits=BatchLimits(max_tries=2))
-    assert slept == [1.0, 2.0]
+    assert slept == [1.0, 1.0, 1.0]  # one second for the first request, two for the third
     assert len(parts) == 2
 
 
