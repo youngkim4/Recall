@@ -55,7 +55,7 @@ def test_the_digest_fake_counts_cached_periods_and_names_what_a_digest_cost() ->
 
 def test_the_limits_of_a_digest_inside_a_question() -> None:
     config = EngineConfig(model="m", max_output_tokens=100)
-    assert config.digest_parts_limit == 12 and config.digest_usd_limit == 0.5
+    assert config.digest_parts_limit == 4 and config.digest_usd_limit == 0.5
     assert EngineConfig(model="m", max_output_tokens=100, digest_parts_limit=0).digest_parts_limit == 0
     with pytest.raises(ValueError, match="digest_parts_limit must not be negative"):
         EngineConfig(model="m", max_output_tokens=100, digest_parts_limit=-1)

@@ -40,7 +40,7 @@ def bounded(desk: Desk, llm: Any = None, **more: Any) -> memory.DigestPort:
 def test_a_digest_inside_a_question_reads_at_most_its_limit_of_parts_that_are_not_read_yet(
     desk: Desk, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    assert memory.DIGEST_PARTS_LIMIT == 12
+    assert memory.DIGEST_PARTS_LIMIT == 4
     monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 2)  # Mina has four parts
     model = FakeLLM()
     asked = bounded(desk, model)
@@ -67,7 +67,7 @@ def test_the_limit_of_memory_reaches_the_digest_as_its_most_new_parts(
     bounded(desk).digest(MINA, cancel=CancelToken(), **JANUARY)
     monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 1)
     bounded(desk).digest(MINA, cancel=CancelToken(), **JANUARY)
-    assert seen == [12, 1]
+    assert seen == [4, 1]
 
 
 # --- the cost ----------------------------------------------------------------------

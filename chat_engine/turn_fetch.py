@@ -1,14 +1,18 @@
 """The slow part of a lookup, run beside the stream.
 
 A tool blocks the turn while it runs. The `fetch` of a lookup (a call to a
-port that reads no archive) runs on a worker thread instead. Its reports go
-through a queue to the turn, which gives each one as an event while the work
-goes on. The turn waits until the work ends, so the events of a lookup all
-come before the next status line and before `done`.
+port) runs on a worker thread instead. It touches nothing of the engine: no
+registry, no labeler, no `ChatArchive`. The port can read its own store there
+(the digest port reads the conversation from the archive, which opens one
+connection for each thread). Its reports go through a queue to the turn,
+which gives each one as an event while the work goes on. The turn waits until
+the work ends, so the events of a lookup all come before the next status line
+and before `done`.
 
-A cancel goes to the work through the cancel token of the question. When the
-reader closes the stream while the work runs, the token is cancelled so the
-work stops; nothing waits for it, and nothing it gives is read.
+A cancel goes to the work through the cancel token of the question. The port
+looks at it at its own steps: a read of its store that has begun ends first.
+When the caller closes the stream while the work runs, the token is cancelled
+so the work stops; nothing waits for it, and nothing it gives is read.
 """
 
 from __future__ import annotations

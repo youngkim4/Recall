@@ -141,5 +141,5 @@ def test_the_engine_gets_the_limit_of_parts_of_memory(
     ask(archive, saved, FakeLLM([say("Nothing says so.")]))
     monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 1)
     ask(archive, saved, FakeLLM([say("Nothing says so.")]))
-    assert [settings.digest_parts_limit for settings in made] == [12, 1]
+    assert [settings.digest_parts_limit for settings in made] == [4, 1]
     assert not hasattr(chat, "_digest_limits")  # no look at whether the engine has the field

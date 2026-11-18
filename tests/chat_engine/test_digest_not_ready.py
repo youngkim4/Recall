@@ -18,7 +18,7 @@ from tests.chat_engine.tiny import JONAS_PHONE, MAYA_PHONE
 
 NOT_READY = (
     "The story of c1 · Maya Okafor · direct is not read yet, and it is too long to read inside one question: "
-    "13 periods are not read yet, and one question reads at most 12 periods. Answer from the other tools."
+    "5 periods are not read yet, and one question reads at most 4 periods. Answer from the other tools."
 )
 LATER_WORDS = ("background", "later", "few minutes", "fuller answer", "come back")
 
@@ -40,34 +40,34 @@ class Prepares(FakeDigests):
         return True
 
 
-def test_a_question_reads_twelve_parts_and_the_cost_guard_stays() -> None:
+def test_a_question_reads_four_parts_and_the_cost_guard_stays() -> None:
     config = EngineConfig(model="m", max_output_tokens=100)
-    assert (config.digest_parts_limit, config.digest_usd_limit) == (12, 0.5)
-    assert Memory().digest_parts_limit == 12
+    assert (config.digest_parts_limit, config.digest_usd_limit) == (4, 0.5)
+    assert Memory().digest_parts_limit == 4
     assert not hasattr(DigestSource, "prepare")
 
 
-def test_twelve_parts_are_read_inside_the_question() -> None:
-    bench = bench_for(_many(12), digest_parts_limit=12)
+def test_four_parts_are_read_inside_the_question() -> None:
+    bench = bench_for(_many(4), digest_parts_limit=4)
     outcome = bench.run("conversation_digest", conversation=bench.alias(MAYA_PHONE))
-    assert outcome.ok and outcome.summary == "Read the story of your conversation with Maya Okafor: 12 periods"
+    assert outcome.ok and outcome.summary == "Read the story of your conversation with Maya Okafor: 4 periods"
 
 
 def test_a_story_too_long_for_one_question_is_not_read_and_nothing_is_started() -> None:
-    digests = Prepares({MAYA_PHONE: _many(13)}, usd=0.2)
-    bench = MemoryBench(digests=digests, digest_parts_limit=12)
+    digests = Prepares({MAYA_PHONE: _many(5)}, usd=0.2)
+    bench = MemoryBench(digests=digests, digest_parts_limit=4)
     prepared = bench.prepare("conversation_digest", conversation=bench.alias(MAYA_PHONE))
     outcome = prepared.run(prepared.own_budget)
     assert prepared.status == "Your conversation with Maya Okafor is too long to read inside one question"
     assert prepared.fetch is None
     assert not outcome.ok and outcome.text == NOT_READY
-    assert outcome.summary == "Did not read the conversation with Maya Okafor: 13 periods are not read yet"
+    assert outcome.summary == "Did not read the conversation with Maya Okafor: 5 periods are not read yet"
     assert [name for name, _ in digests.calls] == ["estimate"]
     assert bench.box.memory_payload() == {"memory": {"notReady": [MAYA_PHONE]}}
 
 
 def test_the_payload_names_each_conversation_that_is_not_read_once() -> None:
-    digests = FakeDigests({MAYA_PHONE: _many(13), JONAS_PHONE: _many(2)}, usd=0.2)
+    digests = FakeDigests({MAYA_PHONE: _many(5), JONAS_PHONE: _many(2)}, usd=0.2)
 
     def both(request: Any) -> list:
         block = last_user(request)
@@ -98,7 +98,7 @@ def test_the_payload_has_the_field_only_with_a_digest_source() -> None:
 
 
 def test_a_story_too_long_tells_the_model_and_the_reader_nothing_about_later() -> None:
-    digests = FakeDigests({MAYA_PHONE: _many(13)}, usd=0.2)
+    digests = FakeDigests({MAYA_PHONE: _many(5)}, usd=0.2)
     engine, fake, _ = engine_with([_ask_digest, say("From the figures: you write often.")], digests=digests)
     events: list[dict] = []
     result = engine.ask("What is my friendship with Maya like?", on_event=events.append)

@@ -61,7 +61,9 @@ DIGEST_MODEL = "gpt-6-luna"
 # The most parts not yet read that one digest inside a question reads. `chat.py`
 # gives the engine the same number, so the two can not differ. A longer
 # conversation is not read by a question: the payload names it, and the reader decides.
-DIGEST_PARTS_LIMIT = 12
+# The parts of one digest are read one at a time (each takes the notes of the one before):
+# about 20 s each on DIGEST_MODEL, so about 80 s for one digest.
+DIGEST_PARTS_LIMIT = 4
 # the states of a part that the engine is told; "waiting" (for the rate budget) is not a change of the part
 TOLD_STATES = frozenset({"start", "done", "cached", "failed"})
 # The model port of a digest inside a question: a provider that hangs holds a

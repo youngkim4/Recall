@@ -218,7 +218,9 @@ def _lookup(ctx: ToolContext, request: DigestRequest) -> tuple[Callable[[int], T
 def _build(ctx: ToolContext, request: DigestRequest, report: Optional[DigestProgressCallback]) -> Built:
     """Ask the source. After a cancel nothing more is read: the question ends.
 
-    It reads nothing of the archive: the turn can run it on another thread.
+    It touches nothing of the engine (no registry, no labeler, no `ChatArchive`), so the turn can run it on
+    another thread. The source can read the conversation from its own archive there; a cancel does not stop
+    that read, only the steps after it.
     """
     cancel = ctx.memory.cancel
     if cancel.cancelled:
