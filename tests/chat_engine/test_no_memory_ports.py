@@ -1,0 +1,58 @@
+"""An engine with no memory port is the engine of commit 82f55e0, byte for byte.
+
+The hashes below were taken at that commit, before the ports for the search by
+meaning and for the digest were added.
+"""
+
+import hashlib
+import json
+
+from chat_engine.fake_llm import call, say
+from chat_engine.ports import LLMRequest
+from chat_engine.tools import TOOL_SPECS
+from tests.chat_engine.helpers import all_text, make_engine, system_text
+
+SPECS_AT_82F55E0 = "fe73fa1d7ccb0aedac549fa4192e1f9692e7e21a72fe504d61324ba9af39343b"
+SYSTEM_AT_82F55E0 = "d8ba85978eac65b4cfb465fb81b04a82ddad655f7ef029fe779144bb24cee652"
+REQUESTS_AT_82F55E0 = "0e2c956ab63b43b78a50a3c1b028419697604723becfeac60af76e07ab34588b"
+
+
+def _hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _specs_text(specs: tuple) -> str:
+    return json.dumps([[spec.name, spec.description, spec.parameters] for spec in specs], ensure_ascii=False)
+
+
+def _request_text(request: LLMRequest) -> str:
+    return "\n".join([all_text(request), _specs_text(request.tools), str(request.allow_tools)])
+
+
+def test_the_tool_list_is_unchanged() -> None:
+    assert _hash(_specs_text(TOOL_SPECS)) == SPECS_AT_82F55E0
+
+
+def test_the_system_prompt_is_unchanged() -> None:
+    engine, fake, _ = make_engine([say("Nothing found.")])
+    engine.ask("anything about zanzibar?")
+    assert _hash(system_text(fake.requests[0])) == SYSTEM_AT_82F55E0
+    assert fake.requests[0].tools == TOOL_SPECS
+
+
+def test_every_request_of_a_question_with_lookups_is_unchanged() -> None:
+    steps = [
+        [
+            call("search_messages", "s1", query="lease", limit=3),
+            call("search_messages", "s2", query="sourdough starter zanzibar", match="any"),
+            call("search_messages", "s3", query="lease", match="meaning"),
+            call("conversation_digest", "s4", conversation="c1"),
+            call("count_messages", "s5", group_by="year"),
+        ],
+        [call("read_around", "s6", reference="m1"), call("list_conversations", "s7", name="maya")],
+        say("Maya signed the lease in 2021 [m1]."),
+    ]
+    engine, fake, _ = make_engine(steps)
+    result = engine.ask("What did Maya say about the lease in 2021?")
+    sent = "\n\n".join(_request_text(request) for request in fake.requests)
+    assert _hash(sent + json.dumps(result, ensure_ascii=False, sort_keys=True)) == REQUESTS_AT_82F55E0
