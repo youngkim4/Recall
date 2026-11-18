@@ -1,4 +1,4 @@
-"""Part D1: a digest in a question is bounded, a long conversation is read in the background, the cost is counted."""
+"""Part D1 as F4 left it: a digest in a question is bounded, a longer story is not read, the cost is counted."""
 
 import logging
 from typing import Any
@@ -16,15 +16,11 @@ from tests.chat_engine.memory_bench import MemoryBench, bench_for, maya_story
 from tests.chat_engine.test_memory_engine import engine_with
 from tests.chat_engine.tiny import JONAS_PHONE, MAYA_PHONE
 
-STARTED = (
-    "The story of c1 · Maya Okafor · direct is long: 3 periods are not read yet. Recall reads them now in the "
-    "background, so the story is not ready for this question. Answer from the other tools, and tell the user "
-    "that a fuller answer is possible in a few minutes."
+NOT_READY = (
+    "The story of c1 · Maya Okafor · direct is not read yet, and it is too long to read inside one question: "
+    "3 periods are not read yet, and one question reads at most 2 periods. Answer from the other tools."
 )
-NOT_STARTED = (
-    "The story of c1 · Maya Okafor · direct is long: 3 periods are not read yet, and one question reads at most "
-    "2 periods. Narrow the days with since and until, or use the other tools."
-)
+TOO_LONG = "Your conversation with Maya Okafor is too long to read inside one question"
 
 
 def _five() -> list:
@@ -34,14 +30,16 @@ def _five() -> list:
 # --- the fake --------------------------------------------------------------------------
 
 
-def test_the_digest_fake_records_prepare_and_says_what_it_was_told() -> None:
-    fake = FakeDigests({MAYA_PHONE: _five()})
-    assert fake.prepare(MAYA_PHONE, since=None, until="2023-12-31") is True
-    assert fake.calls == [("prepare", {"conversation_id": MAYA_PHONE, "since": None, "until": "2023-12-31"})]
-    assert FakeDigests({}, prepare=False).prepare(MAYA_PHONE, since=None, until=None) is False
-    assert not hasattr(FakeDigests({}, prepare=None), "prepare")  # an older source
-    with pytest.raises(RuntimeError):
-        FakeDigests({}, prepare_error=RuntimeError("no job")).prepare(MAYA_PHONE, since=None, until=None)
+def test_the_digest_fake_has_no_prepare_and_reports_each_part() -> None:
+    fake = FakeDigests({MAYA_PHONE: _five()[:2]}, cached=1)
+    assert not hasattr(fake, "prepare")
+    told: list[dict] = []
+    fake.digest(MAYA_PHONE, since=None, until=None, cancel=CancelToken(), progress=told.append)
+    assert told == [
+        {"part": 1, "of": 2, "label": "Y0", "state": "cached"},
+        {"part": 2, "of": 2, "label": "Y1", "state": "start"},
+        {"part": 2, "of": 2, "label": "Y1", "state": "done"},
+    ]
 
 
 def test_the_digest_fake_counts_cached_periods_and_names_what_a_digest_cost() -> None:
@@ -57,7 +55,7 @@ def test_the_digest_fake_counts_cached_periods_and_names_what_a_digest_cost() ->
 
 def test_the_limits_of_a_digest_inside_a_question() -> None:
     config = EngineConfig(model="m", max_output_tokens=100)
-    assert config.digest_parts_limit == 2 and config.digest_usd_limit == 0.5
+    assert config.digest_parts_limit == 12 and config.digest_usd_limit == 0.5
     assert EngineConfig(model="m", max_output_tokens=100, digest_parts_limit=0).digest_parts_limit == 0
     with pytest.raises(ValueError, match="digest_parts_limit must not be negative"):
         EngineConfig(model="m", max_output_tokens=100, digest_parts_limit=-1)
@@ -66,34 +64,29 @@ def test_the_limits_of_a_digest_inside_a_question() -> None:
 # --- more periods to read than one question reads --------------------------------------
 
 
-def test_a_long_story_is_not_read_in_the_question_and_its_reading_starts_in_the_background() -> None:
+def test_a_long_story_of_some_days_is_not_read_in_the_question() -> None:
     bench = bench_for(digest_parts_limit=2, usd=0.01)
     prepared = bench.prepare("conversation_digest", conversation=bench.alias(MAYA_PHONE), since="2021-01-01")
     outcome = prepared.run(prepared.own_budget)
-    assert prepared.status == "Starting to read your conversation with Maya Okafor (from 2021-01-01) in the background"
-    assert not outcome.ok and outcome.text == STARTED.replace("direct is", "direct, from 2021-01-01 is")
-    assert outcome.summary == "Started to read your conversation with Maya Okafor (from 2021-01-01) in the background"
+    assert prepared.status == TOO_LONG
+    assert not outcome.ok and outcome.text == NOT_READY.replace("direct is", "direct, from 2021-01-01 is")
+    assert outcome.summary == "Did not read the conversation with Maya Okafor: 3 periods are not read yet"
     assert bench.box.context.memory.digests.calls == [
         ("estimate", {"conversation_id": MAYA_PHONE, "since": "2021-01-01", "until": None}),
-        ("prepare", {"conversation_id": MAYA_PHONE, "since": "2021-01-01", "until": None}),
     ]
     assert bench.read("message") == [] and len(bench.registry) == 0
 
 
-@pytest.mark.parametrize("options", [{"prepare": False}, {"prepare": None}, {"prepare_error": RuntimeError("Maya")}])
-def test_a_long_story_whose_reading_does_not_start_says_what_a_question_reads(
-    options: dict, caplog: pytest.LogCaptureFixture
-) -> None:
-    bench = bench_for(digest_parts_limit=2, **options)
+def test_a_long_story_says_what_a_question_reads(caplog: pytest.LogCaptureFixture) -> None:
+    bench = bench_for(digest_parts_limit=2)
     prepared = bench.prepare("conversation_digest", conversation=bench.alias(MAYA_PHONE))
     with caplog.at_level(logging.WARNING, logger="chat_engine"):
         outcome = prepared.run(prepared.own_budget)
-    assert prepared.status == "Your conversation with Maya Okafor is too long to read inside one question"
-    assert not outcome.ok and outcome.text == NOT_STARTED and "\n" not in outcome.text
+    assert prepared.status == TOO_LONG
+    assert not outcome.ok and outcome.text == NOT_READY and "\n" not in outcome.text
     assert outcome.summary == "Did not read the conversation with Maya Okafor: 3 periods are not read yet"
     assert "digest" not in [name for name, _ in bench.box.context.memory.digests.calls]
-    logged = " ".join(record.getMessage() for record in caplog.records)
-    assert ("RuntimeError" in logged) is ("prepare_error" in options) and "Maya" not in logged
+    assert caplog.records == []
 
 
 @pytest.mark.parametrize(
@@ -107,20 +100,20 @@ def test_the_parts_limit_counts_the_periods_that_are_not_read_yet(limit: int, ca
 
 
 def test_one_period_to_read_and_a_limit_of_none_read_well() -> None:
-    bench = bench_for(digest_parts_limit=0, cached=2, prepare=None)
+    bench = bench_for(digest_parts_limit=0, cached=2)
     outcome = bench.run("conversation_digest", conversation=bench.alias(MAYA_PHONE))
-    assert "is long: 1 period is not read yet, and one question reads at most 0 periods." in outcome.text
+    assert "one question: 1 period is not read yet, and one question reads at most 0 periods." in outcome.text
 
 
 def test_the_parts_limit_comes_before_the_cost_limit_and_after_the_estimate() -> None:
     costly = bench_for(digest_parts_limit=2, usd=9.0)
-    assert "Recall reads them now in the background" in costly.run(
+    assert "too long to read inside one question" in costly.run(
         "conversation_digest", conversation=costly.alias(MAYA_PHONE)
     ).text
     few = bench_for(digest_parts_limit=2, usd=9.0, cached=1)
     text = few.run("conversation_digest", conversation=few.alias(MAYA_PHONE)).text
     assert "would cost about $9.00: 2 periods are not built yet." in text
-    assert "prepare" not in [name for name, _ in few.box.context.memory.digests.calls]
+    assert few.box.memory_payload() == {"memory": {"notReady": []}}  # a cost refusal is no story too long
     broken = bench_for(digest_parts_limit=2, estimate_error=RuntimeError("down"))
     assert "could not be built now" in broken.run("conversation_digest", conversation=broken.alias(MAYA_PHONE)).text
     assert [name for name, _ in broken.box.context.memory.digests.calls] == ["estimate"]
@@ -207,21 +200,21 @@ def test_a_long_story_in_a_question_tells_the_model_what_to_do() -> None:
     digests = FakeDigests({MAYA_PHONE: _five()}, usd=0.2)
 
     def go_on(request: Any) -> list:
-        assert tool_results(request)[0] == STARTED.replace("3 periods", "5 periods")
-        return say("From the figures: you write often. A fuller answer is possible in a few minutes.")
+        assert tool_results(request)[0] == NOT_READY.replace("3 periods", "5 periods")
+        return say("From the figures: you write often.")
 
-    engine, fake, _ = engine_with([_ask_digest, go_on], digests=digests)
+    engine, fake, _ = engine_with([_ask_digest, go_on], digests=digests, digest_parts_limit=2)
     events: list[dict] = []
     result = engine.ask("What is my friendship with Maya like?", on_event=events.append)
     statuses = [event["text"] for event in events if event["type"] == "status"]
-    assert "Starting to read your conversation with Maya Okafor in the background" in statuses
+    assert TOO_LONG in statuses
     assert result["steps"][-1] == {
         "tool": "conversation_digest",
-        "text": "Started to read your conversation with Maya Okafor in the background",
+        "text": "Did not read the conversation with Maya Okafor: 5 periods are not read yet",
         "seeded": False,
     }
     assert result["usage"]["digest_usd"] == 0.0 and result["usage"]["tool_calls"] == 1
-    assert [name for name, _ in digests.calls] == ["estimate", "prepare"]
+    assert [name for name, _ in digests.calls] == ["estimate"]
 
 
 def test_the_engine_gives_its_parts_limit_to_the_tool() -> None:
@@ -274,10 +267,7 @@ def test_one_hit_that_the_archive_holds_is_enough_for_no_word_about_the_index() 
 def test_the_description_of_the_digest_tool_says_what_happens_to_a_long_conversation() -> None:
     description = tool_specs(digest=True)[-1].description
     assert "costs money" not in description and "above the limit" not in description
-    assert (
-        "A long conversation that is not read yet is read in the background: the tool says so, and the story is "
-        "ready for a later question."
-    ) in description
+    assert "A conversation that is too long to read inside one question is not read: the tool says so." in description
     assert "One question builds at most 3 digests." in description
 
 

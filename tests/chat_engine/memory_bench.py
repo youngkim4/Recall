@@ -98,10 +98,7 @@ def maya_story() -> list:
     ]
 
 
-FAKE_OPTIONS = {
-    "usd", "cached", "failed", "spent", "error", "estimate_error", "during", "honour_cancel", "prepare",
-    "prepare_error",
-}
+FAKE_OPTIONS = {"usd", "cached", "failed", "spent", "error", "estimate_error", "during", "honour_cancel", "per_part"}
 
 
 def bench_for(story: list | None = None, **options: object) -> MemoryBench:

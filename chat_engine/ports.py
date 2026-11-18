@@ -10,7 +10,7 @@ conversation. An engine that gets none of them offers no tool for them.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterator, Mapping, NotRequired, Optional, Protocol, Sequence, TypedDict, Union
+from typing import Any, Callable, Iterator, Mapping, NotRequired, Optional, Protocol, Sequence, TypedDict, Union
 
 from .cancel import CancelToken
 
@@ -307,14 +307,26 @@ class DigestResult(TypedDict):
     usd: NotRequired[float]  # what this call cost; absent means not known
 
 
+class DigestProgress(TypedDict):
+    """One change of one part while a digest is read."""
+
+    part: int  # counts from 1
+    of: int  # the parts of the digest
+    label: str  # the label of the part
+    state: str  # "start", "done", "cached" or "failed"
+
+
+DigestProgressCallback = Callable[[DigestProgress], None]
+
+
 class DigestSource(Protocol):
     """The story of one conversation, period by period.
 
     `estimate` builds nothing and costs nothing. `digest` builds the periods
-    that are not cached. It stops when `cancel` is cancelled. `prepare` starts
-    the reading of a conversation outside the question: True when it started
-    or already runs. A source can have no `prepare`: then nothing starts. A
-    failure here does not fail the question.
+    that are not cached. It stops when `cancel` is cancelled. It gives
+    `progress` one report for each change of a part, from any thread; a source
+    that reports nothing still works. A failure here does not fail the
+    question.
     """
 
     def estimate(
@@ -322,7 +334,11 @@ class DigestSource(Protocol):
     ) -> DigestCost: ...
 
     def digest(
-        self, conversation_id: str, *, since: Optional[str], until: Optional[str], cancel: CancelToken
+        self,
+        conversation_id: str,
+        *,
+        since: Optional[str],
+        until: Optional[str],
+        cancel: CancelToken,
+        progress: Optional[DigestProgressCallback] = None,
     ) -> DigestResult: ...
-
-    def prepare(self, conversation_id: str, *, since: Optional[str], until: Optional[str]) -> bool: ...

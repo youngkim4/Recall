@@ -9,7 +9,9 @@ its tool, and nothing else changes.
   process keeps the loaded index and the vectors of the last descriptions.
 - `DigestPort` is `chat_engine.ports.DigestSource` over
   `recall_services.digests`. A digest is wired as a report is wired, so the
-  two share the notes of the parts that were read.
+  two share the notes of the parts that were read. It tells the engine each
+  change of a part (`progress_relay`). Nothing here starts a reading outside
+  the question.
 
 Rules:
 - The description that reaches `MeaningPort.search` is masked by the engine.
@@ -24,14 +26,14 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
 from archive import Archive
 from chat_engine.cancel import CancelToken
-from chat_engine.ports import DigestCost, DigestMoment, DigestPeriod, DigestResult
+from chat_engine.ports import DigestCost, DigestMoment, DigestPeriod, DigestProgressCallback, DigestResult
 from meaning_index import IndexStore
 from recall_services import digests, keys, meaning, models, reports
 from recall_services.meaning_port import QUERY_TIMEOUT_SECONDS as QUERY_TIMEOUT_SECONDS
@@ -46,6 +48,7 @@ from recall_services.report_failures import NO_KEY, ReportFailure
 from report_engine import LLM, ModelInfo, PeriodCache, ReportOptions, Runtime
 from report_engine import CancelToken as ReportCancelToken
 from report_engine.chat_digest import MomentNote, PeriodNote
+from report_engine.control import ProgressCallback, ProgressEvent
 from report_engine.tokens import TokenCounter
 
 logger = logging.getLogger(__name__)
@@ -57,8 +60,10 @@ logger = logging.getLogger(__name__)
 DIGEST_MODEL = "gpt-6-luna"
 # The most parts not yet read that one digest inside a question reads. `chat.py`
 # gives the engine the same number, so the two can not differ. A longer
-# conversation is read by the `digest` job, outside the question.
-DIGEST_PARTS_LIMIT = 2
+# conversation is not read by a question: the payload names it, and the reader decides.
+DIGEST_PARTS_LIMIT = 12
+# the states of a part that the engine is told; "waiting" (for the rate budget) is not a change of the part
+TOLD_STATES = frozenset({"start", "done", "cached", "failed"})
 # The model port of a digest inside a question: a provider that hangs holds a
 # question for two tries of this long for each part. A report job keeps its own.
 DIGEST_TIMEOUT_SECONDS = 120.0
@@ -68,12 +73,12 @@ LOCK_POLL_SECONDS = 0.1
 SPEND_LOG = "recall.spend"
 
 spend = logging.getLogger(SPEND_LOG)
-# starts the reading of a conversation outside the question: conversation id, since, until
-StartDigest = Callable[[str, "str | None", "str | None"], bool]
 
 
 class DigestStopped(Exception):
     """The question was cancelled while its digest waited for the digest of another question."""
+
+
 @dataclass(frozen=True)
 class DigestSettings:
     """What a digest of chat is built with. Each None is the value of a report run of the app.
@@ -158,6 +163,20 @@ def _period(note: PeriodNote) -> DigestPeriod:
     }
 
 
+def progress_relay(progress: DigestProgressCallback) -> ProgressCallback:
+    """The listener of the report engine that tells `progress` each change of a part of the digest.
+
+    Only a map event with a part is told: "start", "done", "cached" or
+    "failed". The report engine can call it from more than one thread.
+    """
+
+    def relay(event: ProgressEvent) -> None:
+        if event.step == "map" and event.state in TOLD_STATES and event.period is not None:
+            progress({"part": event.index, "of": event.total, "label": event.period, "state": event.state})
+
+    return relay
+
+
 def _spent_for_nothing(failure: ReportFailure) -> float:
     """What a digest that failed or was stopped cost, from the usage that its failure carries.
 
@@ -183,12 +202,10 @@ class DigestPort:
         archive: Archive,
         names: Names,
         settings: DigestSettings | None = None,
-        start_digest: StartDigest | None = None,
     ) -> None:
         self._archive = archive
         self._names = names
         self._settings = settings or DigestSettings()
-        self._start = start_digest
 
     @property
     def model(self) -> str:
@@ -213,9 +230,17 @@ class DigestPort:
         return {"periods": found.periods, "periods_cached": found.periods_cached, "usd": found.usd}
 
     def digest(
-        self, conversation_id: str, *, since: str | None, until: str | None, cancel: CancelToken
+        self,
+        conversation_id: str,
+        *,
+        since: str | None,
+        until: str | None,
+        cancel: CancelToken,
+        progress: DigestProgressCallback | None = None,
     ) -> DigestResult:
         """Build the digest, and say what it cost. It stops before its next model call when `cancel` is cancelled.
+
+        `progress` is told each change of a part, as the report engine reads it.
 
         A digest that fails or is stopped raises the failure of `digests.build`
         with `usd` set on it: what the run cost until then.
@@ -235,6 +260,7 @@ class DigestPort:
                     since,
                     until,
                     token,
+                    on_progress=None if progress is None else progress_relay(progress),
                     llm_factory=chosen.llm_factory or question_llm,
                     runtime=chosen.runtime,
                     max_new_periods=limit,
@@ -251,20 +277,6 @@ class DigestPort:
         periods = [_period(note) for note in found.periods]
         return {"periods": periods, "periods_failed": found.periods_failed, "usd": usd}  # type: ignore[typeddict-unknown-key]
 
-    def prepare(self, conversation_id: str, *, since: str | None, until: str | None) -> bool:
-        """Start the reading of this conversation outside the question. True when it started or already runs.
-
-        With no way to start it, and when the start fails, the answer is False.
-        """
-        if self._start is None:
-            return False
-        try:
-            return bool(self._start(conversation_id, since, until))
-        except Exception as error:  # noqa: BLE001 - a start that fails is a no, never an error of the question
-            logger.warning("the reading of a conversation could not be started (%s)", type(error).__name__)
-            return False
-
-
 def _meaning_port(store: IndexStore, factory: EmbedderFactory | None) -> MeaningPort | None:
     """The port when an index can be searched now. A folder that can not be used gives None and one log line."""
     try:
@@ -275,11 +287,9 @@ def _meaning_port(store: IndexStore, factory: EmbedderFactory | None) -> Meaning
     return MeaningPort(store, factory) if usable else None
 
 
-def _digest_port(
-    archive: Archive, names: Names, settings: DigestSettings, start_digest: StartDigest | None
-) -> DigestPort | None:
+def _digest_port(archive: Archive, names: Names, settings: DigestSettings) -> DigestPort | None:
     """The port when a digest can be built now: its model can be run, and the notes of earlier runs can be opened."""
-    port = DigestPort(archive, names, settings, start_digest)
+    port = DigestPort(archive, names, settings)
     notes = (settings.places or reports.default_places()).cache_path
     try:
         models.model_info(port.model.strip() or models.default_id())
@@ -295,15 +305,11 @@ def ports(
     archive: Archive,
     names: Names,
     *,
-    start_digest: StartDigest | None = None,
     store: IndexStore | None = None,
     embedder_factory: EmbedderFactory | None = None,
     digest: DigestSettings | None = None,
 ) -> dict[str, Any]:
     """`{"meaning": ..., "digests": ...}` for `ChatEngine`, for one question.
-
-    `start_digest` is the function of the server that reads a long
-    conversation outside the question. `DigestPort.prepare` calls it.
 
     `meaning` is None when no key is set, or when no index can be searched.
     `digests` is None when no key is set, when the model of the digest can not
@@ -314,5 +320,5 @@ def ports(
         return {"meaning": None, "digests": None}
     return {
         "meaning": _meaning_port(store or meaning.index_store(archive.path), embedder_factory),
-        "digests": _digest_port(archive, names, digest or DigestSettings(), start_digest),
+        "digests": _digest_port(archive, names, digest or DigestSettings()),
     }

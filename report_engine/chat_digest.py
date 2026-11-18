@@ -31,6 +31,7 @@ import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
+from report_engine.call_pool import CallPool
 from report_engine.calls import Caller, Emit
 from report_engine.chat_digest_refs import without_refs
 from report_engine.chat_digest_span import (
@@ -260,9 +261,16 @@ def conversation_digest(
     cancel: CancelToken | None = None,
     runtime: Runtime | None = None,
     max_new_periods: int | None = None,
+    pool: CallPool | None = None,
 ) -> ConversationDigest:
     """Build the digest of one conversation. Give it what a report run gets:
     the same source, labeler, model facts, options, counter and cache.
+
+    The parts are read one at a time: the prompt of a part holds the notes
+    of the parts before it. To read several conversations at once, run one
+    digest in each thread and give them one `pool`: it bounds the requests
+    in flight and shares the tokens per minute of the model. With no pool
+    the digest has a pool of its own with one slot.
 
     Before any model call it can raise EmptyConversationError, ConfigError,
     SourceError or DigestTooLarge. After that it raises only RunError and its
@@ -279,6 +287,7 @@ def conversation_digest(
         emit=emit,
         reasoning=chosen.reasoning,
         max_calls=limit,
+        pool=pool,
     )
     caller.check_cancel()
 

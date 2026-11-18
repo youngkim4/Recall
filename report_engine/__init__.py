@@ -14,6 +14,7 @@ See README.md in this folder.
 """
 
 from report_engine.cache import PeriodCache
+from report_engine.call_pool import CallPool
 from report_engine.control import CancelToken, ProgressEvent, Runtime
 from report_engine.errors import (
     AllPeriodsFailed,
@@ -44,6 +45,7 @@ from report_engine.models import (
     Usage,
 )
 from report_engine.options import ReportOptions
+from report_engine.parallel import TaskOutcome, run_in_parallel
 from report_engine.pipeline import run_report
 from report_engine.ports import (
     LLM,
@@ -59,6 +61,7 @@ from report_engine.store import ReportEntry, ReportStore
 __all__ = [
     "AllPeriodsFailed",
     "CATEGORIES",
+    "CallPool",
     "CancelToken",
     "ChatMessage",
     "ConfigError",
@@ -93,8 +96,10 @@ __all__ = [
     "SourceError",
     "SourceMessage",
     "StoreError",
+    "TaskOutcome",
     "Usage",
     "estimate",
     "render_markdown",
+    "run_in_parallel",
     "run_report",
 ]

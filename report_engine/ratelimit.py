@@ -2,7 +2,8 @@
 
 A sliding window of one minute. A call is entered at its send time with an
 estimate, and the estimate is replaced by the real number when the reply
-arrives. One run owns one budget; it is not shared between threads.
+arrives. A budget is not safe for threads by itself: `CallPool` holds one
+under a lock for the runs that share it.
 """
 
 from __future__ import annotations
