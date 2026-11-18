@@ -192,3 +192,16 @@ def test_cutting_reads_the_messages_as_a_stream() -> None:
         yield from run(40)
 
     assert sum(s.message_count for s in cut_segments(CHAT, stream())) == 40
+
+
+def test_the_times_of_a_segment_are_its_least_and_its_greatest_time() -> None:
+    (segment,) = cut([msg("a", stamp(90), "one"), msg("b", stamp(0), "two"), msg("c", stamp(60), "three")])
+    assert (segment.first_timestamp, segment.last_timestamp) == (stamp(0), stamp(90))
+    assert (segment.first_message_id, segment.last_message_id) == ("a", "c")
+    assert stored(segment, "model-a", 8).first_timestamp == stamp(0)
+
+
+def test_the_day_of_a_segment_is_the_day_of_its_least_time() -> None:
+    (segment,) = cut([msg("a", "2024-06-04 00:05:00", "after"), msg("b", "2024-06-03 23:55:00", "before")])
+    assert segment.text == "2024-06-03\nThem: after\nThem: before"
+    assert (segment.first_timestamp, segment.last_timestamp) == ("2024-06-03 23:55:00", "2024-06-04 00:05:00")
