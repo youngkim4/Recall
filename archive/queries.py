@@ -165,6 +165,16 @@ class Archive(FigureQueries):
                 except sqlite3.Error:
                     pass  # the caller closed the archive inside the block: the read is over either way
 
+    @contextmanager
+    def snapshot(self) -> Iterator[None]:
+        """Every query of the calling thread inside the block reads one state of the archive.
+
+        Use it when several calls must agree, as the totals and the rows of one answer.
+        The state is the one of the first query inside the block.
+        """
+        with self._reading():
+            yield
+
     def _fetch_all(self, sql: str, params: Sequence[object]) -> list[tuple[Any, ...]]:
         """Run one query to its end. The stream of iter_messages reads each of its chunks with this."""
         with self._using() as conn:

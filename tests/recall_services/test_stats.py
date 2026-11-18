@@ -7,6 +7,8 @@ them sent, from 2024-03-01 to 2024-05-01.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -190,3 +192,28 @@ def test_an_empty_archive_gives_no_time_row(tmp_path: Path) -> None:
         people = asked(empty, Names(), by="person")
     assert (found["rows"], found["first"], found["totals"]["total"]) == ([], None, 0)
     assert (people["rows"], people["rowsTotal"]) == ([], 0)
+
+
+def test_the_totals_and_the_rows_read_one_state_of_the_archive(
+    archive: Archive, saved: Names, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inside: list[bool] = []
+    held = {"open": False}
+    real_snapshot, real_count = archive.snapshot, archive.count
+
+    @contextmanager
+    def watched() -> Iterator[None]:
+        with real_snapshot():
+            held["open"] = True
+            yield
+            held["open"] = False
+
+    def counted(**arguments: Any) -> Any:
+        inside.append(held["open"])
+        return real_count(**arguments)
+
+    monkeypatch.setattr(archive, "snapshot", watched)
+    monkeypatch.setattr(archive, "count", counted)
+    asked(archive, saved, by="month")
+    asked(archive, saved, by="person")
+    assert len(inside) == 4 and all(inside)

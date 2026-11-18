@@ -163,3 +163,18 @@ def odd_files(tmp_path: Path) -> Any:
     import_chat_db(source, path)
     with Archive.open(path) as opened:
         yield opened
+
+
+def test_a_snapshot_reads_one_state_of_the_archive(odd_files: Archive) -> None:
+    import sqlite3
+
+    with odd_files.snapshot():
+        before = odd_files.count()
+        writer = sqlite3.connect(odd_files.path)
+        writer.execute("UPDATE messages SET kind = 'system' WHERE text = 'words'")
+        writer.commit()
+        writer.close()
+        inside = odd_files.count(group_by="day")
+    assert (before, inside[0]["total"]) == (6, 6)
+    # the count of each day reads the messages: after the block it sees the change
+    assert odd_files.count(group_by="day")[0]["total"] == 5

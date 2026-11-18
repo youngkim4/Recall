@@ -115,6 +115,19 @@ def _people_rows(archive: Archive, names: Names, by: str, counted: Sequence[Row]
     return sorted(rows, key=lambda row: (-row["total"], row["key"]))
 
 
+def _rows(
+    archive: Archive, names: Names, filters: Filters, by: str, scope: Mapping[str, Any], days: list[Row]
+) -> list[Row]:
+    """Every row of `by`, before the limit. `days` is the count of each day of the same scope."""
+    if by in PEOPLE_GROUPS:
+        return _people_rows(archive, names, by, archive.count(group_by="conversation", **scope))  # type: ignore[arg-type]
+    if not by:
+        return []
+    counted = days if by == "day" else archive.count(group_by=by, **scope)
+    span = _span(filters, days, _archive_days(archive)) if by in RANGED else None
+    return time_rows(by, counted, span)  # type: ignore[arg-type]
+
+
 def payload(
     archive: Archive,
     names: Names,
@@ -125,17 +138,12 @@ def payload(
     limit: int = DEFAULT_LIMIT,
     prefix: bool = False,
 ) -> dict[str, Any]:
-    """Counts of the filtered set: the totals, its days, and the rows of `by`."""
+    """Counts of the filtered set: the totals, its days, and the rows of `by`. One state of the archive."""
     text = (as_typed(words) if prefix else words.strip()) or None
     scope = {**filters.archive_args(), "text": text}
-    days: list[Row] = archive.count(group_by="day", **scope)  # type: ignore[assignment]
-    rows: list[Row] = []
-    if by in PEOPLE_GROUPS:
-        rows = _people_rows(archive, names, by, archive.count(group_by="conversation", **scope))  # type: ignore[arg-type]
-    elif by:
-        counted = days if by == "day" else archive.count(group_by=by, **scope)
-        span = _span(filters, days, _archive_days(archive)) if by in RANGED else None
-        rows = time_rows(by, counted, span)  # type: ignore[arg-type]
+    with archive.snapshot():
+        days: list[Row] = archive.count(group_by="day", **scope)  # type: ignore[assignment]
+        rows = _rows(archive, names, filters, by, scope, days)
     return {
         "by": by,
         "query": words.strip(),
