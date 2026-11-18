@@ -234,3 +234,23 @@ def test_a_segments_file_that_names_no_build_is_no_index(folder: Path) -> None:
     conn.commit()
     conn.close()
     assert side(store, a, b) == "none"
+
+
+@pytest.mark.parametrize("replaced", [1, 2])
+def test_the_repair_goes_in_the_reverse_order_of_the_swap(
+    folder: Path, monkeypatch: pytest.MonkeyPatch, replaced: int
+) -> None:
+    a, b = two_builds()
+    store = torn_between(folder, a, b, replaced)
+    real = Faults(set())
+    order: list[str] = []
+
+    def replace(source: object, target: object) -> None:
+        order.append(Path(str(target)).name)
+        real(source, target)
+
+    monkeypatch.setattr(store_files.os, "replace", replace)
+    with store.building():
+        pass
+    assert order == list(reversed(FILES[:replaced]))
+    assert side(store, a, b) == "a"
