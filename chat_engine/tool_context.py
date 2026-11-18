@@ -6,11 +6,12 @@ days only through `conversations()` and `days()`, so it cannot widen them.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional, Sequence
 
+from .cancel import CancelToken
 from .directory import Directory
-from .ports import ChatArchive, Conversation, Labeler, Message
+from .ports import ChatArchive, Conversation, DigestSource, Labeler, MeaningSearch, Message
 from .registry import ConversationAliases, EvidenceRegistry
 from .render import ConversationBook, Limits
 from .scope import Scope
@@ -37,10 +38,36 @@ class ToolOutcome:
 
 @dataclass(frozen=True)
 class Prepared:
-    """A checked tool call: a status line to show, and the lookup to run."""
+    """A checked tool call: a status line to show, and the lookup to run.
+
+    own_budget: the tokens the result may hold when the lookup has a budget of
+    its own. None: it spends from the budget of the question.
+    repeated: the question already ran this lookup, so it is not run again.
+    answers_repeats: the tool itself knows what a repeat of this call gets, so
+    the turn sends a call with the same arguments to the tool again.
+    """
 
     status: str
     run: Callable[[int], ToolOutcome]
+    own_budget: Optional[int] = None
+    repeated: bool = False
+    answers_repeats: bool = False
+
+
+@dataclass(frozen=True)
+class Memory:
+    """The optional ports of one question, and the limits of a digest.
+
+    A port that is None is not offered: its tool is not in the tool list.
+    `cancel` is the token of the question. It goes to the digest source.
+    """
+
+    meaning: Optional[MeaningSearch] = None
+    digests: Optional[DigestSource] = None
+    digest_tokens: int = 24_000
+    digest_usd_limit: float = 0.5
+    cancel: CancelToken = field(default_factory=CancelToken)
+    digest_parts_limit: int = 2  # the most periods not yet read that one digest reads inside a question
 
 
 def month_year(timestamp: str) -> str:
@@ -64,12 +91,18 @@ class ToolContext:
         aliases: ConversationAliases,
         scope: Scope,
         limits: Limits,
+        memory: Optional[Memory] = None,
     ) -> None:
         self.archive = archive
         self.labeler = labeler
         self.registry = registry
         self.scope = scope
         self.limits = limits
+        self.memory = memory or Memory()
+        # the digests of this question that gave an answer: "shown" or "failed"
+        self.digests_asked: dict[tuple[str, Optional[str], Optional[str]], str] = {}
+        self.digests_built = 0
+        self.digest_usd = 0.0  # what the digests of this question cost, as far as the source said
         self.book = ConversationBook(archive, labeler, aliases)
         self._directory: Optional[Directory] = None
         self._listed: Optional[list[Conversation]] = None

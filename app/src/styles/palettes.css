@@ -1,0 +1,114 @@
+/* Palettes: the colours of the app after the first one, Graphite, which is
+   in tokens.css. A palette changes the grounds, the text, the two grays
+   that fills and lines are shares of, and the one hue. Everything else in
+   tokens.css follows from those.
+
+   Each palette has a light and a dark form in one block (light-dark), so it
+   goes with any Appearance. Every text step holds 4.5:1 on every ground of
+   its palette, a selected row too: palette.test.ts reads this file and
+   measures it. The names are the ones in lib/palette.ts and in index.html.
+
+   Paper is Graphite, whatever the app is set to: a report that is printed
+   or saved is black on white. */
+
+@layer base {
+  /* a sheet of writing paper and blue-black ink */
+  [data-palette='letter']:not([data-paper]) {
+    --bg: light-dark(#fbf8f1, #1e1b16);
+    --bg-rail: light-dark(#f3eee3, #16130f);
+    --bg-raised: light-dark(#fffdf8, #2b2721);
+    --gray: rgb(131 120 105);
+    --edge: light-dark(rgb(74 62 48), rgb(245 236 222));
+    --text: light-dark(#2a2520, #f4ede1);
+    --text-2: light-dark(#524a41, #c9c0b3);
+    --text-3: light-dark(#655c51, #b5ab9d);
+    --text-off: light-dark(#b5ab9d, #6a6156);
+    --ink: light-dark(#2a2520, #f4ede1);
+    --ink-hover: light-dark(#453d35, #ffffff);
+    --on-ink: light-dark(#fffdf8, #1e1b16);
+    --you: #2f55b5;
+    --you-hover: #3760c6;
+    --you-ink: light-dark(#2a4ea8, #8fb0ff);
+    --them: light-dark(#ebe5d8, #3a352d);
+  }
+
+  /* the inside of a shell, and a rose */
+  [data-palette='rose']:not([data-paper]) {
+    --bg: light-dark(#fdf7f6, #201a1b);
+    --bg-rail: light-dark(#f7ecea, #171213);
+    --bg-raised: light-dark(#ffffff, #2d2527);
+    --gray: rgb(135 115 119);
+    --edge: light-dark(rgb(77 55 60), rgb(247 233 236));
+    --text: light-dark(#2b2123, #f6ecee);
+    --text-2: light-dark(#55464a, #cdbfc2);
+    --text-3: light-dark(#69585c, #b8a9ad);
+    --text-off: light-dark(#b9a9ac, #6c5e61);
+    --ink: light-dark(#2b2123, #f6ecee);
+    --ink-hover: light-dark(#463a3d, #ffffff);
+    --on-ink: light-dark(#ffffff, #201a1b);
+    --you: #cf2f66;
+    --you-hover: #dc3d74;
+    --you-ink: light-dark(#b8245a, #ff8fb3);
+    --them: light-dark(#f1e4e3, #3b3134);
+  }
+
+  /* morning light on leaves */
+  [data-palette='garden']:not([data-paper]) {
+    --bg: light-dark(#f7f9f4, #191c19);
+    --bg-rail: light-dark(#edf1e8, #121512);
+    --bg-raised: light-dark(#ffffff, #262b26);
+    --gray: rgb(112 124 112);
+    --edge: light-dark(rgb(52 66 54), rgb(232 242 232));
+    --text: light-dark(#1f2620, #edf3ec);
+    --text-2: light-dark(#46514a, #bfc9bf);
+    --text-3: light-dark(#535f55, #a9b3a9);
+    --text-off: light-dark(#a8b3a9, #5e685f);
+    --ink: light-dark(#1f2620, #edf3ec);
+    --ink-hover: light-dark(#374038, #ffffff);
+    --on-ink: light-dark(#ffffff, #191c19);
+    --you: #2c7a4b;
+    --you-hover: #34885a;
+    --you-ink: light-dark(#256b41, #7ed6a0);
+    --them: light-dark(#e5ebe0, #333a33);
+  }
+
+  /* the sky after the sun is down */
+  [data-palette='dusk']:not([data-paper]) {
+    --bg: light-dark(#f8f7fc, #1b1a24);
+    --bg-rail: light-dark(#eeecf7, #13121a);
+    --bg-raised: light-dark(#ffffff, #282635);
+    --gray: rgb(120 116 140);
+    --edge: light-dark(rgb(58 54 82), rgb(236 233 250));
+    --text: light-dark(#22202c, #f0eef9);
+    --text-2: light-dark(#4a4759, #c3c0d3);
+    --text-3: light-dark(#5c596d, #adaabe);
+    --text-off: light-dark(#adaabd, #63607a);
+    --ink: light-dark(#22202c, #f0eef9);
+    --ink-hover: light-dark(#3b3848, #ffffff);
+    --on-ink: light-dark(#ffffff, #1b1a24);
+    --you: #6246d6;
+    --you-hover: #6f54e0;
+    --you-ink: light-dark(#563ac4, #b3a4ff);
+    --them: light-dark(#e8e5f3, #353344);
+  }
+
+  /* lamp light, and the last of a fire */
+  [data-palette='ember']:not([data-paper]) {
+    --bg: light-dark(#fcf8f2, #1f1a16);
+    --bg-rail: light-dark(#f5ede2, #17120f);
+    --bg-raised: light-dark(#fffdfa, #2d2620);
+    --gray: rgb(138 120 104);
+    --edge: light-dark(rgb(80 60 44), rgb(248 236 224));
+    --text: light-dark(#2c231c, #f6ece2);
+    --text-2: light-dark(#57493e, #cdbfb2);
+    --text-3: light-dark(#68594d, #b9aa9d);
+    --text-off: light-dark(#bbab9d, #6d5f53);
+    --ink: light-dark(#2c231c, #f6ece2);
+    --ink-hover: light-dark(#483c32, #ffffff);
+    --on-ink: light-dark(#fffdfa, #1f1a16);
+    --you: #c2470f;
+    --you-hover: #d05316;
+    --you-ink: light-dark(#a83b0a, #ff9f6b);
+    --them: light-dark(#efe6da, #3b322a);
+  }
+}

@@ -11,6 +11,11 @@ export type ModelChoice = {
   id: string
   label: string
   level: ModelLevel
+  // how hard the model can be asked to think about a chat question, least
+  // first; none from a server that does not say
+  reasoningLevels?: string[]
+  // the level of a question that asks for none
+  reasoningDefault?: string | null
 }
 
 export type Defaults = {

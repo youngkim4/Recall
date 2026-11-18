@@ -1,0 +1,42 @@
+{
+  "facts_read_on": "2026-11-17",
+  "notes": [
+    "Prices are USD for one million tokens.",
+    "The dimensions, the prices, the largest input and the `dimensions` setting were read from the provider's pages on 2026-11-17.",
+    "null means that the fact was not read. No number is made up for it.",
+    "The request limits (inputs in one request, tokens in one request, tokens in one minute) were not on the page: they are not read.",
+    "The tokenizer family was not read. cl100k_base is an assumption.",
+    "The default is Recall's choice: the large model, shortened to 1024 dimensions."
+  ],
+  "default": {"model": "text-embedding-3-large", "dimensions": 1024},
+  "models": [
+    {
+      "id": "text-embedding-3-small",
+      "provider": "openai",
+      "native_dimensions": 1536,
+      "can_shorten": true,
+      "max_input_tokens": 8192,
+      "usd_per_mtok": 0.02,
+      "max_inputs_per_request": null,
+      "max_tokens_per_request": null,
+      "tokens_per_minute": null,
+      "tokenizer_family": "cl100k_base",
+      "tokenizer_family_assumed": true,
+      "facts_read_on": "2026-11-17"
+    },
+    {
+      "id": "text-embedding-3-large",
+      "provider": "openai",
+      "native_dimensions": 3072,
+      "can_shorten": true,
+      "max_input_tokens": 8192,
+      "usd_per_mtok": 0.13,
+      "max_inputs_per_request": null,
+      "max_tokens_per_request": null,
+      "tokens_per_minute": null,
+      "tokenizer_family": "cl100k_base",
+      "tokenizer_family_assumed": true,
+      "facts_read_on": "2026-11-17"
+    }
+  ]
+}

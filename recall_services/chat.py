@@ -36,6 +36,7 @@ Rules:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 from collections.abc import Callable, Iterator, Mapping
@@ -53,7 +54,7 @@ from chat_engine.local_answer import local_answer
 from chat_engine.ports import LLM
 from chat_engine.scope import EVERYTHING, Scope
 from chat_engine.session import ChatSession
-from recall_services import inputs, keys, messages, models
+from recall_services import inputs, keys, memory, messages, models
 from recall_services.models import ChatModelConfig, ModelChoiceError
 from recall_services.names import Names
 
@@ -62,7 +63,6 @@ logger = logging.getLogger(__name__)
 Event = dict[str, Any]
 LLMFactory = Callable[[ChatModelConfig], LLM]
 
-CHAT_TIMEOUT_SECONDS = 60.0
 # the browser sends the last few turns; more than this is no chat that a person had
 HISTORY_ROWS = 40
 QUESTION_CHARS = 8_000
@@ -70,6 +70,8 @@ HISTORY_ROW_CHARS = 8_000
 EMPTY_QUESTION = "Type a question first."
 TOO_LONG = "The question is too long. Shorten it, then ask again."
 ASK_AGAIN = "then ask again."
+# the effort that asks a model for no reasoning
+NO_REASONING = "none"
 _ENGINE_WORDS = {
     kind.code: kind.default_message
     for kind in (engine_errors.ChatEngineError, engine_errors.ArchiveError, *engine_errors.MODEL_ERRORS)
@@ -106,11 +108,15 @@ def default_llm(config: ChatModelConfig) -> LLM:
     key = keys.api_key()
     if not key:
         raise engine_errors.NoApiKeyError()
+    # a model that reasons harder is silent for longer: the registry gives the effort its own time
+    wait = float(config.timeout_seconds)
     return OpenAIResponsesLLM(
-        build_client(key, timeout_s=CHAT_TIMEOUT_SECONDS),
+        build_client(key, timeout_s=wait),
         api_key=key,
-        timeout_seconds=CHAT_TIMEOUT_SECONDS,
+        timeout_seconds=wait,
         reasoning_effort=config.reasoning_effort,
+        # a model that is asked not to reason has no reasoning to hand back
+        carry_reasoning=config.reasoning_effort not in (None, NO_REASONING),
     )
 
 
@@ -193,9 +199,20 @@ def _session(history: object) -> ChatSession:
     return session
 
 
+def _digest_limits() -> dict[str, int]:
+    """The most parts that a digest reads inside a question, for the engine: the number of `memory.py`.
+
+    The digest port refuses a longer digest with the same number. An engine
+    that has no such limit does not take the argument.
+    """
+    named = {field.name for field in dataclasses.fields(EngineConfig)}
+    return {"digest_parts_limit": memory.DIGEST_PARTS_LIMIT} if "digest_parts_limit" in named else {}
+
+
 def _events(
     asked: _Asked,
     model: str,
+    reasoning_effort: str,
     history: object,
     cancel: CancelToken | None,
     archive: Archive,
@@ -203,6 +220,7 @@ def _events(
     use_ai: bool,
     llm_factory: LLMFactory,
     clock: Callable[[], datetime],
+    start_digest: memory.StartDigest | None = None,
 ) -> Iterator[Event]:
     labeler = names.chat_labeler(archive.conversations())
     adapter = ArchiveAdapter(archive)
@@ -212,9 +230,11 @@ def _events(
             found = local_answer(adapter, asked.question, asked.scope, labeler=labeler)
             yield {"type": "done", "payload": _payload(found, asked, archive, names)}
             return
-        config = models.chat_config(model.strip() or models.default_id())
-        settings = EngineConfig(model=config.model, max_output_tokens=config.max_output_tokens)
-        engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock)
+        config = models.chat_config(model.strip() or models.default_id(), reasoning_effort)
+        settings = EngineConfig(model=config.model, max_output_tokens=config.max_output_tokens, **_digest_limits())
+        # the search by meaning and the digest, each None when it can not work; a test puts its own `memory.ports`
+        ports = memory.ports(archive, names, start_digest=start_digest)
+        engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock, **ports)
         answering = engine.stream(asked.question, scope=asked.scope, session=_session(history), cancel=cancel)
     except engine_errors.ChatEngineError as error:
         yield _failure(error.to_event(), config)
@@ -241,17 +261,25 @@ def stream(
     archive: Archive,
     names: Names,
     use_ai: bool = True,
+    reasoning_effort: object = "",
     llm_factory: LLMFactory | None = None,
     clock: Callable[[], datetime] = datetime.now,
+    start_digest: memory.StartDigest | None = None,
 ) -> Iterator[Event]:
     """Answer one question. See the module docstring for the events.
 
     `contact` is a conversation id, or "" for the whole archive. `model` is an
-    id of the registry, or "" for its default. `history` is the list of
+    id of the registry, or "" for its default. `reasoning_effort` is one of
+    the reasoning levels of that model, or "" for the effort of the registry;
+    a word that the model does not list ends the question with the code
+    `reasoning_level`. `history` is the list of
     `{role, content}` rows that the browser keeps; a "user" row can hold
     `contact`, the conversation that its question was asked of. `cancel` stops the model
     call and the lookups: the question then ends with `done` and `cancelled`.
-    Closing the iterator stops the model call too.
+    Closing the iterator stops the model call too. `start_digest` is the
+    function of the server that reads a long conversation outside the
+    question: it gets the conversation id and the two days, and says whether
+    the reading started.
 
     Nothing is raised for a failure of the model, of the archive or of the
     request: the last event says it.
@@ -265,7 +293,17 @@ def stream(
         yield {"type": "error", "code": "question_too_long", "error": TOO_LONG}
         return
     answering = _events(
-        asked, inputs.text(model), history, cancel, archive, names, use_ai, llm_factory or default_llm, clock
+        asked,
+        inputs.text(model),
+        inputs.text(reasoning_effort),
+        history,
+        cancel,
+        archive,
+        names,
+        use_ai,
+        llm_factory or default_llm,
+        clock,
+        start_digest,
     )
     try:
         yield from answering

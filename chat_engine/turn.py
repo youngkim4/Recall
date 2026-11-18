@@ -6,9 +6,9 @@ the archive fails. It never switches to another way of answering by itself.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import datetime
-from typing import Any, Callable, Generator, Iterator, Optional
+from typing import Any, Generator, Iterator, Optional
 
 from .cancel import CancelToken
 from .citations import CitationStream, stored_form
@@ -31,10 +31,10 @@ from .result import build_payload
 from .scope import Scope
 from .seed import archive_years, plan_seed
 from .session import ChatSession, Turn
-from .tool_context import ToolOutcome
+from .tool_context import Memory, ToolOutcome
 from .tools import ToolBox
+from .turn_parts import TOO_MANY, Event, Reply, TurnSettings, no_answer, status
 
-Event = dict[str, Any]
 MIN_RESULT_TOKENS = 300  # with less left, a lookup has no room for an answer worth a step
 _CARRIED_TOKENS = 1200
 _REPEATED = "Same lookup as before: its result is above. Try a different lookup, or answer."
@@ -42,47 +42,6 @@ _SKIPPED = "Lookup skipped: the limit on lookups for this question is reached."
 _LOOKING = "Looking at more messages"
 _THINKING = "Thinking it over"
 _LEFT_OUT = "[This earlier answer is left out: it was written for another scope than this question has.]"
-_TOO_MANY = (
-    "[{count} more lookups of this step were not run: one step runs at most {limit}. "
-    "Ask for them in the next step if you still need them.]"
-)
-
-
-@dataclass(frozen=True)
-class TurnSettings:
-    model: str
-    max_output_tokens: int
-    max_steps: int
-    max_calls_per_step: int
-    result_tokens: int
-    total_tool_tokens: int
-    history_tokens: int
-    max_message_chars: int
-    timezone: str
-    count_tokens: Callable[[str], int]
-
-
-@dataclass(frozen=True)
-class Reply:
-    """What one model call gave."""
-
-    text: str = ""  # as the model wrote it, with m-references
-    shown: str = ""  # as streamed to the reader, with numbers
-    calls: tuple[ToolCall, ...] = ()
-    order: tuple[str, ...] = ()
-    unknown: tuple[str, ...] = ()
-    stop_reason: str = "stop"
-    provider_items: tuple[Any, ...] = ()
-    streamed: bool = False
-    cancelled: bool = False
-    forced: bool = False  # the call that had to answer without tools
-
-
-def status(text: str, reset: bool = False) -> Event:
-    event: Event = {"type": "status", "text": text}
-    if reset:
-        event["reset"] = True
-    return event
 
 
 class QuestionTurn:
@@ -99,6 +58,7 @@ class QuestionTurn:
         scope: Scope,
         session: ChatSession,
         cancel: CancelToken,
+        memory: Optional[Memory] = None,
     ) -> None:
         self._archive = archive
         self._llm = llm
@@ -111,7 +71,7 @@ class QuestionTurn:
         self._session = session
         self._cancel = cancel
         limits = Limits(settings.max_message_chars, settings.result_tokens, settings.count_tokens)
-        self._box = ToolBox(archive, labeler, session.registry, session.aliases, scope, limits)
+        self._box = ToolBox(archive, labeler, session.registry, session.aliases, scope, limits, memory)
         self._limits = limits
         self._transcript: list[ChatMessage] = []
         self._steps: list[Event] = []
@@ -296,7 +256,7 @@ class QuestionTurn:
             yield status(_LOOKING, reset=True)  # the text shown so far was not the answer
         yield from self._run_calls(calls)
         if extra and self._transcript[-1].role == "tool":
-            note = _TOO_MANY.format(count=extra, limit=limit)
+            note = TOO_MANY.format(count=extra, limit=limit)
             last = self._transcript[-1]
             self._transcript[-1] = replace(last, content=f"{last.content}\n{note}")
             self._left -= self._settings.count_tokens(note)
@@ -313,14 +273,19 @@ class QuestionTurn:
                 self._skip(call, _SKIPPED)
                 continue
             prepared = self._box.prepare(call.name, call.arguments)
+            if prepared.repeated:
+                self._skip(call, _REPEATED)
+                continue
             if prepared.status:
                 yield status(prepared.status)
             if self._cancel.cancelled:
                 return
-            outcome = prepared.run(self._allowance())
-            self._ran.add(key)
+            own = prepared.own_budget  # a lookup with a budget of its own does not spend from the question's
+            outcome = prepared.run(self._allowance() if own is None else own)
+            if not prepared.answers_repeats:
+                self._ran.add(key)
             self._totals["tool_calls"] += 1
-            self._record(call.name, outcome, seeded=False)
+            self._record(call.name, outcome, seeded=False, spends=own is None)
             self._answer(call, outcome.text)
 
     def _answer(self, call: ToolCall, text: str) -> None:
@@ -334,8 +299,9 @@ class QuestionTurn:
     def _allowance(self) -> int:
         return max(0, min(self._settings.result_tokens, self._left))
 
-    def _record(self, tool: str, outcome: ToolOutcome, *, seeded: bool) -> None:
-        self._left -= self._settings.count_tokens(outcome.text)
+    def _record(self, tool: str, outcome: ToolOutcome, *, seeded: bool, spends: bool = True) -> None:
+        if spends:
+            self._left -= self._settings.count_tokens(outcome.text)
         self._steps.append({"tool": tool, "text": outcome.summary, "seeded": seeded})
 
     # --- the prompt ---
@@ -348,6 +314,7 @@ class QuestionTurn:
             timezone=timezone_label(self._now, self._settings.timezone),
             summary=summary,
             scope=scope_line(where, self._scope.since, self._scope.until),
+            offered=self._box.offered,
         )
         turns = self._recent_turns()
         messages = [ChatMessage("system", system)]
@@ -405,7 +372,7 @@ class QuestionTurn:
 
     def _done(self, reply: Reply) -> Event:
         if not reply.cancelled and not reply.shown:
-            raise _no_answer(reply)
+            raise no_answer(reply)
         context = self._box.context
         payload = build_payload(
             answer=reply.shown,
@@ -418,7 +385,7 @@ class QuestionTurn:
             allowed=context.allows,
             text_cap=self._settings.max_message_chars,
             steps=self._steps,
-            usage=self._totals,
+            usage=self._box.usage(self._totals),
             cancelled=reply.cancelled,
             truncated=reply.stop_reason == "length",
         )
@@ -428,15 +395,3 @@ class QuestionTurn:
             self._session.add_turn(Turn(self._question, answer, reply.order, self._scope))
         return {"type": "done", "payload": payload}
 
-
-def _no_answer(reply: Reply) -> ModelError:
-    """Why a model call that had to answer gave no text."""
-    if reply.stop_reason == "length":
-        message = "The model used all of its output before it wrote an answer."
-    elif reply.stop_reason == "filtered":
-        message = "The model provider blocked the answer."
-    elif reply.forced:
-        message = "The model gave no answer after its last lookup."
-    else:
-        message = "The model gave no answer."
-    return ModelError(message, detail=f"stop_reason={reply.stop_reason} forced={reply.forced}")

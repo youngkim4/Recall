@@ -19,7 +19,9 @@ import recall_paths
 import ui_server
 from archive import source
 from archive.importer import work_dir
+from meaning_index import EmbedderFacts, FakeEmbedder
 from recall_services import archive_state, places
+from recall_services import meaning as meaning_service
 from setup_status import DbProbe
 from tests.archive.builders import ChatDbBuilder
 from tests.archive_kit import (
@@ -29,7 +31,9 @@ from tests.archive_kit import (
     data_folder,  # noqa: F401
     databases_opened,
     emptied,
+    ended,
     held,
+    jobs_end,  # noqa: F401
     listed,
     no_names,  # noqa: F401
     not_an_archive,
@@ -311,13 +315,20 @@ class Reads:
         monkeypatch.setattr(source, "copy_source", note_and_copy)
 
     def kinds(self, live, archive_file):
-        """What each database that sqlite3 opened is to this import. A file that is none of its own is named."""
+        """What each database that sqlite3 opened is to this import. A file that is none of its own is named.
+
+        A file in the folder of the index of meanings is "index": after an
+        import the server looks whether an index is there, and brings it up to
+        date. That folder holds ids and vectors, and no database of Messages.
+        """
         work = work_dir(Path(archive_file)).resolve()
+        index = meaning_service.index_store(archive_file).folder.resolve()
         own = {Path(live).resolve(): "messages", Path(archive_file).resolve(): "archive", Path(local_store.DEFAULT_STORE_PATH).resolve(): "store"}
+        folders = {work: "work", index: "index"}
         found = set()
         for target in self.by_sqlite:
             opened = file_of(target)
-            found.add("work" if opened.parent == work else own.get(opened, f"another database: {opened}"))
+            found.add(folders.get(opened.parent) or own.get(opened, f"another database: {opened}"))
         return found
 
 
@@ -380,6 +391,53 @@ def test_the_record_of_reads_names_a_second_database(messages_home, filled, seco
     assert job["status"] == "completed", job["error"]
     assert reads.kinds(live, filled) == {"messages", "work", "archive", "store", f"another database: {second_database.resolve()}"}
     assert set(reads.by_file) == {live.resolve(), second_database.resolve()}
+
+
+def test_with_an_index_an_update_reads_the_index_too_and_still_no_second_source(
+    messages_home, data_folder, second_database, jobs_end, tmp_path, monkeypatch  # noqa: F811
+):
+    """The server brings an index that is there up to date after the update. It reads no other database for it."""
+    filled = pulled(tmp_path / "saves" / "archive.sqlite3", FIRST)
+    facts = EmbedderFacts("fake-embedding-1", 64, usd_per_mtok=0.13, max_input_tokens=8192, tokenizer_family="words")
+    fake = FakeEmbedder()
+    monkeypatch.setattr(meaning_service, "default_facts", lambda: facts)
+    monkeypatch.setattr(meaning_service, "embedder_for", lambda _model, _dimensions, **_more: fake)
+    assert run("meaning", {"messagesPath": str(filled)})["status"] == "completed"
+    live = write_database(messages_home / "chat.db", [*FIRST, "still in messages"])
+    reads = Reads(monkeypatch, [live, second_database])
+
+    job = run("export", {"messagesPath": str(filled)})
+
+    assert job["status"] == "completed", job["error"]
+    with ui_server.JOBS_LOCK:
+        (started,) = [made["id"] for made in ui_server.JOBS.values() if made["action"] == "meaning"]
+    assert ended(started)["status"] == "completed"
+    assert texts(filled) == sorted([*FIRST, "still in messages"])
+    assert reads.kinds(live, filled) == {"messages", "work", "archive", "store", "index"}
+    assert set(reads.by_file) == {live.resolve()}
+
+
+def test_the_record_of_reads_names_a_database_beside_the_index_folder(
+    messages_home, data_folder, tmp_path, monkeypatch  # noqa: F811
+):
+    # a file is "index" only inside the index folder of this archive: the folder of another archive is still named
+    filled = pulled(tmp_path / "saves" / "archive.sqlite3", FIRST)
+    live = write_database(messages_home / "chat.db", [*FIRST, "still in messages"])
+    beside = write_database(meaning_service.index_folder(filled).parent / "of-another-archive" / "segments.sqlite3", ["a copy"])
+    reads = Reads(monkeypatch, [live])
+    real = ui_server.pull_into_archive
+
+    def also_reads_it(action, payload):
+        import sqlite3
+
+        sqlite3.connect(f"file:{quote(str(beside))}?mode=ro", uri=True).close()
+        return real(action, payload)
+
+    monkeypatch.setattr(ui_server, "pull_into_archive", also_reads_it)
+    job = run("export", {"messagesPath": str(filled)})
+
+    assert job["status"] == "completed", job["error"]
+    assert reads.kinds(live, filled) == {"messages", "work", "archive", "store", f"another database: {beside.resolve()}"}
 
 
 # ---- when the database cannot be read ----

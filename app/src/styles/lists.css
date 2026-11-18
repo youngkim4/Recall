@@ -322,16 +322,26 @@
   /* ---- choice menu: a few named choices, each with a line about what it
      means and a check on the one in use. 4px of padding and 8px rows inside a
      12px panel, so the corners share a center. ---- */
-  .choice-menu {
+  .choice-panel {
     width: 15rem;
-    list-style: none;
-    outline: none;
-    /* kept while it fades out, when it is no longer open and still drawn */
-    gap: 1px;
   }
 
-  .choice-menu:popover-open {
+  .choice-menu {
     display: grid;
+    gap: 1px;
+    list-style: none;
+    outline: none;
+  }
+
+  /* A control of its own under the choices, about the choice in use. A
+     hairline parts it from them. The line and the control start and end
+     where the words of a choice start and its check ends: 8px in from the
+     rows, 12px from the panel's edge. It keeps 8px over it, and 12px under
+     it to the panel's edge: as far from the bottom as from the sides. */
+  .choice-extra {
+    margin: var(--s-1) var(--s-2) 0;
+    padding: var(--s-2) 0;
+    border-top: 1px solid var(--line);
   }
 
   .choice {

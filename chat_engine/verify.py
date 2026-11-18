@@ -117,6 +117,12 @@ def _is_held(span: str, sources: Sequence[str], joined: str) -> bool:
     return False
 
 
+def is_quote_of(quote: str, sources: Iterable[str]) -> bool:
+    """True when one source holds the quote, by the rule that checks the answer."""
+    normalised = [normalise(source) for source in sources]
+    return _is_held(quote, normalised, "\n".join(normalised))
+
+
 def unverified_quotes(answer: str, sources: Iterable[str]) -> list[str]:
     """Quoted spans of the answer that no source holds."""
     normalised = [normalise(source) for source in sources]
