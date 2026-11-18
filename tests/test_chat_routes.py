@@ -297,6 +297,30 @@ def test_a_reader_who_leaves_while_a_digest_is_read_pays_for_the_part_in_flight_
     assert [number for number, _ in started] == [1] and question_threads() == []
 
 
+def test_the_watch_of_the_reader_cancels_on_a_close_only():
+    from chat_engine.cancel import CancelToken
+
+    def watched(act):
+        mine, theirs = socket.socketpair()
+        token, done = CancelToken(), threading.Event()
+        watch = threading.Thread(target=ui_server._watch_the_reader, args=(mine, token, done))
+        watch.start()
+        act(theirs, done)
+        watch.join(5)
+        mine.close()
+        theirs.close()
+        return token.cancelled, watch.is_alive()
+
+    assert watched(lambda theirs, _done: theirs.close()) == (True, False)
+    assert watched(lambda theirs, _done: theirs.sendall(b"GET")) == (False, False)  # bytes end the watch
+    assert watched(lambda _theirs, done: done.set()) == (False, False)  # the stream ended
+    closed = socket.socket()
+    closed.close()
+    token = CancelToken()
+    ui_server._watch_the_reader(closed, token, threading.Event())  # a socket that can not be watched
+    assert not token.cancelled
+
+
 def wait_for_the_import():
     limit = time.monotonic() + 10
     while ui_server.unfinished_import() and time.monotonic() < limit:
