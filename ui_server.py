@@ -81,6 +81,7 @@ from recall_services import frame as frame_service
 from recall_services import inputs, models, places
 from recall_services import meaning as meaning_service
 from recall_services import memory as memory_service
+from recall_services import memory_prep as memory_prep_service
 from recall_services import names as names_service
 from recall_services import reports as report_service
 from recall_services import search as search_service
@@ -617,7 +618,7 @@ def pull_into_archive(action: str, payload: dict) -> PullDone:
     raise ImportStopped(outcome.reason)
 
 
-JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge", "meaning", "digest"})
+JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge", "meaning", "digest", "memory"})
 # each of these writes the archive
 IMPORT_ACTIONS = frozenset({"setup_import", "export", "bridge"})
 # this one reads the whole archive into the index for the search by meaning
@@ -629,6 +630,10 @@ DIGEST_ACTIONS = frozenset({"digest"})
 DIGEST_IS_READ = "Recall is reading a conversation for chat. Wait until it ends."
 IMPORT_BEFORE_DIGEST = "An import is running. Wait until it ends, then ask again."
 NO_CONVERSATION_TO_READ = "A conversation is needed to read it for chat."
+# this one reads the memory of chat ahead of time: every conversation of the memory
+MEMORY_ACTIONS = frozenset({"memory"})
+MEMORY_IS_READ = "Recall is reading the memory of chat. Wait until it ends."
+IMPORT_BEFORE_MEMORY = "An import is running. Wait until it ends, then read the memory."
 UNFINISHED = frozenset({"queued", "running"})
 # Jobs that do not run together: the job that is asked for, the jobs that
 # hold it up, and what the reader is told.
@@ -640,6 +645,9 @@ ONE_AT_A_TIME = (
     # one conversation is read for chat at a time, and no import writes the archive meanwhile
     (IMPORT_ACTIONS | DIGEST_ACTIONS, DIGEST_ACTIONS, DIGEST_IS_READ),
     (DIGEST_ACTIONS, IMPORT_ACTIONS, IMPORT_BEFORE_DIGEST),
+    # one reading of the memory at a time, and no import writes the archive meanwhile
+    (IMPORT_ACTIONS | MEMORY_ACTIONS, MEMORY_ACTIONS, MEMORY_IS_READ),
+    (MEMORY_ACTIONS, IMPORT_ACTIONS, IMPORT_BEFORE_MEMORY),
 )
 
 
@@ -970,6 +978,7 @@ def after_job(job_id: str, action: str, payload: dict) -> None:
         with contextlib.suppress(Exception):
             print(f"[jobs] what follows a job did not run: {type(exc).__name__}", file=sys.__stderr__)
     refresh_meaning_index(job_id, action, payload)
+    refresh_memory(job_id, action, payload)
 
 
 WRITTEN_NOT_COUNTED = "The archive is written. Recall could not read it back to count it."
@@ -1189,6 +1198,57 @@ def refresh_meaning_index(job_id: str, action: str, payload: dict) -> None:
             print(f"[meaning] the index was not brought up to date: {type(exc).__name__}", file=sys.__stderr__)
 
 
+def prepare_memory(job_id: str, payload: dict) -> dict:
+    """The `memory` job: read the memory of chat ahead of time, four conversations at once. Its lines hold counts only."""
+    _state, archive = archive_for(named_archive(payload))
+
+    def told(update: dict) -> None:
+        if update.get("progress"):
+            update_job(job_id, progress=update["progress"])
+        if update.get("log"):
+            append_log(job_id, update["log"])
+
+    return memory_prep_service.run(told, archive=archive, names=saved_names())
+
+
+def memory_answer(archive: Archive) -> dict:
+    """The answer of `GET /api/memory`: what is read of the memory, and the `memory` job that runs, if any."""
+    found = memory_prep_service.payload(archive, saved_names())
+    with JOBS_LOCK:
+        running = [job["id"] for job in JOBS.values() if job["action"] in MEMORY_ACTIONS and job["status"] in UNFINISHED]
+    return {**found, "jobId": running[0] if running else None}
+
+
+def refresh_memory(job_id: str, action: str, payload: dict) -> None:
+    """After an import that changed the archive: one `memory` job reads what the import added to the memory.
+
+    Only when the memory was read before: the notes hold a part of it
+    (`memory_prep.read_before`), also when the import gave that part a new
+    key. And only when the parts that are not read cost at most
+    `PREPARE_AUTO_USD` (`memory_prep.worth_starting`). The first reading is
+    the choice of the reader. A fault here does not change how the import ended.
+    """
+    try:
+        if not changed_the_archive(job_id, action):
+            return
+        place = named_archive(payload)
+        _state, archive = archive_for(place, wait_for_import=False)
+        if not memory_prep_service.read_before(archive):
+            return  # no part of the memory is in the notes: the state was none
+        found = memory_prep_service.payload(archive, saved_names())
+        if not memory_prep_service.worth_starting(found, read_before=True):
+            parts = found["partsNotRead"]
+            print(f"[memory] the memory waits for the reader: {parts:,} part{'' if parts == 1 else 's'} not read", file=sys.__stderr__)
+            return
+        named = payload.get("messagesPath")
+        create_job("memory", {"messagesPath": named} if named else {})
+    except JobRefused:
+        pass  # an import that started meanwhile, or a reading that runs
+    except Exception as exc:  # noqa: BLE001 - the import ended: nothing here is a reason to say otherwise
+        with contextlib.suppress(Exception):
+            print(f"[memory] the memory was not brought up to date: {type(exc).__name__}", file=sys.__stderr__)
+
+
 def do_job(job_id: str, action: str, payload: dict) -> dict:
     """The work of one job. What it returns is the result of the job."""
     if action == "export":
@@ -1209,6 +1269,8 @@ def do_job(job_id: str, action: str, payload: dict) -> dict:
         return build_meaning_index(job_id, payload)
     if action == "digest":
         return read_conversation(job_id, payload)
+    if action == "memory":
+        return prepare_memory(job_id, payload)
     raise ValueError(f"Unknown job action: {action}")
 
 
@@ -2740,6 +2802,10 @@ class RecallHandler(BaseHTTPRequestHandler):
             # the index for the search by meaning: what it holds, and what a build would send and cost now
             _state, archive = archive_for(named_archive(query))
             send_json(self, 200, meaning_service.payload(archive, saved_names()))
+        elif parsed.path == "/api/memory":
+            # the memory of chat: what is read, and what reading the rest would cost now
+            _state, archive = archive_for(named_archive(query))
+            send_json(self, 200, memory_answer(archive))
         elif parsed.path == "/api/day":
             _state, archive = archive_for(named_archive(query))
             try:
