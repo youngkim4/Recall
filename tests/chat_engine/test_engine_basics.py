@@ -114,7 +114,16 @@ def test_counting_question_is_answered_from_count_messages() -> None:
     result = engine.ask("How many messages did Maya and I exchange in 2021?")
     assert result["answer"] == "You and Maya exchanged 4 messages in 2021."
     counted = [arguments for name, arguments in archive.calls if name == "count" and arguments["since"]]
-    assert counted == [
+    seeded, asked = counted[0], counted[1:]
+    assert seeded == {  # the figures of the year the question names, run before the model
+        "conversations": None,
+        "since": "2021-01-01",
+        "until": "2021-12-31",
+        "from_me": None,
+        "text": None,
+        "group_by": "conversation",
+    }
+    assert asked == [
         {
             "conversations": [MAYA_PHONE],
             "since": "2021-01-01",

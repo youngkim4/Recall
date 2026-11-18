@@ -29,7 +29,7 @@ from .prompt import LIMIT_NOTE, question_block, scope_line, system_prompt, timez
 from .render import Limits, ResultWriter, add_block, time_key
 from .result import build_payload
 from .scope import Scope
-from .seed import plan_seed
+from .seed import archive_years, plan_seed
 from .session import ChatSession, Turn
 from .tool_context import ToolOutcome
 from .tools import ToolBox
@@ -40,6 +40,7 @@ _CARRIED_TOKENS = 1200
 _REPEATED = "Same lookup as before: its result is above. Try a different lookup, or answer."
 _SKIPPED = "Lookup skipped: the limit on lookups for this question is reached."
 _LOOKING = "Looking at more messages"
+_THINKING = "Thinking it over"
 _LEFT_OUT = "[This earlier answer is left out: it was written for another scope than this question has.]"
 _TOO_MANY = (
     "[{count} more lookups of this step were not run: one step runs at most {limit}. "
@@ -155,15 +156,16 @@ class QuestionTurn:
         if self._cancel.cancelled:
             return Reply(cancelled=True)
         summary = self._box.guard(self._archive.summary)
-        lookups = yield from self._seed()
+        lookups = yield from self._seed(archive_years(summary))
         if self._cancel.cancelled:
             return Reply(cancelled=True)
         self._transcript = self._box.guard(lambda: self._opening(summary, lookups))
+        yield status(_THINKING)  # the line of the last lookup does not stay while the model works
         return (yield from self._loop())
 
-    def _seed(self) -> Generator[Event, None, list[tuple[str, str]]]:
+    def _seed(self, held: tuple[int, int]) -> Generator[Event, None, list[tuple[str, str]]]:
         lookups: list[tuple[str, str]] = []
-        for seed in plan_seed(self._box, self._question):
+        for seed in plan_seed(self._box, self._question, held):
             yield status(seed.prepared.status)
             if self._cancel.cancelled:
                 break

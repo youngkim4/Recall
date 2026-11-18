@@ -3,19 +3,27 @@
 Before the first model call the engine runs one search on the words of the
 question and one lookup of the names in it. The results go into the prompt,
 so a simple recall question ends in one model call.
+
+A question that names years also gets the figures of that period: who the
+user wrote with, and how much. A question about a period is seldom answered
+by a message that holds its words, so the model starts from the pattern.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Any, Callable, Optional, Sequence, cast
 
 from .directory import Directory, Entry
+from .handles import MIN_PHONE_DIGITS
 from .labeler import handle_spans
+from .ports import ArchiveSummary
 from .search import SearchRequest
 from .textnorm import fold, surface_words
+from .tool_args import ToolInputError
 from .tool_context import Prepared, ToolContext
-from .tool_figures import list_entries
+from .tool_figures import list_entries, run_count
 from .tool_search import run_search_tool
 from .tools import ToolBox
 
@@ -26,6 +34,10 @@ _MAX_UNITS = 12
 _MAX_WORD = 40
 _BOOSTED = 8
 _LIST_TOKENS = 700
+_FIGURES_TOKENS = 1500  # room for every row a count by conversation shows
+ALL_YEARS = (1990, 2099)
+_YEAR_RE = re.compile(r"(?<![0-9])(?:199[0-9]|20[0-9]{2})(?![0-9])")
+_DIGITS_RE = re.compile(r"[0-9]+")
 
 
 @dataclass(frozen=True)
@@ -72,6 +84,64 @@ def _worth_a_search(token: str) -> bool:
     return len(token) == 2 and (not token.isascii() or any(ch.isdigit() for ch in token))
 
 
+def archive_years(summary: ArchiveSummary) -> tuple[int, int]:
+    """The first and the last year the archive holds. With no dated message: every year."""
+    first, last = (str(summary.get(key) or "")[:4] for key in ("first_timestamp", "last_timestamp"))
+    if _YEAR_RE.fullmatch(first) and _YEAR_RE.fullmatch(last):
+        return int(first), int(last)
+    return ALL_YEARS
+
+
+def question_period(
+    question: str, held: tuple[int, int] = ALL_YEARS, redact: Optional[Callable[[str], str]] = None
+) -> tuple[Optional[str], Optional[str]]:
+    """The first and the last day of the years the question names. No year: (None, None).
+
+    Only a year the archive holds counts, so an amount such as 2000 is seldom
+    taken for a year. Digits of a phone number or an email address never are:
+    a handle that `redact` masks gives no year, whatever its shape.
+    """
+    kept = question
+    for start, end in reversed(handle_spans(question)):
+        span = question[start:end]
+        masked = redact is not None and redact(span) != span
+        kept = f"{kept[:start]} {'' if masked else _years_beside_a_handle(span)} {kept[end:]}"
+    years = sorted(year for year in map(int, _YEAR_RE.findall(kept)) if held[0] <= year <= held[1])
+    if not years:
+        return None, None
+    return f"{years[0]}-01-01", f"{years[-1]}-12-31"
+
+
+def _years_beside_a_handle(span: str) -> str:
+    """What a span that looks like a phone number or an email address keeps for the search of years.
+
+    A range of years or a date looks like a phone number: it is kept whole. A
+    year written beside a phone number is kept; the number is not.
+    """
+    if "@" in span or "+" in span:
+        return ""
+    if _is_dates(span):
+        return span
+    parts = span.split()
+    years: list[str] = []
+    for end in (-1, 0):
+        while len(parts) > 1 and _YEAR_RE.fullmatch(parts[end]) and _digit_count(parts) - 4 >= MIN_PHONE_DIGITS:
+            years.append(parts.pop(end))
+    return " ".join(years)
+
+
+def _digit_count(parts: Sequence[str]) -> int:
+    return sum(len(run) for part in parts for run in _DIGITS_RE.findall(part))
+
+
+def _is_dates(span: str) -> bool:
+    """Years and short numbers, like 2016-2019 or 2016-06-01: a period or a date, not a phone number."""
+    runs = _DIGITS_RE.findall(span)
+    return any(_YEAR_RE.fullmatch(run) for run in runs) and all(
+        _YEAR_RE.fullmatch(run) or len(run) <= 2 for run in runs
+    )
+
+
 def named_entries(directory: Directory, names: Sequence[str]) -> list[Entry]:
     """Entries any name matches; those that match more names come first."""
     scored: dict[str, tuple[int, Entry]] = {}
@@ -88,7 +158,8 @@ def named_entries(directory: Directory, names: Sequence[str]) -> list[Entry]:
     return [entry for _, (_, entry) in ranked]
 
 
-def plan_seed(box: ToolBox, question: str) -> list[SeedCall]:
+def plan_seed(box: ToolBox, question: str, held: tuple[int, int] = ALL_YEARS) -> list[SeedCall]:
+    """The lookups to run before the first model call. `held` is the years the archive holds."""
     ctx = box.context
     directory: Directory = box.guard(ctx.directory)
     names = directory.named_in(question)
@@ -101,6 +172,9 @@ def plan_seed(box: ToolBox, question: str) -> list[SeedCall]:
         calls.append(_names_call(box, ctx, names, entries))
     elif ctx.scope.conversations:
         calls.append(_scope_call(box, ctx, directory))
+    figures = _figures_call(box, ctx, *question_period(question, held, ctx.labeler.redact))
+    if figures is not None:
+        calls.append(figures)
     return calls
 
 
@@ -141,3 +215,30 @@ def _scope_call(box: ToolBox, ctx: ToolContext, directory: Directory) -> SeedCal
         lambda budget: list_entries(ctx, directory.top(SEED_NAMES), SEED_NAMES, min(budget, _LIST_TOKENS)),
     )
     return SeedCall("list_conversations", "list_conversations()", box.wrap("list_conversations", prepared))
+
+
+def _figures_call(
+    box: ToolBox, ctx: ToolContext, since: Optional[str], until: Optional[str]
+) -> Optional[SeedCall]:
+    """Who the user wrote with in the period of the question. None when it names no period."""
+    if since is None or until is None:
+        return None
+    try:
+        low, high = cast(tuple[str, str], ctx.days(since, until))
+    except ToolInputError:
+        return None  # the period is outside the days the user chose
+    filters: dict[str, Any] = {
+        "conversations": ctx.conversations(None),
+        "since": low,
+        "until": high,
+        "from_me": None,
+        "text": None,
+        "group_by": "conversation",
+    }
+    years = f"in {low[:4]}" if low[:4] == high[:4] else f"from {low[:4]} to {high[:4]}"
+    prepared = Prepared(
+        f"Counting who you wrote with {years}",
+        lambda budget: run_count(ctx, filters, min(budget, _FIGURES_TOKENS)),
+    )
+    label = f'count_messages(group_by="conversation", since="{low}", until="{high}")'
+    return SeedCall("count_messages", label, box.wrap("count_messages", prepared))

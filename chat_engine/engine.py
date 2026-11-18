@@ -39,10 +39,10 @@ class EngineConfig:
 
     model: str
     max_output_tokens: int
-    max_steps: int = 6
+    max_steps: int = 8
     max_calls_per_step: int = 8
     result_tokens: int = 3000
-    total_tool_tokens: int = 18000
+    total_tool_tokens: int = 30000
     history_tokens: int = 6000
     max_message_chars: int = 4000
     timezone: str = ""

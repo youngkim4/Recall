@@ -214,7 +214,7 @@ def test_chat_config_for_a_model_that_reasons() -> None:
     config = models.chat_config("gpt-6.1-sol")
     assert config.model == "gpt-6.1-sol"
     assert config.provider == "openai"
-    assert config.reasoning_effort == "low"
+    assert config.reasoning_effort == "medium"
     assert 1 <= config.max_output_tokens <= 128_000
 
 

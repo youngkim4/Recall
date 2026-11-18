@@ -51,6 +51,13 @@ def _env_value(raw: str) -> str:
     return value.split(" #", 1)[0].strip()
 
 
+def _engine_config(model: str, max_output_tokens: int, max_steps: Optional[int]) -> EngineConfig:
+    """The engine as the app runs it, unless the caller gives a number of steps."""
+    if max_steps is None:
+        return EngineConfig(model=model, max_output_tokens=max_output_tokens)
+    return EngineConfig(model=model, max_output_tokens=max_output_tokens, max_steps=max_steps)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chat_engine.eval.runner", description=__doc__.split("\n\n")[0])
     parser.add_argument("--scripted", action="store_true", help="use the scripted model: no key, no network")
@@ -59,7 +66,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout", type=float, default=90.0, help="seconds before a model call times out")
     parser.add_argument("--reasoning-effort", default=None)
     parser.add_argument("--verbosity", default=None)
-    parser.add_argument("--max-steps", type=int, default=6)
+    parser.add_argument("--max-steps", type=int, default=None, help="default: the steps of the engine")
     parser.add_argument("--only", default="", help="comma-separated question ids")
     parser.add_argument("--env-file", default="", help=f"file to read {_KEY_NAME} from")
     return parser
@@ -113,12 +120,10 @@ def main(argv: Optional[Sequence[str]] = None, out: Callable[[str], None] = prin
         parser.error(f"no question has this id: {', '.join(unknown)}")
     questions = with_roots(every, only)
     if arguments.scripted:
-        config = EngineConfig(model="scripted", max_output_tokens=600, max_steps=arguments.max_steps)
+        config = _engine_config("scripted", 600, arguments.max_steps)
         llm_for: Callable[[Question], LLM] = lambda question: FakeLLM(SCRIPTS[question.id]())  # noqa: E731
     else:
-        config = EngineConfig(
-            model=arguments.model, max_output_tokens=arguments.max_output_tokens, max_steps=arguments.max_steps
-        )
+        config = _engine_config(arguments.model, arguments.max_output_tokens, arguments.max_steps)
         shared = _real_llm(arguments)
         llm_for = lambda question: shared  # noqa: E731
     rows = evaluate(synthetic, questions, llm_for, config)

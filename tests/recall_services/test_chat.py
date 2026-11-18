@@ -414,7 +414,7 @@ def test_the_model_port_of_the_app_goes_to_the_address_of_the_provider_only(monk
     client = llm._client
     assert str(client.base_url).startswith("https://api.openai.com/")
     assert client.max_retries == 0
-    assert llm._reasoning_effort == "low"
+    assert llm._reasoning_effort == "medium"
     assert chat.default_llm(models.chat_config("gpt-6-luna"))._reasoning_effort is None
 
 

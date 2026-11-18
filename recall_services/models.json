@@ -12,7 +12,7 @@
   "default": "gpt-6.1-sol",
   "chat": {
     "max_output_tokens": 8000,
-    "reasoning_effort": "low"
+    "reasoning_effort": "medium"
   },
   "models": [
     {

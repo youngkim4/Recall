@@ -157,6 +157,21 @@ Before the first model call, the engine runs one search on the words of the ques
 It also looks up the names in the question. The results go into the prompt.
 A simple recall question then ends in one model call.
 
+A question that names years also gets the figures of that period before the first model call:
+`count_messages` by conversation, from the first day of the first year to the last day of the last year.
+A range such as `2016-2019` is a period, not a phone number.
+Only a year that the archive holds is a period, so an amount such as 2000 is seldom taken for a year.
+The digits of a phone number or of an email address are never a year. A handle that the labeler masks gives no year.
+A period outside the days that the user chose runs no figures.
+After the seeded lookups the status is "Thinking it over", so the line of the last lookup does not stay while the model works.
+
+The prompt calls these lookups a first look. It tells two kinds of question apart:
+
+- A question about words ("what did she say") is a search. A seeded result can answer it at once.
+- A question about a person, a relationship, a period, a habit or a change is a pattern question.
+  The model must not answer it from one message that holds the words of the question.
+  It gets figures first, then reads the leading conversations at several points of the period, then answers from both.
+
 Words go to the archive as the user or the model wrote them, in lower case.
 The engine compares words without case or diacritics only inside its own code.
 
@@ -186,10 +201,10 @@ A period with no message is empty at once. No page walk can prove that in a very
 
 | Field | Default | Meaning |
 |---|---|---|
-| `max_steps` | 6 | Model calls that can use tools. One more call must answer. |
+| `max_steps` | 8 | Model calls that can use tools. One more call must answer. |
 | `max_calls_per_step` | 8 | The most lookups that one model call can start. More calls are not run and get no answer of their own: a note says how many. |
 | `result_tokens` | 3000 | The largest tool result. |
-| `total_tool_tokens` | 18000 | All tool results of one question. |
+| `total_tool_tokens` | 30000 | All tool results of one question. |
 | `history_tokens` | 6000 | Earlier turns sent with a follow-up. `0` sends none. |
 | `max_message_chars` | 4000 | The longest message text in a result and in a citation. |
 | `timezone` | `""` | The name in the prompt. Empty uses the zone of the clock. |
