@@ -46,7 +46,8 @@ Ask for `state.archive()` and for `names.cached(...)` at the start of each reque
 | job `digest` | `digest_job.run(conversation, since, until, on_progress, archive=..., names=...)` |
 | `/api/memory` | `memory_prep.payload(archive, names)` |
 | job `memory` | `memory_prep.run(on_progress, cancel, archive=..., names=...)` |
-| the reading of the memory after an import | `memory_prep.read_before(archive)`, `memory_prep.payload(archive, names)`, `memory_prep.worth_starting(found, read_before=True)` |
+| the reading of the memory after an import | `memory_prep.completed_before(archive_file)`, `memory_prep.payload(archive, names)`, `memory_prep.worth_starting(found, completed_before=True)` |
+| the marker of a completed `memory` job | `memory_prep.mark_completed(archive_file)` |
 | several digests at once | `digests.call_pool(model, max_parallel)`, then `digests.build(..., pool=pool)` in each thread |
 | the two optional ports of the chat engine | `memory.ports(archive, names)` |
 | the saved report of a report file | `reports.saved_report(contact, report_text)` |
@@ -324,7 +325,7 @@ Tests put a stand-in at `meaning.embedder_for` and at `meaning.default_facts`, o
 Known limits:
 
 - The day in a segment is a local day. After a change of the time zone of the Mac some segments have a new day, and a build embeds them again. The refresh of the server is bounded by `small_enough`; above it the reader sees the cost first.
-- A `meaning` job can not be stopped, and an import waits for it. The same holds for a `digest` job.
+- A `meaning` job can not be stopped. An import that is asked for while it runs is refused with 409 and a plain sentence (`ONE_AT_A_TIME`); the reader starts the import again when it has ended. The same holds for a `digest` job and the `memory` job.
 - The first use of the token counter fetches a vocabulary file. When that fails, the count is one token for three bytes.
 - The status compares times to the second. A new message in the same second as `coveredUntil` does not make the quick status `behind`.
 - An index of an archive file that was moved or deleted stays in `saves/meaning`. Nothing removes it.
@@ -413,7 +414,7 @@ The sentences of a `digest` job that failed:
 
 Known limits:
 
-- A `digest` job can not be stopped, and an import waits for it.
+- A `digest` job can not be stopped. An import that is asked for while it runs is refused with 409 and a plain sentence (`ONE_AT_A_TIME`); the reader starts the import again when it has ended.
 - A job that failed for a reason that passes, such as no connection, is not started again by a question until an import changed the archive or the server started again. A reader can still start the job.
 
 ## Several digests at once
@@ -448,8 +449,9 @@ The memory of chat is the digest of each conversation with at least `PREPARE_MIN
 - `memory_prep.run(on_progress, cancel, archive=..., names=...)` is the `memory` job. It reads each conversation that is not read whole, busiest first, `PREPARE_PARALLEL` (4) at a time, with the model port of a report.
 - The parts of one conversation are read one at a time: the prompt of a part holds the notes of the part before it. The conversations share one pool of calls (`digests.call_pool`): at most 4 requests are in flight, and they share the tokens per minute of the model.
 - A conversation that fails is counted, and the others are read. A failure that each conversation would have stops the job (`FATAL`: `no_key`, `key_rejected`, `unknown_model`, `rate_limit`, `offline`, `cache_unreadable`). No new request is sent; the requests in flight end, and their parts are kept.
-- `memory_prep.read_before(archive)` says whether the notes hold a part of the memory: a part that `DIGEST_MODEL` read, of a conversation of the memory. It is true also after an import gave that part a new key.
-- `memory_prep.worth_starting(found, read_before=...)` says whether the server starts the job by itself after an import: the memory was read before, a part is not read, and the parts that are not read cost at most `PREPARE_AUTO_USD` (0.25 USD).
+- `memory_prep.completed_before(archive_file)` says whether a `memory` job of this archive completed before: its marker is there (`memory_prep_marker.py`, `saves/memory/<16 hex digits>.json`, private to its owner, holding the time only). `prepare_memory` in `ui_server.py` writes it with `mark_completed` when the job ends completed. A question, a report and a `digest` job never write it.
+- `memory_prep.worth_starting(found, completed_before=...)` says whether the server starts the job by itself after an import: a `memory` job of this archive completed before, a part is not read, and the parts that are not read cost at most `PREPARE_AUTO_USD` (0.25 USD).
+- Each end of `run` writes one line to the log `recall.spend` with counts and the cost: `the memory job: 4 parts read now, 0 from the notes, 0 not read, 4 model calls, 0.0123 USD`, or `the memory job stopped (<code>): ...` for a failure. A `MemoryFailure` carries what was spent in `usage`. An error of no known kind in a task is wrapped as `MemoryFailure("run_failed", ...)` with that usage.
 - No line, progress label or sentence holds text of a message, a name, a handle, an id or the label of a part.
 
 `GET /api/memory?messagesPath=...` answers:
@@ -520,6 +522,14 @@ Its `result`:
 - `periodsCached` counts the parts that were in the notes, also of the conversations that were read whole before. `periodsFailed` counts the parts that failed, and the parts that were not read of a conversation that failed.
 - `usd` and `usage` are what the job spent, also on conversations that failed after paid calls.
 
+The job record has `spent`, what the job spent, when it ended completed or failed after the reading started:
+
+```json
+{"usd": 0.81, "usage": {"input_tokens": 2400000, "cached_input_tokens": 0, "output_tokens": 260000, "cost_usd": 0.81, "calls": 131}}
+```
+
+A job that failed before any call has `{"usd": 0.0, "usage": null}`. A job that failed before the reading started (no archive) has no `spent`.
+
 A refusal is 409 with `{"error": sentence}`:
 
 | Asked for | Held up by | Sentence |
@@ -527,8 +537,10 @@ A refusal is 409 with `{"error": sentence}`:
 | `memory` | `memory` | Recall is reading the memory of chat. Wait until it ends. |
 | `memory` | an import | An import is running. Wait until it ends, then read the memory. |
 | an import | `memory` | Recall is reading the memory of chat. Wait until it ends. |
+| `memory` | `digest` | Recall is reading a conversation for chat. Wait until it ends, then read the memory. |
+| `digest` | `memory` | Recall is reading the memory of chat, and this conversation with it. Wait until it ends. |
 
-A report, the `meaning` job, the `digest` job and chat run beside it.
+A `memory` job and a `digest` job read with `DIGEST_MODEL` and no limit of parts: side by side they would pay for each part of one conversation twice. A report, the `meaning` job and chat run beside the `memory` job.
 
 The sentences of a `memory` job that failed:
 
@@ -545,12 +557,14 @@ The sentences of a `memory` job that failed:
 
 A model that can not be run fails the job with the sentence of its ModelChoiceError, as in the other jobs.
 
-After an import that changed the archive, `refresh_memory` in `ui_server.py` starts one `memory` job when `read_before` is true and `worth_starting` says yes. With `read_before` false it starts nothing and takes no estimate: the first reading is the choice of the reader. Above the cost it writes one line with the count of parts to the log of the server, and starts nothing.
+After an import that changed the archive, `refresh_memory` in `ui_server.py` starts one `memory` job when `completed_before` is true and `worth_starting` says yes. With no marker it starts nothing and takes no estimate: the first reading is the choice of the reader. Above the cost it writes one line with the count of parts to the log of the server, and starts nothing.
+
+`GET /api/memory` keeps its counts in the server process for one key (`memory_key` in `ui_server.py`): the signature of the archive, the Contacts cache file, the notes file and its `-wal` file (time and size), `DIGEST_MODEL` and `PREPARE_MIN_MESSAGES`. A part that is saved changes the notes file, so the counts move at the next request; while a `memory` job runs, each request after a saved part works them out again (about 12 s on a large archive). Show the `progress` of the job while it runs. One lock is held while the counts are worked out, so requests that arrive together wait for one answer. `jobId` is read fresh each time.
 
 Known limits:
 
-- A `memory` job can not be stopped from the app, and an import waits for it.
-- A part that a question or a report read with `DIGEST_MODEL` makes `read_before` true. After the next import the server can then read the rest of the memory by itself, when it costs at most 0.25 USD.
+- A `memory` job can not be stopped from the app. An import that is asked for while it runs is refused with 409 and a plain sentence.
+- A report with `DIGEST_MODEL` (the low level) can run beside the `memory` job and pay for the parts of one conversation twice, when both send them at the same moment.
 - The job and a question do not share a lock. A part is paid twice only when both send it at the same moment (see "A digest inside a question is bounded" in `CONTRACTS.md`).
 - A conversation whose new parts fail for a key or a rate limit, while its other parts are in the notes, gives a digest with failed parts and no failure. The job then goes on to the next conversation; each request is refused, and nothing is paid.
 
