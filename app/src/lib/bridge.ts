@@ -69,4 +69,13 @@ export const recallBridge = {
   tick(): void {
     window.webkit?.messageHandlers?.recall?.postMessage({ cmd: 'tick', id: '' })
   },
+  // The window follows the pointer from the press that is going on now, as
+  // it does from a title bar. No answer is waited for.
+  dragWindow(): void {
+    window.webkit?.messageHandlers?.recall?.postMessage({ cmd: 'dragWindow', id: '' })
+  },
+  // what a double click on a title bar does: the window takes the room it can, or goes back
+  zoomWindow(): void {
+    window.webkit?.messageHandlers?.recall?.postMessage({ cmd: 'zoomWindow', id: '' })
+  },
 }

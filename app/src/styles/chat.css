@@ -97,7 +97,7 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    padding: var(--s-8) var(--page-pad) var(--s-6);
+    padding: var(--s-4) var(--page-pad) var(--s-6);
     /* text fades as it reaches the composer instead of being cut by its edge */
     mask-image: linear-gradient(to bottom, #000 calc(100% - var(--s-6)), transparent);
   }
@@ -350,10 +350,11 @@
      and the round controls inside it share a center. The pickers are pills
      for the same reason. */
   .composer {
-    --picker-r: var(--r-full);
+    /* a scene makes the box square (scenes.css) */
+    --picker-r: var(--composer-picker-r, var(--r-full));
     display: grid;
     padding: var(--s-2);
-    border-radius: calc(var(--control-h) / 2 + var(--s-2));
+    border-radius: var(--composer-r, calc(var(--control-h) / 2 + var(--s-2)));
     background: var(--bg-raised);
     box-shadow: var(--shadow-raised);
     transition: box-shadow var(--dur-micro) ease;

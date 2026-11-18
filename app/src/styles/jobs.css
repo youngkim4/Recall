@@ -7,9 +7,9 @@
     --list-w: clamp(20rem, 36%, 30rem);
   }
 
-  /* a list with no heading over it starts one gutter down */
+  /* the first row of the list starts 16px down, as the first field of a list pane does */
   .job-list {
-    padding-top: var(--s-2);
+    padding-top: var(--s-4);
   }
 
   /* ---- a job in the list: its name, and when it last changed at the end of

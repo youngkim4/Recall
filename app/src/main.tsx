@@ -3,11 +3,15 @@ import { createRoot } from 'react-dom/client'
 import './styles/index.css'
 import App from './App.tsx'
 import { ErrorBoundary } from './components/ErrorBoundary.tsx'
+import { moveWindowFromItsTop } from './lib/windowDrag.ts'
 
 // In the packaged macOS app the content sits under the native traffic lights;
 // flag it so the sidebar can leave room (no wasted space in the browser).
 if (new URLSearchParams(window.location.search).get('app') === 'mac') {
   document.documentElement.classList.add('is-mac-app')
+  const stopMoving = moveWindowFromItsTop()
+  // a module that is replaced while the app runs takes its listener with it
+  import.meta.hot?.dispose(stopMoving)
 }
 
 // The interface is built on light-dark() colors and the popover attribute.

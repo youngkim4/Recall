@@ -1,4 +1,4 @@
-/* App frame: rail, title strip, panes, page column.
+/* App frame: rail, panes, page column.
 
    One spacing value governs each region. In the rail it is 8px: the rail's
    padding, a nav row's inset, and the icon-to-label gap are all 8px, and a
@@ -18,9 +18,7 @@
     --rail-w-now: var(--rail-w-collapsed);
   }
 
-  /* ---- rail ----
-     6px of padding above the first 32px row centers it on the 44px title
-     strip beside it, so "Overview" and the view title share a line. */
+  /* ---- rail ---- */
   .rail {
     display: flex;
     flex-direction: column;
@@ -35,6 +33,18 @@
      8px below that, level with the first row of the list beside them. */
   .is-mac-app .rail {
     padding-top: 2.25rem;
+    transition: padding-inline var(--dur-long) var(--ease-out);
+  }
+
+  /* The three buttons take 76px of the top edge: 8px, three of 16px with 7px
+     between, and 7px more. Folded, the rail in the Mac app is that wide, so
+     the buttons stay over it, and each 32px row stands in the middle of it. */
+  .is-mac-app {
+    --rail-w-collapsed: 4.75rem;
+  }
+
+  .is-mac-app .rail-collapsed > .rail {
+    padding-inline: calc((var(--rail-w-collapsed) - 2rem) / 2);
   }
 
   /* Settings, with the control that folds the rail away beside it */
@@ -201,33 +211,17 @@
   /* the views inside ask how wide the workspace is, not the window */
   .workspace {
     display: grid;
-    grid-template-rows: var(--title-h) auto minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
     min-width: 0;
     height: 100%;
     overflow: hidden;
     container: workspace / inline-size;
   }
 
-  /* The title strip doubles as the window's drag zone in the Mac app, so
-     nothing in it is interactive. There it is 28px tall, which centers the
-     title on the traffic lights. */
-  .titlebar {
-    display: flex;
-    align-items: center;
-    padding: 0 var(--s-4);
-    border-bottom: 1px solid var(--line);
-    user-select: none;
-  }
-
-  .is-mac-app .workspace {
-    --title-h: 1.75rem;
-  }
-
-  /* collapsed rail: clear the traffic lights, which now overhang the strip */
-  .is-mac-app .rail-collapsed .titlebar {
-    padding-left: 2.5rem;
-  }
-
+  /* The workspace has no bar and no title: the rail says which view is
+     open, and every column of a view starts at the top of the window. The
+     Mac window's three buttons stand over the rail and never over the
+     workspace: the folded rail is as wide as they are (see .rail). */
   .banner {
     display: flex;
     align-items: center;
@@ -254,14 +248,15 @@
   }
 
   /* ---- page: one reading column ---- */
-  /* One left edge runs down a window: the title in the strip above is 16px
-     in, and so is everything under it for as long as the column fills the
-     width. Once there is room to spare the column sits in the middle with
-     32px gutters. It starts 32px under the strip, as a detail pane does. */
+  /* One left edge runs down a window: everything is 16px in for as long as
+     the column fills the width. Once there is room to spare the column sits
+     in the middle with 32px gutters. It starts 16px from the top, as a detail pane does. The
+     first thing that can be seen on every view, words or the edge of a field
+     or a row, stands 16px from the top of the window. */
   .page {
     max-width: calc(var(--page-max) + var(--page-pad) * 2);
     margin: 0 auto;
-    padding: var(--s-8) var(--page-pad) var(--s-16);
+    padding: var(--s-4) var(--page-pad) var(--s-16);
   }
 
   @container workspace (max-width: 49rem) {
@@ -271,7 +266,7 @@
   }
 
   /* A page of more than one column fills a wide workspace instead of sitting
-     in the middle of it. While it fills, its edge is the title's 16px again;
+     in the middle of it. While it fills, its edge is 16px again;
      past its own limit it is centered like any other page. */
   @container workspace (min-width: 64rem) {
     .page.wide {
@@ -311,10 +306,13 @@
     color: var(--text-3);
   }
 
+  /* a heading is one size over the rows it heads, so it is read as a
+     heading and not as one more row; links beside it keep their size */
   .section-head h2,
   .section-head h3 {
-    font-size: var(--t-body);
+    font-size: var(--t-reading);
     line-height: var(--lh-body);
+    font-weight: var(--w-medium);
   }
 
   .section-head .meta {
@@ -373,6 +371,13 @@
   /* a head that holds an action row in place of a title: same 8px gutter as the list */
   .pane-actions {
     padding: var(--s-2) var(--s-2) 0;
+  }
+
+  /* A field has its edge drawn, so it starts 16px down like the first words
+     of every view. Chat's row "New chat" has no fill, so it keeps 8px: its
+     words stand 16px down. */
+  .pane-actions:has(> .search) {
+    padding-top: var(--s-4);
   }
 
   .pane-actions + .pane-scroll {
@@ -449,33 +454,35 @@
   /* ---- arrive: what a click brought into view fades in and rises into
      place. It runs once, as the thing is put on the page, and leaves every
      transition the thing has of its own alone. With Reduce Motion it is the
-     fade only. ---- */
+     fade only. It is long enough to be seen: 12px over 420ms, each part 50ms
+     after the one above it, about 0.6s in all. Shorter, it was over before
+     the eye found it. ---- */
   .arrive,
   .arrive-each > :not(dialog, [popover]) {
-    animation: arrive max(var(--dur-long), var(--dur-short)) var(--ease-out) backwards;
+    animation: arrive 420ms var(--ease-out) backwards;
   }
 
   /* its parts follow a beat apart, top first */
   .arrive-each > :nth-child(2) {
-    animation-delay: 30ms;
+    animation-delay: 50ms;
   }
 
   .arrive-each > :nth-child(3) {
-    animation-delay: 60ms;
+    animation-delay: 100ms;
   }
 
   .arrive-each > :nth-child(4) {
-    animation-delay: 90ms;
+    animation-delay: 150ms;
   }
 
   .arrive-each > :nth-child(n + 5) {
-    animation-delay: 120ms;
+    animation-delay: 200ms;
   }
 
   @keyframes arrive {
     from {
       opacity: 0;
-      translate: 0 calc(0.5rem * var(--travel));
+      translate: 0 calc(0.75rem * var(--travel));
     }
   }
 
@@ -495,7 +502,7 @@
   /* what is inside answers to the width of this column, which a wide list can make narrow in a wide window */
   .detail {
     max-width: calc(var(--page-max) + var(--page-pad) * 2);
-    padding: var(--s-8) var(--page-pad) var(--s-16);
+    padding: var(--s-4) var(--page-pad) var(--s-16);
     container: detail / inline-size;
   }
 

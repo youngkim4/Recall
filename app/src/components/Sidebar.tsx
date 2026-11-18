@@ -71,7 +71,8 @@ export function Sidebar({
   }
 
   // Where the fill behind the current row sits in each list. When the row is
-  // in the other list, the fill waits one place past the end nearest it.
+  // in the other list, the fill fades on the row at the end nearest it: it
+  // stays inside the rows, so it never crosses the picture of a scene.
   const inPrimary = primary.findIndex((item) => item.key === activeView)
   const inSecondary = secondary.findIndex((item) => item.key === activeView)
 
@@ -81,7 +82,7 @@ export function Sidebar({
         className="nav"
         aria-label="Primary"
         data-current={inPrimary >= 0 || undefined}
-        style={{ '--at': inPrimary >= 0 ? inPrimary : primary.length } as CSSProperties}
+        style={{ '--at': inPrimary >= 0 ? inPrimary : primary.length - 1 } as CSSProperties}
       >
         {primary.map(renderItem)}
       </nav>
@@ -90,7 +91,7 @@ export function Sidebar({
           className="nav"
           aria-label="App"
           data-current={inSecondary >= 0 || undefined}
-          style={{ '--at': inSecondary >= 0 ? inSecondary : -1 } as CSSProperties}
+          style={{ '--at': inSecondary >= 0 ? inSecondary : 0 } as CSSProperties}
         >
           {secondary.map(renderItem)}
         </nav>

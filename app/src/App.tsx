@@ -32,6 +32,7 @@ import { useLayout } from './lib/useLayout'
 import { nameReports } from './lib/reports'
 import { isUpdate, revealsFirstWords } from './lib/setupGuide'
 import { useMediaQuery } from './lib/useMediaQuery'
+import { Backdrop } from './components/Backdrop'
 import { clearPreviewCache, previewCacheStats } from './lib/cache'
 import { useConversationPreview } from './lib/useConversationPreview'
 import { useJobPoll } from './lib/useJobPoll'
@@ -540,6 +541,7 @@ function App() {
 
   return (
     <div className={`app${railCollapsed ? ' rail-collapsed' : ''}`} style={shellStyle}>
+      <Backdrop />
       <Sidebar
         activeView={activeView}
         activeJobCount={activeJobCount}
@@ -558,10 +560,11 @@ function App() {
       />
 
       <main className="workspace">
+        {/* No bar of titles: the rail says which view is open. The name of the
+            view is still the page's heading for a screen reader; the header
+            has no height. */}
         <header className="titlebar">
-          <h1 key={shellTitle} className="swap">
-            {shellTitle}
-          </h1>
+          <h1 className="sr-only">{shellTitle}</h1>
         </header>
 
         {error ? (
@@ -578,12 +581,10 @@ function App() {
             defaults={effectiveDefaults}
             archive={archive}
             contacts={contacts}
-            reports={reports}
             loading={loadingContacts}
             model={model}
             onViewChange={setActiveView}
             onSelectContact={selectContactForAnalyze}
-            onOpenReport={openReport}
             onReplayFirstWords={() => void replayFirstWords()}
             onOpenSetup={() => void openSetup()}
           />

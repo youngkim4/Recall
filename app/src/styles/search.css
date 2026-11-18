@@ -7,10 +7,11 @@
     --list-w: clamp(20rem, 42%, 34rem);
   }
 
-  /* 16px in, the title's edge; the matches under it scroll on their own */
+  /* The field starts 8px in and 16px down, as the first field of every list
+     pane does; the matches under it scroll on their own. */
   .search-head {
     flex: none;
-    padding: var(--s-4) var(--s-4) var(--s-2);
+    padding: var(--s-4) var(--s-2) var(--s-2);
   }
 
   .search-bar {
@@ -45,6 +46,8 @@
   .search-status {
     min-height: var(--lh-body);
     margin-top: var(--s-3);
+    /* its words stand on the 16px line, with the words of the rows under it */
+    padding-inline: var(--s-2);
     color: var(--text-3);
   }
 

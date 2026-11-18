@@ -92,6 +92,24 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         case "tick":
             // a control with steps went from one step to the next: one tick of the trackpad
             NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+        case "dragWindow":
+            // The page covers the title bar, so the page says when a press is
+            // on the bare top of the window: the window then follows the pointer.
+            // The message comes after the press: the window moves only while the button is still down.
+            if let event = NSApp.currentEvent, event.type == .leftMouseDown || event.type == .leftMouseDragged,
+               NSEvent.pressedMouseButtons & 1 != 0 {
+                window?.performDrag(with: event)
+            }
+        case "zoomWindow":
+            // a double click on a title bar does what the Mac is set to do (Desktop & Dock settings)
+            switch UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick") {
+            case "Minimize":
+                window?.performMiniaturize(nil)
+            case "None":
+                break
+            default:
+                window?.performZoom(nil)
+            }
         default:
             resolveBridge(requestId, json: "null")
         }
