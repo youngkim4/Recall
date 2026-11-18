@@ -4,16 +4,23 @@
 
     {"type": "status", "text": ...}           optional "reset": true
     {"type": "delta", "text": ...}
+    {"type": "progress", "tool": "conversation_digest", "conversation": ..., "part": i, "of": n,
+     "label": ..., "state": "start"|"done"|"cached"|"failed"}
     {"type": "done", "payload": ...}
     {"type": "error", "code": ..., "error": ...}   optional "retry_after" in seconds
 
 The last event is `done` or `error`. When a `status` event has `reset`, the
 text that the deltas gave so far is a note of the model and not the answer.
+A `progress` event comes only with a digest source, while a digest is read
+inside the question: one for each change of a part. `ask` drops them.
 
 The payload of `done` has the keys of `AskResponse` (`question`, `contact`,
 `terms`, `answer`, `mode`, `citations`). It also has what the engine knows
 beyond that: `unverifiedQuotes`, `steps`, `cancelled`, `truncated`, `usage`.
-`terms` is always empty: the engine has no list of search words.
+`terms` is always empty: the engine has no list of search words. With a
+digest source it also has `memory`: `{"notReady": [conversation ids]}`, the
+conversations whose story was too long to read inside the question. Nothing
+reads them by itself: the app can offer it.
 
 Rules:
 - A citation has the shape of a search result, with the names of the screen
@@ -170,6 +177,7 @@ def _payload(result: Mapping[str, Any], asked: _Asked, archive: Archive, names: 
         "cancelled": bool(result["cancelled"]),
         "truncated": bool(result["truncated"]),
         "usage": dict(result["usage"]),
+        **({"memory": {"notReady": list(result["memory"]["notReady"])}} if "memory" in result else {}),
     }
 
 
@@ -209,7 +217,6 @@ def _events(
     use_ai: bool,
     llm_factory: LLMFactory,
     clock: Callable[[], datetime],
-    start_digest: memory.StartDigest | None = None,
 ) -> Iterator[Event]:
     labeler = names.chat_labeler(archive.conversations())
     adapter = ArchiveAdapter(archive)
@@ -227,7 +234,7 @@ def _events(
             digest_parts_limit=memory.DIGEST_PARTS_LIMIT,
         )
         # the search by meaning and the digest, each None when it can not work; a test puts its own `memory.ports`
-        ports = memory.ports(archive, names, start_digest=start_digest)
+        ports = memory.ports(archive, names)
         engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock, **ports)
         answering = engine.stream(asked.question, scope=asked.scope, session=_session(history), cancel=cancel)
     except engine_errors.ChatEngineError as error:
@@ -258,7 +265,6 @@ def stream(
     reasoning_effort: object = "",
     llm_factory: LLMFactory | None = None,
     clock: Callable[[], datetime] = datetime.now,
-    start_digest: memory.StartDigest | None = None,
 ) -> Iterator[Event]:
     """Answer one question. See the module docstring for the events.
 
@@ -270,10 +276,7 @@ def stream(
     `{role, content}` rows that the browser keeps; a "user" row can hold
     `contact`, the conversation that its question was asked of. `cancel` stops the model
     call and the lookups: the question then ends with `done` and `cancelled`.
-    Closing the iterator stops the model call too. `start_digest` is the
-    function of the server that reads a long conversation outside the
-    question: it gets the conversation id and the two days, and says whether
-    the reading started.
+    Closing the iterator stops the model call and the reading of a digest too.
 
     Nothing is raised for a failure of the model, of the archive or of the
     request: the last event says it.
@@ -297,7 +300,6 @@ def stream(
         use_ai,
         llm_factory or default_llm,
         clock,
-        start_digest,
     )
     try:
         yield from answering

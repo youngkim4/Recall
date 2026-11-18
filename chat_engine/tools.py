@@ -17,7 +17,7 @@ from .registry import ConversationAliases, EvidenceRegistry
 from .render import Limits, squeeze
 from .scope import Scope
 from .tool_args import ToolInputError, parse_arguments
-from .tool_context import Memory, Prepared, ToolContext, ToolOutcome
+from .tool_context import Fetch, Memory, Prepared, Report, ToolContext, ToolOutcome
 from .tool_digest import prepare_digest
 from .tool_figures import prepare_count, prepare_list, prepare_stats
 from .tool_meaning import prepare_search_or_meaning
@@ -91,12 +91,41 @@ class ToolBox:
             return dict(totals)
         return {**totals, "digest_usd": float(self.context.digest_usd)}
 
+    def memory_payload(self) -> dict[str, Any]:
+        """`{"memory": {"notReady": [...]}}`: the conversations whose story was too long to read in this question.
+
+        Empty with no digest source, so the payload of an engine without one does not change.
+        """
+        if self.context.memory.digests is None:
+            return {}
+        ids = dict.fromkeys(conversation for conversation, _since, _until in self.context.digests_long)
+        return {"memory": {"notReady": list(ids)}}
+
     def wrap(self, name: str, prepared: Prepared) -> Prepared:
-        """Give a lookup the guard and the redaction every tool result gets."""
+        """Give a lookup the guard and the redaction every tool result and every event gets."""
         redact = self.context.labeler.redact
+        fetch = prepared.fetch
         return replace(
-            prepared, status=redact(prepared.status), run=lambda budget: self._run(name, prepared, budget)
+            prepared,
+            status=redact(prepared.status),
+            run=lambda budget: self._run(name, prepared, budget),
+            fetch=None if fetch is None else Fetch(self._guarded(fetch), self._masked(fetch)),
         )
+
+    def _guarded(self, fetch: Fetch) -> Callable[[Report], None]:
+        return lambda report: self.guard(lambda: fetch.work(report))
+
+    def _masked(self, fetch: Fetch) -> Callable[[object], Optional[dict[str, Any]]]:
+        """The event of a report, with every text in it masked."""
+        redact = self.context.labeler.redact
+
+        def event(raw: object) -> Optional[dict[str, Any]]:
+            told = fetch.event(raw)
+            if told is None:
+                return None
+            return {key: redact(value) if isinstance(value, str) else value for key, value in told.items()}
+
+        return event
 
     def guard(self, action: Callable[[], Any]) -> Any:
         """Run archive work. An unexpected failure becomes a typed ArchiveError."""

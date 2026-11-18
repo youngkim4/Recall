@@ -244,12 +244,12 @@ def test_the_starter_never_raises_into_a_question(monkeypatch, capfd):
 
 
 @pytest.mark.parametrize("route", ["/api/ask", "/api/ask/stream"])
-def test_each_chat_route_gives_the_question_a_starter_for_its_archive(server, desk, monkeypatch, route):
+def test_no_chat_route_gives_the_question_a_starter_and_no_question_starts_a_job(server, desk, monkeypatch, route):
     given = []
     real = chat_service.stream
 
     def noted(*args, **more):
-        given.append(more.get("start_digest"))
+        given.append(sorted(more))
         return real(*args, **more)
 
     monkeypatch.setattr(chat_service, "stream", noted)
@@ -258,10 +258,8 @@ def test_each_chat_route_gives_the_question_a_starter_for_its_archive(server, de
     from tests.loopback import _ask
 
     status, _headers, _raw = _ask(server, "POST", route, body)
-    assert status == 200 and callable(given[0])
-    assert given[0](MINA, None, None) is True
-    (job,) = [made for made in ui_server.list_jobs() if made["action"] == "digest"]
-    assert ended(job["id"])["result"]["conversation"] == MINA
+    assert status == 200 and "start_digest" not in given[0]
+    assert [made for made in ui_server.list_jobs() if made["action"] == "digest"] == []
 
 
 # --- the log of what a question spent ----------------------------------------------

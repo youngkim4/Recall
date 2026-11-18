@@ -2502,7 +2502,7 @@ def cancel_asking(request_id: str) -> bool:
 
 
 def answer_question(payload: dict) -> tuple[int, dict]:
-    """The answer to /api/ask: the status and the body."""
+    """The answer to /api/ask: the status and the body. The body is the payload alone: no progress event."""
     _state, archive = archive_for(named_archive(payload))
     asked = ask_arguments(payload)
     try:
@@ -2517,7 +2517,6 @@ def answer_question(payload: dict) -> tuple[int, dict]:
                 names=saved_names(),
                 use_ai=asked["use_ai"],
                 reasoning_effort=asked["reasoning_effort"],
-                start_digest=digest_starter(payload),
             )
     except chat_service.ChatFailure as failure:
         said = {"error": str(failure), "code": failure.code}
@@ -2680,9 +2679,10 @@ class RecallHandler(BaseHTTPRequestHandler):
         return payload
 
     def handle_ask_stream(self, payload: dict):
-        """Server-sent events for a chat question: status lines, the words of
-        the answer as the model writes them, then the whole answer or one
-        plain sentence that says why there is none.
+        """Server-sent events for a chat question: status lines, the progress
+        of each part of a digest that the question reads, the words of the
+        answer as the model writes them, then the whole answer or one plain
+        sentence that says why there is none.
 
         A request that cannot be answered at all (no archive, a bad archive
         file) is refused before the stream starts, as on every other route."""
@@ -2710,7 +2710,6 @@ class RecallHandler(BaseHTTPRequestHandler):
                     names=saved_names(),
                     use_ai=asked["use_ai"],
                     reasoning_effort=asked["reasoning_effort"],
-                    start_digest=digest_starter(payload),
                 )
                 try:
                     for event in events:

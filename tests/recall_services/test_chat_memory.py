@@ -35,14 +35,12 @@ def matches_of(request: LLMRequest) -> list[Any]:
     return list(tools_of(request)["search_messages"].parameters["properties"]["match"]["enum"])
 
 
-def given(monkeypatch: pytest.MonkeyPatch, started: list[Any] | None = None, **ports: Any) -> list[tuple[Any, Any]]:
+def given(monkeypatch: pytest.MonkeyPatch, **ports: Any) -> list[tuple[Any, Any]]:
     """Put these ports in the place of the ones of the app. Gives what `memory.ports` was asked with."""
     asked: list[tuple[Any, Any]] = []
 
-    def stand_in(archive: Any, names: Any, *, start_digest: Any = None) -> dict[str, Any]:
+    def stand_in(archive: Any, names: Any) -> dict[str, Any]:
         asked.append((archive, names))
-        if started is not None:
-            started.append(start_digest)
         return {"meaning": None, "digests": None, **ports}
 
     monkeypatch.setattr(memory, "ports", stand_in)
@@ -92,21 +90,39 @@ def test_the_local_answer_asks_for_no_port(archive: Archive, saved: Names, monke
     assert events[-1]["type"] == "done" and asked == []
 
 
-# --- a long conversation is read outside the question ------------------------------
+# --- a digest inside the question: its progress, and what is not read -------------
 
 
-def test_the_function_that_starts_a_digest_goes_from_the_route_to_the_ports(
+def _story(parts: int) -> list[Any]:
+    return [period(f"P{n}", f"2024-04-{n + 1:02d}", f"2024-04-{n + 1:02d}", 5, f"Part {n}.") for n in range(parts)]
+
+
+def test_the_progress_of_a_digest_reaches_the_stream_of_the_app(
     archive: Archive, saved: Names, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    started: list[Any] = []
-    given(monkeypatch, started)
+    given(monkeypatch, digests=FakeDigests({world.GARDEN: _story(2)}, cached=1))
+    llm = FakeLLM([[call("conversation_digest", "d1", conversation=world.GARDEN_TITLE)], say("They mended it.")])
+    settings = {"model": "gpt-6.1-sol", "llm_factory": lambda _config: llm, "clock": lambda: NOW}
+    events = list(chat.stream(QUESTION, archive=archive, names=saved, contact=world.GARDEN, **settings))
+    told = [event for event in events if event["type"] == "progress"]
+    assert [(event["part"], event["of"], event["label"], event["state"]) for event in told] == [
+        (1, 2, "P0", "cached"), (2, 2, "P1", "start"), (2, 2, "P1", "done"),
+    ]  # fmt: skip
+    assert {event["tool"] for event in told} == {"conversation_digest"} and told[0]["conversation"]
+    assert events[-1]["type"] == "done" and events[-1]["payload"]["memory"] == {"notReady": []}
 
-    def start(_conversation: str, _since: Any, _until: Any) -> bool:
-        return True
 
-    ask(archive, saved, FakeLLM([say("Nothing says so.")]), start_digest=start)
-    ask(archive, saved, FakeLLM([say("Nothing says so.")]))
-    assert started == [start, None]
+def test_the_payload_names_a_conversation_too_long_for_one_question(
+    archive: Archive, saved: Names, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    given(monkeypatch, digests=FakeDigests({world.GARDEN: _story(3)}, usd=0.1))
+    monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 2)
+    llm = FakeLLM([[call("conversation_digest", "d1", conversation=world.GARDEN_TITLE)], say("From the figures.")])
+    payload = ask(archive, saved, llm, contact=world.GARDEN)
+    assert payload["memory"] == {"notReady": [world.GARDEN]}
+    # with no digest source the payload has the keys it always had
+    given(monkeypatch)
+    assert "memory" not in ask(archive, saved, FakeLLM([say("Nothing says so.")]))
 
 
 def test_the_engine_gets_the_limit_of_parts_of_memory(
@@ -125,5 +141,5 @@ def test_the_engine_gets_the_limit_of_parts_of_memory(
     ask(archive, saved, FakeLLM([say("Nothing says so.")]))
     monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 1)
     ask(archive, saved, FakeLLM([say("Nothing says so.")]))
-    assert [settings.digest_parts_limit for settings in made] == [2, 1]
+    assert [settings.digest_parts_limit for settings in made] == [12, 1]
     assert not hasattr(chat, "_digest_limits")  # no look at whether the engine has the field
