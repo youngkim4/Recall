@@ -9,7 +9,7 @@ import pytest
 from recall_services import digest_job, digests, memory, reports
 from report_engine import LLMError
 from report_engine.fake_llm import FakeCall, FakeLLM
-from tests.recall_services.report_world import PERIOD_LABELS, Desk
+from tests.recall_services.report_world import MODEL, PERIOD_LABELS, Desk
 from tests.report_engine.synth import MINA
 
 RESULT_KEYS = {"conversation", "periods", "periodsBuilt", "periodsCached", "periodsFailed", "usd", "usage"}
@@ -88,15 +88,81 @@ def test_the_model_port_of_the_job_is_the_one_of_a_report(desk: Desk, monkeypatc
     assert found["periodsBuilt"] == 1 and len(model.calls) == 1
 
 
-def test_a_failure_is_the_failure_of_a_digest(desk: Desk) -> None:
+def failing(error: Exception) -> FakeLLM:
     def responder(call: FakeCall) -> Any:
-        raise LLMError("x (HTTP 401)", status_code=401)
+        raise error
 
-    with pytest.raises(digests.ReportFailure) as told:
-        run(desk, FakeLLM(responder))
-    assert told.value.code == "key_rejected"
+    return FakeLLM(responder)
+
+
+OPENAI_KEY = "OPENAI_API_KEY in the file .env in Recall's data folder"
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "sentence"),
+    [
+        (LLMError("x (HTTP 401)", status_code=401), "key_rejected", f"OpenAI rejected the API key. Check {OPENAI_KEY}, then ask again."),
+        (LLMError("x (HTTP 404)", status_code=404), "unknown_model", "OpenAI does not know the model gpt-6.1-sol. The conversation was not read."),
+        (
+            LLMError("x (HTTP 429)", status_code=429),
+            "rate_limit",
+            "OpenAI is limiting requests, or the account has no credit left. Wait a moment, then ask again.",
+        ),
+        (
+            LLMError("the model service failed (APIConnectionError)"),
+            "offline",
+            "OpenAI could not be reached. Check the internet connection, then ask again.",
+        ),
+        (LLMError("the model service failed (APITimeoutError)"), "timeout", "The model took too long to answer. Ask again."),
+        (LLMError("x (HTTP 500)", status_code=500), "model_error", "The model could not read the conversation. Ask again."),
+    ],
+)
+def test_a_job_in_which_every_part_fails_says_why_in_words_of_its_own(
+    desk: Desk, error: Exception, code: str, sentence: str
+) -> None:
+    with pytest.raises(digest_job.DigestFailure) as told:
+        run(desk, failing(error), model=MODEL)
+    assert (told.value.code, str(told.value)) == (code, sentence)
+    # it is the failure that the server tells in one sentence, with what the run spent
+    assert isinstance(told.value, digests.ReportFailure) and told.value.usage is not None
+
+
+def test_days_with_no_message_and_a_conversation_that_is_not_there_say_so(desk: Desk) -> None:
+    sentence = "This conversation has no messages with text in these dates."
+    for conversation, dates in ((MINA, ("1999-01-01", "1999-01-02")), ("+15559990000", ())):
+        with pytest.raises(digest_job.DigestFailure) as told:
+            digest_job.run(conversation, *dates, **desk.more())
+        assert (told.value.code, str(told.value)) == ("empty", sentence)
     with pytest.raises(ValueError):
         digest_job.run("", **desk.more())
+
+
+def test_with_no_key_the_job_says_where_the_key_goes(desk: Desk, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY")
+    more = {name: value for name, value in desk.more().items() if name != "llm_factory"}
+    with pytest.raises(digest_job.DigestFailure) as told:
+        digest_job.run(MINA, **more)
+    assert (told.value.code, str(told.value)) == (
+        "no_key",
+        "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then ask again.",
+    )
+
+
+def test_no_sentence_of_the_job_names_a_report(desk: Desk) -> None:
+    codes = [
+        "no_key", "key_rejected", "unknown_model", "rate_limit", "timeout", "offline", "model_error", "empty",
+        "too_large", "archive_error", "cache_unreadable", "cancelled", "run_failed", "too_many_parts", "a-new-code",
+    ]  # fmt: skip
+    said = {code: digest_job.sentence_of(code, "OpenAI", "gpt-6-luna") for code in codes}
+    assert len(set(said.values())) == len(codes) - 1  # a code with no sentence of its own gets the last one
+    assert said["a-new-code"] == said["too_many_parts"] == "The conversation could not be read for chat. Ask again."
+    for sentence in said.values():
+        assert "report" not in sentence.lower() and sentence.endswith(".")
+    assert said["cancelled"] == "The reading was stopped. What was read is kept."
+    assert said["cache_unreadable"] == "What earlier runs read could not be read or kept. The conversation was not read."
+    assert said["archive_error"] == "The messages of this conversation could not be read. Update the archive, then ask again."
+    assert said["too_large"] == "The model can not read this conversation with its limits. The conversation was not read."
+    assert said["run_failed"] == "The reading failed. What was read is kept: ask again."
 
 
 def test_a_listener_that_fails_does_not_stop_the_job(desk: Desk) -> None:

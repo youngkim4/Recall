@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import dataclasses
 from datetime import datetime
 from typing import Any
 
 import pytest
 
 from archive import Archive
-from chat_engine.engine import EngineConfig
 from chat_engine.fake_digests import FakeDigests, period
 from chat_engine.fake_llm import FakeLLM, call, say
 from chat_engine.fake_meaning import FakeMeaning
@@ -111,15 +109,10 @@ def test_the_function_that_starts_a_digest_goes_from_the_route_to_the_ports(
     assert started == [start, None]
 
 
-def test_the_engine_gets_the_limit_of_parts_of_memory_when_it_has_such_a_limit(
+def test_the_engine_gets_the_limit_of_parts_of_memory(
     archive: Archive, saved: Names, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The engine and the digest port read one number, so the two can not differ."""
-
-    @dataclasses.dataclass(frozen=True)
-    class WithALimit(EngineConfig):
-        digest_parts_limit: int = 7
-
     made: list[Any] = []
     real = chat.ChatEngine
 
@@ -129,17 +122,8 @@ def test_the_engine_gets_the_limit_of_parts_of_memory_when_it_has_such_a_limit(
 
     given(monkeypatch)
     monkeypatch.setattr(chat, "ChatEngine", noted)
-    monkeypatch.setattr(chat, "EngineConfig", WithALimit)
     ask(archive, saved, FakeLLM([say("Nothing says so.")]))
     monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 1)
     ask(archive, saved, FakeLLM([say("Nothing says so.")]))
     assert [settings.digest_parts_limit for settings in made] == [2, 1]
-
-
-def test_the_engine_of_this_tree_takes_the_question_with_or_without_such_a_limit(
-    archive: Archive, saved: Names, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    given(monkeypatch)
-    named = {field.name for field in dataclasses.fields(EngineConfig)}
-    assert chat._digest_limits() == ({"digest_parts_limit": memory.DIGEST_PARTS_LIMIT} if "digest_parts_limit" in named else {})
-    assert ask(archive, saved, FakeLLM([say("Nothing says so.")]))["answer"] == "Nothing says so."
+    assert not hasattr(chat, "_digest_limits")  # no look at whether the engine has the field

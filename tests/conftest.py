@@ -72,6 +72,8 @@ def no_jobs():
     def clear():
         with ui_server.JOBS_LOCK:
             ui_server.JOBS.clear()
+            # what the server keeps about digest jobs that ended, beside the jobs
+            getattr(ui_server, "DIGEST_ENDS", {}).clear()
 
     clear()
     yield

@@ -226,9 +226,11 @@ def test_after_an_export_is_loaded_into_an_archive_with_no_index_of_its_own_noth
     assert meaning_jobs() == []
 
 
-def test_after_a_load_that_changed_nothing_the_server_starts_nothing(archive_file, embedder, tmp_path):
-    build(archive_file)
+def test_after_a_load_that_changed_nothing_the_server_starts_nothing(embedder, tmp_path):
     export = bridged(tmp_path / "earlier" / "messages.csv", ["one", "two", "three"])
+    assert build(str(export))["status"] == "completed"
+    # the archive of the export has an index: a load that changed it would start a refresh
+    assert meaning_service.built(places.archive_path_for(str(export))) is True
     job = run("bridge", {"messagesPath": str(export)})
     assert (job["status"], job["result"]["status"]) == ("completed", "current")
     assert meaning_jobs() == []

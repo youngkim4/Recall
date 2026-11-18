@@ -27,7 +27,7 @@ RESULT_KEYS = {"conversation", "periods", "periodsBuilt", "periodsCached", "peri
 IMPORTS = ["setup_import", "export", "bridge"]
 DIGEST_IS_READ = "Recall is reading a conversation for chat. Wait until it ends."
 IMPORT_FIRST = "An import is running. Wait until it ends, then ask again."
-NO_KEY = "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then run the report again."
+NO_KEY = "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then ask again."
 
 
 @pytest.fixture
@@ -58,13 +58,13 @@ def held_jobs(monkeypatch):
         ui_server.JOBS.clear()
 
 
-def run(payload):
+def run(payload, action="digest"):
     """Run one job to its end, the way its thread does, and give back how it ended."""
-    job = ui_server.job_record("digest", payload)
+    job = ui_server.job_record(action, payload)
     with ui_server.JOBS_LOCK:
         ui_server.JOBS[job["id"]] = job
     try:
-        ui_server.run_job(job["id"], "digest", payload)
+        ui_server.run_job(job["id"], action, payload)
         with ui_server.JOBS_LOCK:
             return ui_server.job_copy(ui_server.JOBS[job["id"]])
     finally:
@@ -203,6 +203,28 @@ def test_the_starter_says_yes_for_a_job_of_the_same_conversation_that_runs_and_n
     assert start(MINA, None, None) is True  # it already runs: nothing more is started
     assert start(THEO, None, None) is False  # one digest job at a time
     assert listed() == [("digest", "queued")]
+
+
+def test_a_job_that_runs_for_other_days_or_for_another_archive_is_not_the_job_of_this_question(held_jobs, tmp_path):
+    start = ui_server.digest_starter({})
+    assert start(MINA, "2023-02-01", None) is True
+    assert start(MINA, "2023-02-01", None) is True
+    # the job that runs reads from February: it does not read the whole conversation
+    assert start(MINA, None, None) is False and start(MINA, "2023-02-01", "2023-03-31") is False
+    # the same conversation id in another archive is another conversation
+    assert ui_server.digest_starter({"messagesPath": str(tmp_path / "another.sqlite3")})(MINA, "2023-02-01", None) is False
+    assert listed() == [("digest", "queued")]
+
+
+def test_the_record_of_a_digest_job_keeps_its_archive_its_conversation_and_its_days(desk):
+    payload = {"messagesPath": desk.file, "contact": THEO, "conversation": MINA, "since": "2023-02-01"}
+    record = ui_server.job_record("digest", payload)
+    assert (record["contact"], record["since"], record["until"]) == (MINA, "2023-02-01", None)
+    assert record["archivePath"] == str(places.archive_path_for(desk.file).resolve())
+    assert ui_server.job_record("digest", {"conversation": MINA})["archivePath"] == str(places.archive_path_for(None).resolve())
+    # a report job is listed as before
+    report = ui_server.job_record("analyze", {"contact": THEO, "conversation": MINA, "since": "2023-02-01"})
+    assert report["contact"] == THEO and not {"archivePath", "since", "until"} & set(report)
 
 
 @pytest.mark.parametrize("other", IMPORTS)

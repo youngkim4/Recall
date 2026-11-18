@@ -36,7 +36,6 @@ Rules:
 
 from __future__ import annotations
 
-import dataclasses
 import logging
 import math
 from collections.abc import Callable, Iterator, Mapping
@@ -199,16 +198,6 @@ def _session(history: object) -> ChatSession:
     return session
 
 
-def _digest_limits() -> dict[str, int]:
-    """The most parts that a digest reads inside a question, for the engine: the number of `memory.py`.
-
-    The digest port refuses a longer digest with the same number. An engine
-    that has no such limit does not take the argument.
-    """
-    named = {field.name for field in dataclasses.fields(EngineConfig)}
-    return {"digest_parts_limit": memory.DIGEST_PARTS_LIMIT} if "digest_parts_limit" in named else {}
-
-
 def _events(
     asked: _Asked,
     model: str,
@@ -231,7 +220,12 @@ def _events(
             yield {"type": "done", "payload": _payload(found, asked, archive, names)}
             return
         config = models.chat_config(model.strip() or models.default_id(), reasoning_effort)
-        settings = EngineConfig(model=config.model, max_output_tokens=config.max_output_tokens, **_digest_limits())
+        settings = EngineConfig(
+            model=config.model,
+            max_output_tokens=config.max_output_tokens,
+            # the digest port refuses a longer digest with the same number
+            digest_parts_limit=memory.DIGEST_PARTS_LIMIT,
+        )
         # the search by meaning and the digest, each None when it can not work; a test puts its own `memory.ports`
         ports = memory.ports(archive, names, start_digest=start_digest)
         engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock, **ports)

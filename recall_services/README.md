@@ -215,7 +215,7 @@ Tests put a stand-in at `meaning.embedder_for` and at `meaning.default_facts`, o
 Known limits:
 
 - The day in a segment is a local day. After a change of the time zone of the Mac some segments have a new day, and a build embeds them again. The refresh of the server is bounded by `small_enough`; above it the reader sees the cost first.
-- A `meaning` job can not be stopped, and an import waits for it.
+- A `meaning` job can not be stopped, and an import waits for it. The same holds for a `digest` job.
 - The first use of the token counter fetches a vocabulary file. When that fails, the count is one token for three bytes.
 - The status compares times to the second. A new message in the same second as `coveredUntil` does not make the quick status `behind`.
 - An index of an archive file that was moved or deleted stays in `saves/meaning`. Nothing removes it.
@@ -248,8 +248,9 @@ With a port that is None the engine does not offer its tool. A reason goes to th
 `DigestPort`:
 
 - `estimate` and `digest` pass the conversation and the days to `digests.estimate` and `digests.build`.
-- `digest` reads at most `DIGEST_PARTS_LIMIT` (2) parts that are not read yet. It gives that number to `digests.build` as `max_new_periods`. A digest that needs more raises `too_many_parts`, and no call is made. `chat.py` gives the engine the same constant (`_digest_limits`), so the two can not differ.
+- `digest` reads at most `DIGEST_PARTS_LIMIT` (2) parts that are not read yet. It gives that number to `digests.build` as `max_new_periods`. A digest that needs more raises `too_many_parts`. When the check before the first call refuses it, no call is made. The report engine can also stop a digest at the limit after calls that were paid for: the failure then carries their usage, and `usd` and the spend line say what they cost. Do not take a refusal to mean that nothing was paid: look at the usage. `chat.py` gives the engine the same constant (`EngineConfig.digest_parts_limit` in `_events`), so the two can not differ.
 - `digest` returns `usd`: the cost of the usage of the run. The log `recall.spend` gets one line with counts and the cost. `log_to_the_server_log` in `ui_server.py` lets that line through.
+- A digest that was paid for and failed, or that was stopped, says what it cost too. `digest` takes the usage from the failure of `digests.build` (`ReportFailure.usage`), writes the line `a digest inside a question gave nothing (<code>): N model calls, X USD`, sets `usd` on the failure and raises the same failure again. A failure before any call has no usage: its `usd` is 0.0 and it leaves no line.
 - One lock for the archive path, the conversation and the model is held around the build (`digest_lock`). A second question waits and then finds the parts read. A question that is cancelled while it waits stops waiting (`DigestStopped`).
 - The model port of a digest inside a question has a timeout of 120 seconds and one more try (`question_llm`, `DIGEST_TIMEOUT_SECONDS`, `DIGEST_RETRIES`). A report job keeps 300 seconds and two more tries.
 - `prepare` calls the `start_digest` function of the server and returns its answer. With none given, or when it fails, the answer is False.
@@ -266,7 +267,7 @@ A test gives `store`, `embedder_factory` and `digest` (`DigestSettings`) to `mem
 Known limits:
 
 - A reader who leaves during a digest inside a question does not stop it: the turn gives no event while a tool runs. It reads 2 parts at most.
-- The `digest` job does not hold the lock of a question. A question and the job can pay for the same part, 2 parts at most.
+- A question and the `digest` job do not share a lock. A part is paid for twice only when two runs send it at the same moment, before either has saved it; so a question beside a `digest` job pays again for at most the parts of its own limit (2), and two runs with no limit pay again only for the parts whose calls overlap. In the worst case two runs with no limit that move in step each pay for every part, because nothing marks a part as being read. The mechanism: just before a part is sent, its key is looked up one more time (`report_engine/map_step.py`, for a report run too).
 - The clock times in a transcript are local times. After a change of the time zone of the Mac the parts of a digest are new, and they are read and paid for again.
 - A digest under a scope with days can pay for a period that is then not shown. The app sets no days in a scope today.
 
@@ -277,8 +278,34 @@ Known limits:
 - It uses `DIGEST_MODEL`, so a later question finds the parts in the notes. It has no limit of parts, and the model port of a report.
 - The result has `conversation`, `periods`, `periodsBuilt`, `periodsCached`, `periodsFailed`, `usd` and `usage`.
 - A listener gets `{"progress": {"step", "of", "label"}}` and a line under `log`, as in a report job. A line holds the label of a part and counts.
-- A failure is a `ReportFailure` with the sentences of a report run. A missing conversation and a bad day are a ValueError.
+- A failure is a `DigestFailure`: a `ReportFailure` with the code of the failure of `digests.build`, its usage, and a sentence of this job (`sentence_of`). No sentence names a report. A missing conversation and a bad day are a ValueError.
 - `digest_starter` in `ui_server.py` makes the `start_digest` function of one question. It starts a `digest` job for the archive of the question.
+- The starter says True when the job started, or when a `digest` job of the same archive, conversation and days already runs.
+- The starter starts nothing when the last job of the same archive, conversation and days failed, or read no new part while parts failed. Each question would pay for the same parts again. An import that changed the archive, and a new start of the server, let the reading start again.
+
+The sentences of a `digest` job that failed:
+
+| Code | Sentence |
+|---|---|
+| `no_key` | No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then ask again. |
+| `key_rejected` | OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, then ask again. |
+| `unknown_model` | OpenAI does not know the model gpt-6-luna. The conversation was not read. |
+| `rate_limit` | OpenAI is limiting requests, or the account has no credit left. Wait a moment, then ask again. |
+| `offline` | OpenAI could not be reached. Check the internet connection, then ask again. |
+| `timeout` | The model took too long to answer. Ask again. |
+| `model_error` | The model could not read the conversation. Ask again. |
+| `empty` | This conversation has no messages with text in these dates. |
+| `too_large` | The model can not read this conversation with its limits. The conversation was not read. |
+| `archive_error` | The messages of this conversation could not be read. Update the archive, then ask again. |
+| `cache_unreadable` | What earlier runs read could not be read or kept. The conversation was not read. |
+| `cancelled` | The reading was stopped. What was read is kept. |
+| `run_failed` | The reading failed. What was read is kept: ask again. |
+| any other code | The conversation could not be read for chat. Ask again. |
+
+Known limits:
+
+- A `digest` job can not be stopped, and an import waits for it.
+- A job that failed for a reason that passes, such as no connection, is not started again by a question until an import changed the archive or the server started again. A reader can still start the job.
 
 ## Reports
 
