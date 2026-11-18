@@ -47,9 +47,12 @@ def reply(vectors: Sequence[Sequence[float]], order: Sequence[int] | None = None
     )
 
 
-def status_error(kind: type, code: int, *, headers: dict[str, str] | None = None, body: Any = None) -> Exception:
+def status_error(
+    kind: type, code: int, *, headers: dict[str, str] | None = None, body: Any = None, message: str | None = None
+) -> Exception:
+    """An error as the SDK makes it: `body` is the `error` object of the reply."""
     response = httpx.Response(code, headers=headers or {}, request=REQUEST)
-    return kind(f"the service said no to {MARK}", response=response, body=body)
+    return kind(message or f"the service said no to {MARK}", response=response, body=body)
 
 
 class Embeddings:
@@ -141,9 +144,11 @@ def test_a_quota_failure_is_not_a_rate_limit() -> None:
 
 def test_a_request_that_the_service_calls_too_large_in_words_only_is_too_large() -> None:
     body = {"code": None, "message": "This model's maximum context length is 8192 tokens, however you requested 9000"}
-    embedder = OpenAIEmbedder(Client(status_error(openai.BadRequestError, 400, body=body)), MODEL, 2)
-    with pytest.raises(EmbeddingTooLarge):
-        embedder.embed(["a text"])
+    as_the_sdk_writes_it = f"Error code: 400 - {{'error': {body}}}"
+    raised = status_error(openai.BadRequestError, 400, body=body, message=as_the_sdk_writes_it)
+    with pytest.raises(EmbeddingTooLarge) as caught:
+        OpenAIEmbedder(Client(raised), MODEL, 2).embed(["a text"])
+    assert str(caught.value) == "the embedding service failed (HTTP 400)"
 
 
 def test_the_error_names_the_status_the_code_and_the_request_and_nothing_else() -> None:
