@@ -76,3 +76,27 @@ class ScriptedEmbedder:
     def texts(self) -> list[str]:
         """Every text that got a vector, in order."""
         return [text for call in self.answered for text in call]
+
+
+def kept(number: int, *, conversation: str = "chat-a", day: str = "2024-06-03", content: str | None = None) -> "Segment":
+    """An invented stored segment. Its ids follow `number`."""
+    from meaning_index.shapes import Segment
+
+    return Segment(
+        segment_id=f"{number:064x}",
+        conversation_id=conversation,
+        first_message_id=f"first-{number}",
+        last_message_id=f"last-{number}",
+        first_timestamp=f"{day} 09:00:00",
+        last_timestamp=f"{day} 09:30:00",
+        message_count=3,
+        content_hash=content if content is not None else f"{number + 1000:064x}",
+    )
+
+
+def unit(count: int, dimensions: int, seed: int = 7) -> "np.ndarray":
+    """`count` invented rows of length 1, as the store keeps them."""
+    import numpy as np
+
+    rows = np.random.default_rng(seed).standard_normal((count, dimensions))
+    return (rows / np.linalg.norm(rows, axis=1, keepdims=True)).astype("<f2")
