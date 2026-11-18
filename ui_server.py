@@ -9,6 +9,8 @@ import logging
 import mimetypes
 import os
 import re
+import selectors
+import socket
 import sqlite3
 import sys
 import threading
@@ -2425,6 +2427,54 @@ def cancel_asking(request_id: str) -> bool:
     return True
 
 
+# how often the watch of a stream looks whether the reader closed the connection
+READER_POLL_SECONDS = 0.2
+
+
+def _watch_the_reader(connection: socket.socket, token: CancelToken, done: threading.Event) -> None:
+    """Cancel the question when the reader closes the connection. Peeks: it reads no byte of the request.
+
+    Bytes that the reader sends while the answer streams end the watch: they
+    are not a close, and they belong to the server. A socket that the
+    selector can not watch ends it too. Then only a failed write sees a close.
+    """
+    try:
+        watcher = selectors.DefaultSelector()
+        watcher.register(connection, selectors.EVENT_READ)
+    except (OSError, ValueError):
+        return
+    with watcher:
+        while not done.is_set():
+            if not watcher.select(READER_POLL_SECONDS):
+                continue
+            try:
+                left = connection.recv(1, socket.MSG_PEEK) == b""
+            except OSError:  # reset by the reader
+                left = True
+            if left:
+                token.cancel()
+            return
+
+
+@contextlib.contextmanager
+def watching_the_reader(connection: socket.socket, token: CancelToken):
+    """While a stream is open, a thread sees the reader leave within READER_POLL_SECONDS and cancels the question.
+
+    Without it a close is seen only when a write fails, and the first write
+    after a close succeeds. The thread ends with the stream.
+    """
+    done = threading.Event()
+    thread = threading.Thread(
+        target=_watch_the_reader, args=(connection, token, done), name="chat-reader-watch", daemon=True
+    )
+    thread.start()
+    try:
+        yield
+    finally:
+        done.set()
+        thread.join()
+
+
 def answer_question(payload: dict) -> tuple[int, dict]:
     """The answer to /api/ask: the status and the body. The body is the payload alone: no progress event."""
     _state, archive = archive_for(named_archive(payload))
@@ -2622,7 +2672,7 @@ class RecallHandler(BaseHTTPRequestHandler):
             self.wfile.write(frame.encode("utf-8"))
             self.wfile.flush()
 
-        with asking(ask_id(payload)) as token:
+        with asking(ask_id(payload)) as token, watching_the_reader(self.connection, token):
             try:
                 events = chat_service.stream(
                     asked["question"],
