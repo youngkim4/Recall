@@ -10,12 +10,15 @@ search by meaning finds it.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from archive import Archive
+from archive import Archive, ArchiveError
 from meaning_index import EmbedderFacts, FakeEmbedder, IndexStore
+from recall_services import meaning
 from recall_services.names import Names
 from tests.integration.report_data import MINA_CONTACT, Pulled
 from tests.report_engine.synth import MINA, THEO, message
@@ -68,9 +71,6 @@ class Lake:
         self.pulled.pull([MINA_CONTACT])
         self.archive = self.pulled.open()
 
-    def embedder(self) -> FakeEmbedder:
-        return FakeEmbedder()
-
     def close(self) -> None:
         self.archive.close()
         self.pulled.close()
@@ -92,3 +92,54 @@ def ids_of(archive: Archive, text: str) -> list[str]:
     """The ids of the messages with exactly this text, in every conversation."""
     chats = [chat["id"] for chat in archive.conversations()]
     return [row["id"] for chat in chats for row in archive.iter_messages(chat) if row["text"] == text]
+
+
+class Failing:
+    """An embedder that raises at each request."""
+
+    model, dimensions = FAKE_FACTS.model, FAKE_FACTS.dimensions
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+        raise self._error
+
+
+class Unreadable:
+    """An archive that fails when its messages are read."""
+
+    def __init__(self, archive: Any) -> None:
+        self._archive = archive
+
+    def conversations(self, **more: Any) -> Any:
+        return self._archive.conversations(**more)
+
+    def iter_messages(self, *_args: Any, **_more: Any) -> Any:
+        raise ArchiveError(f"the text {MARK} of {MINA}")
+
+
+def build(lake: Lake, embedder: Any = None, **more: Any) -> dict[str, Any]:
+    """Build the index of the lake with a fixed embedder, or with the one that is given."""
+    made = embedder or FakeEmbedder()
+    settings = {"store": lake.store, "facts": FAKE_FACTS, "count_tokens": words, **more}
+    return meaning.build(lake.archive, embedder_factory=lambda _model, _dimensions: made, **settings)
+
+
+def estimate(lake: Lake) -> dict[str, Any]:
+    return meaning.estimate(lake.archive, store=lake.store, facts=FAKE_FACTS, count_tokens=words)
+
+
+def failure(lake: Lake, embedder: Any = None, **more: Any) -> meaning.MeaningFailure:
+    """The failure of a build that must fail."""
+    try:
+        build(lake, embedder, **more)
+    except meaning.MeaningFailure as told:
+        return told
+    raise AssertionError("the build did not fail")
+
+
+def newer_format(store: IndexStore) -> None:
+    """Make the folder hold an index that a newer build of the app wrote."""
+    store.folder.mkdir(parents=True, exist_ok=True)
+    (store.folder / "meta.json").write_text(json.dumps({"format_version": 99}), encoding="utf-8")

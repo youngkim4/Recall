@@ -6,9 +6,6 @@ no request leaves this machine.
 
 from __future__ import annotations
 
-import json
-import logging
-from collections.abc import Iterator, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -16,76 +13,19 @@ from typing import Any
 import pytest
 
 import recall_paths
-from archive import ArchiveError
-from chat_engine.cancel import CancelToken
-from meaning_index import (
-    BatchLimits,
-    EmbeddingKeyError,
-    EmbeddingNetworkError,
-    EmbeddingRateLimited,
-    EmbeddingReplyError,
-    EmbeddingServiceError,
-    EmbeddingTooLarge,
-    FakeEmbedder,
-    IndexStore,
-    MeaningIndex,
-    embedder_facts,
-)
+from meaning_index import FakeEmbedder, IndexStore, MeaningIndex, StoreError, embedder_facts
 from meaning_index.openai_embedder import OpenAIEmbedder
 from recall_services import meaning
 from tests.integration.report_data import Pulled, moment
 from tests.recall_services import memory_kit as kit
-from tests.recall_services.memory_kit import FAKE_FACTS, MARK, SEGMENTS, Lake
-from tests.report_engine.synth import MINA, THEO
+from tests.recall_services.memory_kit import FAKE_FACTS, MARK, SEGMENTS, Lake, build, estimate, newer_format
+from tests.report_engine.synth import MINA
 
 STATUS_KEYS = {"state", "segments", "model", "dimensions", "builtAt", "coveredUntil"}
 ESTIMATE_KEYS = {"segments", "newSegments", "tokens", "estimatedCost", "upperBound"}
 BUILD_KEYS = {"segments", "embedded", "reused", "removed", "tokens"}
 NO_KEY = "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then build the index again."
-HANDLE_PARTS = (MINA, THEO, "2025550143", "theo@", "example.com")
 
-
-@pytest.fixture
-def lake(tmp_path: Path) -> Iterator[Lake]:
-    made = kit.build_lake(tmp_path)
-    try:
-        yield made
-    finally:
-        made.close()
-
-
-class Failing:
-    """An embedder that raises at each request."""
-
-    model, dimensions = FAKE_FACTS.model, FAKE_FACTS.dimensions
-
-    def __init__(self, error: Exception) -> None:
-        self._error = error
-
-    def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
-        raise self._error
-
-
-def build(lake: Lake, embedder: Any = None, **more: Any) -> dict[str, Any]:
-    made = embedder or FakeEmbedder()
-    settings = {"store": lake.store, "facts": FAKE_FACTS, "count_tokens": kit.words, **more}
-    return meaning.build(lake.archive, embedder_factory=lambda _model, _dimensions: made, **settings)
-
-
-def estimate(lake: Lake) -> dict[str, Any]:
-    return meaning.estimate(lake.archive, store=lake.store, facts=FAKE_FACTS, count_tokens=kit.words)
-
-
-def failure(lake: Lake, embedder: Any = None, **more: Any) -> meaning.MeaningFailure:
-    with pytest.raises(meaning.MeaningFailure) as raised:
-        build(lake, embedder, **more)
-    return raised.value
-
-
-def newer_format(store: IndexStore) -> None:
-    """Make the folder hold an index that a newer build of the app wrote."""
-    store.folder.mkdir(parents=True, exist_ok=True)
-    (store.folder / "meta.json").write_text(json.dumps({"format_version": 99}), encoding="utf-8")
 
 
 # --- the place ---------------------------------------------------------------------
@@ -200,8 +140,6 @@ def test_an_estimate_that_counts_too_much_says_that_it_is_an_upper_bound(
 
 
 def test_a_folder_whose_status_can_not_be_read_counts_as_no_index(lake: Lake, caplog: pytest.LogCaptureFixture) -> None:
-    from meaning_index import StoreError
-
     build(lake)
 
     class Broken(IndexStore):
@@ -253,138 +191,6 @@ def test_a_build_with_nothing_new_asks_for_no_key(lake: Lake, monkeypatch: pytes
 def test_with_a_key_the_embedder_of_the_app_is_the_adapter_of_the_provider() -> None:
     made = meaning.embedder_for("text-embedding-3-large", 1024)
     assert isinstance(made, OpenAIEmbedder) and (made.model, made.dimensions) == ("text-embedding-3-large", 1024)
-
-
-# --- failures ----------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("error", "code", "sentence"),
-    [
-        (
-            EmbeddingKeyError("x", status_code=401),
-            "key_rejected",
-            "OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, "
-            "then build the index again.",
-        ),
-        (
-            EmbeddingRateLimited("x", retry_after_s=900.0, status_code=429),
-            "rate_limit",
-            "OpenAI is limiting requests, or the account has no credit left. Wait a moment, then build the index again.",
-        ),
-        (
-            EmbeddingServiceError("x", status_code=429, code="insufficient_quota"),
-            "rate_limit",
-            "OpenAI is limiting requests, or the account has no credit left. Wait a moment, then build the index again.",
-        ),
-        (
-            EmbeddingNetworkError("x"),
-            "offline",
-            "OpenAI could not be reached. Check the internet connection, then build the index again.",
-        ),
-        (
-            EmbeddingServiceError("x", status_code=500),
-            "model_error",
-            "The embedding model did not answer. What was read is kept: build the index again.",
-        ),
-        (
-            EmbeddingReplyError("x"),
-            "model_error",
-            "The embedding model did not answer. What was read is kept: build the index again.",
-        ),
-        (
-            EmbeddingTooLarge("x", status_code=413),
-            "model_error",
-            "The embedding model did not answer. What was read is kept: build the index again.",
-        ),
-    ],
-)
-def test_a_failure_of_the_embedder_is_one_plain_sentence_and_the_index_is_as_it_was(
-    lake: Lake, error: Exception, code: str, sentence: str
-) -> None:
-    told = failure(lake, Failing(error), limits=BatchLimits(max_tries=1))
-    assert (told.code, str(told)) == (code, sentence)
-    assert meaning.status(lake.archive, store=lake.store)["state"] == "none"
-
-
-def test_a_second_build_at_the_same_time_is_told_to_wait(lake: Lake) -> None:
-    with lake.store.building():
-        told = failure(lake)
-    assert (told.code, str(told)) == ("busy", "The index is being built now. Wait until that ends.")
-
-
-@pytest.mark.parametrize("cancel", [lambda: True, "token"])
-def test_a_build_that_is_stopped_says_so_and_keeps_the_index_as_it_was(lake: Lake, cancel: Any) -> None:
-    token = CancelToken()
-    token.cancel()
-    told = failure(lake, cancel=token if cancel == "token" else cancel)
-    assert (told.code, str(told)) == ("cancelled", "The build was stopped. What was read is kept for the next build.")
-    assert meaning.status(lake.archive, store=lake.store)["state"] == "none"
-
-
-class Unreadable:
-    """An archive that fails when its messages are read."""
-
-    def __init__(self, archive: Any) -> None:
-        self._archive = archive
-
-    def conversations(self, **more: Any) -> Any:
-        return self._archive.conversations(**more)
-
-    def iter_messages(self, *_args: Any, **_more: Any) -> Any:
-        raise ArchiveError(f"the text {MARK} of {MINA}")
-
-
-def test_an_archive_that_can_not_be_read_is_one_plain_sentence(lake: Lake) -> None:
-    broken = Unreadable(lake.archive)
-    sentence = "The message archive could not be read. Update the archive, then build the index again."
-    with pytest.raises(meaning.MeaningFailure) as built:
-        meaning.build(broken, store=lake.store, facts=FAKE_FACTS, embedder_factory=lambda *_: FakeEmbedder())
-    with pytest.raises(meaning.MeaningFailure) as estimated:
-        meaning.estimate(broken, store=lake.store, facts=FAKE_FACTS)
-    for told in (built.value, estimated.value):
-        assert (told.code, str(told)) == ("archive_error", sentence)
-
-
-def test_an_archive_that_fails_while_the_state_is_read_is_the_same_sentence(lake: Lake) -> None:
-    build(lake)
-    lake.add([(MINA, "2024-07-01 08:00:00", "The lake is warm now", False)])
-    with pytest.raises(meaning.MeaningFailure) as raised:
-        meaning.status(Unreadable(lake.archive), store=lake.store)
-    assert raised.value.code == "archive_error"
-
-
-def test_an_index_of_a_newer_build_of_the_app_is_not_read_and_not_replaced(lake: Lake) -> None:
-    newer_format(lake.store)
-    sentence = "A newer version of Recall made this index. Update Recall, then try again."
-    assert meaning.status(lake.archive, store=lake.store)["state"] == "none"
-    assert meaning.built(lake.store) is False
-    with pytest.raises(meaning.MeaningFailure) as estimated:
-        estimate(lake)
-    told = failure(lake)
-    assert (told.code, str(told)) == (estimated.value.code, str(estimated.value)) == ("index_newer", sentence)
-    assert json.loads((lake.store.folder / "meta.json").read_text(encoding="utf-8")) == {"format_version": 99}
-
-
-def test_a_folder_that_can_not_be_written_is_one_plain_sentence(lake: Lake, tmp_path: Path) -> None:
-    (tmp_path / "a-file").write_text("not a folder", encoding="utf-8")
-    told = failure(lake, store=IndexStore(tmp_path / "a-file" / "meaning"))
-    assert (told.code, str(told)) == (
-        "index_error",
-        "The index could not be written. Check the free space on the disk, then build the index again.",
-    )
-
-
-def test_facts_that_can_not_be_read_are_a_failure_with_a_sentence(lake: Lake, monkeypatch: pytest.MonkeyPatch) -> None:
-    from meaning_index import ModelFactsError
-
-    def broken() -> Any:
-        raise ModelFactsError("the embedding facts file can not be read")
-
-    monkeypatch.setattr(meaning, "default_facts", broken)
-    with pytest.raises(meaning.MeaningFailure) as raised:
-        meaning.build(lake.archive, store=lake.store)
-    assert (raised.value.code, str(raised.value)) == ("build_failed", "The index could not be built. Build it again.")
 
 
 # --- the answer to the route -------------------------------------------------------
@@ -451,26 +257,3 @@ def test_a_listener_that_fails_does_not_stop_the_build(lake: Lake, caplog: pytes
 
     assert build(lake, on_progress=broken)["segments"] == SEGMENTS
     assert len([record for record in caplog.records if "listener" in record.getMessage()]) == 1
-
-
-# --- privacy -----------------------------------------------------------------------
-
-
-def test_no_log_line_no_job_line_and_no_sentence_holds_text_or_a_handle(
-    lake: Lake, caplog: pytest.LogCaptureFixture
-) -> None:
-    caplog.set_level(logging.DEBUG)
-    updates: list[dict[str, Any]] = []
-    build(lake, on_progress=updates.append)
-    estimate(lake)
-    meaning.status(lake.archive, store=lake.store)
-    told = [failure(lake, Failing(EmbeddingServiceError(f"said {MARK}")), store=IndexStore(lake.store.folder / "x"))]
-    with pytest.raises(meaning.MeaningFailure) as raised:
-        meaning.estimate(Unreadable(lake.archive), store=lake.store, facts=FAKE_FACTS)
-    told.append(raised.value)
-    lines = [str(update.get("log") or "") for update in updates] + [
-        str(update["progress"]["label"]) for update in updates if update.get("progress")
-    ]
-    everything = "\n".join([caplog.text, *lines, *(str(item) for item in told)])
-    assert MARK not in everything and kit.FERRY_LINE not in everything
-    assert not [part for part in HANDLE_PARTS if part in everything]

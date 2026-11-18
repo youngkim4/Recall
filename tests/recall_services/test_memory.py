@@ -17,7 +17,7 @@ import recall_paths
 from meaning_index import EmbeddingNetworkError, FakeEmbedder, MeaningIndex
 from recall_services import meaning, memory
 from tests.recall_services import memory_kit as kit
-from tests.recall_services.memory_kit import FAKE_FACTS, MARK, Lake
+from tests.recall_services.memory_kit import FAKE_FACTS, MARK, Lake, build
 from tests.report_engine.synth import MINA, THEO
 
 HIT_KEYS = {"conversation", "first_message_id", "last_message_id", "score"}
@@ -30,22 +30,6 @@ def _nothing_kept() -> Iterator[None]:
     memory.forget()
     yield
     memory.forget()
-
-
-@pytest.fixture
-def lake(tmp_path: Path) -> Iterator[Lake]:
-    made = kit.build_lake(tmp_path)
-    try:
-        yield made
-    finally:
-        made.close()
-
-
-def build(lake: Lake) -> dict[str, Any]:
-    return meaning.build(
-        lake.archive, store=lake.store, facts=FAKE_FACTS, count_tokens=kit.words,
-        embedder_factory=lambda _model, _dimensions: FakeEmbedder(),
-    )  # fmt: skip
 
 
 class Asked:

@@ -22,7 +22,7 @@ from recall_services.names import Names  # noqa: E402
 from tests.recall_services import world  # noqa: E402
 
 if TYPE_CHECKING:
-    from tests.recall_services import report_world
+    from tests.recall_services import memory_kit, report_world
 
 
 @pytest.fixture(autouse=True)
@@ -60,3 +60,15 @@ def desk(tmp_path: Path) -> Iterator["report_world.Desk"]:
         yield made
     finally:
         report_world.close_desk(made)
+
+
+@pytest.fixture
+def lake(tmp_path: Path) -> Iterator["memory_kit.Lake"]:
+    """An archive with a few short exchanges of two people, and a folder for the index of meanings."""
+    from tests.recall_services import memory_kit
+
+    made = memory_kit.build_lake(tmp_path)
+    try:
+        yield made
+    finally:
+        made.close()
