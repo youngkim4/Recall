@@ -2152,6 +2152,35 @@ def _next_anniversary(first: pd.Timestamp, today: pd.Timestamp) -> pd.Timestamp 
     return None
 
 
+# The moments of the Overview, for one content of the archive, one set of names and one day.
+# Working them out reads every message (about half a second on a large archive).
+_MOMENTS_CACHE: dict = {"key": None, "value": None}
+_MOMENTS_LOCK = threading.Lock()
+
+
+def local_now() -> pd.Timestamp:
+    return pd.Timestamp.now()
+
+
+def forget_moments() -> None:
+    with _MOMENTS_LOCK:
+        _MOMENTS_CACHE.update({"key": None, "value": None})
+
+
+def cached_moments(messages_path: Path, now: pd.Timestamp | None = None) -> dict:
+    """The moments of the Overview, worked out once for one archive, its names and the day of `now`."""
+    now = now if now is not None else local_now()
+    # the signature first: moments are never kept under a signature that is newer than they are
+    key = (bundle_signature(messages_path), now.date())
+    # held while they are worked out: requests that arrive together wait for one answer
+    with _MOMENTS_LOCK:
+        if _MOMENTS_CACHE["key"] == key:
+            return _MOMENTS_CACHE["value"]
+        value = memories_payload(messages_path, now=now)
+        _MOMENTS_CACHE.update({"key": key, "value": value})
+        return value
+
+
 def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> dict:
     """Proactive memories computed from the cached dataframe -- no AI calls.
     On-this-day moments from past years, upcoming first-message anniversaries,
@@ -2668,7 +2697,7 @@ class RecallHandler(BaseHTTPRequestHandler):
                 "dbPath": str(LIVE_CHAT_DB),
             })
         elif parsed.path == "/api/memories":
-            send_json(self, 200, {"memories": memories_payload(named_archive(query))})
+            send_json(self, 200, {"memories": cached_moments(named_archive(query))})
         elif parsed.path == "/api/overview":
             send_json(self, 200, {"overview": archive_patterns(named_archive(query))})
         elif parsed.path == "/api/contacts":
