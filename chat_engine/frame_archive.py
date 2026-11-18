@@ -161,6 +161,10 @@ class FrameArchive:
         positions = self._filter(None, [str(conversation_id)], _day_key(since), _day_key(until), None)
         return (self._message(int(position)) for position in positions)
 
+    def message(self, message_id: str) -> Optional[Message]:
+        position = self._position(message_id)
+        return self._message(position) if position >= 0 else None
+
     def context(self, message_id: str, *, radius: int = 6) -> list[Message]:
         position = self._position(message_id)
         if position < 0:
