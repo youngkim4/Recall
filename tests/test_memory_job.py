@@ -12,7 +12,7 @@ from urllib.parse import quote
 import pytest
 
 import ui_server
-from recall_services import keys, memory, memory_prep
+from recall_services import keys, memory, memory_prep, places
 from recall_services import reports as report_service
 from report_engine.fake_llm import FakeLLM
 from tests.archive_kit import (
@@ -47,6 +47,8 @@ ANSWER_KEYS = {
 }  # fmt: skip
 MEMORY_IS_READ = "Recall is reading the memory of chat. Wait until it ends."
 IMPORT_BEFORE_MEMORY = "An import is running. Wait until it ends, then read the memory."
+MEMORY_BEFORE_DIGEST = "Recall is reading the memory of chat, and this conversation with it. Wait until it ends."
+DIGEST_BEFORE_MEMORY = "Recall is reading a conversation for chat. Wait until it ends, then read the memory."
 
 
 @pytest.fixture
@@ -191,12 +193,26 @@ def test_a_memory_job_and_an_import_refuse_each_other(held_jobs, other):
     assert listed() == [("memory", "completed"), (other, "queued")]
 
 
-def test_a_report_an_index_build_and_a_digest_run_beside_the_memory_job(held_jobs):
+def test_a_report_and_an_index_build_run_beside_the_memory_job(held_jobs):
     ui_server.create_job("memory", {})
     ui_server.create_job("analyze", {"contact": "+12025550143"})
     ui_server.create_job("meaning", {})
+    assert listed() == [("memory", "queued"), ("analyze", "queued"), ("meaning", "queued")]
+
+
+def test_a_memory_job_and_a_digest_job_refuse_each_other(server, held_jobs):
+    """Both read with the digest model and no limit of parts: side by side they would pay for each part twice."""
+    first = ui_server.create_job("memory", {})
+    with pytest.raises(ui_server.JobRefused) as refused:
+        ui_server.create_job("digest", {"conversation": "+12025550143"})
+    assert (str(refused.value), refused.value.status) == (MEMORY_BEFORE_DIGEST, 409)
+    ui_server.update_job(first["id"], status="completed")
     ui_server.create_job("digest", {"conversation": "+12025550143"})
-    assert listed() == [("memory", "queued"), ("analyze", "queued"), ("meaning", "queued"), ("digest", "queued")]
+    with pytest.raises(ui_server.JobRefused) as refused:
+        ui_server.create_job("memory", {})
+    assert str(refused.value) == DIGEST_BEFORE_MEMORY
+    assert post(server, "/api/jobs", {"action": "memory"}) == (409, {"error": DIGEST_BEFORE_MEMORY})
+    assert listed() == [("memory", "completed"), ("digest", "queued")]
 
 
 # --- after an import ---------------------------------------------------------------
@@ -294,3 +310,116 @@ def test_a_reading_that_is_refused_after_the_import_changes_nothing(archive_file
     assert (job["status"], job["error"]) == ("completed", None)
     assert refused == ["memory"] and memory_jobs() == []
     assert "[memory]" not in capfd.readouterr().err
+
+
+# --- what a job spent, also when it failed ------------------------------------------
+
+
+def test_a_job_that_ends_keeps_what_it_spent(archive_file, model):
+    job = read_memory(archive_file)
+    assert job["spent"] == {"usd": job["result"]["usd"], "usage": job["result"]["usage"]}
+
+
+def test_a_job_that_fails_after_paid_parts_keeps_what_it_spent(archive_file, model, monkeypatch):
+    usage = {"input_tokens": 900, "cached_input_tokens": 0, "output_tokens": 100, "cost_usd": 0.0123, "calls": 3}
+
+    def paid_then_refused(*_args, **_more):
+        raise memory_prep.MemoryFailure("key_rejected", "OpenAI rejected the API key.", usage)
+
+    monkeypatch.setattr(memory_prep, "run", paid_then_refused)
+    job = read_memory(archive_file)
+    assert (job["status"], job["code"], job["result"]) == ("failed", "key_rejected", None)
+    assert job["spent"] == {"usd": 0.0123, "usage": usage}
+
+
+def test_a_job_that_fails_before_any_call_spent_nothing(archive_file, model, monkeypatch):
+    def refused(*_args, **_more):
+        raise memory_prep.MemoryFailure("no_key", "No API key is set.")
+
+    monkeypatch.setattr(memory_prep, "run", refused)
+    job = read_memory(archive_file)
+    assert job["status"] == "failed" and job["spent"] == {"usd": 0.0, "usage": None}
+
+
+def test_a_job_that_failed_writes_no_marker(archive_file, model, monkeypatch):
+    def refused(*_args, **_more):
+        raise memory_prep.MemoryFailure("offline", "OpenAI could not be reached.")
+
+    monkeypatch.setattr(memory_prep, "run", refused)
+    assert read_memory(archive_file)["status"] == "failed"
+    assert memory_prep.completed_before(places.archive_path_for(archive_file)) is False
+
+
+def test_a_job_that_ends_writes_the_marker_of_its_archive(archive_file, model):
+    assert memory_prep.completed_before(places.archive_path_for(archive_file)) is False
+    read_memory(archive_file)
+    assert memory_prep.completed_before(places.archive_path_for(archive_file)) is True
+
+
+def test_after_an_import_a_digest_read_by_a_question_starts_nothing(archive_file, model, messages_home):
+    """A question or a report with the digest model put parts in the notes, but no memory job completed."""
+    from recall_services import digests
+
+    archive = places.state_for(archive_file).archive()
+    conversation = archive.conversations()[0]["id"]
+    digests.build(conversation, archive=archive, names=ui_server.saved_names(), model=memory.DIGEST_MODEL)
+    write_database(messages_home / "chat.db", [*FIRST, *MORE])
+    assert run("export", {"messagesPath": archive_file})["status"] == "completed"
+    assert memory_jobs() == [] and len(model.map_calls) == 1
+
+
+# --- the answer of the route is kept -------------------------------------------------
+
+
+@pytest.fixture
+def counted_payloads(monkeypatch):
+    calls = []
+    real = memory_prep.payload
+
+    def counted(*args, **more):
+        calls.append(1)
+        return real(*args, **more)
+
+    monkeypatch.setattr(memory_prep, "payload", counted)
+    return calls
+
+
+def test_two_calls_in_a_row_work_the_answer_out_once(server, archive_file, model, counted_payloads):
+    first = memory_of(server, archive_file)
+    second = memory_of(server, archive_file)
+    assert first == second and len(counted_payloads) == 1
+
+
+def test_calls_that_arrive_together_wait_for_one_answer(server, archive_file, model, counted_payloads):
+    answers = []
+    threads = [threading.Thread(target=lambda: answers.append(memory_of(server, archive_file))) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(10)
+    assert len(answers) == 4 and len(counted_payloads) == 1
+
+
+def test_after_a_part_is_saved_the_counts_move(server, archive_file, model, counted_payloads):
+    from recall_services import digests
+
+    assert memory_of(server, archive_file)[1]["partsRead"] == 0
+    archive = places.state_for(archive_file).archive()
+    conversation = archive.conversations()[0]["id"]
+    digests.build(conversation, archive=archive, names=ui_server.saved_names(), model=memory.DIGEST_MODEL)
+    _status, answer = memory_of(server, archive_file)
+    assert (answer["state"], answer["partsRead"]) == ("ready", 1) and len(counted_payloads) == 2
+
+
+def test_the_job_that_runs_is_read_fresh_beside_a_kept_answer(server, archive_file, model, held_jobs, counted_payloads):
+    assert memory_of(server, archive_file)[1]["jobId"] is None
+    job = ui_server.create_job("memory", {"messagesPath": archive_file})
+    assert memory_of(server, archive_file)[1]["jobId"] == job["id"] and len(counted_payloads) == 1
+
+
+def test_an_import_that_changed_the_archive_works_the_answer_out_again(server, archive_file, model, messages_home, counted_payloads):
+    memory_of(server, archive_file)
+    write_database(messages_home / "chat.db", [*FIRST, *MORE])
+    assert run("export", {"messagesPath": archive_file})["status"] == "completed"
+    _status, answer = memory_of(server, archive_file)
+    assert answer["parts"] == 1 and len(counted_payloads) == 2
