@@ -98,8 +98,9 @@ def test_order() -> None:
 
 
 def test_prefix() -> None:
-    assert read_prefix({}) is False
-    assert read_prefix({"prefix": ""}) is False
+    # no `prefix` at all is today's search as the reader types: the app drops an empty value too
+    assert read_prefix({}) is True
+    assert read_prefix({"prefix": ""}) is True
     assert read_prefix({"prefix": "true"}) is True
     assert read_prefix({"prefix": "FALSE"}) is False
     with pytest.raises(ValueError, match="^prefix must be true or false.$"):

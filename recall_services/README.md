@@ -136,7 +136,8 @@ Each filter is optional. All of them are combined with AND. A value of a filter,
 | `from` | `me`, `them` or empty |
 | `kind` | `direct`, `group` or empty |
 | `attachments` | `any`, `none`, `image`, `video`, `audio`, `other` or empty |
-| `query` | the words. `prefix=true` makes the last word a prefix. Default `false`. A star is always a prefix. |
+| `query` | the words. A star is always a prefix. |
+| `prefix` | `false`: every word is whole. Send it for whole words. `true`: the last word is a prefix. No `prefix` (or an empty one): `true`, the search of the app of today as the reader types. |
 | `order` | `/api/search` only: `newest` (default), `oldest`, `relevance` |
 
 - The kind of an attachment comes from its mime type: `image/*`, `video/*`, `audio/*`. `other` is every other type and an attachment with no type. A GIF is an image.
@@ -167,6 +168,9 @@ Each filter is optional. All of them are combined with AND. A value of a filter,
 }
 ```
 
+- That answer is for `query=hi&prefix=false`: the word "hi" only, not "this", "which", "hit" or "him". With no `prefix`, `prefix` is `true` and "hit" and "him" match too ("this" and "which" never: a prefix is the start of a word).
+- `prefix` says what the search applied.
+
 - `filters` holds every key. A filter that was not applied is `""` or `[]`. `contacts` holds `contact` too.
 - `ranges` are `[start, end)` in UTF-16 units of `text`, as JavaScript counts. They are the ranges that the index matched: a prefix marks the whole word. They follow the shown text: no outer space, no attachment placeholder. A word after the cut of a long text (600 characters) has no range. A range across the cut stops at the cut.
 - With no words, `ranges` is `[]`.
@@ -195,6 +199,7 @@ Each filter is optional. All of them are combined with AND. A value of a filter,
 - `by`: `day`, `week`, `month`, `year`, `weekday`, `hour`, `weekday_hour`, `person`, `conversation`, or empty. Empty gives `rows` `[]` and the totals only.
 - `totals` covers the whole filtered set. `first` and `last` are its first and last local day, or `null` when the set is empty. `received` is the count of the archive. In the archive every message is sent or received (`is_from_me` is 0 or 1), so its `received` is `total` less `sent`; the service adds the counts of the archive and never works one out itself.
 - `rowsTotal` is the number of rows before `limit`.
+- `prefix` reads as on `/api/search`: no `prefix` is `true`. Send `prefix=false` to count whole words only.
 - Time rows: `{"key", "label", "total", "sent", "received"}`.
   - `day` (`YYYY-MM-DD`), `week` (the Monday, `YYYY-MM-DD`), `month` (`YYYY-MM`), `year` (`YYYY`): every bucket from `since` to `until`, in time order. With no `since`, the range starts at `first`. With no `until`, it ends at `last`. The range never goes past the first or the last day of the archive. An empty bucket is a row of zeros. The label is the key.
   - `weekday` (`0` is Monday to `6`, label `Monday`), `hour` (`00` to `23`, label `09:00`), `weekday_hour` (`W-HH`, label `Monday 09:00`): every bucket, always.
@@ -438,7 +443,7 @@ Each one has a test that states it.
 - `reactions_frame` holds the six classic kinds of tapback. A tapback with any emoji or a sticker is no row.
 - A message that was unsent is a row of the archive with no text. It counts in the list, in a day and in a search with no words. `messages_frame` has no row for it. `tests/recall_services/test_frame_edges.py` states this open seam.
 - `around` of a day must be written as `YYYY-MM-DD HH:MM` or longer. Other forms give the start of the day.
-- A search matches whole words. `piz` does not find `pizza`; `piz*` does. `prefix=true` (`as_you_type=True`) makes the last word a prefix.
+- The route reads the last word as a prefix unless the request says `prefix=false`: then `piz` does not find `pizza`, and `piz*` does. The service matches whole words unless `as_you_type=True`.
 - A search with no words and no filter gives nothing. With a filter it lists the messages of the filter.
 - `sender` of an own message is `""`. The export held the handle of the other person there.
 - `senderName` is set only for a received message in a group.

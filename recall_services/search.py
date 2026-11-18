@@ -16,8 +16,10 @@ What a caller may send as `query`:
   matched as plain text. A query is cut to 1,000 characters and 32 terms.
 
 `prefix=true` makes the last word a prefix: the reader is still typing it.
-With `prefix=false` (the default) every word is whole. A star typed by the
-reader is always a prefix.
+With `prefix=false` every word is whole. A request with no `prefix` is read as
+`true`: the app of today searches as the reader types and sends none. A star
+typed by the reader is always a prefix. `payload()` itself matches whole words
+unless `as_you_type=True`.
 
 `ranges` are the [start, end) places of the matched words in the `text` of
 the result, in UTF-16 units, as JavaScript counts. A word that the shown text

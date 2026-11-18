@@ -99,20 +99,17 @@ def test_the_search_route_answers_with_the_payload_of_the_service(
 ) -> None:
     status, answer = get(server, "/api/search", messagesPath=export, **asked)
     expected = search.payload(
-        bridged, saved, asked.get("query", ""), asked.get("contact", ""), asked.get("limit", ""), asked.get("offset", "")
+        bridged, saved, asked.get("query", ""), asked.get("contact", ""), asked.get("limit", ""), asked.get("offset", ""), as_you_type=True
     )
     assert status == 200
     assert answer == as_json(expected)
 
 
-def test_the_search_route_reads_the_last_word_as_a_prefix_when_asked(
-    server: Any, export: Path, bridged: Archive, saved: Names
-) -> None:
-    # the reader may still be typing: whole words unless the app sends prefix=true
-    assert get(server, "/api/search", messagesPath=export, query="piz")[1]["total"] == 0
-    status, answer = get(server, "/api/search", messagesPath=export, query="piz", prefix="true")
+def test_the_search_route_reads_the_last_word_as_a_prefix(server: Any, export: Path, bridged: Archive, saved: Names) -> None:
+    # the reader may still be typing: the service matches whole words unless the route says so
+    assert search.payload(bridged, saved, "piz")["total"] == 0
+    status, answer = get(server, "/api/search", messagesPath=export, query="piz")
     assert (status, answer["total"], answer["query"]) == (200, 8, "piz")
-    assert answer == as_json(search.payload(bridged, saved, "piz", as_you_type=True))
 
 
 @pytest.mark.parametrize(

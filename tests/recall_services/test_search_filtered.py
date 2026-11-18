@@ -28,17 +28,21 @@ def asked(archive: Archive, saved: Names, **params: str) -> dict[str, object]:
 
 def test_the_payload_says_what_it_applied(archive: Archive, saved: Names) -> None:
     found = asked(archive, saved, query="wheelbarrow")
-    assert (found["filters"], found["order"], found["prefix"]) == (NOTHING_APPLIED, "newest", False)
+    assert (found["filters"], found["order"], found["prefix"]) == (NOTHING_APPLIED, "newest", True)
     narrowed = asked(archive, saved, query="wheelbarrow", kind="group", since="2024-04-01", order="oldest")
     assert narrowed["filters"] == {**NOTHING_APPLIED, "kind": "group", "since": "2024-04-01"}
     assert narrowed["order"] == "oldest"
     json.dumps(narrowed)
 
 
-def test_whole_words_unless_the_reader_is_typing(archive: Archive, saved: Names) -> None:
-    assert asked(archive, saved, query="wheelb")["total"] == 0
+def test_whole_words_only_with_prefix_false(archive: Archive, saved: Names) -> None:
+    whole = asked(archive, saved, query="wheelb", prefix="false")
+    assert (whole["total"], whole["prefix"]) == (0, False)
     typing = asked(archive, saved, query="wheelb", prefix="true")
     assert (typing["total"], typing["prefix"], typing["query"]) == (2, True, "wheelb")
+    # no `prefix` at all: the last word is a prefix, as the app of today expects
+    today = asked(archive, saved, query="wheelb")
+    assert (today["total"], today["prefix"]) == (2, True)
     # a star typed by the reader is always a prefix
     assert asked(archive, saved, query="wheelb*", prefix="false")["total"] == 2
 

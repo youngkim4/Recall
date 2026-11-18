@@ -272,11 +272,10 @@ def test_a_phrase_in_quotes_matches_as_a_phrase(app_archive, server):
     assert turned["total"] == 0
 
 
-def test_the_last_word_of_a_search_is_a_prefix_only_while_the_reader_types(app_archive, server):
-    _status, typing = get(server, "/api/search", query="good piz", prefix="true")
-    _status, whole_word = get(server, "/api/search", query="piz good", prefix="true")
-    _status, middle = get(server, "/api/search", query="izz", prefix="true")
-    _status, typed = get(server, "/api/search", query="good piz")
+def test_the_last_word_of_a_search_is_read_as_a_prefix(app_archive, server):
+    _status, typing = get(server, "/api/search", query="good piz")
+    _status, whole_word = get(server, "/api/search", query="piz good")
+    _status, middle = get(server, "/api/search", query="izz")
 
     # the reader may still be typing the last word
     assert texts(typing) == ["that was a good pizza"]
@@ -284,8 +283,6 @@ def test_the_last_word_of_a_search_is_a_prefix_only_while_the_reader_types(app_a
     # a word before the last one is whole, and a part from the middle of a word matches nothing
     assert texts(whole_word) == []
     assert middle["total"] == 0
-    # after the reader stops typing, every word is whole
-    assert (typed["total"], typed["prefix"]) == (0, False)
 
 
 def test_a_search_in_one_conversation_stays_in_it(app_archive, server):

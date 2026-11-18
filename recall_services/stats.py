@@ -1,7 +1,7 @@
 """The /api/stats payload: counts over the whole archive, with the filters of search.
 
 The query string takes the filters of `search_filters`, `query` and `prefix`
-as /api/search reads them (count only the messages that match the words), and:
+as /api/search reads them (no `prefix` is true; `prefix=false` counts whole words) (count only the messages that match the words), and:
 
 - `by`: day, week, month, year, weekday, hour, weekday_hour, person,
   conversation, or empty for the totals only.

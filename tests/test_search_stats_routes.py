@@ -46,7 +46,7 @@ def texts(answer):
 
 
 def test_a_word_is_whole_and_its_ranges_are_given(app_archive, server):
-    status, answer = get(server, "/api/search", query="hi")
+    status, answer = get(server, "/api/search", query="hi", prefix="false")
 
     assert status == 200
     # "this" and "which" hold "hi" but are other words
@@ -55,6 +55,45 @@ def test_a_word_is_whole_and_its_ranges_are_given(app_archive, server):
         "hi, your pizza order is ready": [[0, 2]],
     }
     assert (answer["filters"], answer["order"], answer["prefix"]) == (NO_FILTERS, "newest", False)
+
+
+HI_ROWS = [
+    row(AVERY, "2025-02-01 09:00:00", "hi"),
+    row(AVERY, "2025-02-01 09:01:00", "this one"),
+    row(AVERY, "2025-02-01 09:02:00", "which one"),
+    row(AVERY, "2025-02-01 09:03:00", "that was a hit"),
+    row(AVERY, "2025-02-01 09:04:00", "tell him", from_me=1),
+    row(AVERY, "2025-02-01 09:05:00", "Hi there"),
+]
+
+
+@pytest.fixture
+def hi_archive(data_folder):
+    loaded(data_folder / "messages.csv", HI_ROWS)
+    return data_folder
+
+
+def test_hi_with_prefix_false_is_the_word_hi_only(hi_archive, server):
+    _status, whole = get(server, "/api/search", query="Hi", prefix="false")
+    _status, counted = get(server, "/api/stats", query="Hi", prefix="false")
+
+    # no "this", no "which", no "hit", no "him"
+    assert texts(whole) == ["Hi there", "hi"]
+    assert {result["text"]: result["ranges"] for result in whole["results"]} == {"Hi there": [[0, 2]], "hi": [[0, 2]]}
+    assert (whole["total"], whole["prefix"]) == (2, False)
+    assert (counted["totals"]["total"], counted["prefix"]) == (2, False)
+
+
+def test_with_no_prefix_parameter_the_last_word_is_a_prefix_as_today(app_archive, server):
+    _status, answer = get(server, "/api/search", query="piz")
+    _status, hi = get(server, "/api/search", query="Hi")
+    _status, counted = get(server, "/api/stats", query="piz")
+
+    assert (answer["total"], answer["prefix"]) == (5, True)
+    assert "🍕 pizza night at mine" in texts(answer)
+    assert (counted["totals"]["total"], counted["prefix"]) == (5, True)
+    # as the reader types "Hi", the words that start with it match, never a part inside a word
+    assert sorted(texts(hi)) == ["hi, your pizza order is ready", "this is which hi"]
 
 
 def test_ranges_count_utf16_units(app_archive, server):

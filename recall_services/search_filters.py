@@ -28,6 +28,8 @@ SENDERS = ("me", "them")
 ORDERS = ("newest", "oldest", "relevance")
 _FROM_ME = {"me": True, "them": False}
 _FLAGS = {"true": True, "false": False}
+# the app of today sends no `prefix` and searches as the reader types
+PREFIX_WHEN_NOT_GIVEN = True
 _DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
@@ -128,8 +130,12 @@ def read_order(params: Mapping[str, object]) -> str:
 
 
 def read_prefix(params: Mapping[str, object]) -> bool:
-    """`prefix`: true makes the last word a prefix. Nothing given is false."""
+    """`prefix`: true makes the last word a prefix, false makes every word whole.
+
+    No `prefix` (or an empty one, which the app drops) is true: the search of
+    the app of today, which finds words as the reader types them.
+    """
     value = _value(params, "prefix").lower()
     if value and value not in _FLAGS:
         raise ValueError("prefix must be true or false.")
-    return _FLAGS.get(value, False)
+    return _FLAGS.get(value, PREFIX_WHEN_NOT_GIVEN)
