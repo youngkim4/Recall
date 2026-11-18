@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { recallApi } from '../../lib/api'
 import { messageCount } from '../../lib/conversations'
+import { loadMoments, loadPatterns } from '../../lib/overviewLoads'
 import { useLoad } from '../../lib/useLoad'
 import type { ArchiveSummary, Contact, Defaults, ViewKey } from '../../types'
 import { CardStudio } from '../cards/CardStudio'
@@ -25,9 +25,6 @@ type OverviewViewProps = {
   // opens the guide that builds the archive, or updates one that exists
   onOpenSetup: () => void
 }
-
-const loadMoments = (messagesPath: string) => recallApi.memories({ messagesPath }).then((response) => response.memories)
-const loadPatterns = (messagesPath: string) => recallApi.overview({ messagesPath }).then((response) => response.overview)
 
 // stands in for the chart of months while it loads
 function MonthsWaiting() {

@@ -34,6 +34,8 @@ import { isUpdate, revealsFirstWords } from './lib/setupGuide'
 import { useMediaQuery } from './lib/useMediaQuery'
 import { Backdrop } from './components/Backdrop'
 import { clearPreviewCache, previewCacheStats } from './lib/cache'
+import { forgetKept } from './lib/kept'
+import { preloadOverview } from './lib/overviewLoads'
 import { useConversationPreview } from './lib/useConversationPreview'
 import { useJobPoll } from './lib/useJobPoll'
 import type {
@@ -108,6 +110,12 @@ function App() {
         : null,
     [defaults, paths],
   )
+  // The Overview's moments and charts are asked for as soon as the archive is
+  // known, not when the Overview opens, so it opens with them on the page.
+  const overviewPath = archive?.conversations ? (effectiveDefaults?.messagesPath ?? '') : ''
+  useEffect(() => {
+    if (overviewPath) preloadOverview(overviewPath)
+  }, [overviewPath, archive])
   // a report goes by the name its conversation has in the list
   const reports = useMemo(() => nameReports(reportFiles, contacts), [reportFiles, contacts])
   // Dates belong to one conversation in one archive. Chosen for another, they
@@ -451,6 +459,7 @@ function App() {
       const reveal = revealsFirstWords(rerunSetup, result)
       // no preview of the archive before the import is shown again, and no error from before it
       clearPreviewCache()
+      forgetKept()
       setError(null)
       // a report that was opened holds the figures of the archive before the import
       setOpened(null)
