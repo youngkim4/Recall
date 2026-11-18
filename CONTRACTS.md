@@ -386,20 +386,26 @@ Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `rec
 
 ### A digest inside a question is bounded
 
-- One digest inside a question reads at most `DIGEST_PARTS_LIMIT` parts that are not read yet (2, in `recall_services/memory.py`). These change together: `DigestPort.digest` gives the number to `digests.build` as `max_new_periods`, and `_digest_limits` in `recall_services/chat.py` gives it to `EngineConfig.digest_parts_limit`. Both read the one constant.
+- One digest inside a question reads at most `DIGEST_PARTS_LIMIT` parts that are not read yet (2, in `recall_services/memory.py`). These change together: `DigestPort.digest` gives the number to `digests.build` as `max_new_periods`, and `_events` in `recall_services/chat.py` gives it to `EngineConfig.digest_parts_limit`. Both read the one constant.
 - A longer conversation is read outside the question. The engine calls `DigestSource.prepare`. `DigestPort.prepare` calls the `start_digest` function that goes `digest_starter` in `ui_server.py` -> `chat.stream(..., start_digest=...)` -> `memory.ports(..., start_digest=...)`. It starts a `digest` job for the archive of the question. It never raises into a question.
-- `start_digest` says True when the job started, or when a `digest` job of the same conversation already runs. It says False in every other case.
+- `start_digest` says True when the job started, or when a `digest` job of the same archive, conversation and days already runs. It says False in every other case.
+- A reading that fails is not started again and again. The server keeps how the last `digest` job of an archive, a conversation and days ended (`DIGEST_ENDS` in `ui_server.py`, written by `keep_digest_end` with the change that ends the job). When that job failed, or read no new part while parts failed (`periodsBuilt == 0` and `periodsFailed > 0`), `start_digest` says False and starts nothing. The model then gets the line that advises narrower days, and a digest of narrower days shows the parts that are in the notes.
+- `DIGEST_ENDS` is kept in the server process only. An import that changed the archive drops the entries of that archive (`after_job`). A job that read a new part, or that left no part unread, drops its own entry.
 - `DigestPort.digest` returns `usd`, the cost of the usage of the run, for the usage of the question. The log `recall.spend` gets one line with counts and the cost at the level INFO. `log_to_the_server_log` lets that level through for this log only.
+- A digest inside a question that was paid for and failed, or that was stopped, says what it cost too. `DigestPort.digest` writes the line of the spend log from the usage that the failure carries, sets `usd` on the failure and raises it again. The engine adds that `usd` to `digest_usd`.
 - One lock for the archive path, the conversation and the model is held around the build inside a question (`digest_lock`). A second question waits and then finds the parts read.
 - The model port of a digest inside a question has a timeout of 120 s and one more try (`question_llm`). The `digest` job and a report keep the port of a report: 300 s and two more tries.
-- Known limits: a reader who leaves during the 2 parts of a digest inside a question does not stop them. The `digest` job does not hold the lock of a question, so a question and the job can pay for the same part. A digest under a scope with days can pay for a period that is then not shown.
+- Known limits: a reader who leaves during the 2 parts of a digest inside a question does not stop them. A digest under a scope with days can pay for a period that is then not shown.
+- A question and the `digest` job do not share a lock. Each one looks up a part in the notes one more time just before it sends that part (`report_engine`), so a part that the other one finished is not paid for again. A part is paid for two times only when both send it at the same moment. For one question that is 2 parts at most, the limit of a question.
 
 ### The digest job
 
 - The `digest` job reads one conversation for chat (`read_conversation` in `ui_server.py`, `digest_job.run`). The request has `conversation`, and `since` and `until` as days or null. It uses `DIGEST_MODEL` and has no limit of parts.
 - Its result has `conversation`, `periods`, `periodsBuilt`, `periodsCached`, `periodsFailed`, `usd` and `usage`. Its `progress` has `step`, `of` and `label`, as in a report job. Its lines hold the label of a part and counts.
 - One `digest` job runs at a time. A `digest` job and an import do not run together (`ONE_AT_A_TIME`). A report and the `meaning` job run beside it.
-- The job carries its conversation in `contact`, as a report job does (`job_record`). `digest_starter` finds a job of the same conversation by it.
+- The record of a `digest` job says what it reads: `contact` is the conversation (`conversation` of the request, before `contact`), `archivePath` is the resolved path of the archive file, and `since` and `until` are the days or null (`job_record`). `digest_starter` finds a running job of the same reading by these four (`digest_key`). The record of any other job has no such field.
+- A `digest` job that fails tells a sentence of its own (`sentence_of` in `recall_services/digest_job.py`), with the code of the failure of `digests.build`. No sentence names a report: the job writes none.
+- Known limit: a `digest` job can not be stopped, and an import waits for it.
 
 ### The index job and its route
 
