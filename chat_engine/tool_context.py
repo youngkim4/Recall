@@ -43,12 +43,15 @@ class Prepared:
     own_budget: the tokens the result may hold when the lookup has a budget of
     its own. None: it spends from the budget of the question.
     repeated: the question already ran this lookup, so it is not run again.
+    answers_repeats: the tool itself knows what a repeat of this call gets, so
+    the turn sends a call with the same arguments to the tool again.
     """
 
     status: str
     run: Callable[[int], ToolOutcome]
     own_budget: Optional[int] = None
     repeated: bool = False
+    answers_repeats: bool = False
 
 
 @dataclass(frozen=True)
@@ -95,7 +98,8 @@ class ToolContext:
         self.scope = scope
         self.limits = limits
         self.memory = memory or Memory()
-        self.digests_asked: set[tuple[str, Optional[str], Optional[str]]] = set()  # digests of this question
+        # the digests of this question that gave an answer: "shown" or "failed"
+        self.digests_asked: dict[tuple[str, Optional[str], Optional[str]], str] = {}
         self.digests_built = 0
         self.book = ConversationBook(archive, labeler, aliases)
         self._directory: Optional[Directory] = None

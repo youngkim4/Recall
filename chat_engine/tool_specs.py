@@ -11,7 +11,7 @@ from typing import Any, Mapping
 from .ports import ToolSpec
 from .prompt import DIGEST
 from .tool_figures import GROUPS, LIST_LIMIT_MAX
-from .tool_limits import SEARCH_LIMIT_MAX
+from .tool_limits import DIGESTS_PER_QUESTION, SEARCH_LIMIT_MAX
 from .tool_search import READ_RADIUS_MAX
 
 _DAY = "A day as YYYY-MM-DD in local time. The day itself is included."
@@ -47,7 +47,8 @@ _SEARCH_MEANING = (
     ' Set match to "meaning" to find exchanges by what they are about, when you do not know the '
     "words: an apology, a plan, good news, a fight. Then query is a short description of the exchange, "
     'such as "we made up after a fight" or "planning a trip together". The result is whole exchanges, '
-    "best first, found by meaning and by words together; limit counts exchanges, and from_me must be null."
+    "best first, found by meaning and by words together; limit counts exchanges, from_me must be null, and "
+    "order is not used."
 )
 
 
@@ -60,7 +61,10 @@ def _search_spec(meaning: bool) -> ToolSpec:
         "Each hit also shows up to 2 messages before it and 2 after it."
     )
     if meaning:
-        query = 'Words to look for, or a short description with match "meaning". ' + query.split(". ", 1)[1]
+        query = (
+            'Words to look for. With match "meaning": a short description of the exchange, never empty. '
+            "With another match, empty or null reads one conversation."
+        )
         limit += ' With match "meaning": exchanges to show.'
     return ToolSpec(
         "search_messages",
@@ -93,7 +97,7 @@ DIGEST_SPEC = ToolSpec(
     "one person or one conversation as a whole: what the relationship is like, how it changed, what "
     "happened in a year. A summary is not a quote. The first digest of a long conversation takes time "
     "and costs money: when the cost is above the limit, the tool builds nothing and says so. Give days "
-    "to read a part of the conversation.",
+    f"to read a part of the conversation. One question builds at most {DIGESTS_PER_QUESTION} digests.",
     _schema(
         {
             "conversation": {"type": "string", "description": "A conversation alias such as c3."},

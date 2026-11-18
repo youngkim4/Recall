@@ -128,24 +128,93 @@ def test_a_hostile_reply_that_is_in_the_cache_is_checked_again(cache_path: Path)
     assert found["Wrong words"].quote == ""
 
 
-def test_a_quote_of_a_span_is_looked_for_in_the_whole_conversation() -> None:
-    """A quote can stand up to three days from its moment, also in a period before the span.
-    A report on all dates finds it there, and a digest of a span finds it too."""
-    messages = tagged(LARGE)
-    late = next(item for item in messages if item["timestamp"].startswith("2023-01-31"))
+# --- the messages of a moment are messages of its period --------------------------------
+
+DATED = tagged(LARGE)
+
+
+def on_day(day: str) -> SourceMessage:
+    """The first message of a day of the long conversation."""
+    return next(item for item in DATED if item["timestamp"].startswith(day))
+
+
+def one_claim(month: str, day: str, quote: str, cite: str | None) -> Any:
+    """A model that gives the period of `month` one moment. It cites the first line of `cite`."""
+
+    def responder(call: FakeCall) -> Any:
+        if call.kind != "map" or not call.first_day.startswith(month):
+            return None
+        refs = [line.ref for line in call.lines if line.day == cite][:1]
+        return {"summary": SUMMARY, "moments": [claim("Across", day, quote, refs)]}
+
+    return responder
+
+
+def test_the_id_of_a_message_outside_the_period_is_not_given_and_its_quote_is_dropped() -> None:
+    """A report looks for a quote up to three days from the moment, also in the next period.
+    A digest gives only messages of the period of the moment."""
+    inside, outside = on_day("2023-01-31"), on_day("2023-02-01")
+    responder = one_claim("2023-01", "2023-01-31", outside["text"], "2023-01-31")
+    found = digest(DATED, llm=FakeLLM(responder), since="2023-01-01", until="2023-01-31")
+    (period,) = found.periods
+    (moment,) = period.moments
+    assert (period.summary, moment.title, moment.date) == (SUMMARY, "Across", "2023-01-31")
+    assert moment.message_ids == (inside["id"],) and moment.quote == ""
+    # a report is what it was
+    told = run(DATED, llm=FakeLLM(responder)).periods[0].moments[0]
+    assert told.message_ids == (inside["id"], outside["id"]) and told.quote == outside["text"]
+
+
+def test_a_quote_that_only_a_message_before_the_period_holds_is_dropped() -> None:
+    outside = on_day("2023-01-31")
+    responder = one_claim("2023-02", "2023-02-01", outside["text"], None)
+    found = digest(DATED, llm=FakeLLM(responder), since="2023-02-01", until="2023-02-28")
+    (period,) = found.periods
+    (moment,) = period.moments
+    assert (period.label, moment.title, moment.date) == ("Feb 2023", "Across", "2023-02-01")
+    assert moment.message_ids == () and moment.quote == ""
+    told = run(DATED, llm=FakeLLM(responder)).periods[1].moments[0]
+    assert told.message_ids == (outside["id"],) and told.quote == outside["text"]
+
+
+def test_a_quote_in_a_message_of_the_period_that_was_not_cited_stays() -> None:
+    cited, quoted = on_day("2023-01-15"), on_day("2023-01-16")
+    responder = one_claim("2023-01", "2023-01-15", quoted["text"], "2023-01-15")
+    (period,) = digest(DATED, llm=FakeLLM(responder), until="2023-01-31").periods
+    (moment,) = period.moments
+    assert moment.message_ids == (cited["id"], quoted["id"]) and moment.quote == quoted["text"]
+
+
+def test_a_quote_in_a_cited_message_of_the_period_stays() -> None:
+    cited = on_day("2023-01-31")
+    responder = one_claim("2023-01", "2023-01-31", cited["text"], "2023-01-31")
+    (period,) = digest(DATED, llm=FakeLLM(responder), until="2023-01-31").periods
+    (moment,) = period.moments
+    assert moment.message_ids == (cited["id"],) and moment.quote == cited["text"]
+
+
+def test_every_message_id_of_a_digest_is_a_message_of_its_period() -> None:
+    """Each period gets a moment on its last day that quotes the first message after the period."""
+    day_of = {item["id"]: item["timestamp"][:10] for item in DATED}
 
     def responder(call: FakeCall) -> Any:
         if call.kind != "map":
             return None
-        return {"summary": SUMMARY, "moments": [claim("Across", call.first_day, late["text"], [])]}
+        after = [item for item in DATED if item["timestamp"][:10] > call.last_day][:1]
+        quote = after[0]["text"] if after else call.lines[-1].text
+        return {
+            "summary": SUMMARY,
+            "moments": [claim("Edge", call.last_day, quote, [call.lines[-1].ref])],
+        }
 
-    report = run(messages, llm=FakeLLM(responder))
-    found = digest(messages, llm=FakeLLM(responder), since="2023-02-01", until="2023-02-28")
-    (period,) = found.periods
-    (moment,) = period.moments
-    assert (period.label, moment.date) == ("Feb 2023", "2023-02-01")
-    assert moment.quote == late["text"] and moment.message_ids == (late["id"],)
-    assert report.periods[1].moments[0].message_ids == (late["id"],)
+    found = digest(DATED, llm=FakeLLM(responder))
+    assert len(found.periods) == 4
+    for period in found.periods:
+        (moment,) = period.moments
+        assert len(moment.message_ids) == 1
+        assert all(period.first_day <= day_of[mid] <= period.last_day for mid in moment.message_ids)
+    quoted = [bool(period.moments[0].quote) for period in found.periods]
+    assert quoted == [False, False, False, True]
 
 
 # --- no private text in a log line or an error -------------------------------------

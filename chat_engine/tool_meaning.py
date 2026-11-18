@@ -11,6 +11,9 @@ The conversations and the days of the request limit both rankings. They come
 from `ToolContext.conversations` and `ToolContext.days`, as for every search,
 so the scope of the user holds. Each message that is shown passes
 `ToolContext.allows` again. A failure of the port leaves the word ranking.
+
+The word ranking is always by relevance. The order of the call is not used.
+After a cancel that comes while the port searches, the archive is not read.
 """
 
 from __future__ import annotations
@@ -86,13 +89,13 @@ def prepare_search_or_meaning(ctx: ToolContext, arguments: Mapping[str, Any]) ->
     if bool_arg(arguments, "from_me") is not None:
         raise ToolInputError('from_me does not work with match "meaning": an exchange holds both sides.')
     ctx.listed()  # the labeler knows every handle of the archive before the status line is masked
-    order = choice_arg(arguments, "order", ORDERS, "newest") or "newest"
+    choice_arg(arguments, "order", ORDERS, "newest")  # checked, not used: the result is best first
     since, until = day_arg(arguments, "since"), day_arg(arguments, "until")
     limit = int_arg(arguments, "limit", default=SEARCH_LIMIT_DEFAULT, low=1, high=SEARCH_LIMIT_MAX)
     conversations = ctx.conversations(list_arg(arguments, "conversations"))
     since, until = ctx.days(since, until)
     words = SearchRequest(
-        query=query, match="any", conversations=conversations, since=since, until=until, order=order, limit=limit
+        query=query, match="any", conversations=conversations, since=since, until=until, limit=limit
     )
     names = ctx.names(conversations)
     status = f"Searching for moments like “{query}”" + (f" in {names}" if names else "")
@@ -108,15 +111,21 @@ def meaning_lookup(
     def run(budget: int) -> ToolOutcome:
         if not asked:
             asked.append(ask_port(ctx, request))
+        if ctx.memory.cancel.cancelled:  # the cancel came while the port searched: nothing more is read
+            return ToolOutcome("", "Stopped before the messages were read", ok=False)
         return run_meaning_search(ctx, request, asked[0], budget, radius)
 
     return run
 
 
 def ask_port(ctx: ToolContext, request: MeaningRequest) -> Optional[list[MeaningHit]]:
-    """The hits of the port that have the right form, best first. None when the port fails."""
+    """The hits of the port that have the right form, best first. None when the port fails.
+
+    A port that gives more hits than were asked for is cut to that number.
+    """
     port = ctx.memory.meaning
     words = request.words
+    wanted = _fetch(words.limit)
     ctx.listed()  # the labeler knows every handle of the archive before the description is masked
     description = ctx.labeler.redact(request.description)
     try:
@@ -125,14 +134,14 @@ def ask_port(ctx: ToolContext, request: MeaningRequest) -> Optional[list[Meaning
             conversations=None if words.conversations is None else list(words.conversations),
             since=words.since,
             until=words.until,
-            limit=_fetch(words.limit),
+            limit=wanted,
         )
         if not isinstance(found, (list, tuple)):
             raise TypeError("the port gave no list")
     except Exception as error:  # the question goes on with the word ranking
         logger.warning("the search by meaning failed: %s", type(error).__name__)
         return None
-    return [row for row in found if _is_hit(row)]
+    return [row for row in found[:wanted] if _is_hit(row)]
 
 
 def _fetch(limit: int) -> int:
@@ -153,7 +162,8 @@ def run_meaning_search(
 ) -> ToolOutcome:
     words = request.words
     segments = _segments(ctx, words, hits or ())
-    found = run_search(ctx.archive, replace(words, limit=_fetch(words.limit))).hits
+    # by relevance, whatever the order of the call: the newest messages must not hide an old strong match
+    found = run_search(ctx.archive, replace(words, limit=_fetch(words.limit), order="relevance")).hits
     keys, by_key = _joined(segments, found)
     by_segment = {segment.key: segment for segment in segments}
     exchanges, used = _exchanges(ctx, keys, by_key, by_segment, words.limit, radius)

@@ -35,8 +35,7 @@ from typing import Any
 from archive import Archive
 from chat_engine.cancel import CancelToken
 from chat_engine.ports import DigestCost, DigestMoment, DigestPeriod, DigestResult, MeaningHit
-from meaning_index import Embedder, IndexStore, MeaningIndex, MeaningIndexError, SearchHit
-from meaning_index.store_files import usable_meta
+from meaning_index import Embedder, IndexMeta, IndexStore, MeaningIndex, MeaningIndexError, SearchHit
 from recall_services import digests, keys, meaning, models, reports
 from recall_services.names import Names
 from report_engine import CancelToken as ReportCancelToken
@@ -84,6 +83,11 @@ class DigestSettings:
 def _query_embedder(model: str, dimensions: int) -> Embedder:
     """The embedder of a description. A question does not wait as long as a build does."""
     return meaning.embedder_for(model, dimensions, timeout_s=QUERY_TIMEOUT_SECONDS)
+
+
+def usable_meta(folder: Any) -> IndexMeta | None:
+    """The build on disk, or None when the folder holds no whole build."""
+    return IndexStore(folder).meta()
 
 
 def _load(store: IndexStore) -> MeaningIndex | None:

@@ -30,7 +30,7 @@ from tests.chat_engine.tiny import JONAS_PHONE, MAYA_PHONE, UNSAVED_EMAIL, UNSAV
 
 JONAS_2024 = hit(JONAS_PHONE, "j1", "j3", 0.8)
 MEANING_RULE = 'To find a kind of moment (an apology, a plan, good news, a fight), set match to "meaning"'
-DIGEST_RULE = "then conversation_digest for that conversation, then read_around on the moments that matter"
+DIGEST_RULE = "2. Story: call conversation_digest for the conversation that leads"
 SUMMARY_RULE = "A summary from conversation_digest is not a quote"
 
 
@@ -100,17 +100,13 @@ def test_the_added_rules_stand_after_the_rules_they_belong_to() -> None:
     engine.ask("anything about zanzibar?")
     rules = system_text(fake.requests[0]).splitlines()
     where = {name: next(i for i, rule in enumerate(rules) if text in rule) for name, text in {
-        "group": "a direct conversation tells more than a group",
-        "digest": DIGEST_RULE,
         "search": "the words people really write",
         "meaning": MEANING_RULE,
         "quote": "Never reword a quote.",
         "summary": SUMMARY_RULE,
     }.items()}
-    assert where["digest"] == where["group"] + 1
     assert where["meaning"] == where["search"] + 1
     assert where["summary"] == where["quote"] + 1
-    assert "at most the three conversations that lead" in rules[where["digest"]]
     assert "only a message reference such as [m3] is a citation" in rules[where["summary"]]
 
 
@@ -220,7 +216,16 @@ def test_the_model_reads_a_digest_and_cites_a_message_of_a_moment() -> None:
 
 
 def test_an_answer_cannot_cite_a_message_the_digest_named_outside_the_scope() -> None:
-    digests = FakeDigests({MAYA_PHONE: maya_story()})
+    story = [
+        period(
+            "2021", "2021-03-04", "2021-03-04", 4, "Maya signs a lease.",
+            [
+                moment("2021-03-04", "The lease is signed", "Maya tells you.", "", ["a2"]),
+                moment("2021-03-04", "Bread", "Jonas bakes sourdough.", "", ["j1"]),
+            ],
+        )
+    ]
+    digests = FakeDigests({MAYA_PHONE: story})
     session = ChatSession()
 
     def ask_digest(request: Any) -> list:
@@ -236,8 +241,10 @@ def test_an_answer_cannot_cite_a_message_the_digest_named_outside_the_scope() ->
     result = engine.ask("how are things with her?", scope=Scope(conversations=(MAYA_PHONE,)), session=session)
     assert [c["id"] for c in result["citations"]] == ["a2"]
     assert len(result["invalid_references"]) == 1
-    assert session.registry.ref_of("j1") is None  # the digest named it; it is in another conversation
-    assert "sourdough" not in "\n".join(all_text(request) for request in fake.requests)
+    assert session.registry.ref_of("j1") is None  # the digest named it; the scope refuses it
+    sent = "\n".join(all_text(request) for request in fake.requests)
+    assert "sourdough" not in sent and "Bread" not in sent
+    assert "[Outside the scope and not shown: 1 moment.]" in sent
 
 
 def test_a_digest_has_a_budget_of_its_own() -> None:
@@ -265,10 +272,10 @@ def test_a_digest_is_cut_to_the_digest_budget_of_the_engine() -> None:
         alias = alias_of_line(last_user(request), "Maya Okafor · direct, phone")
         return [call("conversation_digest", "d1", conversation=alias)]
 
-    engine, fake, _ = engine_with([ask_digest, say("Close.")], digests=digests, digest_tokens=500)
+    engine, fake, _ = engine_with([ask_digest, say("Close.")], digests=digests, digest_tokens=600)
     engine.ask("What is my friendship with Maya like?")
     digest = tool_results(fake.requests[1])[0]
-    assert estimate_tokens(digest) <= 500 and digest.count(" [cut]") == 2
+    assert estimate_tokens(digest) <= 600 and digest.count(" [cut]") == 2
     assert "[Cut to fit: each summary keeps about " in digest
 
 

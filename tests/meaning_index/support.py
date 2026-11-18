@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import shutil
+import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 
@@ -118,3 +121,22 @@ def cut_texts(source: ListSource) -> list[str]:
         for conversation in source.conversation_ids()
         for segment in cut_segments(conversation, source.messages(conversation))
     ]
+
+
+def crashed_copy(folder: Path, target: Path, dimensions: int) -> Path:
+    """Copy a folder as a process that died inside a write of the work file leaves it.
+
+    The copy holds the work file with a part of a write in it, and the journal
+    that SQLite needs to take that part out again.
+    """
+    conn = sqlite3.connect(folder / "work.sqlite3")
+    try:
+        conn.execute("PRAGMA cache_size = 1")  # so that the write reaches the file before it is committed
+        blob = bytes(dimensions * 2)
+        conn.executemany("INSERT INTO vectors VALUES (?, ?, ?)", ((f"lost-{n}", dimensions, blob) for n in range(3000)))
+        shutil.copytree(folder, target)
+        conn.rollback()
+    finally:
+        conn.close()
+    assert (target / "work.sqlite3-journal").exists()
+    return target

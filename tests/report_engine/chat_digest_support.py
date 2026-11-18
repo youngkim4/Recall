@@ -14,7 +14,7 @@ from report_engine.chat_digest import (
     conversation_digest,
     estimate_digest,
 )
-from report_engine.fake_llm import FakeCall, FakeLLM
+from report_engine.fake_llm import FakeCall, FakeLLM, default_map_reply
 from report_engine.model_info import ModelInfo
 from report_engine.options import ReportOptions
 from report_engine.ports import SourceMessage
@@ -88,6 +88,25 @@ def tagged(messages: Sequence[SourceMessage], prefix: str = "guid-") -> list[Sou
 def months(llm: FakeLLM) -> list[str]:
     """The month of each period that the fake model read, in order."""
     return [call.first_day[:7] for call in llm.map_calls]
+
+
+def notes_seen(llm: FakeLLM) -> list[tuple[str, list[str]]]:
+    """For each period that the fake model read: its month and the labels of its notes."""
+    return [(call.first_day[:7], [label for label, _ in call.notes]) for call in llm.map_calls]
+
+
+def echo(call: FakeCall) -> Any:
+    """A reply whose summary names the notes that the prompt held, so a payload
+    shows which prompt made it."""
+    if call.kind != "map":
+        return None
+    seen = [label for label, _ in call.notes]
+    return {**default_map_reply(call), "summary": f"{call.first_day[:7]} saw notes={seen}"}
+
+
+def versions(path: Path) -> list[tuple[str, str]]:
+    """The label and the prompt version of every entry of a cache file, oldest period first."""
+    return sorted((row[2], row[4]) for row in cache_rows(path))
 
 
 def fail_month(month: str, error: Exception) -> Any:

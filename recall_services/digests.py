@@ -8,8 +8,7 @@ writes no report and no file but the notes of the parts that it read.
 A digest is wired as a report is wired in `reports.py`, with the functions of
 that module: the same messages with the same masks, the same names for the
 model, the same key, the same model facts and prices, the same token counter
-and the same file of notes. So a part that a report read costs a digest
-nothing, and a part that a digest read costs a report nothing.
+and the same file of notes.
 
 WARNING: Name the model of the reports. The notes of a part belong to one
 model. With no model named, the default model is used, as in a report.
@@ -17,6 +16,13 @@ model. With no model named, the default model is used, as in a report.
 The dates do not cut the conversation, as the dates of a report do. They
 select the parts that overlap them, and each selected part is read whole. The
 parts are the parts of a report on all dates.
+
+A digest shares the notes of the reports when the model reads what it reads
+in a report: the dates start at the first part, or every part before them was
+read. Then a part that a report read costs a digest nothing, and a part that
+a digest read costs a report nothing. With other dates the digest keeps notes
+of its own, which only a digest of dates with the same first part reads again.
+See "Digest for chat" in `report_engine/README.md`.
 
 A failure is a `ReportFailure` with the codes and the sentences of a report
 run, and `too_many_parts` when `max_new_periods` refuses the digest.

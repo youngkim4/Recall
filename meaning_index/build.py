@@ -5,6 +5,9 @@ whose content hash has no vector yet: not in the index, and not in the work
 file of a build that stopped. It writes a new set of files and swaps them at
 the end. A build that fails or is cancelled leaves the index as it was.
 
+Before the first request a build checks what would make it pay for nothing: a
+segment id that comes two times, and a work file that can not take a row.
+
 No text, no id of a conversation and no id of a message is logged or put in an error.
 """
 
@@ -43,6 +46,7 @@ class _Reading:
 
     segments: tuple[Segment, ...]
     texts: Mapping[str, str]
+    repeats: int
 
 
 def _checker(cancel: object) -> _Check:
@@ -99,16 +103,24 @@ def _read(
     conversations = _conversations(source)
     segments: list[Segment] = []
     texts: dict[str, str] = {}
+    seen: set[str] = set()
+    repeats = 0
     _tell(progress, "read", 0, len(conversations))
     for number, conversation_id in enumerate(conversations, start=1):
         check()
         for cut in _cuts(source, conversation_id):
+            if cut.segment_id in seen:  # a source that gives one message id two times
+                repeats += 1
+                continue
+            seen.add(cut.segment_id)
             segment = stored(cut, model, dimensions)
             segments.append(segment)
             if segment.content_hash not in known:
                 texts.setdefault(segment.content_hash, cut.text)
         _tell(progress, "read", number, len(conversations))
-    return _Reading(segments=tuple(segments), texts=texts)
+    if repeats:
+        logger.warning("left out %d segments that repeat the id of an earlier segment; the first one is kept", repeats)
+    return _Reading(segments=tuple(segments), texts=texts, repeats=repeats)
 
 
 def _old_index(store: IndexStore) -> StoredIndex | None:
@@ -144,8 +156,14 @@ def _embed(
     bodies = [texts[key] for key in hashes]
     counts = [count_tokens(body) for body in bodies]
     done = tokens = 0
+
+    def stop_if_asked() -> None:
+        check(done, tokens)  # during a wait: with what the build paid for until now
+
     _tell(progress, "embed", 0, len(hashes))
-    answers = embed_in_batches(embedder, bodies, counts, limits=limits, sleep=sleep)
+    if hashes:
+        work.check_writable()  # before the first request: a vector that can not be kept is paid for nothing
+    answers = embed_in_batches(embedder, bodies, counts, limits=limits, sleep=sleep, check=stop_if_asked)
     while True:
         check(done, tokens)  # between two requests: nothing is asked for after a cancel
         answer = next(answers, None)
@@ -197,7 +215,8 @@ def build_index(
     """Make the index hold the segments of the source, with the vectors of this embedder.
 
     `cancel` is a callable that returns a bool, or an object with `is_set()` or
-    `cancelled`. It is looked at before each conversation and between two requests.
+    `cancelled`. It is looked at before each conversation, between two requests,
+    and one time a second while the build waits for a rate limit.
     """
     check = _checker(cancel)
     model, dimensions = embedder.model, embedder.dimensions
@@ -235,9 +254,19 @@ def estimate_build(
     embedder_facts: EmbedderFacts,
     count_tokens: CountTokens = default_count_tokens,
 ) -> BuildEstimate:
-    """What a build with this model would embed now, and what that costs. It writes nothing."""
+    """What a build with this model would embed now, and what that costs. It writes nothing.
+
+    A work file that can not be read is not taken for empty: the estimate then
+    counts what the index does not hold, and says that it is an upper bound.
+    """
     dimensions = embedder_facts.dimensions
-    known = _old_rows(_old_index(store), dimensions).keys() | store.work_file(dimensions).hashes()
+    known: Set[str] = _old_rows(_old_index(store), dimensions).keys()
+    upper_bound = False
+    try:
+        known = known | store.work_file(dimensions).hashes()
+    except StoreError as exc:
+        logger.warning("the work file can not be read (%s); the estimate is an upper bound", type(exc).__name__)
+        upper_bound = True
     reading = _read(source, embedder_facts.model, dimensions, known, _checker(None), None)
     tokens = sum(count_tokens(text) for text in reading.texts.values())
     return BuildEstimate(
@@ -245,4 +274,5 @@ def estimate_build(
         new_segments=sum(1 for segment in reading.segments if segment.content_hash not in known),
         tokens=tokens,
         usd=tokens * embedder_facts.usd_per_mtok / TOKENS_PER_PRICE,
+        upper_bound=upper_bound,
     )
