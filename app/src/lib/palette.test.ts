@@ -87,6 +87,8 @@ for (const { value: palette } of paletteOptions) {
       }
       // a hover is a moment, and large or bold words: 3 to 1 is the rule for those
       assert.ok(contrast(get('on-you'), get('you-hover')) >= 3, '--on-you on --you-hover')
+      // the marks on the far end of the slider's track are the colour of words on the hue
+      assert.ok(contrast(get('on-you'), get('you-far')) >= 3, '--on-you on --you-far')
       assert.ok(contrast(get('on-ink'), get('ink')) >= 4.5, '--on-ink on --ink')
       assert.ok(contrast(get('on-ink'), get('ink-hover')) >= 4.5, '--on-ink on --ink-hover')
       assert.ok(contrast(get('text'), get('them')) >= 4.5, '--text on --them')
@@ -97,7 +99,7 @@ for (const { value: palette } of paletteOptions) {
 // what a palette must say itself; a token it left out would be Graphite's, in the wrong tint
 const OWN = [
   'bg', 'bg-rail', 'bg-raised', 'gray', 'edge', 'text', 'text-2', 'text-3', 'text-off',
-  'ink', 'ink-hover', 'on-ink', 'you', 'you-hover', 'on-you', 'you-ink', 'them', 'them-mark',
+  'ink', 'ink-hover', 'on-ink', 'you', 'you-hover', 'you-far', 'on-you', 'you-ink', 'them', 'them-mark',
 ]
 
 test('each palette after the first sets every colour that is a palette\'s own', () => {

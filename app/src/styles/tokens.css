@@ -66,6 +66,9 @@
 
     /* ---- voices: the only hue in the chrome ---- */
     --you: #0071e3;
+    /* the far end of a scale that runs from the hue (the reasoning slider):
+       a near neighbour of the blue, an electric cyan */
+    --you-far: light-dark(#0b8ab8, #0e93c4);
     --you-hover: #0077ed;
     --on-you: #ffffff;
     --you-ink: light-dark(#0064cc, #5aa9ff);

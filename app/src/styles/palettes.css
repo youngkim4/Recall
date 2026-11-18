@@ -7,9 +7,12 @@
    Everything else in tokens.css follows from those. A palette can also set
    the face of the interface and the corners.
 
-   The page of every scene is paper by day and warm charcoal by night, from
-   a print: a page tinted blue or green is the stock dark mode the user saw
-   as vibe coded. The colour of a scene is in its picture and in its hue.
+   The page of every scene is a paper of its own by day and a charcoal of
+   its own by night, each tinted toward the scene's hue so faintly that it
+   reads as grey (chroma about 0.01). A strongly tinted page, the navy or
+   green-black of a stock dark mode, is what the user saw as vibe coded;
+   one paper for every scene was too alike. The colour of a scene is in its
+   picture and its hue; the page only leans toward it.
 
    Each scene has a day and a night in one block (light-dark), so it goes
    with any Appearance. Every text step holds 4.5:1 on every ground of its
@@ -30,7 +33,7 @@
      Financial Times (its Origami palette); the whole interface in the
      Mac's serif (New York); square corners and ink lines, as
      Semafor and the Obsidian theme Newspaper draw them. The rail is a print
-     in halftone. */
+     in halftone. The far end of a scale is the print's red run hotter. */
   [data-palette='broadsheet']:not([data-paper]) {
     --bg: light-dark(#fff1e5, #1d1b19);
     --bg-rail: light-dark(#f2dfce, #262321);
@@ -46,6 +49,7 @@
     --on-ink: light-dark(#fff1e5, #1a1817);
     --you: light-dark(#990f3d, #b54268);
     --you-hover: light-dark(#ad1a4c, #c05275);
+    --you-far: light-dark(#c23a1c, #d4532f);
     --on-you: light-dark(#ffffff, #ffffff);
     --you-ink: light-dark(#990f3d, #e39ab0);
     --them: light-dark(#f2dfce, #33302e);
@@ -59,27 +63,29 @@
 
   /* Shoreline: a shore from above, in the rail. The page is woodblock
      paper and sumi ink; the hue is Prussian blue, the pigment of the Edo
-     coast prints (Hokusai, Hiroshige). The interface is set in Iowan
+     coast prints (Hokusai, Hiroshige); the far end of a scale is the teal
+     of the shallows in the rail. The interface is set in Iowan
      Old Style, a book face; corners are square. */
   [data-palette='shoreline']:not([data-paper]) {
-    --bg: light-dark(#f6f1e7, #1b1a18);
-    --bg-rail: light-dark(#ece3d0, #222120);
-    --bg-raised: light-dark(#fffbf3, #272523);
-    --gray: light-dark(rgb(126 120 110), rgb(124 120 114));
-    --edge: light-dark(#23211e, #ece6dc);
-    --text: light-dark(#1c1a17, #f2ede4);
-    --text-2: light-dark(#36332e, #d9d2c6);
-    --text-3: light-dark(#423e38, #c2bab0);
-    --text-off: light-dark(#b1a99c, #6a655e);
-    --ink: light-dark(#1c1a17, #f2ede4);
-    --ink-hover: light-dark(#36332e, #ffffff);
-    --on-ink: light-dark(#f6f1e7, #1b1a18);
+    --bg: light-dark(#eef1f1, #15191c);
+    --bg-rail: light-dark(#e3e9ea, #1b2024);
+    --bg-raised: light-dark(#f9fbfb, #20262a);
+    --gray: light-dark(rgb(112 122 128), rgb(116 124 130));
+    --edge: light-dark(#1f262b, #e3e8eb);
+    --text: light-dark(#161b1f, #eef1f3);
+    --text-2: light-dark(#2f363b, #d3d9dd);
+    --text-3: light-dark(#3e464c, #bcc4ca);
+    --text-off: light-dark(#a3acb1, #626b71);
+    --ink: light-dark(#161b1f, #eef1f3);
+    --ink-hover: light-dark(#2f363b, #ffffff);
+    --on-ink: light-dark(#eef1f1, #15191c);
     --you: light-dark(#1f4a7a, #4a76a3);
     --you-hover: light-dark(#285689, #5682ae);
+    --you-far: light-dark(#1b7f8c, #2a96a3);
     --on-you: light-dark(#ffffff, #ffffff);
     --you-ink: light-dark(#1f4a7a, #a9c1da);
-    --them: light-dark(#e9e1d1, #2f2d2a);
-    --them-mark: light-dark(#8a8274, #a29a90);
+    --them: light-dark(#e1e7e8, #283035);
+    --them-mark: light-dark(#7f8a90, #9aa4aa);
     --font: 'Iowan Old Style', ui-serif, Georgia, serif;
     --r-xs: 1px;
     --r-sm: 2px;
@@ -88,28 +94,30 @@
   }
 
   /* Canopy: under trees, looking up, in the rail. The page is herbarium
-     paper and ink; the hue is the sap green of botanical plates. The interface is
+     paper and ink; the hue is the sap green of botanical plates; the far end of a scale is
+     the yellow-green of the fireflies in the rail. The interface is
      set in Palatino, a book face with an open, tall lowercase that reads well
      small; corners are square. */
   [data-palette='canopy']:not([data-paper]) {
-    --bg: light-dark(#f6f1e7, #1b1a18);
-    --bg-rail: light-dark(#ece3d0, #222120);
-    --bg-raised: light-dark(#fffbf3, #272523);
-    --gray: light-dark(rgb(126 120 110), rgb(124 120 114));
-    --edge: light-dark(#23211e, #ece6dc);
-    --text: light-dark(#1c1a17, #f2ede4);
-    --text-2: light-dark(#36332e, #d9d2c6);
-    --text-3: light-dark(#423e38, #c2bab0);
-    --text-off: light-dark(#b1a99c, #6a655e);
-    --ink: light-dark(#1c1a17, #f2ede4);
-    --ink-hover: light-dark(#36332e, #ffffff);
-    --on-ink: light-dark(#f6f1e7, #1b1a18);
+    --bg: light-dark(#eff1ea, #171a16);
+    --bg-rail: light-dark(#e5e9dc, #1d211b);
+    --bg-raised: light-dark(#f9faf5, #222720);
+    --gray: light-dark(rgb(116 124 110), rgb(118 126 114));
+    --edge: light-dark(#222920, #e4e8de);
+    --text: light-dark(#191d17, #eef1ea);
+    --text-2: light-dark(#313830, #d4d9cf);
+    --text-3: light-dark(#40483f, #bec5b8);
+    --text-off: light-dark(#a8ae9f, #656c60);
+    --ink: light-dark(#191d17, #eef1ea);
+    --ink-hover: light-dark(#313830, #ffffff);
+    --on-ink: light-dark(#eff1ea, #171a16);
     --you: light-dark(#35593a, #527c58);
     --you-hover: light-dark(#3f6745, #5c8762);
+    --you-far: light-dark(#6b7a12, #7d8c1c);
     --on-you: light-dark(#ffffff, #ffffff);
     --you-ink: light-dark(#2f5034, #b1cdb3);
-    --them: light-dark(#e9e1d1, #2f2d2a);
-    --them-mark: light-dark(#8a8274, #a29a90);
+    --them: light-dark(#e2e7d9, #2b3128);
+    --them-mark: light-dark(#838b7a, #9ea697);
     --font: Palatino, 'Palatino Linotype', 'Iowan Old Style', ui-serif, serif;
     --r-xs: 1px;
     --r-sm: 2px;
@@ -119,27 +127,29 @@
 
   /* Sky: first light with cloud by day, stars and northern light by night,
      in the rail. The page is paper and ink; the hue is a dusty plum, the ink
-     of a dawn sky in a print. The interface is set in Charter, which holds
+     of a dawn sky in a print; the far end of a scale is the violet of the
+     northern lights in the rail. The interface is set in Charter, which holds
      up small on a dark page; corners are square. */
   [data-palette='sky']:not([data-paper]) {
-    --bg: light-dark(#f6f1e7, #1b1a18);
-    --bg-rail: light-dark(#ece3d0, #222120);
-    --bg-raised: light-dark(#fffbf3, #272523);
-    --gray: light-dark(rgb(126 120 110), rgb(124 120 114));
-    --edge: light-dark(#23211e, #ece6dc);
-    --text: light-dark(#1c1a17, #f2ede4);
-    --text-2: light-dark(#36332e, #d9d2c6);
-    --text-3: light-dark(#423e38, #c2bab0);
-    --text-off: light-dark(#b1a99c, #6a655e);
-    --ink: light-dark(#1c1a17, #f2ede4);
-    --ink-hover: light-dark(#36332e, #ffffff);
-    --on-ink: light-dark(#f6f1e7, #1b1a18);
+    --bg: light-dark(#f4f1f2, #1b181a);
+    --bg-rail: light-dark(#ebe5e8, #211d20);
+    --bg-raised: light-dark(#fcfafb, #262225);
+    --gray: light-dark(rgb(126 116 122), rgb(126 118 124));
+    --edge: light-dark(#282226, #e9e3e7);
+    --text: light-dark(#1d191b, #f2eef0);
+    --text-2: light-dark(#383134, #d9d2d6);
+    --text-3: light-dark(#474045, #c3bbc0);
+    --text-off: light-dark(#b0a6ab, #6b6368);
+    --ink: light-dark(#1d191b, #f2eef0);
+    --ink-hover: light-dark(#383134, #ffffff);
+    --on-ink: light-dark(#f4f1f2, #1b181a);
     --you: light-dark(#6a4a68, #8a6888);
     --you-hover: light-dark(#775675, #957393);
+    --you-far: light-dark(#5a48a8, #7e6cd0);
     --on-you: light-dark(#ffffff, #ffffff);
     --you-ink: light-dark(#5e4060, #d2bcd0);
-    --them: light-dark(#e9e1d1, #2f2d2a);
-    --them-mark: light-dark(#8a8274, #a29a90);
+    --them: light-dark(#e9e2e6, #302a2e);
+    --them-mark: light-dark(#8f8489, #aaa0a5);
     --font: Charter, ui-serif, Georgia, serif;
     --r-xs: 1px;
     --r-sm: 2px;
