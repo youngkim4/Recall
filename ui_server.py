@@ -1013,7 +1013,7 @@ def build_meaning_index(job_id: str, payload: dict) -> dict:
             append_log(job_id, update["log"])
 
     try:
-        return meaning_service.build(archive, None, told)
+        return meaning_service.build(archive, saved_names(), None, told)
     except meaning_service.MeaningFailure as failure:
         raise JobStopped(str(failure), failure.code) from failure
 
@@ -1022,8 +1022,10 @@ def refresh_meaning_index(job_id: str, action: str, payload: dict) -> None:
     """After an import that changed the archive: one `meaning` job brings an index that is there up to date.
 
     With no index nothing is started: the first build is the choice of the
-    reader. The job is made as every job is made, so it runs one at a time
-    with the imports. A fault here does not change how the import ended.
+    reader. A build that would embed much is not started either
+    (`meaning.small_enough`): the status then says `behind`, and the reader
+    sees the cost first. The job is made as every job is made, so it runs one
+    at a time with the imports. A fault here does not change how the import ended.
     """
     if action not in IMPORT_ACTIONS:
         return
@@ -1033,9 +1035,17 @@ def refresh_meaning_index(job_id: str, action: str, payload: dict) -> None:
             result = job.get("result") if isinstance(job.get("result"), dict) else {}
             # a pull that ends well changed the archive; a load says whether it did
             changed = job.get("status") == "completed" and (action != "bridge" or result.get("status") == "built")
-        if changed and meaning_service.built():
-            named = payload.get("messagesPath")
-            create_job("meaning", {"messagesPath": named} if named else {})
+        place = named_archive(payload)
+        if not changed or not meaning_service.built(places.archive_path_for(place)):
+            return
+        _state, archive = archive_for(place, wait_for_import=False)
+        found = meaning_service.estimate(archive, saved_names())
+        if not meaning_service.small_enough(found):
+            new, held = found["newSegments"], found["segments"]
+            print(f"[meaning] the index waits for the reader: {new:,} of {held:,} segments are new", file=sys.__stderr__)
+            return
+        named = payload.get("messagesPath")
+        create_job("meaning", {"messagesPath": named} if named else {})
     except JobRefused:
         pass  # an import that started meanwhile brings its own job
     except Exception as exc:  # noqa: BLE001 - the import ended: nothing here is a reason to say otherwise
@@ -2560,7 +2570,7 @@ class RecallHandler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/meaning":
             # the index for the search by meaning: what it holds, and what a build would send and cost now
             _state, archive = archive_for(named_archive(query))
-            send_json(self, 200, meaning_service.payload(archive))
+            send_json(self, 200, meaning_service.payload(archive, saved_names()))
         elif parsed.path == "/api/day":
             _state, archive = archive_for(named_archive(query))
             try:
