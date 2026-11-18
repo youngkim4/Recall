@@ -2,7 +2,8 @@
 
 Before the first model call the engine runs one search on the words of the
 question and one lookup of the names in it. The results go into the prompt,
-so a simple recall question ends in one model call.
+so a simple recall question ends in one model call. With a search by meaning,
+that search joins the exchanges found by meaning and by words.
 
 A question that names years also gets the figures of that period: who the
 user wrote with, and how much. A question about a period is seldom answered
@@ -24,6 +25,7 @@ from .textnorm import fold, surface_words
 from .tool_args import ToolInputError
 from .tool_context import Prepared, ToolContext
 from .tool_figures import list_entries, run_count
+from .tool_meaning import MeaningRequest, meaning_lookup
 from .tool_search import run_search_tool
 from .tools import ToolBox
 
@@ -167,7 +169,7 @@ def plan_seed(box: ToolBox, question: str, held: tuple[int, int] = ALL_YEARS) ->
     calls: list[SeedCall] = []
     units = question_units(question, ctx.labeler.redact)
     if units:
-        calls.append(_search_call(box, ctx, units, entries))
+        calls.append(_search_call(box, ctx, units, entries, question))
     if entries:
         calls.append(_names_call(box, ctx, names, entries))
     elif ctx.scope.conversations:
@@ -178,7 +180,10 @@ def plan_seed(box: ToolBox, question: str, held: tuple[int, int] = ALL_YEARS) ->
     return calls
 
 
-def _search_call(box: ToolBox, ctx: ToolContext, units: list[str], entries: Sequence[Entry]) -> SeedCall:
+def _search_call(
+    box: ToolBox, ctx: ToolContext, units: list[str], entries: Sequence[Entry], question: str
+) -> SeedCall:
+    """The search on the words of the question. With a search by meaning: the joined ranking for the question."""
     since, until = ctx.days(None, None)
     request = SearchRequest(
         query=" ".join(units),
@@ -189,6 +194,11 @@ def _search_call(box: ToolBox, ctx: ToolContext, units: list[str], entries: Sequ
         limit=SEED_HITS,
         boost=tuple(str(entry.conversation["id"]) for entry in entries[:_BOOSTED]),
     )
+    if ctx.memory.meaning is not None:
+        joined = MeaningRequest(question, request, "the question")
+        prepared = Prepared("Searching your messages", meaning_lookup(ctx, joined, radius=SEED_RADIUS))
+        label = 'search_messages(match="meaning", query=the question)'
+        return SeedCall("search_messages", label, box.wrap("search_messages", prepared))
     prepared = Prepared(
         "Searching your messages",
         lambda budget: run_search_tool(ctx, request, budget, radius=SEED_RADIUS),

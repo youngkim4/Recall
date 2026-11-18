@@ -322,10 +322,12 @@ def add_block(
     limits: Limits,
     marks: Mapping[str, str],
     focus: Optional[Mapping[str, int]] = None,
+    tail: Sequence[str] = (),
 ) -> bool:
     """Add one exchange to a result. When it does not fit, cut its messages shorter and try again.
 
     False when it does not fit at all. Then nothing is added and nothing is registered.
+    `tail` is lines that go under the exchange and fit with it or not at all.
     """
     cap = limits.max_message_chars
     while True:
@@ -333,7 +335,7 @@ def add_block(
         lines = render_block(
             messages, book=book, registry=registry, limits=_shorter(limits, cap), marks=marks, focus=focus
         )
-        if writer.add("\n" + "\n".join(lines)):
+        if writer.add("\n" + "\n".join([*lines, *tail])):
             return True
         registry.rollback(mark)
         if cap <= MIN_MESSAGE_CHARS:

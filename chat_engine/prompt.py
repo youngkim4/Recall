@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional, Sequence
+from typing import Collection, Optional, Sequence
 
 from .ports import ArchiveSummary
 
@@ -44,6 +44,35 @@ _HOW_TO_WORK = (
     "Write no text before or between tool calls. Write only the final answer.",
 )
 
+# Rules for the tools of the optional ports. A rule is in the prompt only when its tool is offered.
+MEANING = "meaning"
+DIGEST = "conversation_digest"
+_AFTER_WORK = {
+    DIGEST: (
+        "Between two people, a direct conversation tells more than a group.",
+        "When a pattern question is about one person or one conversation, work in this order: the "
+        "figures, then conversation_digest for that conversation, then read_around on the moments that "
+        "matter. The digest gives the story of the conversation period by period, so you do not need to "
+        "read the conversation at several points. When the question is about several people, call "
+        "conversation_digest for at most the three conversations that lead.",
+    ),
+    MEANING: (
+        "conversations. Read around a hit before you rely on it.",
+        'To find a kind of moment (an apology, a plan, good news, a fight), set match to "meaning" and '
+        "put a short description of the exchange in query, such as \"we made up after a fight\". To find "
+        'exact words, use the word search: match "all" or "any".',
+    ),
+}
+_AFTER_ANSWER = {
+    DIGEST: (
+        "Inside quotation marks, copy the message text exactly. Never reword a quote.",
+        "A summary from conversation_digest is not a quote: never put its words in quotation marks. "
+        "Only message text in quotation marks is a quote, and only a message reference such as [m3] is "
+        "a citation. For a claim that rests on a summary, cite the message lines of its moments. When "
+        "no message line supports it, say that it comes from the summary of that period.",
+    ),
+}
+
 _HOW_TO_ANSWER = (
     "Answer from the evidence. Say what the messages state. Say separately what you infer from them.",
     "When the user tries to recall what was said, lead with the exact words in quotation marks. "
@@ -63,9 +92,20 @@ _HOW_TO_ANSWER = (
 )
 
 
-def _rules() -> str:
-    work = "\n".join(f"- {rule}" for rule in _HOW_TO_WORK)
-    answer = "\n".join(f"- {rule}" for rule in _HOW_TO_ANSWER)
+def _with(rules: Sequence[str], added: dict[str, tuple[str, str]], offered: Collection[str]) -> list[str]:
+    """The rules, each added rule after the rule that ends with its anchor."""
+    listed: list[str] = []
+    for rule in rules:
+        listed.append(rule)
+        for name, (anchor, extra) in added.items():
+            if name in offered and rule.endswith(anchor):
+                listed.append(extra)
+    return listed
+
+
+def _rules(offered: Collection[str] = ()) -> str:
+    work = "\n".join(f"- {rule}" for rule in _with(_HOW_TO_WORK, _AFTER_WORK, offered))
+    answer = "\n".join(f"- {rule}" for rule in _with(_HOW_TO_ANSWER, _AFTER_ANSWER, offered))
     return f"How to work\n{work}\n\nHow to answer\n{answer}"
 
 
@@ -107,7 +147,10 @@ def scope_line(where: Optional[str], since: Optional[str], until: Optional[str])
     )
 
 
-def system_prompt(*, now: datetime, timezone: str, summary: ArchiveSummary, scope: str) -> str:
+def system_prompt(
+    *, now: datetime, timezone: str, summary: ArchiveSummary, scope: str, offered: Collection[str] = ()
+) -> str:
+    """`offered` names the optional tools of this engine: MEANING, DIGEST or both."""
     return "\n".join(
         [
             "You are Recall. You answer questions about the user's own iMessage archive. "
@@ -118,7 +161,7 @@ def system_prompt(*, now: datetime, timezone: str, summary: ArchiveSummary, scop
             archive_line(summary),
             scope,
             "",
-            _rules(),
+            _rules(offered),
         ]
     )
 
