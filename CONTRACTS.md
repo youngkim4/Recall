@@ -349,9 +349,10 @@ Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `rec
 ### The index files
 
 - The index is in `saves/meaning` (`meaning.index_store`). `segments.sqlite3` holds conversation ids and message ids. `vectors.npy` and `work.sqlite3` hold vectors. No file of the index holds text of a message.
-- A build swaps the files in this order: segments, vectors, meta (`SWAP_ORDER` in `meaning_index/store_files.py`). The id of the build is in the segments file and in the meta file. Until the meta file is in place the folder holds no whole build.
-- A reader takes files of one build only. `MeaningPort` checks the build id after a load and loads again when it changed (`_load` in `recall_services/memory.py`).
-- A process keeps one loaded index for each folder. It loads again only when the build on disk is another one. While the folder holds no whole build, the index that was loaded before answers.
+- A build swaps the files in this order: segments, vectors, meta (`SWAP_ORDER` in `meaning_index/store_swap.py`). A put-back goes the other way. Each file names its build, and three files are an index only when they name one build.
+- A reader takes files of one build only (`read_whole`). `MeaningPort` asks `IndexStore.meta()` for the build id after a load and loads again when it changed (`_load` in `recall_services/memory.py`).
+- A process keeps one loaded index for each folder. It asks `IndexStore.meta()` for each search, which reads no row, and loads again only when the build on disk is another one. While the folder holds no whole build, the index that was loaded before answers.
+- With no index folder the services ask for no file (`_held` in `recall_services/meaning.py`). So an import with no index opens no database of the index. `Reads` in `tests/test_update_reads_messages.py` names a database in the index folder `index`, and any other unknown database by its path.
 - An index of a newer format is not read and not replaced. Chat then has no search by meaning, and the status of the index is `none`.
 
 ### What is embedded again
@@ -383,6 +384,7 @@ Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `rec
 - The `meaning` job builds the index or brings it up to date (`build_meaning_index` in `ui_server.py`). Its result has `segments`, `embedded`, `reused`, `removed` and `tokens`. Its `progress` has `step`, `of`, `label`, `done` and `total`. Its lines hold counts only.
 - The `meaning` job and an import do not run together, and two `meaning` jobs do not run together (`ONE_AT_A_TIME`). The second one is refused with a plain sentence.
 - After an import that changed the archive, the server starts one `meaning` job when an index is there (`refresh_meaning_index`, called by `run_job`). With no index it starts nothing: the first build is the choice of the reader. That job is made by `create_job`, so the same rule holds for it.
+- `run_job` looks at the index after the import has ended in the list. A slow look or a fault there does not delay or fail the import.
 - A failure of a build is a `MeaningFailure`. The job tells its sentence and its code.
 
 ## Mac shell

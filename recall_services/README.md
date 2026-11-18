@@ -148,6 +148,7 @@ Status:
 - `behind` means that the archive holds a later message with text than the index covers. A later photo with no caption is in no segment, so it does not make the state `behind`.
 - `coveredUntil` is the local time of the last message in the index. `builtAt` is UTC.
 - An index that this build of the app can not read has the state `none`. The estimate and the build then fail with the code `index_newer`.
+- With no index folder the status asks for no file. An import with no index thus opens no database of the index.
 - A message that was edited or removed leaves the state `ready`. The next build still brings the index up to date.
 
 Estimate:
@@ -207,7 +208,7 @@ With a port that is None the engine does not offer its tool. A reason goes to th
 
 - It embeds the description with the model and the dimensions of the index, not with the default model.
 - Only the description goes to the provider. The engine masked it. The conversation ids filter the search on this machine.
-- The process keeps one loaded index for each folder. It loads again only when the build on disk is another one (`IndexMeta.build_id`).
+- The process keeps one loaded index for each folder. It asks `IndexStore.meta()` for each search and loads again only when the build on disk is another one (`IndexMeta.build_id`).
 - While a build swaps the files, the folder holds no whole build. The index that was loaded before answers then. A question that finds no loaded index gets no port.
 - A load is checked: when the build on disk changed during the load, the load is thrown away and tried again.
 - The process keeps the vectors of the last 64 descriptions (`QUERY_VECTORS`). The seeded search and a repeat do not pay twice.
