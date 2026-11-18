@@ -408,7 +408,9 @@ In each other case the digest does not share the cache with reports:
 - A digest of a span that starts at the same period reads these entries again. It makes no call for them.
 - A report never reads them. A digest of a span that starts at another period never reads them.
 
-The result of a digest does not depend on which digests ran before it. It depends only on which of the two cases holds.
+A period with a key of its own is never sent with notes from before the span. So such an entry does not depend on what the cache held, or on the order of the questions.
+As in a report, a period that fails leaves no notes for the periods after it.
+The case depends on what the cache holds when the digest starts. The same span can be read with no notes at first, and with the notes of the reports after a report filled the cache.
 `reading_of` in `chat_digest_span.py` decides the case. `estimate_digest` and `max_new_periods` count a period as cached with the keys of that case.
 
 A report with a scope reads only the messages of its scope. Its periods can differ from the periods of a digest. Then the two share no entry for those periods.
