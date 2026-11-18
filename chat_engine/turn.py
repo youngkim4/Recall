@@ -385,7 +385,7 @@ class QuestionTurn:
             allowed=context.allows,
             text_cap=self._settings.max_message_chars,
             steps=self._steps,
-            usage=self._totals,
+            usage=self._box.usage(self._totals),
             cancelled=reply.cancelled,
             truncated=reply.stop_reason == "length",
         )

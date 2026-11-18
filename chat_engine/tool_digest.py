@@ -1,9 +1,14 @@
 """conversation_digest: the story of one conversation, period by period.
 
-The digest comes from `ports.DigestSource`. This tool guards the cost, keeps
-the scope, reads the messages of each moment from the archive and registers
-them as evidence. The result has a budget of its own: it does not spend from
-the budget of the other lookups.
+The digest comes from `ports.DigestSource`. This tool guards the time and the
+cost, keeps the scope, reads the messages of each moment from the archive and
+registers them as evidence. The result has a budget of its own: it does not
+spend from the budget of the other lookups.
+
+The guards, in their order: the scope, a repeat, the estimate, the number of
+periods that are not read yet, the cost. A conversation with more periods to
+read than one question reads is not read here: the source is asked to read it
+in the background (`prepare`), and the model is told to go on without it.
 """
 
 from __future__ import annotations
@@ -36,6 +41,15 @@ _TOO_COSTLY = (
     "Reading {title} whole would cost about ${usd:.2f}{missing}. That is above the limit of ${limit:.2f}, "
     "so nothing was built. Narrow the days with since and until, or use the other tools."
 )
+_LONG = "The story of {title} is long: {missing} not read yet"
+_STARTED = (
+    f"{_LONG}. Recall reads them now in the background, so the story is not ready for this question. "
+    "Answer from the other tools, and tell the user that a fuller answer is possible in a few minutes."
+)
+_NOT_STARTED = (
+    f"{_LONG}, and one question reads at most {{limit}}. "
+    "Narrow the days with since and until, or use the other tools."
+)
 _SHOWN, _FAILED_STATE = "shown", "failed"
 
 
@@ -57,6 +71,7 @@ class Built:
     state: str
     periods: tuple[Period, ...] = ()
     failed: int = 0
+    usd: Optional[float] = None  # what the call cost; None when the source did not say
 
 
 def prepare_digest(ctx: ToolContext, arguments: Mapping[str, Any]) -> Prepared:
@@ -82,7 +97,10 @@ def prepare_digest(ctx: ToolContext, arguments: Mapping[str, Any]) -> Prepared:
     if cost is None:
         ctx.digests_asked[request.key] = _FAILED_STATE
         return _prepared(ctx, "", lambda budget: _answer(ctx, request, "failed"))
-    if cost["usd"] > ctx.memory.digest_usd_limit:  # not kept: a narrower digest can make this one cheaper
+    # the two refusals below are not kept: the reading in the background or a narrower digest changes the estimate
+    if cost["periods"] - cost["periods_cached"] > ctx.memory.digest_parts_limit:
+        return _too_long(ctx, request, cost)
+    if cost["usd"] > ctx.memory.digest_usd_limit:
         return _prepared(ctx, "", lambda budget: _too_costly(ctx, request, cost))
     if cost["periods"] <= 0:
         ctx.digests_asked[request.key] = _SHOWN
@@ -135,6 +153,35 @@ def _too_costly(ctx: ToolContext, request: DigestRequest, cost: DigestCost) -> T
     return ToolOutcome(text, summary, ok=False)
 
 
+def _too_long(ctx: ToolContext, request: DigestRequest, cost: DigestCost) -> Prepared:
+    """A story with more periods to read than one question reads. Its reading is started outside the question."""
+    count = cost["periods"] - cost["periods_cached"]
+    missing = f"{plural(count, 'period')} {'is' if count == 1 else 'are'}"
+    label = ctx.book.label(request.conversation)
+    if _start_reading(ctx, request):
+        text = _STARTED.format(title=_title(ctx, request), missing=missing)
+        words = f"your whole conversation with {label} in the background"
+        started = ToolOutcome(text, f"Started to read {words}", ok=False)
+        return _prepared(ctx, f"Starting to read {words}", lambda budget: started)
+    limit = plural(ctx.memory.digest_parts_limit, "period")
+    text = _NOT_STARTED.format(title=_title(ctx, request), missing=missing, limit=limit)
+    refused = ToolOutcome(text, f"Did not read the conversation with {label}: {missing} not read yet", ok=False)
+    status = f"Your conversation with {label} is too long to read inside one question"
+    return _prepared(ctx, status, lambda budget: refused)
+
+
+def _start_reading(ctx: ToolContext, request: DigestRequest) -> bool:
+    """Ask the source to read the conversation outside the question. False when it has no way, or fails."""
+    start = getattr(ctx.memory.digests, "prepare", None)
+    if not callable(start):
+        return False
+    try:
+        return start(request.conversation, since=request.since, until=request.until) is True
+    except Exception as error:  # the question goes on with the other tools
+        logger.warning("the reading of a digest in the background did not start: %s", type(error).__name__)
+        return False
+
+
 def _lookup(ctx: ToolContext, request: DigestRequest) -> Callable[[int], ToolOutcome]:
     """The lookup of one digest. The source is asked one time, also when the result is written twice."""
     built: list[Built] = []
@@ -164,6 +211,8 @@ def _build(ctx: ToolContext, request: DigestRequest) -> Built:
             return Built("stopped")
         logger.warning("the digest source failed: %s", type(error).__name__)
         return Built("failed")
+    usd = _spent(result)
+    ctx.digest_usd += usd or 0.0  # counted at once: a cancel or a failure after this does not lose what was paid
     if cancel.cancelled:
         return Built("stopped")
     if not isinstance(result, Mapping) or not isinstance(result.get("periods"), (list, tuple)):
@@ -171,7 +220,14 @@ def _build(ctx: ToolContext, request: DigestRequest) -> Built:
         return Built("failed")
     periods = [_period(row) for row in result["periods"]]
     kept = tuple(period for period in periods if period is not None)
-    return Built("ok", kept, _whole(result.get("periods_failed")) + len(periods) - len(kept))
+    return Built("ok", kept, _whole(result.get("periods_failed")) + len(periods) - len(kept), usd)
+
+
+def _spent(result: object) -> Optional[float]:
+    """The cost that a digest names, when it is an amount. None when the source did not say."""
+    usd = result.get("usd") if isinstance(result, Mapping) else None
+    known = isinstance(usd, (int, float)) and not isinstance(usd, bool) and math.isfinite(usd) and usd >= 0
+    return float(usd) if known else None  # type: ignore[arg-type]
 
 
 def _answer(ctx: ToolContext, request: DigestRequest, state: str) -> ToolOutcome:
@@ -202,7 +258,14 @@ def _written(ctx: ToolContext, request: DigestRequest, built: Built, budget: int
     label = ctx.book.label(request.conversation)
     count = plural(written.periods, "period")
     shown = count if written.shown == written.periods else f"{written.shown:,} of {count}"
-    return ToolOutcome(written.text, f"Read the story of your conversation with {label}: {shown}")
+    return ToolOutcome(written.text, f"Read the story of your conversation with {label}: {shown}{_cost(built.usd)}")
+
+
+def _cost(usd: Optional[float]) -> str:
+    """What a digest that was read now cost, for the step line. Empty when nothing was paid or the cost is not known."""
+    if not usd:
+        return ""
+    return f", about ${usd:.2f}" if usd >= 0.005 else ", less than $0.01"
 
 
 def _in_scope(ctx: ToolContext, *days: str) -> bool:

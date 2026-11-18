@@ -66,9 +66,9 @@ _IN_PLACE = {
             "2. Story: call conversation_digest for the conversation that leads, or for each of the "
             f"conversations that lead, at most {DIGESTS_PER_QUESTION} in one question. It gives the story of a "
             "conversation period by period, with the moments that matter. "
-            "3. Reading: use read_around on the moments that matter. When a digest could not be built, read "
-            "that conversation at several points of the period: use search_messages with an empty query, "
-            "one conversation, and since and until. "
+            "3. Reading: use read_around on the moments that matter. When the tool gives no digest, read that "
+            "conversation at several points of the period: use search_messages with an empty query, one "
+            "conversation, and since and until. "
             "4. Answer from all of it: how much you wrote to each other, over how long, whether both sides "
             "wrote, and what the digest and the messages show."
         ),
