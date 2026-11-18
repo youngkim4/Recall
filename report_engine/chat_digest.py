@@ -139,7 +139,6 @@ def _log_warnings(of_cache: Sequence[str], of_checks: Sequence[str]) -> None:
 
 
 def _mapped_digest(
-    *,
     span: Span,
     caller: Caller,
     cache: PeriodStore | None,
@@ -177,6 +176,27 @@ def _mapped_digest(
         periods_failed=len(failed),
         usage=caller.usage,
     )
+
+
+def _guarded_digest(
+    span: Span,
+    caller: Caller,
+    cache: PeriodStore | None,
+    model_info: ModelInfo,
+    conversation: str,
+    options: ReportOptions,
+    emit: Emit,
+) -> ConversationDigest:
+    """`_mapped_digest`. An error that nobody planned for becomes a RunError
+    that names its type only and holds the usage of the run."""
+    try:
+        return _mapped_digest(span, caller, cache, model_info, conversation, options, emit)
+    except RunError:
+        raise
+    except Exception as exc:
+        raise RunError(
+            f"the digest stopped on an unexpected error: {type(exc).__name__}", usage=caller.usage
+        ) from exc
 
 
 def conversation_digest(
@@ -217,36 +237,12 @@ def conversation_digest(
     caller.check_cancel()
 
     emit(ProgressEvent(step="prepare", state="start"))
-    span = span_plan(
-        source=source,
-        conversation=conversation,
-        since=since,
-        until=until,
-        labeler=labeler,
-        model_info=model_info,
-        options=chosen,
-        counter=counter,
-    )
+    span = span_plan(source, conversation, since, until, labeler, model_info, chosen, counter)
     total = span.stop - span.start
     emit(ProgressEvent(step="prepare", state="done", total=total))
     check_limit(limit, span.plan, cache)
 
-    try:
-        digest = _mapped_digest(
-            span=span,
-            caller=caller,
-            cache=cache,
-            model_info=model_info,
-            conversation=conversation,
-            options=chosen,
-            emit=emit,
-        )
-    except RunError:
-        raise
-    except Exception as exc:
-        raise RunError(
-            f"the digest stopped on an unexpected error: {type(exc).__name__}", usage=caller.usage
-        ) from exc
+    digest = _guarded_digest(span, caller, cache, model_info, conversation, chosen, emit)
     emit(ProgressEvent(step="done", state="done", total=total))
     return digest
 
@@ -270,16 +266,7 @@ def estimate_digest(
     of a report on all dates."""
     chosen = options or ReportOptions()
     try:
-        span = span_plan(
-            source=source,
-            conversation=conversation,
-            since=since,
-            until=until,
-            labeler=labeler,
-            model_info=model_info,
-            options=chosen,
-            counter=counter,
-        )
+        span = span_plan(source, conversation, since, until, labeler, model_info, chosen, counter)
     except EmptyConversationError:
         return DigestEstimate(periods=0, periods_cached=0, input_tokens=0, output_tokens=0, usd=0.0)
     known = known_keys(cache, [planned.key for planned in span.plan.periods])

@@ -84,7 +84,6 @@ def _overlaps(period: Period, first: str | None, last: str | None) -> bool:
 
 
 def span_plan(
-    *,
     source: ReportSource,
     conversation: str,
     since: str | None,

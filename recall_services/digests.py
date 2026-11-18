@@ -70,6 +70,23 @@ def _too_many(error: DigestTooLarge) -> ReportFailure:
     )
 
 
+def _reading(
+    archive: Archive, asked: reports._Asked, options: ReportOptions | None, counter: TokenCounter | None
+) -> dict[str, Any]:
+    """What the estimate and the digest both give the engine, as a report run
+    gives it. The two then plan the same parts, with the cache keys of a report."""
+    return {
+        "source": reports._Masked(archive, asked.redact),
+        "conversation": asked.conversation,
+        "model_info": asked.info,
+        "labeler": asked.labeler,
+        "since": asked.since,
+        "until": asked.until,
+        "options": options,
+        "counter": counter or reports.shared_counter(asked.info.tokenizer_family),
+    }
+
+
 def estimate(
     conversation_id: str,
     since: str | None = None,
@@ -93,15 +110,7 @@ def estimate(
         asked = reports._asked(conversation_id, model, since, until, archive, names)
         try:
             return estimate_digest(
-                source=reports._Masked(archive, asked.redact),
-                conversation=asked.conversation,
-                model_info=asked.info,
-                labeler=asked.labeler,
-                cache=_notes_to_read(cache_path),
-                since=asked.since,
-                until=asked.until,
-                options=options,
-                counter=counter or reports.shared_counter(asked.info.tokenizer_family),
+                cache=_notes_to_read(cache_path), **_reading(archive, asked, options, counter)
             )
         except ReportEngineError as error:
             raise failure_of(error, None, reports._provider(asked.info), asked.info.id) from error
@@ -142,20 +151,13 @@ def build(
     watched = reports._Watched(reports._port(llm_factory or reports.default_llm, asked.info))
     try:
         return conversation_digest(
-            source=reports._Masked(archive, asked.redact),
-            conversation=asked.conversation,
             llm=watched,
-            model_info=asked.info,
-            labeler=asked.labeler,
             cache=notes,
-            since=asked.since,
-            until=asked.until,
-            options=options,
-            counter=counter or reports.shared_counter(asked.info.tokenizer_family),
             on_progress=on_progress,
             cancel=cancel,
             runtime=runtime,
             max_new_periods=max_new_periods,
+            **_reading(archive, asked, options, counter),
         )
     except DigestTooLarge as error:
         raise _too_many(error) from error
