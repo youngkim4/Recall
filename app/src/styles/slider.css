@@ -1,29 +1,23 @@
-/* A slider with a few named steps: its name and the step it is on, over a
-   track with a mark at each step. The track is filled up to a round knob
-   that sits inside the end of the fill. The fill is the one hue of the
-   palette, a little deeper at its start than at the knob. */
+/* The reasoning control: a lamp whose flame grows with each step, and
+   beside it the name of the control and its step over a quiet row of
+   marks, one for each step, with a knob on the step chosen. The colour is
+   the flame's; the row stays quiet. */
 
 @layer controls {
   .level-slider {
-    /* the height of the track; LevelSlider.tsx holds half of it as INSET */
-    --track: 22px;
-    /* the room between the knob and the edge of the track */
-    --knob-room: 2px;
-    /* a spring that goes a little past its place and comes back: 5% of the
-       way at most, so a knob that crosses the whole track stays inside it */
+    /* the height of the row the knob moves in; LevelSlider.tsx holds half of it as INSET */
+    --track: 16px;
+    /* a spring that goes a little past its place and comes back */
     --spring: cubic-bezier(0.3, 1.2, 0.5, 1);
     /* LevelSlider.tsx sets where the knob is, 0 to 1 */
     --at: 0;
-    /* the fill and the light around it are the palette's hue and no other */
-    --tone: var(--you);
-    --ramp: linear-gradient(90deg, color-mix(in srgb, var(--you) 72%, var(--bg-raised)), var(--you));
-    /* and these two when the step changes: the step as a share of the way
-       (0 to 1), and how long one beat of the track takes on it */
-    --level: 0;
-    --pulse: 4.2s;
+    /* the knob is the colour of the flame at its step: the hue turning to the far end */
+    --tone: color-mix(in oklab, var(--you), var(--you-far) calc(var(--at) * 100%));
     display: grid;
-    gap: var(--s-2);
-    /* a drag that starts on the track does not pick out the words over it */
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: end;
+    gap: var(--s-3);
+    /* a drag that starts on the row does not pick out the words over it */
     user-select: none;
     -webkit-user-select: none;
   }
@@ -32,6 +26,19 @@
     .level-slider {
       --spring: linear(0, 0.38 9%, 0.76 18%, 0.99 28%, 1.05 37%, 1.045 45%, 1.015 57%, 0.998 70%, 1);
     }
+  }
+
+  /* the lamp: 22 by 20 cells of 2px, sharp, as tall as the words and marks beside it */
+  .lamp {
+    width: 2.75rem;
+    height: 2.5rem;
+    image-rendering: pixelated;
+  }
+
+  .level-slider-body {
+    display: grid;
+    gap: var(--s-1);
+    min-width: 0;
   }
 
   .level-slider-head {
@@ -67,222 +74,85 @@
     }
   }
 
-  /* The whole track takes the pointer. The page under it does not scroll
-     or select while the knob is moved. What is inside measures itself
-     against the track's width (cqi). The first and last marks stand half
-     the track's height in from its ends, where the knob's middle comes to
-     rest. The track glows in the colour of its step, more with each step. */
+  /* The row takes the pointer; a hairline runs through the marks. What is
+     inside measures itself against the row's width (cqi). The first and
+     last marks stand half the row's height in from its ends. */
   .level-slider-track {
     position: relative;
     height: var(--track);
-    border-radius: var(--r-full);
-    background: var(--fill-track);
     container-type: inline-size;
     cursor: default;
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
+    border-radius: var(--r-full);
   }
 
-  /* The light around the track: the fill again, blurred. It has the fill's
-     own shape, so it ends in a round around the knob as the fill does, and
-     not in a straight edge. It breathes: it swells and brightens and falls
-     back, slowly on the first step and fast on the last, and it is stronger
-     the higher the step. The blur is on what holds the shape, so the shape
-     is cut first and blurred after. */
-  .level-slider-aura {
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    filter: blur(0.4375rem);
-    /* where it rests when nothing moves */
-    opacity: calc(0.15 + var(--level) * 0.2);
-    pointer-events: none;
-    animation: level-breathe var(--pulse) ease-in-out infinite;
-  }
-
-  .level-slider-aura::before {
+  .level-slider-track::before {
     content: '';
     position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    background: var(--ramp);
-    clip-path: inset(0 calc((100cqi - var(--track)) * (1 - var(--at))) 0 0 round var(--r-full));
-    transition: clip-path 420ms var(--spring);
+    top: 50%;
+    left: calc(var(--track) / 2);
+    right: calc(var(--track) / 2);
+    height: 1px;
+    background: var(--line-strong);
   }
 
-  .level-slider-track[data-held] > .level-slider-aura::before {
-    transition: none;
-  }
-
-  @keyframes level-breathe {
-    0%,
-    100% {
-      opacity: calc(0.1 + var(--level) * 0.12);
-      scale: 1 0.85;
-    }
-
-    50% {
-      opacity: calc(0.2 + var(--level) * 0.3);
-      scale: 1 calc(1.05 + var(--level) * 0.25);
-    }
-  }
-
-  /* The fill lies over the whole track, so the ramp runs the track's whole
-     length, and is cut back to where the knob is: a pill that ends in a half
-     circle around the knob. Cutting the fill and moving the knob change no
-     layout, so both keep up with the pointer. */
-  .level-slider-fill {
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    background: var(--ramp);
-    clip-path: inset(0 calc((100cqi - var(--track)) * (1 - var(--at))) 0 0 round var(--r-full));
-    transition: clip-path 420ms var(--spring);
-  }
-
-  /* a mark at each step: grey on the track, pale on the fill */
+  /* a mark at each step; the steps up to the chosen one in the colour of the flame */
   .level-slider-stop {
     position: absolute;
     top: 50%;
     left: calc(var(--track) / 2 + (100% - var(--track)) * var(--stop));
-    width: 3px;
-    height: 3px;
+    width: 5px;
+    height: 5px;
     border-radius: var(--r-full);
-    background: color-mix(in srgb, var(--text-3) 55%, transparent);
+    background: var(--line-strong);
     translate: -50% -50%;
+    transition: background-color var(--dur-short) ease;
   }
 
-  .level-slider-fill > .level-slider-stop {
-    background: color-mix(in srgb, var(--on-you) 55%, transparent);
+  .level-slider-stop[data-passed] {
+    background: var(--tone);
   }
 
-  /* A light that runs along the fill, from its start to the knob, one time
-     for each beat of the track. On the lower steps there is none; from the
-     middle step up it shows, brighter and faster with each step. When the
-     last step is reached it also runs once at full strength
-     (LevelSlider.tsx). The fill cuts it off at the knob. */
-  .level-slider-shine {
+  /* the knob: a round in the colour of its step, ringed in the page so it stands off the marks */
+  .level-slider-knob {
     position: absolute;
-    inset: 0 auto 0 0;
-    width: 28%;
-    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--on-you) 55%, transparent), transparent);
-    opacity: 0;
-    pointer-events: none;
-    animation: level-run var(--pulse) cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  }
-
-  @keyframes level-run {
-    from {
-      opacity: 0;
-      translate: -110% 0;
-    }
-
-    20%,
-    70% {
-      opacity: clamp(0, (var(--level) - 0.4) * 0.8, 0.45);
-    }
-
-    to {
-      opacity: 0;
-      translate: 380% 0;
-    }
-  }
-
-  /* The knob and the ring that goes out from it stand at the same place.
-     They are moved with translate and swell with scale, which are two
-     properties: a swell does not move them. The knob is white in both
-     themes, as a knob is; its edge is a shadow, and a halo in the colour of
-     its step. */
-  .level-slider-knob,
-  .level-slider-ring {
-    position: absolute;
-    top: var(--knob-room);
-    left: var(--knob-room);
-    width: calc(var(--track) - var(--knob-room) * 2);
-    height: calc(var(--track) - var(--knob-room) * 2);
+    top: 2px;
+    left: 2px;
+    width: calc(var(--track) - 4px);
+    height: calc(var(--track) - 4px);
     border-radius: var(--r-full);
+    background: var(--tone);
+    box-shadow:
+      0 0 0 2px var(--bg-raised),
+      0 1px 3px rgb(0 0 0 / 0.25);
     translate: calc((100cqi - var(--track)) * var(--at)) 0;
     transition:
       translate 420ms var(--spring),
       scale var(--dur-short) var(--ease-out);
   }
 
-  .level-slider-knob {
-    background: #fff;
-    box-shadow:
-      0 1px 2px rgb(0 0 0 / 0.2),
-      0 2px 6px rgb(0 0 0 / 0.22),
-      0 0 0.625rem color-mix(in srgb, var(--tone) 75%, transparent);
+  .level-slider-track:focus-visible {
+    outline: 2px solid var(--you-ink);
+    outline-offset: 2px;
   }
 
-  .level-slider-ring {
-    box-shadow: 0 0 0 2px var(--tone);
-    opacity: 0;
-    pointer-events: none;
-  }
-
-  /* One ring goes out from the knob with each beat of the track. On the
-     first step there is none; the higher the step, the more it shows, and
-     it stays faint. */
-  .level-slider-knob::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    box-shadow: 0 0 0 1.5px var(--tone);
-    opacity: 0;
-    pointer-events: none;
-    animation: level-wave var(--pulse) var(--ease-out) infinite;
-  }
-
-  @keyframes level-wave {
-    from {
-      opacity: calc(var(--level) * 0.4);
-      scale: 1;
-    }
-
-    70%,
-    to {
-      opacity: 0;
-      scale: calc(1.5 + var(--level) * 0.7);
-    }
-  }
-
-  /* held: the knob is where LevelSlider.tsx puts it, with nothing in between */
-  .level-slider-track[data-held] > .level-slider-fill {
-    transition: none;
-  }
-
-  .level-slider-track[data-held] > :is(.level-slider-knob, .level-slider-ring) {
-    transition: scale var(--dur-short) var(--ease-out);
-  }
-
-  /* held, the knob comes up a little */
+  /* held: the knob is where LevelSlider.tsx puts it, and comes up a little */
   .level-slider-track[data-held] > .level-slider-knob {
-    scale: 1.06;
+    scale: 1.15;
+    transition: scale var(--dur-short) var(--ease-out);
   }
 
   /* with motion reduced the knob is on its step or under the pointer at once */
   @media (prefers-reduced-motion: reduce) {
-    .level-slider-track > :is(.level-slider-fill, .level-slider-knob, .level-slider-ring),
-    .level-slider-track[data-held] > :is(.level-slider-fill, .level-slider-knob, .level-slider-ring) {
+    .level-slider-track > .level-slider-knob,
+    .level-slider-track[data-held] > .level-slider-knob {
       transition: none;
     }
 
     .level-slider-track[data-held] > .level-slider-knob {
       scale: 1;
-    }
-
-    /* nothing beats: the light stands still at its middle strength */
-    .level-slider-aura,
-    .level-slider-shine,
-    .level-slider-knob::before {
-      animation: none;
-    }
-
-    .level-slider-aura::before {
-      transition: none;
     }
   }
 }

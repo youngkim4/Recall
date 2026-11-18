@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { recallBridge } from '../../lib/bridge'
 import { alongAt, heldStep, stepAt, stepByKey } from '../../lib/levelSlider'
+import { Lamp } from './Lamp'
 
 export type LevelStep = { value: string; label: string }
 
@@ -24,26 +25,21 @@ type LevelSliderProps = {
 
 // Half the height of the track, in px: how far in from each end the first
 // and last steps stand. The style sheet holds the height as --track.
-const INSET = 11
+const INSET = 8
 // A press away from the knob brings the knob to the pointer: each frame it
 // covers this share of the way that is left, and it has arrived when less
 // than half a pixel is left.
 const CHASE = 0.32
 const ARRIVED_PX = 0.5
-// How long one pulse of the track takes on the first step and on the last,
-// in seconds: the more the model thinks, the faster the track beats. Even
-// the last step is slower than a resting heart.
-const PULSE_SLOW = 4.2
-const PULSE_FAST = 2.4
 const SWELL = 'cubic-bezier(0.34, 1.56, 0.64, 1)'
-const OUT = 'cubic-bezier(0.23, 1, 0.32, 1)'
 
 function still() {
   return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
-// A slider with a few named steps: a track with a mark at each step, filled
-// up to a round knob. Its name and the step it is on stand over it.
+// A control with a few named steps: beside a lamp whose flame grows with
+// each step (Lamp.tsx), its name and the step it is on stand over a quiet
+// row of marks, one for each step, and a knob on the step chosen.
 //
 // The knob is moved by the pointer itself: it stays under the pointer where
 // it was taken, and the page is not drawn again for each move. A press away
@@ -51,9 +47,8 @@ function still() {
 // when the pointer moves on in the meantime. The step changes when the knob
 // is well past half way to the next one, so a hand that rests between two
 // steps does not flip between them. On a new step the knob and the step's
-// mark swell once, a ring goes out from the knob, and the trackpad ticks;
-// the last step also sends a light along the track. Let go, the knob
-// springs onto its step. The arrow keys move one step.
+// mark swell once, the flame flares, and the trackpad ticks. Let go, the
+// knob springs onto its step. The arrow keys move one step.
 export function LevelSlider({ label, steps, value, onChange }: LevelSliderProps) {
   const labelId = useId()
   const root = useRef<HTMLDivElement>(null)
@@ -86,20 +81,10 @@ export function LevelSlider({ label, steps, value, onChange }: LevelSliderProps)
     root.current?.style.setProperty('--at', String(along))
   }
 
-  // How fast the track beats on a step. It is set when the step changes and
-  // not while the knob moves: a beat whose length changed at each move would
-  // start again at each move.
-  function pace(index: number) {
-    const seconds = PULSE_SLOW - (PULSE_SLOW - PULSE_FAST) * (index / Math.max(1, last))
-    root.current?.style.setProperty('--pulse', `${seconds.toFixed(2)}s`)
-    root.current?.style.setProperty('--level', String(index / Math.max(1, last)))
-  }
-
   // The knob stands on its step, unless a pointer holds it: then the pointer
   // says where it is.
   useLayoutEffect(() => {
     chosen.current = at
-    pace(at)
     if (holder.current || last < 1) return
     place(at / last)
   }, [at, last])
@@ -122,21 +107,8 @@ export function LevelSlider({ label, steps, value, onChange }: LevelSliderProps)
     box
       .querySelector('.level-slider-knob')
       ?.animate([{ scale: base }, { scale: base * 1.2 }, { scale: base }], { duration: 300, easing: SWELL })
-    box
-      .querySelector('.level-slider-ring')
-      ?.animate([{ opacity: 0.6, scale: 1 }, { opacity: 0, scale: 2.8 }], { duration: 620, easing: OUT })
     for (const mark of box.querySelectorAll(`[data-step="${index}"]`)) {
-      mark.animate([{ scale: 1 }, { scale: 2.6 }, { scale: 1 }], { duration: 300, easing: SWELL })
-    }
-    if (index === last) {
-      box.querySelector('.level-slider-shine')?.animate(
-        [
-          { opacity: 0, translate: '-120% 0' },
-          { opacity: 0.55, offset: 0.3 },
-          { opacity: 0, translate: '420% 0' },
-        ],
-        { duration: 720, easing: 'ease-out' },
-      )
+      mark.animate([{ scale: 1 }, { scale: 2.2 }, { scale: 1 }], { duration: 300, easing: SWELL })
     }
   }
 
@@ -145,7 +117,6 @@ export function LevelSlider({ label, steps, value, onChange }: LevelSliderProps)
     if (!step || index === chosen.current) return
     setTurn(index > chosen.current ? 'up' : 'down')
     chosen.current = index
-    pace(index)
     onChange(step.value)
     beat(index)
   }
@@ -226,55 +197,45 @@ export function LevelSlider({ label, steps, value, onChange }: LevelSliderProps)
   if (steps.length < 2) return null
   return (
     <div ref={root} className="level-slider">
-      <div className="level-slider-head">
-        <span id={labelId}>{label}</span>
-        {/* the name of a new step turns in from the side the knob came from */}
-        <span key={value} className="level-slider-value" data-turn={turn} aria-hidden="true">
-          {steps[at].label}
-        </span>
-      </div>
-      <div
-        ref={track}
-        className="level-slider-track"
-        role="slider"
-        tabIndex={0}
-        aria-labelledby={labelId}
-        aria-valuemin={0}
-        aria-valuemax={last}
-        aria-valuenow={at}
-        aria-valuetext={steps[at].label}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerEnd}
-        onPointerCancel={handlePointerEnd}
-        onLostPointerCapture={handlePointerEnd}
-        onBlur={release}
-        onKeyDown={handleKeyDown}
-      >
-        {/* the light the fill throws around the track: it beats, faster on a higher step */}
-        <span className="level-slider-aura" />
-        {steps.map((step, index) => (
-          <span
-            key={step.value}
-            className="level-slider-stop"
-            data-step={index}
-            style={{ '--stop': index / last } as CSSProperties}
-          />
-        ))}
-        {/* the fill carries its own marks, so a mark is pale exactly where the fill has reached it */}
-        <span className="level-slider-fill">
+      {/* a step named none asks for no thinking at all: the candle is out */}
+      <Lamp level={at / Math.max(1, last)} max={at === last} lit={steps[at].value !== 'none'} />
+      <div className="level-slider-body">
+        <div className="level-slider-head">
+          <span id={labelId}>{label}</span>
+          {/* the name of a new step turns in from the side the knob came from */}
+          <span key={value} className="level-slider-value" data-turn={turn} aria-hidden="true">
+            {steps[at].label}
+          </span>
+        </div>
+        <div
+          ref={track}
+          className="level-slider-track"
+          role="slider"
+          tabIndex={0}
+          aria-labelledby={labelId}
+          aria-valuemin={0}
+          aria-valuemax={last}
+          aria-valuenow={at}
+          aria-valuetext={steps[at].label}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerEnd}
+          onPointerCancel={handlePointerEnd}
+          onLostPointerCapture={handlePointerEnd}
+          onBlur={release}
+          onKeyDown={handleKeyDown}
+        >
           {steps.map((step, index) => (
             <span
               key={step.value}
               className="level-slider-stop"
               data-step={index}
+              data-passed={index <= at || undefined}
               style={{ '--stop': index / last } as CSSProperties}
             />
           ))}
-          <span className="level-slider-shine" />
-        </span>
-        <span className="level-slider-ring" />
-        <span className="level-slider-knob" />
+          <span className="level-slider-knob" />
+        </div>
       </div>
     </div>
   )
