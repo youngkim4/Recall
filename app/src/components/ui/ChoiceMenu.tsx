@@ -1,4 +1,4 @@
-import { useId, useState, type KeyboardEvent } from 'react'
+import { useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import type { PanelAlign } from '../../lib/anchor'
 import { stepIndex } from '../../lib/roving'
 import { usePanel } from '../../lib/usePanel'
@@ -23,23 +23,27 @@ type ChoiceMenuProps = {
   align?: PanelAlign
   // set where the label is already written beside the button; it is then only spoken
   quietLabel?: boolean
+  // a control of its own under the choices, about the choice in use: it stays
+  // in the panel, and Tab goes on to it
+  extra?: ReactNode
 }
 
 // A quiet button that names a setting and its value, and opens a short menu
 // of the choices: each with a line about what it means, and a check on the
 // one in use. The arrow keys move through it, Return chooses, Escape or a
 // click outside closes it and focus goes back to the button.
-export function ChoiceMenu({ label, value, choices, onChange, align = 'start', quietLabel }: ChoiceMenuProps) {
+export function ChoiceMenu({ label, value, choices, onChange, align = 'start', quietLabel, extra }: ChoiceMenuProps) {
   const id = useId()
   const [active, setActive] = useState(0)
+  const menu = useRef<HTMLUListElement>(null)
   const current = choices.find((choice) => choice.value === value)
-  const { control, panel, open, close, panelEvents } = usePanel<HTMLUListElement>({
+  const { control, panel, open, close, panelEvents } = usePanel<HTMLDivElement>({
     align,
     onToggle(opening) {
       if (!opening) return
       // each opening starts at the choice in use
       setActive(Math.max(0, choices.indexOf(current ?? choices[0])))
-      panel.current?.focus({ preventScroll: true })
+      menu.current?.focus({ preventScroll: true })
     },
   })
 
@@ -57,10 +61,19 @@ export function ChoiceMenu({ label, value, choices, onChange, align = 'start', q
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
       choose(choices[active])
-    } else if (event.key === 'Tab') {
-      // leaving the menu closes it; focus then moves on from the button
+    } else if (event.key === 'Tab' && !(extra && !event.shiftKey)) {
+      // leaving the menu closes it; focus then moves on from the button.
+      // With a control under the choices, Tab goes on to that control.
       close()
     }
+  }
+
+  // Shift+Tab from the control under the choices goes back to the choices,
+  // and not to the button behind the open panel
+  function backToChoices(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== 'Tab' || !event.shiftKey) return
+    event.preventDefault()
+    menu.current?.focus({ preventScroll: true })
   }
 
   return (
@@ -70,7 +83,7 @@ export function ChoiceMenu({ label, value, choices, onChange, align = 'start', q
         type="button"
         className="picker"
         popoverTarget={id}
-        aria-haspopup="menu"
+        aria-haspopup={extra ? 'dialog' : 'menu'}
         aria-expanded={open}
         aria-label={`${label}: ${current?.label ?? value}`}
       >
@@ -81,41 +94,54 @@ export function ChoiceMenu({ label, value, choices, onChange, align = 'start', q
         </span>
         <ChevronDownIcon />
       </button>
-      <ul
+      <div
         ref={panel}
         id={id}
         popover="auto"
-        className="popover choice-menu"
-        role="menu"
-        tabIndex={-1}
-        aria-label={label}
-        aria-activedescendant={choices[active] ? `${id}-${active}` : undefined}
+        className="popover choice-panel"
+        // with a control under the choices the panel is more than a menu
+        role={extra ? 'dialog' : undefined}
+        aria-label={extra ? label : undefined}
         {...panelEvents}
-        onKeyDown={handleKeyDown}
       >
-        {choices.map((choice, index) => (
-          <li
-            key={choice.value}
-            id={`${id}-${index}`}
-            className="choice"
-            role="menuitemradio"
-            aria-checked={choice.value === value}
-            data-active={index === active || undefined}
-            // the pointer and the arrow keys move the same highlight
-            onPointerMove={() => setActive(index)}
-            onClick={() => choose(choice)}
-          >
-            <span className="choice-main">
-              <span className="choice-title">
-                {choice.label}
-                {choice.meta ? <span className="choice-meta">{choice.meta}</span> : null}
+        <ul
+          ref={menu}
+          className="choice-menu"
+          role="menu"
+          tabIndex={-1}
+          aria-label={label}
+          aria-activedescendant={choices[active] ? `${id}-${active}` : undefined}
+          onKeyDown={handleKeyDown}
+        >
+          {choices.map((choice, index) => (
+            <li
+              key={choice.value}
+              id={`${id}-${index}`}
+              className="choice"
+              role="menuitemradio"
+              aria-checked={choice.value === value}
+              data-active={index === active || undefined}
+              // the pointer and the arrow keys move the same highlight
+              onPointerMove={() => setActive(index)}
+              onClick={() => choose(choice)}
+            >
+              <span className="choice-main">
+                <span className="choice-title">
+                  {choice.label}
+                  {choice.meta ? <span className="choice-meta">{choice.meta}</span> : null}
+                </span>
+                {choice.note ? <span className="choice-note">{choice.note}</span> : null}
               </span>
-              {choice.note ? <span className="choice-note">{choice.note}</span> : null}
-            </span>
-            {choice.value === value ? <CheckIcon /> : null}
-          </li>
-        ))}
-      </ul>
+              {choice.value === value ? <CheckIcon /> : null}
+            </li>
+          ))}
+        </ul>
+        {extra ? (
+          <div className="choice-extra" onKeyDown={backToChoices}>
+            {extra}
+          </div>
+        ) : null}
+      </div>
     </>
   )
 }

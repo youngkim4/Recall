@@ -2154,7 +2154,9 @@ def cached_messages_bundle(messages_path: Path) -> tuple[pd.DataFrame, pd.DataFr
 
 
 # a question that the request itself makes impossible: the answer is 400, not a fault of the provider
-ASK_REQUEST_FAULTS = frozenset({"empty_question", "question_too_long", "unknown_model", "model_not_offered"})
+ASK_REQUEST_FAULTS = frozenset(
+    {"empty_question", "question_too_long", "unknown_model", "model_not_offered", "reasoning_level"}
+)
 ASK_ID_CHARS = 80
 # the questions that are being answered now, by the id that the app gave each
 ASKING: dict[str, CancelToken] = {}
@@ -2168,6 +2170,8 @@ def ask_arguments(payload: dict) -> dict:
         "question": payload.get("question", ""),
         "contact": payload.get("contact", ""),
         "model": payload.get("model", ""),
+        # one of the reasoning levels of the model, or nothing for the effort of the registry
+        "reasoning_effort": payload.get("reasoningEffort", ""),
         "history": history if isinstance(history, list) else None,
         "use_ai": str(payload.get("ai", True)).lower() not in {"0", "false", "no", "off"},
     }
@@ -2219,6 +2223,7 @@ def answer_question(payload: dict) -> tuple[int, dict]:
                 archive=archive,
                 names=saved_names(),
                 use_ai=asked["use_ai"],
+                reasoning_effort=asked["reasoning_effort"],
             )
     except chat_service.ChatFailure as failure:
         said = {"error": str(failure), "code": failure.code}
@@ -2410,6 +2415,7 @@ class RecallHandler(BaseHTTPRequestHandler):
                     archive=archive,
                     names=saved_names(),
                     use_ai=asked["use_ai"],
+                    reasoning_effort=asked["reasoning_effort"],
                 )
                 try:
                     for event in events:

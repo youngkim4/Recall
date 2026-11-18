@@ -81,7 +81,7 @@ export function Composer({
           searchPlaceholder="Search conversations"
           emptyText="No conversations match"
         />
-        <QualityControl models={models} value={model} onChange={onModelChange} align="end" />
+        <QualityControl models={models} value={model} onChange={onModelChange} align="end" reasoning />
         {pending ? (
           <button type="button" className="send" aria-label="Stop the answer" onClick={onStop}>
             <CloseIcon />
