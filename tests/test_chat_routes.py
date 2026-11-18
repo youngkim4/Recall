@@ -142,6 +142,7 @@ def test_with_no_key_the_answer_is_one_plain_sentence_and_no_keyword_list(server
         ({"question": "x" * 8_001}, "question_too_long"),
         ({"question": QUESTION, "model": "gpt-5.5"}, "model_not_offered"),
         ({"question": QUESTION, "model": "no-such-model"}, "unknown_model"),
+        ({"question": QUESTION, "model": "gpt-6.1-sol", "reasoningEffort": "none"}, "reasoning_level"),
     ],
 )
 def test_a_question_that_cannot_be_asked_is_refused_with_a_code(server, archive_file, monkeypatch, body, code):
