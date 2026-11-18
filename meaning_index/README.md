@@ -176,7 +176,7 @@ Requests:
 
 Stop and progress:
 
-- `cancel` is a callable that returns a bool, an object with `is_set()`, or an object with `cancelled` (the `CancelToken` of `report_engine`). The build looks at it before each conversation and before each request.
+- `cancel` is a callable that returns a bool, an object with `is_set()`, or an object with `cancelled` (the `CancelToken` of `report_engine`). The build looks at it before each conversation, before each request, and before it writes the files.
 - A cancelled build raises `BuildCancelled`. Its `texts_embedded` and `tokens` say what the build paid for.
 - A build that stops keeps the work file. The next build with the same model and dimensions does not pay for those vectors again.
 - `progress` gets `BuildProgress(phase, done, total)`. The phases are `read` (conversations), `embed` (texts) and `write` (segments), in this order.
@@ -238,6 +238,7 @@ index.search(vector, *, conversations=None, since=None, until=None, limit=20) ->
 ## Limits
 
 - The index does not follow the archive by itself. Run a build after a pull.
+- The index gives no way from one message to its segment. A caller that needs it compares the conversation and the time of the message with `first_timestamp` and `last_timestamp`.
 - A build reads every conversation again. It embeds only what is new.
 - A segment is cut on local time. The gap of 120 minutes is measured on local clock times: on a day with a clock change it is one hour off.
 - The first line of a text is a local day. When the time zone of the Mac changes, the day of some segments changes, and the next build embeds those segments again.
