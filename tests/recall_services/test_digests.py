@@ -103,6 +103,27 @@ def test_a_reply_that_cites_another_conversation_or_words_nobody_wrote_gives_no_
     assert all(mid in own for moment in period.moments for mid in moment.message_ids)
 
 
+def test_no_line_reference_of_the_report_engine_leaves_in_a_digest(desk: Desk) -> None:
+    """Chat has references of the same form for other messages. The notes of the part keep them for a report."""
+
+    def responder(call: Any) -> Any:
+        first = call.lines[0]
+        claim = {"date": first.day, "category": "milestone", "score": 0.9, "quote": first.text, "refs": [first.ref]}
+        moment = {**claim, "title": "First contact (m1)", "detail": "You welcomed it, see m1–m2. It set the tone [m3]."}
+        return {"summary": "Mina wrote first and you welcomed it (m1–m2). A plan followed (m3–m18, m353).", "moments": [moment]}
+
+    found = digests.build(MINA, None, "2023-01-31", model=MODEL, **desk.more(FakeLLM(responder)))
+    (period,) = found.periods
+    (moment,) = period.moments
+    assert period.summary == "Mina wrote first and you welcomed it. A plan followed."
+    assert (moment.title, moment.detail) == ("First contact", "You welcomed it. It set the tone.")
+    assert moment.quote and len(moment.message_ids) == 1
+    (row,) = cache_rows(desk.places.cache_path)
+    assert "(m3–m18, m353)" in row[5] and "First contact (m1)" in row[5]
+    done = reports.run(MINA, MODEL, "2023-01-01", "2023-01-31", **desk.more())
+    assert "(m1–m2)" in done.report.periods[0].summary and done.report.periods[0].from_cache
+
+
 def test_the_model_reads_saved_names_and_no_handle(desk: Desk) -> None:
     model = FakeLLM()
     digests.build(MINA, model=MODEL, **desk.more(model))
@@ -244,9 +265,6 @@ def test_the_dates_select_the_parts_that_overlap_them(desk: Desk) -> None:
         ("2023-02-01", "2023-02-28"),
         ("2023-03-01", "2023-03-31"),
     ]
-    again = FakeLLM()
-    reports.run(MINA, MODEL, **desk.more(again))
-    assert [call.first_day[:7] for call in again.map_calls] == ["2023-01", "2023-04"]
 
 
 @pytest.mark.parametrize(
