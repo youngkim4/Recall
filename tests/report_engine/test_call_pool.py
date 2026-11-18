@@ -240,3 +240,25 @@ def test_a_run_that_is_cancelled_while_it_waits_for_a_slot_sends_nothing() -> No
     joined(threads)
     assert isinstance(later[0], ReportCancelled) and len(gate.llm.calls) == 1
     assert not isinstance(ended[0], Exception)
+
+
+def test_a_call_that_another_call_of_the_run_passed_while_it_waited_is_refused_after_the_wait() -> None:
+    """The check before the wait lets both through; the count at the send refuses the second."""
+    ticks = FakeTime()
+    pool = CallPool(max_parallel=2, tokens_per_minute=1_000, clock=ticks.clock)
+    filler = caller(FakeLLM(lambda call: completed(call, default_reply(call), usage=LLMUsage(input_tokens=500))), pool,
+                    runtime=runtime(ticks))  # fmt: skip
+    send(filler, tokens=490, output=10)
+    llm = FakeLLM()
+    inner: list[Any] = []
+
+    def meanwhile(event: ProgressEvent) -> None:
+        if event == WAITING and not inner:
+            inner.append(send(shared, tokens=50, output=10))  # fits beside the filler
+
+    shared = caller(llm, pool, max_calls=1, runtime=runtime(ticks), emit=meanwhile)
+    with pytest.raises(CallLimitReached):
+        send(shared, tokens=800, output=100)
+    assert len(inner) == 1 and len(llm.calls) == 1 and shared.usage.calls == 1
+    # the refused call gave its room back: a call of 900 fits in the next window
+    send(caller(FakeLLM(), pool, runtime=runtime(ticks)), tokens=850, output=50)

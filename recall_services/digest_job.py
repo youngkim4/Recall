@@ -1,9 +1,12 @@
 """The `digest` job: one conversation read for chat, outside a question.
 
-A question reads at most a few parts of a conversation (`DIGEST_PARTS_LIMIT`
-in `memory.py`). A longer conversation is read here, by a job. It uses the
-model of a digest, so a later question finds the parts in the notes. It has
-no limit of parts, and the model port of a report.
+A question reads at most `DIGEST_PARTS_LIMIT` parts that are not read yet
+(`memory.py`). The `memory` job (`memory_prep.py`) reads every conversation
+of the memory ahead of time. This job reads one conversation, with optional
+days, when the app asks for it: for example a conversation that is too long
+to read inside a question. It uses the model of a digest, so the parts it
+reads are in the notes for each later question. It has no limit of parts,
+and the model port of a report.
 
 `run` gives the counts and the cost of the run. A listener gets the progress
 in the shape of a report job: `{"progress": {"step", "of", "label"}}`, with a

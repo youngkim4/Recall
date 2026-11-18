@@ -276,3 +276,21 @@ def test_the_job_that_the_server_starts_holds_up_the_next_import(archive_file, m
     finally:
         let_go.set()
     assert started()["status"] == "completed"
+
+
+def test_a_reading_that_is_refused_after_the_import_changes_nothing(archive_file, model, messages_home, monkeypatch, capfd):
+    """Another import or a reading started meanwhile: the server starts nothing and says nothing."""
+    assert read_memory(archive_file)["status"] == "completed"
+    refused = []
+
+    def busy(action, payload):
+        refused.append(action)
+        raise ui_server.JobRefused(MEMORY_IS_READ)
+
+    write_database(messages_home / "chat.db", [*FIRST, *MORE])
+    real = ui_server.create_job
+    monkeypatch.setattr(ui_server, "create_job", lambda action, payload: busy(action, payload) if action == "memory" else real(action, payload))
+    job = run("export", {"messagesPath": archive_file})
+    assert (job["status"], job["error"]) == ("completed", None)
+    assert refused == ["memory"] and memory_jobs() == []
+    assert "[memory]" not in capfd.readouterr().err

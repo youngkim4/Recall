@@ -324,3 +324,16 @@ def test_a_listener_that_fails_does_not_stop_the_job(desk: Desk) -> None:
 
     found = memory_prep.run(on_progress=broken, **desk.more())
     assert found["periodsBuilt"] == 4
+
+
+def test_an_error_that_nobody_planned_for_stops_the_pool_and_fails_the_job(desk: Desk, monkeypatch: pytest.MonkeyPatch) -> None:
+    pools: list[Any] = []
+
+    def broken(*_args: Any, pool: Any = None, **_more: Any) -> Any:
+        pools.append(pool)
+        raise RuntimeError("a fault")
+
+    monkeypatch.setattr(digests, "build", broken)
+    with pytest.raises(RuntimeError, match="a fault"):
+        run(desk)
+    assert pools and pools[0].stopped
