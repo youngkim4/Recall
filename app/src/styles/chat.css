@@ -2,8 +2,64 @@
    them, and in a wide window the messages an answer cites on the right. */
 
 @layer views {
-  .split.chat {
-    --list-w: 16.25rem;
+  /* The list of chats is as wide as it was dragged to (App keeps the
+     width). Folded away, its column closes over 300ms, as the rail does,
+     while the chat moves over and takes the whole width; a button in the
+     chat's corner brings the list back. What is in the list keeps its own
+     width the whole time, so no line in it is set twice on the way. In a
+     narrow window one pane shows at a time (shell.css) and none of this is
+     used. */
+  @container workspace (min-width: 40.0625rem) {
+    .split.chat {
+      --list-now: var(--list-w);
+      --edge-now: 1px;
+      grid-template-columns: var(--list-now) var(--edge-now) minmax(0, 1fr);
+      transition: grid-template-columns var(--dur-long) var(--ease-out);
+    }
+
+    .split.chat[data-cites] {
+      grid-template-columns: var(--list-now) var(--edge-now) minmax(0, 1fr) 1px auto;
+    }
+
+    .split.chat[data-cites='closed'] {
+      grid-template-columns: var(--list-now) var(--edge-now) minmax(0, 1fr) 0px auto;
+    }
+
+    .split.chat[data-list='closed'] {
+      --list-now: 0px;
+      --edge-now: 0px;
+    }
+
+    .split.chat > .chat-list {
+      overflow: hidden;
+    }
+
+    .split.chat > .chat-list > * {
+      min-width: var(--list-w);
+    }
+  }
+
+  /* "New chat" takes the row; the button that folds the list stands at its end */
+  .chat-list-head {
+    display: flex;
+    align-items: center;
+    gap: var(--s-1);
+  }
+
+  .chat-list-head > .row {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .chat-pane {
+    position: relative;
+  }
+
+  .chat-list-open {
+    position: absolute;
+    top: var(--s-2);
+    left: var(--s-2);
+    z-index: 1;
   }
 
   /* ---- saved chats ---- */
@@ -220,6 +276,34 @@
     grid-template-columns: var(--list-w) 1px minmax(0, 1fr) 1px auto;
   }
 
+  /* put away, the cited messages close toward the right edge the way they
+     came in, and their edge goes with them; the name of an answer's
+     citations under it brings them back */
+  .split.chat[data-cites='closed'] > .chat-cites {
+    width: 0;
+    opacity: 0;
+  }
+
+  /* the name of the list keeps the line; the control that puts it away stands at its end */
+  .chat-cites-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-2);
+    padding-block: var(--s-3) var(--s-2);
+  }
+
+  /* the button that brings the list back fades in once the list has gone */
+  .chat-list-open {
+    animation: list-open-in var(--dur-short) ease var(--dur-long) backwards;
+  }
+
+  @keyframes list-open-in {
+    from {
+      opacity: 0;
+    }
+  }
+
   /* with the pane beside it the thread takes a wider column of what is left */
   .split.chat[data-cites] .chat-pane {
     --chat-w: 46rem;
@@ -229,7 +313,6 @@
      the thread moves over. What is in it keeps its full width the whole
      time, so no line in it is set twice on the way. */
   .chat-cites {
-    --cites-w: clamp(20rem, 30cqi, 26rem);
     width: var(--cites-w);
     overflow: hidden;
     transition:

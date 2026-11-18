@@ -3,7 +3,7 @@
 // convenience; the app runs the same without it.
 
 import type { Defaults, RuntimePaths } from '../types'
-import { LIST_WIDTH } from './layout.ts'
+import { CHAT_LIST_WIDTH, CITES_WIDTH, LIST_WIDTH } from './layout.ts'
 
 const MODEL_KEY = 'recall.selectedModel'
 const PATHS_KEY = 'recall.runtimePaths.v1'
@@ -17,6 +17,12 @@ export type LayoutState = {
   listWidth: number
   reportListWidth: number
   sidebarCollapsed: boolean
+  chatListWidth: number
+  // the list of saved chats is folded away, and the chat takes its room
+  chatListClosed: boolean
+  citesWidth: number
+  // the cited messages beside the chat are put away until asked for again
+  citesClosed: boolean
 }
 
 export const emptyPaths: RuntimePaths = { messagesPath: '', outDir: '' }
@@ -26,6 +32,10 @@ const defaultLayout: LayoutState = {
   listWidth: LIST_WIDTH.initial,
   reportListWidth: REPORT_LIST_INITIAL,
   sidebarCollapsed: false,
+  chatListWidth: CHAT_LIST_WIDTH.initial,
+  chatListClosed: false,
+  citesWidth: CITES_WIDTH.initial,
+  citesClosed: false,
 }
 
 function read<Value>(key: string): Partial<Value> | null {
@@ -96,6 +106,10 @@ export function readStoredLayout(): LayoutState {
     listWidth: within(stored.listWidth, LIST_WIDTH.min, LIST_WIDTH.max, defaultLayout.listWidth),
     reportListWidth: within(stored.reportListWidth, LIST_WIDTH.min, LIST_WIDTH.max, defaultLayout.reportListWidth),
     sidebarCollapsed: stored.sidebarCollapsed === true,
+    chatListWidth: within(stored.chatListWidth, CHAT_LIST_WIDTH.min, CHAT_LIST_WIDTH.max, defaultLayout.chatListWidth),
+    chatListClosed: stored.chatListClosed === true,
+    citesWidth: within(stored.citesWidth, CITES_WIDTH.min, CITES_WIDTH.max, defaultLayout.citesWidth),
+    citesClosed: stored.citesClosed === true,
   }
 }
 

@@ -12,7 +12,16 @@ import {
 import { fakeStorage, noPage, pageWithNoStorage, pageWithStorage } from './fakeStorage.test.ts'
 
 const LAYOUT_KEY = 'recall.layout.v2'
-const DEFAULT_LAYOUT = { sidebarWidth: 236, listWidth: 300, reportListWidth: 318, sidebarCollapsed: false }
+const DEFAULT_LAYOUT = {
+  sidebarWidth: 236,
+  listWidth: 300,
+  reportListWidth: 318,
+  sidebarCollapsed: false,
+  chatListWidth: 260,
+  chatListClosed: false,
+  citesWidth: 360,
+  citesClosed: false,
+}
 
 const withLayout = (stored: unknown) => {
   pageWithStorage(fakeStorage({ [LAYOUT_KEY]: JSON.stringify(stored) }))
@@ -26,7 +35,16 @@ test('with nothing remembered the panes take their first sizes', () => {
 })
 
 test('sizes that were remembered come back', () => {
-  const layout = { sidebarWidth: 260, listWidth: 340, reportListWidth: 400, sidebarCollapsed: true }
+  const layout = {
+    sidebarWidth: 260,
+    listWidth: 340,
+    reportListWidth: 400,
+    sidebarCollapsed: true,
+    chatListWidth: 300,
+    chatListClosed: true,
+    citesWidth: 420,
+    citesClosed: true,
+  }
   pageWithStorage(fakeStorage())
 
   storeLayout(layout)
@@ -35,12 +53,17 @@ test('sizes that were remembered come back', () => {
 })
 
 test('a size outside what a pane can be dragged to is held to the nearest end', () => {
-  assert.deepEqual(withLayout({ sidebarWidth: 10, listWidth: 9999, reportListWidth: 100, sidebarCollapsed: false }), {
+  assert.deepEqual(withLayout({ sidebarWidth: 10, listWidth: 9999, reportListWidth: 100, sidebarCollapsed: false, chatListWidth: 50 }), {
     sidebarWidth: 220,
     listWidth: 480,
     reportListWidth: 240,
     sidebarCollapsed: false,
+    chatListWidth: 200,
+    chatListClosed: false,
+    citesWidth: 360,
+    citesClosed: false,
   })
+  assert.equal(withLayout({ chatListWidth: 9999 }).chatListWidth, 420)
 })
 
 test('a size that is missing or is not a number is the first size, not the smallest', () => {
@@ -117,4 +140,17 @@ test('where nothing can be remembered the app starts from its first settings', (
   starts()
   noPage()
   starts()
+})
+
+test('the list of chats is closed only when that is what was remembered', () => {
+  assert.equal(withLayout({ chatListClosed: true }).chatListClosed, true)
+  assert.equal(withLayout({ chatListClosed: 'true' }).chatListClosed, false)
+  assert.equal(withLayout({}).chatListClosed, false)
+})
+
+test('the width of the cited messages is held to what it can be dragged to, and it is put away only when remembered so', () => {
+  assert.equal(withLayout({ citesWidth: 100 }).citesWidth, 280)
+  assert.equal(withLayout({ citesWidth: 9999 }).citesWidth, 560)
+  assert.equal(withLayout({ citesClosed: true }).citesClosed, true)
+  assert.equal(withLayout({ citesClosed: 1 }).citesClosed, false)
 })

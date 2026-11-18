@@ -620,6 +620,14 @@ function App() {
             defaults={effectiveDefaults}
             model={model}
             contacts={contacts}
+            listWidth={layout.chatListWidth}
+            onListWidthChange={(chatListWidth) => changeLayout({ chatListWidth })}
+            listClosed={layout.chatListClosed}
+            onListClosedChange={(chatListClosed) => changeLayout({ chatListClosed })}
+            citesWidth={layout.citesWidth}
+            onCitesWidthChange={(citesWidth) => changeLayout({ citesWidth })}
+            citesClosed={layout.citesClosed}
+            onCitesClosedChange={(citesClosed) => changeLayout({ citesClosed })}
             onModelChange={handleModelChange}
             onSelectContact={selectContactForAnalyze}
             onOpenSetup={() => void openSetup()}

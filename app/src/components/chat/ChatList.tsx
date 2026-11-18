@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import { CloseIcon, PlusIcon } from '../Icons'
+import { CloseIcon, PlusIcon, SidebarIcon } from '../Icons'
 import { chatStore, type SavedChat } from '../../lib/chatStore'
 import { relativeTime } from '../../lib/format'
 import { Truncate } from '../ui/Truncate'
@@ -14,9 +14,13 @@ type ChatListProps = {
   activeChatId: string | null
   onOpen: (id: string) => void
   onNew: () => void
+  // folds the list away; the chat takes its room
+  onClose: () => void
+  // folded away: still on the page, while its column closes, but out of reach
+  closed: boolean
 }
 
-export function ChatList({ chats, activeChatId, onOpen, onNew }: ChatListProps) {
+export function ChatList({ chats, activeChatId, onOpen, onNew, onClose, closed }: ChatListProps) {
   const [removed, setRemoved] = useState<{ chat: SavedChat; index: number } | null>(null)
   // the bar leaves with a short fade; it is taken away when that has finished
   const [leaving, setLeaving] = useState(false)
@@ -56,11 +60,14 @@ export function ChatList({ chats, activeChatId, onOpen, onNew }: ChatListProps) 
   }
 
   return (
-    <aside className="pane chat-list appear" aria-label="Saved chats">
-      <div className="pane-head pane-actions">
+    <aside className="pane chat-list appear" aria-label="Saved chats" inert={closed}>
+      <div className="pane-head pane-actions chat-list-head">
         <button ref={newChat} type="button" className="row" onClick={onNew}>
           <PlusIcon />
           New chat
+        </button>
+        <button type="button" className="icon-btn" aria-label="Hide chats" title="Hide chats" onClick={onClose}>
+          <SidebarIcon />
         </button>
       </div>
 

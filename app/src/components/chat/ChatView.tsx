@@ -1,13 +1,15 @@
-import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { bookmarkId } from '../../lib/bookmarks'
 import { chatStore, type ChatMessage } from '../../lib/chatStore'
 import { contactTitle, conversationName } from '../../lib/conversations'
+import { CHAT_LIST_WIDTH, CITES_WIDTH } from '../../lib/layout'
 import { dayOfMessage } from '../../lib/dayParts'
 import { scopeChoices } from '../../lib/scope'
 import { useMediaQuery } from '../../lib/useMediaQuery'
 import { useReasoning } from '../../lib/useReasoning'
 import type { Contact, Defaults, SearchResult } from '../../types'
-import { ChevronLeftIcon } from '../Icons'
+import { ChevronLeftIcon, SidebarIcon } from '../Icons'
+import { ResizeHandle } from '../ResizeHandle'
 import { DaySheet } from '../ui/DaySheet'
 import { ChatCites } from './ChatCites'
 import { ChatList } from './ChatList'
@@ -22,6 +24,16 @@ type ChatViewProps = {
   onSelectContact: (contact: Contact) => void
   // opens the guide that builds the archive
   onOpenSetup: () => void
+  // how wide the list of saved chats is, and whether it is folded away
+  listWidth: number
+  onListWidthChange: (width: number) => void
+  listClosed: boolean
+  onListClosedChange: (closed: boolean) => void
+  // how wide the cited messages beside the chat are, and whether they are put away
+  citesWidth: number
+  onCitesWidthChange: (width: number) => void
+  citesClosed: boolean
+  onCitesClosedChange: (closed: boolean) => void
 }
 
 // a window this wide has room for the cited messages beside the thread
@@ -43,6 +55,14 @@ export function ChatView({
   onModelChange,
   onSelectContact,
   onOpenSetup,
+  listWidth,
+  onListWidthChange,
+  listClosed,
+  onListClosedChange,
+  citesWidth,
+  onCitesWidthChange,
+  citesClosed,
+  onCitesClosedChange,
 }: ChatViewProps) {
   const { chats, activeChatId, pending, errors, status } = useSyncExternalStore(
     chatStore.subscribe,
@@ -82,7 +102,8 @@ export function ChatView({
   // The reader's choice of another answer holds until a new one arrives.
   const citing = messages.filter((message) => message.role === 'assistant' && citedBy(message).length > 0)
   const asked = chosen && chosen.among === citing.length ? citing.find((message) => message.id === chosen.id) : undefined
-  const beside = roomBeside ? (asked ?? citing[citing.length - 1] ?? null) : null
+  // the answer whose cited messages stand beside the chat; they stay on the page when put away, so their pane can close
+  const citedHere = roomBeside ? (asked ?? citing[citing.length - 1] ?? null) : null
   const openedContact = opened ? contacts.find((contact) => contact.chat_id === opened.chatId) : undefined
   const openedDay = opened ? dayOfMessage(opened.timestamp) : null
 
@@ -155,12 +176,52 @@ export function ChatView({
 
   return (
     <>
-      <div className="split chat" data-pane={pane} data-cites={beside ? '' : undefined}>
-        <ChatList chats={chats} activeChatId={activeChatId} onOpen={openChat} onNew={newChat} />
-        <div className="divider" />
+      <div
+        className="split chat"
+        data-pane={pane}
+        data-cites={citedHere ? (citesClosed ? 'closed' : '') : undefined}
+        data-list={listClosed ? 'closed' : undefined}
+        style={{ '--list-w': `${listWidth}px`, '--cites-w': `${citesWidth}px` } as CSSProperties}
+      >
+        {/* folded away the list stays on the page, out of reach, so its column can close over it */}
+        <ChatList
+          chats={chats}
+          activeChatId={activeChatId}
+          onOpen={openChat}
+          onNew={newChat}
+          onClose={() => onListClosedChange(true)}
+          closed={listClosed}
+        />
+        <ResizeHandle
+          label="Resize the list of chats"
+          value={listWidth}
+          min={CHAT_LIST_WIDTH.min}
+          max={CHAT_LIST_WIDTH.max}
+          onChange={onListWidthChange}
+          disabled={listClosed}
+        />
 
         <section className={`pane chat-pane${isEmpty ? ' is-empty' : ''}`} aria-label="Chat">
-          <button type="button" className="pane-back btn quiet" onClick={() => setPane('list')}>
+          {/* the list folded away comes back from the corner it went to */}
+          {listClosed ? (
+            <button
+              type="button"
+              className="icon-btn chat-list-open"
+              aria-label="Show chats"
+              title="Show chats"
+              onClick={() => onListClosedChange(false)}
+            >
+              <SidebarIcon />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="pane-back btn quiet"
+            onClick={() => {
+              onListClosedChange(false)
+              setPane('list')
+            }}
+          >
             <ChevronLeftIcon />
             Chats
           </button>
@@ -176,8 +237,11 @@ export function ChatView({
                 openedAt={openedAt}
                 waiting={isPending && !isStreaming}
                 waitingStatus={pendingStatus}
-                beside={beside ? { paneId: citesId, answerId: beside.id } : null}
-                onShowCited={(id) => setChosen({ id, among: citing.length })}
+                beside={citedHere ? { paneId: citesId, answerId: citedHere.id, open: !citesClosed } : null}
+                onShowCited={(id) => {
+                  setChosen({ id, among: citing.length })
+                  onCitesClosedChange(false)
+                }}
                 openKey={opened ? bookmarkId(opened) : ''}
                 onOpenCitation={openCited}
               />
@@ -230,15 +294,25 @@ export function ChatView({
           ) : null}
         </section>
 
-        {beside ? (
+        {citedHere ? (
           <>
-            <div className="divider" />
+            <ResizeHandle
+              label="Resize the cited messages"
+              value={citesWidth}
+              min={CITES_WIDTH.min}
+              max={CITES_WIDTH.max}
+              onChange={onCitesWidthChange}
+              disabled={citesClosed}
+              sizesRight
+            />
             <ChatCites
               id={citesId}
-              answerId={beside.id}
-              citations={citedBy(beside)}
+              answerId={citedHere.id}
+              citations={citedBy(citedHere)}
               openKey={opened ? bookmarkId(opened) : ''}
               onOpen={openCited}
+              closed={citesClosed}
+              onClose={() => onCitesClosedChange(true)}
             />
           </>
         ) : null}

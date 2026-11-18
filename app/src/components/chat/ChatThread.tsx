@@ -15,9 +15,10 @@ type ChatThreadProps = {
   waiting: boolean
   waitingStatus: string
   // set where the cited messages stand in a pane beside the thread: the pane's
-  // id, and the answer whose messages it shows. Null where each answer keeps
-  // its own under it.
-  beside: { paneId: string; answerId: string } | null
+  // id, the answer whose messages it shows, and whether the pane is open (put
+  // away, the control under an answer brings it back). Null where each
+  // answer keeps its own under it.
+  beside: { paneId: string; answerId: string; open: boolean } | null
   onShowCited: (answerId: string) => void
   // the cited message whose day is open, as bookmarkId gives it; '' for none
   openKey: string
@@ -72,7 +73,7 @@ export function ChatThread({
               <button
                 type="button"
                 className="cites-show"
-                aria-pressed={message.id === beside.answerId}
+                aria-pressed={beside.open && message.id === beside.answerId}
                 aria-controls={beside.paneId}
                 onClick={() => onShowCited(message.id)}
               >
