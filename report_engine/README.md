@@ -333,6 +333,7 @@ Period results stay in the cache. The next run does not pay for them again.
 ## Cancel and progress
 
 `CancelToken.cancel()` stops the run before the next model call. A call that is in progress completes first.
+`CallPool.stop()` does the same for every run of the pool (see "Several conversations at once").
 
 `on_progress` gets a `ProgressEvent` with `step`, `state`, `period`, `index` and `total`.
 
@@ -355,7 +356,7 @@ This count is 1.0 to 1.5 times the `o200k_base` count on chat text in the langua
 The engine does not load a tokenizer at import time.
 
 Before each call the engine reserves the input estimate plus the output limit in a 60-second window.
-It waits when the window is full. After the call it replaces the reserve with the real usage.
+It waits when the window is full. Runs that share a `CallPool` share one window. After the call it replaces the reserve with the real usage.
 Retries inside the model port are counted after the call, at the time of the last send.
 
 ## Estimate
@@ -481,6 +482,27 @@ Before the first call a digest raises the errors of a report: `EmptyConversation
 A digest has no list of warnings. The log (`report_engine.chat_digest`) gets the counts of the checks. No log line and no error holds text of a message, a name or a handle.
 
 `recall_services/digests.py` wires a digest for the app as `recall_services/reports.py` wires a report.
+
+### Several conversations at once
+
+The parts of one conversation are read one at a time. The prompt of a part holds the notes of the parts before it (`carry_over`, in `map_step.py`): the newest notes that fit `carry_over_token_budget`, and a note is at most 80 words. So a part needs the reply of the part just before it, and two parts of one conversation can not be sent together without other prompts. A part whose earlier parts are all in the cache is sent at once.
+
+Conversations do not wait for each other. To read several at once:
+
+1. Make one `CallPool(max_parallel=N, tokens_per_minute=..., clock=...)`.
+2. Run one `conversation_digest` in each thread, with `pool=` that pool. `run_in_parallel(tasks, max_parallel=N, stop=...)` runs the tasks N at a time and gives their outcomes in the order of the tasks.
+
+What the pool does:
+
+- At most N requests are in flight at one time, over all the runs of the pool.
+- The runs share one tokens-per-minute budget. A run waits for room in it as a run alone waits for its own (`waiting` events).
+- `pool.stop()` stops each run before its next request (`ReportCancelled`). The requests in flight end, and their results go to the cache.
+- `max_new_periods` stays the limit of each run. A request counts when it is sent, under a lock, and the request that would pass the limit is refused before it is sent. This holds also when threads share one run.
+
+A run with no pool has a pool of its own with one slot: a report and a digest alone send as before.
+The results, the cache keys, the notes and the checks of a digest are the same with a pool and without one (`tests/report_engine/test_chat_digest_parallel.py`).
+`on_progress` is called in the thread of each run. A caller that gives one function to several runs makes it safe for threads.
+Threads that open a new cache file at once each open it: the first opening in a process makes the file and its table, one thread at a time.
 
 ## Store
 

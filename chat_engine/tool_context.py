@@ -7,7 +7,7 @@ days only through `conversations()` and `days()`, so it cannot widen them.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from .cancel import CancelToken
 from .directory import Directory
@@ -36,6 +36,21 @@ class ToolOutcome:
     ok: bool = True
 
 
+Report = Callable[[object], None]
+
+
+@dataclass(frozen=True)
+class Fetch:
+    """Slow work of a lookup: a call to a port that touches nothing of the engine. The turn runs it beside the stream.
+
+    work: does the work. It gives each raw report of progress to the function it gets, from any thread.
+    event: one raw report as an event of the stream, or None to drop it. The turn calls it on its own thread.
+    """
+
+    work: Callable[[Report], None]
+    event: Callable[[object], Optional[dict[str, Any]]]
+
+
 @dataclass(frozen=True)
 class Prepared:
     """A checked tool call: a status line to show, and the lookup to run.
@@ -45,6 +60,9 @@ class Prepared:
     repeated: the question already ran this lookup, so it is not run again.
     answers_repeats: the tool itself knows what a repeat of this call gets, so
     the turn sends a call with the same arguments to the tool again.
+    fetch: slow work that the turn runs before `run`, beside the stream, so
+    its progress reaches the reader. `run` does the work itself when nobody
+    ran `fetch`.
     """
 
     status: str
@@ -52,6 +70,7 @@ class Prepared:
     own_budget: Optional[int] = None
     repeated: bool = False
     answers_repeats: bool = False
+    fetch: Optional[Fetch] = None
 
 
 @dataclass(frozen=True)
@@ -67,7 +86,7 @@ class Memory:
     digest_tokens: int = 24_000
     digest_usd_limit: float = 0.5
     cancel: CancelToken = field(default_factory=CancelToken)
-    digest_parts_limit: int = 2  # the most periods not yet read that one digest reads inside a question
+    digest_parts_limit: int = 4  # the most periods not yet read that one digest reads inside a question
 
 
 def month_year(timestamp: str) -> str:
@@ -101,7 +120,8 @@ class ToolContext:
         self.memory = memory or Memory()
         # the digests of this question that gave an answer: "shown" or "failed"
         self.digests_asked: dict[tuple[str, Optional[str], Optional[str]], str] = {}
-        self.digests_long: dict[tuple[str, Optional[str], Optional[str]], ToolOutcome] = {}  # the line each got
+        # the digests too long to read inside this question, and the line each got
+        self.digests_long: dict[tuple[str, Optional[str], Optional[str]], ToolOutcome] = {}
         self.digests_built = 0
         self.digest_estimates = 0
         self.digest_usd = 0.0  # what the digests of this question cost, as far as the source said

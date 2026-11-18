@@ -94,6 +94,44 @@ def test_the_answer_without_a_stream_is_the_same_payload(server, archive_file, m
     assert payload["answer"] == "Someone in the group wrote it [1]." and payload["question"] == QUESTION
 
 
+def digest_of_the_garden(monkeypatch, parts):
+    """Chat gets a scripted digest source; the model asks for the story of the garden, then answers."""
+    from chat_engine.fake_digests import FakeDigests, period
+    from chat_engine.fake_llm import call
+    from recall_services import memory
+
+    story = [period(f"P{n}", f"2024-04-0{n + 1}", f"2024-04-0{n + 1}", 3, f"Part {n}.") for n in range(parts)]
+    digests = FakeDigests({world.GARDEN: story}, usd=0.01)
+    monkeypatch.setattr(memory, "ports", lambda _archive, _names: {"meaning": None, "digests": digests})
+    scripted(monkeypatch, [call("conversation_digest", "d1", conversation=world.GARDEN_TITLE)], say("They mended it."))
+    return digests
+
+
+def test_the_stream_passes_the_progress_of_a_digest_to_the_app(server, archive_file, monkeypatch):
+    digest_of_the_garden(monkeypatch, 2)
+    events = stream(server, {"messagesPath": archive_file, "question": QUESTION, "contact": world.GARDEN})
+    told = [event for event in events if event["type"] == "progress"]
+    assert [(event["part"], event["of"], event["label"], event["state"]) for event in told] == [
+        (1, 2, "P0", "start"), (1, 2, "P0", "done"), (2, 2, "P1", "start"), (2, 2, "P1", "done"),
+    ]
+    assert all(event["tool"] == "conversation_digest" and event["conversation"] for event in told)
+    assert events[-1]["type"] == "done" and events[-1]["payload"]["memory"] == {"notReady": []}
+    assert not [job for job in ui_server.list_jobs() if job["action"] == "digest"]  # a question starts no job
+
+
+def test_the_answer_without_a_stream_has_no_progress_and_names_what_is_not_read(server, archive_file, monkeypatch):
+    from recall_services import memory
+
+    digests = digest_of_the_garden(monkeypatch, 3)
+    monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 2)
+    body = {"messagesPath": archive_file, "question": QUESTION, "contact": world.GARDEN}
+    status, payload = post(server, "/api/ask", body)
+    assert status == 200 and payload["answer"] == "They mended it." and "type" not in payload
+    assert payload["memory"] == {"notReady": [world.GARDEN]}
+    assert [name for name, _ in digests.calls] == ["estimate"]
+    assert not [job for job in ui_server.list_jobs() if job["action"] == "digest"]
+
+
 def test_no_handle_that_is_not_saved_goes_to_the_model(server, archive_file, monkeypatch):
     llm = scripted(monkeypatch, cite(FLAT_TIRE))
     stream(server, {"messagesPath": archive_file, "question": QUESTION})
@@ -212,6 +250,75 @@ def test_a_reader_who_leaves_ends_the_model_call(server, archive_file, monkeypat
     while llm.closed_early == 0 and time.monotonic() < limit:
         time.sleep(0.02)
     assert (llm.closed_early, llm.finished, len(llm.requests)) == (1, 0, 1)
+
+
+PART_SECONDS = 0.4
+QUESTION_THREADS = ("chat-lookup", "chat-reader-watch")
+
+
+def question_threads():
+    return [thread.name for thread in threading.enumerate() if thread.name in QUESTION_THREADS]
+
+
+def test_a_reader_who_leaves_while_a_digest_is_read_pays_for_the_part_in_flight_at_most(
+    server, archive_file, monkeypatch
+):
+    """The close is seen without a write: no part starts after the reader left, and no thread of the question stays."""
+    from chat_engine.fake_digests import FakeDigests, period
+    from chat_engine.fake_llm import call
+    from recall_services import memory
+
+    started = []
+
+    def per_part(number):
+        started.append((number, time.monotonic()))
+        time.sleep(PART_SECONDS)
+
+    story = [period(f"P{n}", f"2024-04-0{n + 1}", f"2024-04-0{n + 1}", 3, f"Part {n}.") for n in range(4)]
+    digests = FakeDigests({world.GARDEN: story}, usd=0.01, per_part=per_part)
+    monkeypatch.setattr(memory, "ports", lambda _archive, _names: {"meaning": None, "digests": digests})
+    scripted(monkeypatch, [call("conversation_digest", "d1", conversation=world.GARDEN_TITLE)], say("ok"))
+    body = json.dumps({"messagesPath": archive_file, "question": QUESTION, "contact": world.GARDEN}).encode()
+    reader = socket.create_connection(("127.0.0.1", server.server_port), timeout=5)
+    reader.sendall(
+        b"POST /api/ask/stream HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
+    )
+    seen = b""
+    while b'"state": "start"' not in seen:
+        seen += reader.recv(65536)
+    reader.close()
+    left = time.monotonic()
+    limit = left + PART_SECONDS * 4 + 3
+    while (question_threads() or not started) and time.monotonic() < limit:
+        time.sleep(0.02)
+    time.sleep(PART_SECONDS)  # time for a next part to start, if one would
+    assert [number for number, at in started if at > left] == []
+    assert [number for number, _ in started] == [1] and question_threads() == []
+
+
+def test_the_watch_of_the_reader_cancels_on_a_close_only():
+    from chat_engine.cancel import CancelToken
+
+    def watched(act):
+        mine, theirs = socket.socketpair()
+        token, done = CancelToken(), threading.Event()
+        watch = threading.Thread(target=ui_server._watch_the_reader, args=(mine, token, done))
+        watch.start()
+        act(theirs, done)
+        watch.join(5)
+        mine.close()
+        theirs.close()
+        return token.cancelled, watch.is_alive()
+
+    assert watched(lambda theirs, _done: theirs.close()) == (True, False)
+    assert watched(lambda theirs, _done: theirs.sendall(b"GET")) == (False, False)  # bytes end the watch
+    assert watched(lambda _theirs, done: done.set()) == (False, False)  # the stream ended
+    closed = socket.socket()
+    closed.close()
+    token = CancelToken()
+    ui_server._watch_the_reader(closed, token, threading.Event())  # a socket that can not be watched
+    assert not token.cancelled
 
 
 def wait_for_the_import():

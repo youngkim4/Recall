@@ -24,7 +24,8 @@ from tests.recall_services.test_messages import RESULT_KEYS
 # AskResponse in app/src/types.ts at 89ab504
 ASK_KEYS = {"question", "contact", "terms", "answer", "mode", "citations"}
 # what the engine knows beyond that; the app does not read these yet
-MORE_KEYS = {"unverifiedQuotes", "steps", "cancelled", "truncated", "usage"}
+# "memory" is there because the key of these tests gives chat a digest source
+MORE_KEYS = {"unverifiedQuotes", "steps", "cancelled", "truncated", "usage", "memory"}
 FLAT_TIRE = "The wheelbarrow has a flat tire"
 QUESTION = "Who said the wheelbarrow has a flat tire?"
 NOW = datetime(2026, 11, 17, 9, 30)
@@ -364,7 +365,7 @@ def test_an_answer_without_ai_calls_no_model(archive: Archive, saved: Names) -> 
     events = run(archive, saved, factory, "wheelbarrow tire", use_ai=False)
     payload = done(events)
     assert factory.configs == [] and [event["type"] for event in events] == ["done"]
-    assert set(payload) == ASK_KEYS | MORE_KEYS
+    assert set(payload) == ASK_KEYS | MORE_KEYS - {"memory"}  # the local answer has no digest source
     assert payload["mode"] == "local"
     assert payload["answer"].startswith("No AI model was used.")
     assert FLAT_TIRE in [citation["text"] for citation in payload["citations"]]
