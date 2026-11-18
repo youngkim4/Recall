@@ -7,6 +7,7 @@ import logging
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -270,3 +271,87 @@ def test_forget_lets_go_of_the_index_and_of_the_vectors(lake: Lake) -> None:
     memory.forget()
     port(lake, asked).search(kit.BOAT_QUERY, **EVERYWHERE)
     assert asked.texts == [kit.BOAT_QUERY, kit.BOAT_QUERY]
+
+
+# --- a build that swaps the files while a question loads the index -------------------
+
+
+def test_files_of_two_builds_are_never_read_as_one_index(lake: Lake, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A load that ends on another build than it started on is thrown away and tried again."""
+    build(lake)
+    real = memory.usable_meta
+    seen: list[str] = []
+
+    def other_build_once(folder: Path) -> Any:
+        found = real(folder)
+        seen.append("look")
+        # the second look is the check after the first load: it finds another build there
+        return replace(found, build_id="another-build") if len(seen) == 2 and found is not None else found
+
+    monkeypatch.setattr(memory, "usable_meta", other_build_once)
+    hits = port(lake).search(kit.BOAT_QUERY, **EVERYWHERE)
+    assert texts_of(lake, hits[0])[0] == kit.FERRY_LINE and len(seen) >= 3
+
+
+def test_a_folder_that_never_holds_one_whole_build_gives_no_port(lake: Lake, monkeypatch: pytest.MonkeyPatch) -> None:
+    build(lake)
+    real = memory.usable_meta
+    looks: list[int] = []
+
+    def always_another(folder: Path) -> Any:
+        looks.append(1)
+        found = real(folder)
+        return replace(found, build_id=f"build-{len(looks)}") if found is not None else found
+
+    monkeypatch.setattr(memory, "usable_meta", always_another)
+    assert memory.ports(lake.archive, lake.names, store=lake.store)["meaning"] is None
+
+
+def test_a_load_that_finds_the_folder_in_a_swap_gives_no_port_for_this_question(
+    lake: Lake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    build(lake)
+    monkeypatch.setattr(MeaningIndex, "load", classmethod(lambda cls, store: None))
+    assert memory.ports(lake.archive, lake.names, store=lake.store)["meaning"] is None
+
+
+def test_a_new_index_that_can_not_be_read_leaves_the_loaded_one_to_answer(
+    lake: Lake, caplog: pytest.LogCaptureFixture
+) -> None:
+    build(lake)
+    found = port(lake)
+    before = found.search(kit.BOAT_QUERY, **EVERYWHERE)
+    lake.add([(MINA, "2024-07-01 08:00:00", "The lake is warm now", False)])
+    build(lake)
+    with closing(sqlite3.connect(lake.store.folder / "segments.sqlite3")) as conn, conn:
+        conn.execute("UPDATE segments SET first_timestamp = 'no time'")
+    assert found.search(kit.BOAT_QUERY, **EVERYWHERE) == before
+    assert "the one before it answers" in caplog.text
+
+
+# --- the edges ---------------------------------------------------------------------
+
+
+def test_a_limit_below_one_gives_nothing_and_embeds_nothing(lake: Lake) -> None:
+    build(lake)
+    asked = Asked()
+    assert port(lake, asked).search(kit.BOAT_QUERY, conversations=None, since=None, until=None, limit=0) == []
+    assert asked.texts == []
+
+
+def test_the_embedder_of_a_description_is_the_one_of_the_app_with_a_short_wait(
+    lake: Lake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    build(lake)
+    made: list[tuple[str, int, float]] = []
+    fake = FakeEmbedder()
+
+    def stand_in(model: str, dimensions: int, *, timeout_s: float) -> Any:
+        made.append((model, dimensions, timeout_s))
+        return fake
+
+    monkeypatch.setattr(meaning, "embedder_for", stand_in)
+    found = memory.ports(lake.archive, lake.names, store=lake.store)["meaning"]
+    assert found.search(kit.BOAT_QUERY, **EVERYWHERE)
+    assert made == [(FAKE_FACTS.model, FAKE_FACTS.dimensions, memory.QUERY_TIMEOUT_SECONDS)]
+    assert memory.QUERY_TIMEOUT_SECONDS < meaning.BUILD_TIMEOUT_SECONDS

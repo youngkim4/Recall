@@ -161,3 +161,15 @@ def test_with_no_model_named_the_digest_uses_the_model_of_the_reports(desk: Desk
         MINA, since="2023-01-01", until="2023-01-31", cancel=CancelToken()
     )
     assert seen == [models.default_id(), MODEL]
+
+
+def test_notes_of_earlier_runs_that_can_not_be_opened_give_no_digest_port(
+    desk: Desk, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A digest would fail at its first call: the tool is not offered. A check makes no file."""
+    assert isinstance(memory.ports(desk.archive, desk.names, digest=settings(desk))["digests"], memory.DigestPort)
+    assert not desk.places.cache_path.exists()
+    desk.places.cache_path.parent.mkdir(parents=True, exist_ok=True)
+    desk.places.cache_path.write_bytes(b"not a database " * 64)
+    assert memory.ports(desk.archive, desk.names, digest=settings(desk))["digests"] is None
+    assert "StoreError" in caplog.text

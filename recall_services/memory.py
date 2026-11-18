@@ -39,7 +39,7 @@ from meaning_index.store_files import usable_meta
 from recall_services import digests, keys, meaning, models, reports
 from recall_services.names import Names
 from report_engine import CancelToken as ReportCancelToken
-from report_engine import ReportOptions, Runtime
+from report_engine import PeriodCache, ReportOptions, Runtime, StoreError
 from report_engine.chat_digest import MomentNote, PeriodNote
 from report_engine.tokens import TokenCounter
 
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 # reports use, a digest pays again for each part that a report read.
 DIGEST_MODEL = ""
 QUERY_VECTORS = 64
-QUERY_TIMEOUT_SECONDS = 20.0
+QUERY_TIMEOUT_SECONDS = 10.0
 # segments read for each hit that is asked for: the same words said again are one hit
 FETCH_FACTOR = 2
 LOAD_TRIES = 3
@@ -122,7 +122,13 @@ class _Kept:
             held = self._index
             if on_disk is None or (held is not None and held.meta.build_id == on_disk.build_id):
                 return held
-            fresh = _load(store)
+            try:
+                fresh = _load(store)
+            except MeaningIndexError as error:
+                if held is None:
+                    raise
+                logger.warning("the new index can not be read (%s); the one before it answers", type(error).__name__)
+                return held
             if fresh is not None:  # an index with no segment is an index
                 self._index = fresh
             return self._index
@@ -309,12 +315,15 @@ def _meaning_port(store: IndexStore, factory: EmbedderFactory | None) -> Meaning
 
 
 def _digest_port(archive: Archive, names: Names, settings: DigestSettings) -> DigestPort | None:
-    """The port when its model can be run. A digest with a model that can not be run fails at its first call."""
+    """The port when a digest can be built now: its model can be run, and the notes of earlier runs can be opened."""
     port = DigestPort(archive, names, settings)
+    notes = (settings.places or reports.default_places()).cache_path
     try:
         models.model_info(port.model.strip() or models.default_id())
-    except (models.ModelChoiceError, models.ModelFactsError) as error:
-        logger.warning("the model of the digest can not be run (%s); chat has no digest", type(error).__name__)
+        if notes.exists():  # a check makes no file: the first digest makes the notes
+            PeriodCache(notes)
+    except (models.ModelChoiceError, models.ModelFactsError, StoreError) as error:
+        logger.warning("a digest can not be built (%s); chat has no digest", type(error).__name__)
         return None
     return port
 
@@ -330,8 +339,9 @@ def ports(
     """`{"meaning": ..., "digests": ...}` for `ChatEngine`, for one question.
 
     `meaning` is None when no key is set, or when no index can be searched.
-    `digests` is None when no key is set, or when the model of the digest can
-    not be run. A test gives `store`, `embedder_factory` and `digest`.
+    `digests` is None when no key is set, when the model of the digest can not
+    be run, or when the notes of earlier report runs can not be opened. A test
+    gives `store`, `embedder_factory` and `digest`.
     """
     if not keys.api_key():
         return {"meaning": None, "digests": None}
