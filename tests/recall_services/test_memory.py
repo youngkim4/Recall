@@ -8,7 +8,6 @@ import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import closing
 from dataclasses import replace
-from pathlib import Path
 from typing import Any
 
 import pytest
