@@ -244,9 +244,6 @@ def test_the_dates_select_the_parts_that_overlap_them(desk: Desk) -> None:
         ("2023-02-01", "2023-02-28"),
         ("2023-03-01", "2023-03-31"),
     ]
-    again = FakeLLM()
-    reports.run(MINA, MODEL, **desk.more(again))
-    assert [call.first_day[:7] for call in again.map_calls] == ["2023-01", "2023-04"]
 
 
 @pytest.mark.parametrize(

@@ -166,7 +166,11 @@ def _run_period(
 
 
 def _save(
-    cache: PeriodStore | None, outcome: PeriodOutcome, conversation: str, model_info: ModelInfo
+    cache: PeriodStore | None,
+    outcome: PeriodOutcome,
+    conversation: str,
+    model_info: ModelInfo,
+    prompt_version: str = MAP_PROMPT_VERSION,
 ) -> str | None:
     """Store a fresh result. Returns the reason when the cache refuses it."""
     if cache is None or outcome.digest is None:
@@ -183,7 +187,7 @@ def _save(
             conversation=conversation,
             label=outcome.planned.period.label,
             model=model_info.id,
-            prompt_version=MAP_PROMPT_VERSION,
+            prompt_version=prompt_version,
         )
     except StoreError as exc:
         return str(exc)
@@ -217,12 +221,14 @@ def map_periods(
     notes_budget: int,
     emit: Emit,
     earlier_notes: Sequence[Note] = (),
+    prompt_version: str = MAP_PROMPT_VERSION,
 ) -> MapResult:
     """Run every period in order. Raises ReportCancelled; never LLMError.
 
     `earlier_notes` are the notes of periods that stand before the first
     period of the plan, oldest first. A report has none: its plan starts at
-    its first period."""
+    its first period. `prompt_version` is written with each new cache entry.
+    A caller that gives the plan keys of its own names them here."""
     warnings: list[str] = []
     cached = _read_cache(cache, [planned.key for planned in plan.periods], warnings)
     notes = [_SizedNote(note, plan.meter.count(note_line(note))) for note in earlier_notes]
@@ -239,7 +245,7 @@ def map_periods(
             outcome = _run_period(
                 planned, _fitting_notes(notes, notes_budget), plan, caller, model_info, events
             )
-            refused = _save(cache, outcome, conversation, model_info)
+            refused = _save(cache, outcome, conversation, model_info, prompt_version)
             if refused is not None:
                 unsaved.append(refused)
             emit(events["done"] if outcome.digest is not None else events["failed"])

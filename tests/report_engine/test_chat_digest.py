@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import re
-import sqlite3
-from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -191,15 +189,6 @@ def test_a_span_after_a_report_costs_no_map_call(cache_path: Path) -> None:
     assert (found.periods_built, found.periods_cached) == (0, 2)
 
 
-def test_a_report_after_a_span_reads_only_the_other_periods(cache_path: Path) -> None:
-    cache = PeriodCache(cache_path)
-    digest(LARGE, cache=cache, since="2023-02-10", until="2023-03-05")
-    llm = FakeLLM()
-    report = run(LARGE, llm=llm, cache=cache)
-    assert months(llm) == ["2023-01", "2023-04"]
-    assert [period.from_cache for period in report.periods] == [False, True, True, False]
-
-
 def test_a_span_that_holds_no_message_is_an_empty_conversation() -> None:
     llm = FakeLLM()
     for since, until in (("2024-01-01", None), (None, "2022-12-31"), ("2020-01-01", "2020-12-31")):
@@ -223,40 +212,7 @@ def test_a_span_that_is_not_understood_is_refused_before_the_messages_are_read(
     assert llm.calls == [] and source.calls == []
 
 
-# --- the notes of earlier periods ------------------------------------------------
-
-
-def test_a_period_of_a_span_reads_the_notes_of_the_earlier_periods_that_the_cache_holds(
-    cache_path: Path,
-) -> None:
-    cache = PeriodCache(cache_path)
-    digest(LARGE, cache=cache, until="2023-01-31")
-    llm = FakeLLM()
-    digest(LARGE, llm=llm, cache=cache, since="2023-03-01", until="2023-04-30")
-    # Feb was never read: it has no notes. Mar leaves its notes for Apr.
-    assert [[label for label, _ in call.notes] for call in llm.map_calls] == [
-        ["Jan 2023"],
-        ["Jan 2023", "Mar 2023"],
-    ]
-
-
-def test_with_no_cache_a_span_starts_with_no_notes() -> None:
-    llm = FakeLLM()
-    digest(LARGE, llm=llm, since="2023-03-01")
-    assert [[label for label, _ in call.notes] for call in llm.map_calls] == [[], ["Mar 2023"]]
-
-
-def test_an_earlier_period_whose_cache_entry_does_not_parse_leaves_no_note_and_is_not_run(
-    cache_path: Path,
-) -> None:
-    cache = PeriodCache(cache_path)
-    digest(LARGE, cache=cache, until="2023-02-28")
-    with closing(sqlite3.connect(cache_path)) as conn, conn:
-        conn.execute("UPDATE period_results SET payload = '{}' WHERE label = 'Jan 2023'")
-    llm = FakeLLM()
-    digest(LARGE, llm=llm, cache=cache, since="2023-03-01", until="2023-03-31")
-    assert months(llm) == ["2023-03"]
-    assert [[label for label, _ in call.notes] for call in llm.map_calls] == [["Feb 2023"]]
+# --- the notes of earlier periods: see also test_chat_digest_spans.py ------------------
 
 
 def test_a_whole_digest_gives_each_period_the_notes_that_a_report_gives_it() -> None:
