@@ -89,6 +89,9 @@ final class RecallApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, WK
         case "print":
             resolveBridge(requestId, json: "true")
             saveAsPDF()
+        case "tick":
+            // a control with steps went from one step to the next: one tick of the trackpad
+            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
         default:
             resolveBridge(requestId, json: "null")
         }

@@ -1,10 +1,16 @@
 /* Design tokens: the single source for color, type, space, shape, motion.
 
-   The palette is the one Messages uses: white and Apple's faintly cool grays,
-   blue for what you sent, gray for what you received. One gray family runs
-   through surfaces, lines, fills and bubbles so nothing clashes in hue.
+   The first palette, Graphite, is the one Messages uses: white and Apple's
+   faintly cool grays, blue for what you sent, gray for what you received.
+   One gray family runs through surfaces, lines, fills and bubbles so nothing
+   clashes in hue. The other palettes are in palettes.css: each one changes
+   the grounds, the text, the two grays below and the hue, and nothing else.
    light-dark() resolves from color-scheme, which follows the system unless
    the Appearance preference pins it through data-theme.
+
+   Fills, lines, rings and the heat steps are not colours of their own. They
+   are shares of --gray, --edge and --text, so a palette tints them all by
+   changing those three.
 
    Every text step is measured to hold 4.5:1 on each surface it can sit on,
    hovered and selected rows included.
@@ -16,7 +22,13 @@
 @layer base {
   :root {
     color-scheme: light dark;
+  }
 
+  /* Graphite is the page with no palette chosen. It is also named, for a
+     thing inside a page of another palette that must show Graphite. Light or
+     dark is the page's alone: this block does not set color-scheme. */
+  :root,
+  [data-palette='graphite'] {
     /* ---- surfaces ---- */
     --bg: light-dark(#ffffff, #1c1c1e);
     --bg-rail: light-dark(#f5f5f7, #131315);
@@ -24,23 +36,26 @@
     /* a card in the page stands on the page's own ground, and its ring is
        its edge. The lighter fill is for controls and for layers that float. */
     --bg-card: var(--bg);
+    /* the gray that fills are a share of, and the one that lines are a share of */
+    --gray: rgb(120 120 128);
+    --edge: light-dark(rgb(60 60 67), rgb(235 235 245));
     /* fills are translucent, so each one steps from the surface beneath it */
-    --fill-hover: light-dark(rgb(120 120 128 / 0.08), rgb(120 120 128 / 0.16));
-    --fill-active: light-dark(rgb(120 120 128 / 0.16), rgb(120 120 128 / 0.28));
-    --fill-track: light-dark(rgb(120 120 128 / 0.12), rgb(120 120 128 / 0.24));
+    --fill-hover: light-dark(color-mix(in srgb, var(--gray) 8%, transparent), color-mix(in srgb, var(--gray) 16%, transparent));
+    --fill-active: light-dark(color-mix(in srgb, var(--gray) 16%, transparent), color-mix(in srgb, var(--gray) 28%, transparent));
+    --fill-track: light-dark(color-mix(in srgb, var(--gray) 12%, transparent), color-mix(in srgb, var(--gray) 24%, transparent));
     --scrim: light-dark(rgb(0 0 0 / 0.28), rgb(0 0 0 / 0.56));
     /* bars that content scrolls beneath */
-    --bg-glass: light-dark(rgb(255 255 255 / 0.8), rgb(28 28 30 / 0.78));
+    --bg-glass: light-dark(color-mix(in srgb, var(--bg) 80%, transparent), color-mix(in srgb, var(--bg) 78%, transparent));
 
     /* ---- lines ---- */
-    --line: light-dark(rgb(60 60 67 / 0.12), rgb(235 235 245 / 0.12));
-    --line-strong: light-dark(rgb(60 60 67 / 0.18), rgb(235 235 245 / 0.18));
-    --line-field: light-dark(rgb(60 60 67 / 0.3), rgb(235 235 245 / 0.3));
+    --line: color-mix(in srgb, var(--edge) 12%, transparent);
+    --line-strong: color-mix(in srgb, var(--edge) 18%, transparent);
+    --line-field: color-mix(in srgb, var(--edge) 30%, transparent);
 
     /* ---- text ---- */
     --text: light-dark(#1d1d1f, #f5f5f7);
     --text-2: light-dark(#48484c, #c0c0c5);
-    --text-3: light-dark(#636368, #a8a8ad);
+    --text-3: light-dark(#636368, #b0b0b5);
     --text-off: light-dark(#aeaeb2, #636366);
 
     /* ---- ink: the primary action ---- */
@@ -53,7 +68,7 @@
     --you-hover: #0077ed;
     --on-you: #ffffff;
     --you-ink: light-dark(#0064cc, #5aa9ff);
-    --you-soft: light-dark(rgb(0 113 227 / 0.12), rgb(90 169 255 / 0.2));
+    --you-soft: light-dark(color-mix(in srgb, var(--you) 12%, transparent), color-mix(in srgb, var(--you-ink) 20%, transparent));
     --them: light-dark(#e9e9eb, #3a3a3c);
     --on-them: var(--text);
     --them-mark: #8e8e93;
@@ -62,10 +77,10 @@
 
     /* ---- heat: how much, in five steps of the text color ---- */
     --heat-0: var(--fill-track);
-    --heat-1: light-dark(rgb(29 29 31 / 0.14), rgb(245 245 247 / 0.16));
-    --heat-2: light-dark(rgb(29 29 31 / 0.28), rgb(245 245 247 / 0.3));
-    --heat-3: light-dark(rgb(29 29 31 / 0.48), rgb(245 245 247 / 0.5));
-    --heat-4: light-dark(rgb(29 29 31 / 0.78), rgb(245 245 247 / 0.82));
+    --heat-1: light-dark(color-mix(in srgb, var(--text) 14%, transparent), color-mix(in srgb, var(--text) 16%, transparent));
+    --heat-2: light-dark(color-mix(in srgb, var(--text) 28%, transparent), color-mix(in srgb, var(--text) 30%, transparent));
+    --heat-3: light-dark(color-mix(in srgb, var(--text) 48%, transparent), color-mix(in srgb, var(--text) 50%, transparent));
+    --heat-4: light-dark(color-mix(in srgb, var(--text) 78%, transparent), color-mix(in srgb, var(--text) 82%, transparent));
 
     /* the words a search found, picked out in the text the way find-in-page does */
     --find: light-dark(#ffe58a, #7a6400);
@@ -81,8 +96,8 @@
        pop: the same ring with real depth, for surfaces that float.
        In dark the shadows drop out and the ring alone is the edge, so it is
        a step firmer than the hairlines it holds. */
-    --ring: light-dark(rgb(60 60 67 / 0.12), rgb(235 235 245 / 0.15));
-    --ring-hover: light-dark(rgb(60 60 67 / 0.2), rgb(235 235 245 / 0.24));
+    --ring: light-dark(color-mix(in srgb, var(--edge) 12%, transparent), color-mix(in srgb, var(--edge) 15%, transparent));
+    --ring-hover: light-dark(color-mix(in srgb, var(--edge) 20%, transparent), color-mix(in srgb, var(--edge) 24%, transparent));
     --lift-near: light-dark(rgb(0 0 0 / 0.06), transparent);
     --lift-far: light-dark(rgb(0 0 0 / 0.04), transparent);
     --drop-near: light-dark(rgb(0 0 0 / 0.08), rgb(0 0 0 / 0.32));
@@ -164,10 +179,10 @@
   /* Increase Contrast: lines firm up to 3:1, secondary text darkens, bars go solid */
   @media (prefers-contrast: more) {
     :root {
-      --line: light-dark(rgb(60 60 67 / 0.3), rgb(235 235 245 / 0.3));
-      --line-strong: light-dark(rgb(60 60 67 / 0.55), rgb(235 235 245 / 0.45));
-      --line-field: light-dark(rgb(60 60 67 / 0.7), rgb(235 235 245 / 0.6));
-      --ring: light-dark(rgb(60 60 67 / 0.55), rgb(235 235 245 / 0.45));
+      --line: color-mix(in srgb, var(--edge) 30%, transparent);
+      --line-strong: light-dark(color-mix(in srgb, var(--edge) 55%, transparent), color-mix(in srgb, var(--edge) 45%, transparent));
+      --line-field: light-dark(color-mix(in srgb, var(--edge) 70%, transparent), color-mix(in srgb, var(--edge) 60%, transparent));
+      --ring: light-dark(color-mix(in srgb, var(--edge) 55%, transparent), color-mix(in srgb, var(--edge) 45%, transparent));
       --text-2: light-dark(#2c2c2e, #e5e5ea);
       --text-3: light-dark(#48484c, #c7c7cc);
       --bg-glass: var(--bg);

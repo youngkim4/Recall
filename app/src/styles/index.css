@@ -2,6 +2,7 @@
 @layer reset, base, controls, shell, components, views;
 
 @import './tokens.css';
+@import './palettes.css';
 @import './base.css';
 @import './controls.css';
 @import './slider.css';

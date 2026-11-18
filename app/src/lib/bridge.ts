@@ -64,4 +64,9 @@ export const recallBridge = {
   relaunch(): void {
     void post('relaunch')
   },
+  // One tick of the trackpad, where the Mac has one that can: a control with
+  // steps is felt as it goes from one step to the next. No answer is waited for.
+  tick(): void {
+    window.webkit?.messageHandlers?.recall?.postMessage({ cmd: 'tick', id: '' })
+  },
 }
