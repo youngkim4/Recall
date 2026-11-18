@@ -174,7 +174,13 @@ class _OnDemand:
 
 
 def _held(store: IndexStore) -> IndexStatus:
-    """What the folder holds. An index that this build of the app can not read counts as none."""
+    """What the folder holds. An index that this build of the app can not read counts as none.
+
+    With no folder there is no index, and no file is asked for: an import
+    that looks for an index opens nothing then.
+    """
+    if not store.folder.is_dir():
+        return IndexStatus(state="none")
     try:
         return store.status()
     except StoreError as error:  # a newer format is one of these
@@ -263,8 +269,7 @@ def estimate(
         "newSegments": found.new_segments,
         "tokens": found.tokens,
         "estimatedCost": found.usd,
-        # a field of a later meaning_index: an estimate without it is exact
-        "upperBound": bool(getattr(found, "upper_bound", False)),
+        "upperBound": bool(found.upper_bound),
     }
 
 
