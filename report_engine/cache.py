@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -32,6 +33,8 @@ BUSY_TIMEOUT_S = 10.0
 PRIVATE_FILE_MODE = 0o600
 PRIVATE_FOLDER_MODE = 0o700
 QUERY_CHUNK = 500
+# one opening of a cache file at a time in this process
+_OPENING = threading.Lock()
 
 _CREATE = """
 CREATE TABLE IF NOT EXISTS period_results (
@@ -83,7 +86,8 @@ def _chunks(keys: Sequence[str]) -> Iterator[Sequence[str]]:
 
 
 class PeriodCache:
-    """Opens the file per operation, so threads and processes can share it."""
+    """Opens the file per operation, so threads and processes can share it.
+    The first opening in a process makes the file and its table, one thread at a time."""
 
     def __init__(
         self, path: str | os.PathLike[str], now: Callable[[], datetime] = _utc_now
@@ -94,7 +98,9 @@ class PeriodCache:
             self._path.parent.mkdir(mode=PRIVATE_FOLDER_MODE, parents=True, exist_ok=True)
         except OSError as exc:
             raise StoreError(f"can not create the cache folder: {exc}") from exc
-        with self._open() as conn:
+        # Threads that open a new file at once would each switch it to WAL and
+        # make the table: SQLite refuses one of them at once, with no wait.
+        with _OPENING, self._open() as conn:
             version = conn.execute("PRAGMA user_version").fetchone()[0]
             if version > CACHE_SCHEMA_VERSION:
                 raise StoreError(
