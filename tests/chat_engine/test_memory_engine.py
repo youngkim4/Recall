@@ -57,7 +57,7 @@ def engine_with(script: list, *, meaning: Any = None, digests: Any = None, **con
 
 def test_the_digest_limits_have_defaults_and_are_checked() -> None:
     config = EngineConfig(model="m", max_output_tokens=100)
-    assert config.digest_tokens == 24_000 and config.digest_usd_limit == 2.0
+    assert config.digest_tokens == 24_000 and config.digest_usd_limit == 0.5
     assert EngineConfig(model="m", max_output_tokens=100, digest_usd_limit=0).digest_usd_limit == 0
     with pytest.raises(ValueError):
         EngineConfig(model="m", max_output_tokens=100, digest_tokens=0)

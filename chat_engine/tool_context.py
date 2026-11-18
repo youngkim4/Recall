@@ -65,8 +65,9 @@ class Memory:
     meaning: Optional[MeaningSearch] = None
     digests: Optional[DigestSource] = None
     digest_tokens: int = 24_000
-    digest_usd_limit: float = 2.0
+    digest_usd_limit: float = 0.5
     cancel: CancelToken = field(default_factory=CancelToken)
+    digest_parts_limit: int = 2  # the most periods not yet read that one digest reads inside a question
 
 
 def month_year(timestamp: str) -> str:
@@ -101,6 +102,7 @@ class ToolContext:
         # the digests of this question that gave an answer: "shown" or "failed"
         self.digests_asked: dict[tuple[str, Optional[str], Optional[str]], str] = {}
         self.digests_built = 0
+        self.digest_usd = 0.0  # what the digests of this question cost, as far as the source said
         self.book = ConversationBook(archive, labeler, aliases)
         self._directory: Optional[Directory] = None
         self._listed: Optional[list[Conversation]] = None

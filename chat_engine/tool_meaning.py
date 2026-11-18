@@ -14,6 +14,8 @@ so the scope of the user holds. Each message that is shown passes
 
 The word ranking is always by relevance. The order of the call is not used.
 After a cancel that comes while the port searches, the archive is not read.
+When the archive holds none of the hits of the port, the index is older than
+the archive: the first line of the result says so.
 """
 
 from __future__ import annotations
@@ -36,6 +38,10 @@ MATCHES = ("all", "any", "meaning")
 FETCH_FOR_EACH = 3  # hits read from each ranking for each exchange that is asked for
 SEGMENT_MESSAGES = 40  # the most messages of one exchange that are read
 _NOT_AVAILABLE = "The search by meaning was not available: these were found by their words only."
+_STALE = (
+    "The search by meaning found nothing that the archive still holds: its index must be brought up to date. "
+    "These were found by their words only."
+)
 Key = tuple[str, str, str]  # conversation, first message id, last message id ("" for a word hit alone)
 
 
@@ -161,7 +167,8 @@ def run_meaning_search(
     radius: int = SEARCH_RADIUS,
 ) -> ToolOutcome:
     words = request.words
-    segments = _segments(ctx, words, hits or ())
+    segments, stale = _segments(ctx, words, hits or ())
+    note = _NOT_AVAILABLE if hits is None else _STALE if stale else ""
     # by relevance, whatever the order of the call: the newest messages must not hide an old strong match
     found = run_search(ctx.archive, replace(words, limit=_fetch(words.limit), order="relevance")).hits
     keys, by_key = _joined(segments, found)
@@ -170,7 +177,7 @@ def run_meaning_search(
     known = len(exchanges) + len(keys) - used  # the exchanges that were built, and those past the limit
     writer = ResultWriter(budget, ctx.limits.count_tokens)
     place = f"{ctx.where(words.conversations)}{ctx.when(words.since, words.until)}"
-    writer.add(_header(request, place, known, failed=hits is None), force=True)
+    writer.add(_header(request, place, known, note), force=True)
     shown = 0
     for exchange in exchanges:
         if not _add_exchange(ctx, writer, exchange):
@@ -178,18 +185,30 @@ def run_meaning_search(
         shown += 1
     writer.add(_footer(known, len(exchanges), shown, words.limit), force=True)
     summary = f"Searched by meaning for {request.what}: {plural(shown, 'exchange')} shown"
-    return ToolOutcome(writer.text().rstrip(), summary + (", by words only" if hits is None else ""))
+    return ToolOutcome(writer.text().rstrip(), summary + (", by words only" if note else ""))
 
 
-def _segments(ctx: ToolContext, words: SearchRequest, hits: Sequence[MeaningHit]) -> list[Segment]:
-    """The hits inside the conversations and the days of the request, each one time, best first."""
+def _segments(
+    ctx: ToolContext, words: SearchRequest, hits: Sequence[MeaningHit]
+) -> tuple[list[Segment], bool]:
+    """The hits inside the conversations and the days of the request, each one time, best first.
+
+    Also: True when hits were looked up and the archive holds none of them.
+    Then the index is older than the archive.
+    """
     segments: dict[Key, Segment] = {}
+    looked = held = 0
     for row in hits:
         conversation = row["conversation"]
         if words.conversations is not None and conversation not in words.conversations:
             continue
-        first, last = ctx.archive.message(row["first_message_id"]), ctx.archive.message(row["last_message_id"])
-        if first is None or last is None or time_key(first) > time_key(last):
+        looked += 1
+        first = ctx.archive.message(row["first_message_id"])
+        last = None if first is None else ctx.archive.message(row["last_message_id"])
+        if first is None or last is None:
+            continue
+        held += 1
+        if time_key(first) > time_key(last):
             continue
         if first["conversation"] != conversation or last["conversation"] != conversation:
             continue
@@ -197,7 +216,10 @@ def _segments(ctx: ToolContext, words: SearchRequest, hits: Sequence[MeaningHit]
             continue
         segment = Segment(first, last)
         segments.setdefault(segment.key, segment)
-    return list(segments.values())
+    stale = looked > 0 and held == 0
+    if stale:
+        logger.warning("the search by meaning gave %d hits that the archive does not hold", looked)
+    return list(segments.values()), stale
 
 
 def _day(message: Message) -> str:
@@ -309,10 +331,11 @@ def _fewer(messages: Sequence[Message], hits: frozenset[str]) -> tuple[Message, 
     return tuple(messages[start:start + size])
 
 
-def _header(request: MeaningRequest, place: str, known: int, *, failed: bool) -> str:
+def _header(request: MeaningRequest, place: str, known: int, note: str) -> str:
+    """The first line. `note` says why only the words were searched, or is empty."""
     found = f"{plural(known, 'exchange')}, best first." if known else "nothing found."
     text = f"Search by meaning for {request.what} in {place}: {found}"
-    return f"{text} {_NOT_AVAILABLE}" if failed else text
+    return f"{text} {note}" if note else text
 
 
 def _footer(known: int, read: int, shown: int, limit: int) -> str:

@@ -179,7 +179,7 @@ def test_with_a_digest_the_prompt_holds_one_procedure_for_a_pattern_question() -
     assert places == sorted(places)
     assert f"at most {DIGESTS_PER_QUESTION} in one question" in rule and DIGESTS_PER_QUESTION == 3
     assert "read_around on the moments that matter" in rule
-    assert "When a digest could not be built, read that conversation at several points" in rule
+    assert "When the tool gives no digest, read that conversation at several points" in rule
     assert "three" not in rule.split("2. Story:")[1]
 
 
