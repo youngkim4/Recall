@@ -41,7 +41,7 @@ Report = Callable[[object], None]
 
 @dataclass(frozen=True)
 class Fetch:
-    """Slow work of a lookup that reads no archive: a call to a port. The turn runs it beside the stream.
+    """Slow work of a lookup: a call to a port that touches nothing of the engine. The turn runs it beside the stream.
 
     work: does the work. It gives each raw report of progress to the function it gets, from any thread.
     event: one raw report as an event of the stream, or None to drop it. The turn calls it on its own thread.
