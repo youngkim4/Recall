@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -73,13 +73,12 @@ LOCK_POLL_SECONDS = 0.1
 SPEND_LOG = "recall.spend"
 
 spend = logging.getLogger(SPEND_LOG)
-# the type of `ui_server.digest_starter`, which starts a `digest` job: conversation id, since, until.
-# No question calls it.
-StartDigest = Callable[[str, "str | None", "str | None"], bool]
 
 
 class DigestStopped(Exception):
     """The question was cancelled while its digest waited for the digest of another question."""
+
+
 @dataclass(frozen=True)
 class DigestSettings:
     """What a digest of chat is built with. Each None is the value of a report run of the app.
@@ -256,7 +255,6 @@ class DigestPort:
         lock = digest_lock(self._archive, conversation_id, self.model)
         try:
             with _turn(lock, cancel), _report_cancel(cancel) as token:
-                # seam (F3): pass max_parallel=PREPARE_PARALLEL here once digests.build takes it
                 found = digests.build(
                     conversation_id,
                     since,

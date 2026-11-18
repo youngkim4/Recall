@@ -33,7 +33,8 @@ Ask for `state.archive()` and for `names.cached(...)` at the start of each reque
 |---|---|
 | `/api/defaults` (models) | `models.defaults_payload()` |
 | `/api/contacts` | `conversations.payload(archive, saved, limit, messages_path)` |
-| `/api/search` | `search.payload(archive, saved, query, contact, limit, offset, as_you_type=True)` |
+| `/api/search` | `search.answer(archive, saved, query_string)`, which calls `search.payload(archive, saved, query, contact, limit, offset, as_you_type=..., filters=..., order=...)` |
+| `/api/stats` | `stats.answer(archive, saved, query_string)`, which calls `stats.payload(archive, saved, filters, words=..., by=..., limit=..., prefix=...)` |
 | `/api/day` | `day.payload(archive, saved, contact, day, around, offset, limit)` |
 | `/api/ask/stream` | `chat.stream(question, contact, model, history, cancel, archive=..., names=..., use_ai=...)` |
 | `/api/ask` | `chat.ask(...)`, the same arguments |
@@ -43,6 +44,10 @@ Ask for `state.archive()` and for `names.cached(...)` at the start of each reque
 | job `meaning` | `meaning.build(archive, names, cancel, on_progress)` |
 | the refresh after an import | `meaning.built(archive_file)`, `meaning.estimate(archive, names)`, `meaning.small_enough(estimate)` |
 | job `digest` | `digest_job.run(conversation, since, until, on_progress, archive=..., names=...)` |
+| `/api/memory` | `memory_prep.payload(archive, names)` |
+| job `memory` | `memory_prep.run(on_progress, cancel, archive=..., names=...)` |
+| the reading of the memory after an import | `memory_prep.read_before(archive)`, `memory_prep.payload(archive, names)`, `memory_prep.worth_starting(found, read_before=True)` |
+| several digests at once | `digests.call_pool(model, max_parallel)`, then `digests.build(..., pool=pool)` in each thread |
 | the two optional ports of the chat engine | `memory.ports(archive, names)` |
 | the saved report of a report file | `reports.saved_report(contact, report_text)` |
 | the moments of a report | `reports.moments_for(report, archive)` |
@@ -119,6 +124,106 @@ A group that nobody named gets a name from its saved people. Two differences fro
 
 - A member who never wrote is a person of the group. The export knew only the writers.
 - A person with two handles stands where the busier handle stands. The export rule added both.
+
+## Search and counts
+
+`search.py` answers `/api/search`. `stats.py` answers `/api/stats`. Both read the filters of `search_filters.py`.
+
+### Filters
+
+Each filter is optional. All of them are combined with AND. A value of a filter, of `order`, `prefix` or `by` that is not allowed is a `ValueError` with one sentence, and the route answers 400 with it: `{"error": "kind must be direct, group or empty."}`. That sentence never repeats the value. A `limit` or an `offset` that is no whole number gives the error of `inputs.whole`, as before: `limit must be a whole number, got 'many'`.
+
+| Parameter | Values |
+|---|---|
+| `contacts` | conversation ids, comma separated. `contact` (one id) still works and is added first. An id matches whole. An unknown id matches nothing. |
+| `since`, `until` | local days, `YYYY-MM-DD`, both included. A `since` after `until` matches nothing. |
+| `from` | `me`, `them` or empty |
+| `kind` | `direct`, `group` or empty |
+| `attachments` | `any`, `none`, `image`, `video`, `audio`, `other` or empty |
+| `query` | the words. A star is always a prefix. |
+| `prefix` | `false`: every word is whole. Send it for whole words. `true`: the last word is a prefix. No `prefix` (or an empty one): `true`, the search of the app of today as the reader types. |
+| `order` | `/api/search` only: `newest` (default), `oldest`, `relevance` |
+
+- The kind of an attachment comes from its mime type: `image/*`, `video/*`, `audio/*`. `other` is every other type and an attachment with no type. A GIF is an image.
+- `any` is a message with one attachment record or more. A message of kind `attachment` with no record (an old export) is `none`.
+- A message with an image and a video is in `image` and in `video`.
+- `relevance` with no words is `newest`, and `order` in the payload says `newest`.
+
+### `/api/search`
+
+```json
+{
+  "query": "hi",
+  "contact": "",
+  "count": 2,
+  "total": 2,
+  "offset": 0,
+  "results": [
+    {
+      "messageId": "…", "chatId": "…", "displayName": "…", "senderName": "…",
+      "timestamp": "2025-01-03 19:30:00", "sender": "…", "text": "this is which hi",
+      "attachment": "", "isFromMe": true,
+      "ranges": [[14, 16]]
+    }
+  ],
+  "filters": {"contacts": [], "since": "", "until": "", "from": "", "kind": "", "attachments": ""},
+  "order": "newest",
+  "prefix": false
+}
+```
+
+- That answer is for `query=hi&prefix=false`: the word "hi" only, not "this", "which", "hit" or "him". With no `prefix`, `prefix` is `true` and "hit" and "him" match too ("this" and "which" never: a prefix is the start of a word).
+- `prefix` says what the search applied.
+
+- `filters` holds every key. A filter that was not applied is `""` or `[]`. `contacts` holds `contact` too.
+- `ranges` are `[start, end)` in UTF-16 units of `text`, as JavaScript counts. They are the ranges that the index matched: a prefix marks the whole word. They follow the shown text: no outer space, no attachment placeholder. A word after the cut of a long text (600 characters) has no range. A range across the cut stops at the cut.
+- With no words, `ranges` is `[]`.
+- No words and a filter list the messages of the filter, newest first. `total` counts all of them. The pages have no depth limit.
+- Typed text with no word (`*`, `""`) matches nothing, also with a filter. `/api/stats` counts 0 for it.
+
+### `/api/stats`
+
+```json
+{
+  "by": "person",
+  "query": "pizza",
+  "prefix": false,
+  "filters": {"contacts": [], "since": "", "until": "", "from": "", "kind": "", "attachments": ""},
+  "totals": {"total": 5, "sent": 1, "received": 4},
+  "first": "2025-01-01",
+  "last": "2025-01-05",
+  "rows": [
+    {"key": "+15550000001", "label": "Avery Stone", "total": 2, "sent": 1, "received": 1,
+     "conversations": ["+15550000001"]}
+  ],
+  "rowsTotal": 3
+}
+```
+
+- `by`: `day`, `week`, `month`, `year`, `weekday`, `hour`, `weekday_hour`, `person`, `conversation`, or empty. Empty gives `rows` `[]` and the totals only.
+- `totals` covers the whole filtered set. `first` and `last` are its first and last local day, or `null` when the set is empty. `received` is the count of the archive. In the archive every message is sent or received (`is_from_me` is 0 or 1), so its `received` is `total` less `sent`; the service adds the counts of the archive and never works one out itself.
+- `rowsTotal` is the number of rows before `limit`.
+- `prefix` reads as on `/api/search`: no `prefix` is `true`. Send `prefix=false` to count whole words only.
+- Time rows: `{"key", "label", "total", "sent", "received"}`.
+  - `day` (`YYYY-MM-DD`), `week` (the Monday, `YYYY-MM-DD`), `month` (`YYYY-MM`), `year` (`YYYY`): every bucket from `since` to `until`, in time order. With no `since`, the range starts at `first`. With no `until`, it ends at `last`. The range never goes past the first or the last day of the archive. An empty bucket is a row of zeros. The label is the key.
+  - `weekday` (`0` is Monday to `6`, label `Monday`), `hour` (`00` to `23`, label `09:00`), `weekday_hour` (`W-HH`, label `Monday 09:00`): every bucket, always.
+  - With an empty set and no `since` or `until`, `day` to `year` have no row.
+- People rows: the time row and `conversations`, the ids that the row counts.
+  - `conversation`: one row per conversation.
+  - `person`: one row per person. The phone thread and the email thread of one person are one row: the archive joins handles of one contact record (`Conversation["person_id"]`). A group is its own row. The key is the id of the busiest thread in the set.
+  - The label is `conversation_label(names.conversation(record), id)` from `conversation.py`: the words of `conversationName` in the app. A saved name, a group name, "Unnamed group", "Number ending in 1234", or an email address as it is. No full phone number of a person who is not saved.
+  - The busiest come first (a tie: the key). `limit` is 50 by default, held between 1 and 500.
+- One answer reads one state of the archive (`Archive.snapshot()`): the totals and the rows agree also while an import commits.
+- `GET /api/stats/words` (the most used words) is not built. On the invented archive below, a count of the words of every message took 3.9 s in Python (2.4 s of it to read the texts), and `fts5vocab` with a filter of one year took 1.7 s. Both miss the limit of 2 s.
+
+### Speed
+
+Measured on an invented archive of 545,000 messages and 1,400 conversations (`tests/archive/synthetic.py` with 1,300 people and 100 groups, 2017 to 2037), on the Mac of the build, best of three:
+
+- `/api/stats` on the whole archive: 212 ms (`person`) to 626 ms (`year`). The total alone: 235 ms. A grouping by time makes two counts: the days, and the grouping.
+- `/api/stats` with filters (one year, `from=me&kind=group`, `attachments=image`, a word): 6 ms to 244 ms.
+- `/api/search` with words: 27 ms to 88 ms, also with filters and with `prefix=true`. With no words and a filter: 16 ms (one year) to 506 ms (`attachments=none`, 490,673 messages).
+
 
 ## Chat
 
@@ -258,8 +363,8 @@ With a port that is None the engine does not offer its tool. A reason goes to th
 - One lock for the archive path, the conversation and the model is held around the build (`digest_lock`). A second question waits and then finds the parts read. A question that is cancelled while it waits stops waiting (`DigestStopped`).
 - The model port of a digest inside a question has a timeout of 120 seconds and one more try (`question_llm`, `DIGEST_TIMEOUT_SECONDS`, `DIGEST_RETRIES`). A report job keeps 300 seconds and two more tries.
 - `digest` tells its `progress` callback each change of a part (`progress_relay`): a map event of the report engine with the state `start`, `done`, `cached` or `failed` becomes `{"part": index, "of": total, "label": period, "state": state}`. The events `prepare`, `waiting`, `reduce` and `done` of the run are not told.
-- The parts are read one at a time until `digests.build` takes `max_parallel` (part F3). The seam is one comment line in `DigestPort.digest`.
-- The port has no `prepare`. Nothing here starts a `digest` job.
+- One question reads the parts of one conversation one at a time, in order: the carry-over notes of a part go to the next part. `digest` gives `digests.build` no `pool`.
+- Nothing here starts a `digest` job.
 - The cancel token of chat sets a cancel token of the report engine (`_report_cancel`). The two classes have the same name and are not the same class.
 - A `ReportFailure` is raised. The engine then prints its one line for a digest that failed.
 - `DIGEST_MODEL` is the model of a digest: `gpt-6-luna`. The digest only sums up the periods. The chat model answers and checks against the messages.
@@ -285,9 +390,7 @@ Known limits:
 - The result has `conversation`, `periods`, `periodsBuilt`, `periodsCached`, `periodsFailed`, `usd` and `usage`.
 - A listener gets `{"progress": {"step", "of", "label"}}` and a line under `log`, as in a report job. A line holds the label of a part and counts.
 - A failure is a `DigestFailure`: a `ReportFailure` with the code of the failure of `digests.build`, its usage, and a sentence of this job (`sentence_of`). No sentence names a report. A missing conversation and a bad day are a ValueError.
-- `digest_starter` in `ui_server.py` makes a function that starts a `digest` job for one archive. No question calls it since part F4: a question reads what it can itself.
-- The starter says True when the job started, or when a `digest` job of the same archive, conversation and days already runs.
-- The starter starts nothing when the last job of the same archive, conversation and days failed, or read no new part while parts failed. Each question would pay for the same parts again. An import that changed the archive, and a new start of the server, let the reading start again.
+- The job starts only when a request asks for it. No question starts it.
 
 The sentences of a `digest` job that failed:
 
@@ -312,6 +415,144 @@ Known limits:
 
 - A `digest` job can not be stopped, and an import waits for it.
 - A job that failed for a reason that passes, such as no connection, is not started again by a question until an import changed the archive or the server started again. A reader can still start the job.
+
+## Several digests at once
+
+`digests.build` reads the parts of one conversation one at a time: the prompt of a part holds the notes of the part before it (see "Several conversations at once" in `report_engine/README.md`). Several conversations are read at once with one build in each thread and one pool for all of them:
+
+```python
+pool = digests.call_pool(model, max_parallel)   # at most max_parallel requests in flight, one budget of tokens
+found = digests.build(
+    conversation_id, since, until, cancel, on_progress,
+    archive=archive, names=names, model=model, pool=pool,
+    places=..., llm_factory=..., options=..., counter=..., runtime=..., max_new_periods=...,
+)
+```
+
+- `pool`: a `report_engine.CallPool` from `call_pool`, with the same `model` as each build. `pool.stop()` stops every build before its next request; the requests in flight end and their parts are kept. With no pool a build has a pool of its own with one slot. `call_pool(..., clock=runtime.clock)` takes the clock of a test runtime.
+- `cancel`: a token with `cancelled`. It stops this build only.
+- `max_new_periods`: the limit of this build. A request counts when it is sent, and the one that would pass the limit is refused before it is sent.
+- `on_progress`: each `report_engine.ProgressEvent`, in the thread of the build. Give each build a function of its own to know its conversation. The events of a part have `step == "map"`, `period` (the label of the part), `index` (its number, from 1) and `total` (the number of parts of the dates), and `state`:
+  - `start`: its request is sent now;
+  - `done`: it is read and in the notes;
+  - `cached`: it was in the notes;
+  - `failed`: it gave no result (also a part that is too large, with no `start` before it);
+  - `waiting`: the build waits for room in the tokens per minute.
+  Before the parts come `prepare` `start` and `prepare` `done` (`total` is the number of parts); after them `done` `done`, when the digest is whole.
+
+## The memory job
+
+The memory of chat is the digest of each conversation with at least `PREPARE_MIN_MESSAGES` (200) messages, read with `DIGEST_MODEL`. `memory_prep.py` reads it ahead of time, so a question finds each part in the notes. `memory_prep_read.py` holds the tasks and the counts, and `memory_prep_words.py` the lines and the sentences.
+
+- `memory_prep.payload(archive, names)` is the answer of `GET /api/memory`. It takes `digests.estimate` for each conversation of the memory. It makes no model call, needs no key and makes no file.
+- `memory_prep.run(on_progress, cancel, archive=..., names=...)` is the `memory` job. It reads each conversation that is not read whole, busiest first, `PREPARE_PARALLEL` (4) at a time, with the model port of a report.
+- The parts of one conversation are read one at a time: the prompt of a part holds the notes of the part before it. The conversations share one pool of calls (`digests.call_pool`): at most 4 requests are in flight, and they share the tokens per minute of the model.
+- A conversation that fails is counted, and the others are read. A failure that each conversation would have stops the job (`FATAL`: `no_key`, `key_rejected`, `unknown_model`, `rate_limit`, `offline`, `cache_unreadable`). No new request is sent; the requests in flight end, and their parts are kept.
+- `memory_prep.read_before(archive)` says whether the notes hold a part of the memory: a part that `DIGEST_MODEL` read, of a conversation of the memory. It is true also after an import gave that part a new key.
+- `memory_prep.worth_starting(found, read_before=...)` says whether the server starts the job by itself after an import: the memory was read before, a part is not read, and the parts that are not read cost at most `PREPARE_AUTO_USD` (0.25 USD).
+- No line, progress label or sentence holds text of a message, a name, a handle, an id or the label of a part.
+
+`GET /api/memory?messagesPath=...` answers:
+
+```json
+{
+  "state": "partial",
+  "model": "gpt-6-luna",
+  "minMessages": 200,
+  "conversations": 184,
+  "conversationsRead": 120,
+  "conversationsSkipped": 0,
+  "parts": 332,
+  "partsRead": 200,
+  "partsNotRead": 132,
+  "estimatedCost": 0.81,
+  "error": null,
+  "code": null,
+  "jobId": null
+}
+```
+
+- `state` is `none` when no part is in the notes, `partial`, or `ready` when every part of every conversation of the memory is in the notes. An archive with no conversation of the memory is `none`.
+- `conversationsRead` counts the conversations with every part in the notes. `conversationsSkipped` counts the conversations whose parts could not be planned (for example `too_large`); their parts are in no count.
+- `estimatedCost` is the cost in USD of the parts that are not read, with `DIGEST_MODEL`.
+- `jobId` is the id of the `memory` job that runs, or null.
+- When the archive can not be read or the model can not be run, the counts are 0, `estimatedCost` is 0.0, `state` is `none`, and `error` and `code` say why (`archive_error`, or the `code` of the ModelChoiceError). With no archive the route answers as the other routes do.
+
+The `memory` job is asked for as every job: `POST /api/jobs` with `{"action": "memory", "messagesPath": "..."}` (`messagesPath` is optional). The answer is 202 with `{"job": {...}}`, and the job record has `contact` "".
+
+Its `progress`:
+
+```json
+{"step": 1, "of": 2, "label": "Looking at your conversations", "done": 0, "total": 184}
+{"step": 2, "of": 2, "label": "Reading your conversations", "done": 12, "total": 132}
+```
+
+In step 2, `total` is the number of parts that are not read, and `done` counts the parts that ended, read or failed. At the end `done` is `total`.
+
+Its lines, in this order:
+
+```text
+Looking at 184 conversations with 200 messages or more
+132 parts of 64 conversations are not read yet, 200 are read
+A conversation is read: 3 parts read now, 1 from earlier runs, 0 not read (5 of 64)
+A conversation could not be read (6 of 64)
+The memory is read: 132 parts read now, 200 from earlier runs, 0 not read.
+```
+
+There is one line for each conversation that is read, in the order in which they end.
+
+Its `result`:
+
+```json
+{
+  "conversations": 184,
+  "conversationsRead": 183,
+  "conversationsFailed": 1,
+  "periodsBuilt": 131,
+  "periodsCached": 200,
+  "periodsFailed": 1,
+  "usd": 0.81,
+  "usage": {"input_tokens": 2400000, "cached_input_tokens": 0, "output_tokens": 260000, "cost_usd": 0.81, "calls": 131}
+}
+```
+
+- `conversations` counts the conversations of the memory, skipped ones too. `conversationsFailed` counts the conversations that gave no digest and the skipped ones.
+- `periodsCached` counts the parts that were in the notes, also of the conversations that were read whole before. `periodsFailed` counts the parts that failed, and the parts that were not read of a conversation that failed.
+- `usd` and `usage` are what the job spent, also on conversations that failed after paid calls.
+
+A refusal is 409 with `{"error": sentence}`:
+
+| Asked for | Held up by | Sentence |
+|---|---|---|
+| `memory` | `memory` | Recall is reading the memory of chat. Wait until it ends. |
+| `memory` | an import | An import is running. Wait until it ends, then read the memory. |
+| an import | `memory` | Recall is reading the memory of chat. Wait until it ends. |
+
+A report, the `meaning` job, the `digest` job and chat run beside it.
+
+The sentences of a `memory` job that failed:
+
+| Code | Sentence |
+|---|---|
+| `no_key` | No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then read the memory again. |
+| `key_rejected` | OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, then read the memory again. What was read is kept. |
+| `unknown_model` | OpenAI does not know the model gpt-6-luna. What was read is kept. |
+| `rate_limit` | OpenAI is limiting requests, or the account has no credit left. Wait a moment, then read the memory again. What was read is kept. |
+| `offline` | OpenAI could not be reached. Check the internet connection, then read the memory again. What was read is kept. |
+| `cache_unreadable` | What earlier runs read could not be read or kept. What was read is kept. |
+| `archive_error` | The message archive could not be read. Update the archive, then read the memory again. |
+| `cancelled` | The reading was stopped. What was read is kept. |
+
+A model that can not be run fails the job with the sentence of its ModelChoiceError, as in the other jobs.
+
+After an import that changed the archive, `refresh_memory` in `ui_server.py` starts one `memory` job when `read_before` is true and `worth_starting` says yes. With `read_before` false it starts nothing and takes no estimate: the first reading is the choice of the reader. Above the cost it writes one line with the count of parts to the log of the server, and starts nothing.
+
+Known limits:
+
+- A `memory` job can not be stopped from the app, and an import waits for it.
+- A part that a question or a report read with `DIGEST_MODEL` makes `read_before` true. After the next import the server can then read the rest of the memory by itself, when it costs at most 0.25 USD.
+- The job and a question do not share a lock. A part is paid twice only when both send it at the same moment (see "A digest inside a question is bounded" in `CONTRACTS.md`).
+- A conversation whose new parts fail for a key or a rate limit, while its other parts are in the notes, gives a digest with failed parts and no failure. The job then goes on to the next conversation; each request is refused, and nothing is paid.
 
 ## Reports
 
@@ -348,8 +589,8 @@ Each one has a test that states it.
 - `reactions_frame` holds the six classic kinds of tapback. A tapback with any emoji or a sticker is no row.
 - A message that was unsent is a row of the archive with no text. It counts in the list, in a day and in a search with no words. `messages_frame` has no row for it. `tests/recall_services/test_frame_edges.py` states this open seam.
 - `around` of a day must be written as `YYYY-MM-DD HH:MM` or longer. Other forms give the start of the day.
-- A search matches whole words. `piz` does not find `pizza`; `piz*` does. `as_you_type=True` makes the last word a prefix.
-- A search with no words and no conversation gives nothing.
+- The route reads the last word as a prefix unless the request says `prefix=false`: then `piz` does not find `pizza`, and `piz*` does. The service matches whole words unless `as_you_type=True`.
+- A search with no words and no filter gives nothing. With a filter it lists the messages of the filter.
 - `sender` of an own message is `""`. The export held the handle of the other person there.
 - `senderName` is set only for a received message in a group.
 - A chat answer has no `terms`, and no keyword answer takes the place of an answer that failed.

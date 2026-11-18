@@ -7,16 +7,17 @@ budget is honoured, and the real usage of the reply is counted.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from report_engine.call_pool import CallPool
 from report_engine.control import CancelToken, ProgressEvent, Runtime
 from report_engine.errors import CallLimitReached, LLMError, ReportCancelled
 from report_engine.model_info import ModelInfo
 from report_engine.models import Usage
 from report_engine.ports import LLM, ChatMessage, LLMResult, LLMUsage
 from report_engine.pricing import call_cost_usd
-from report_engine.ratelimit import TokenBudget
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,13 @@ def usage_of(model_info: ModelInfo, usage: LLMUsage) -> Usage:
 
 
 class Caller:
-    """Sends the requests of one run and keeps the run's usage."""
+    """Sends the requests of one run and keeps the run's usage.
+
+    Its requests go through a `CallPool`: the pool of a caller that reads
+    several conversations at once, or a pool of its own with one slot. The
+    calls of the run are counted under a lock, so its limit holds also when
+    threads share it: a call counts when it is sent, and the call that would
+    pass the limit is refused before it is sent."""
 
     def __init__(
         self,
@@ -60,6 +67,7 @@ class Caller:
         emit: Emit,
         reasoning: str | None,
         max_calls: int | None = None,
+        pool: CallPool | None = None,
     ) -> None:
         self._llm = llm
         self._model_info = model_info
@@ -71,7 +79,10 @@ class Caller:
         # knows whether it was paid
         self._max_calls = max_calls
         self._sent = 0
-        self._budget = TokenBudget(model_info.tokens_per_minute, runtime.clock)
+        self._lock = threading.Lock()
+        self._pool = pool or CallPool(
+            max_parallel=1, tokens_per_minute=model_info.tokens_per_minute, clock=runtime.clock
+        )
         self._usage = Usage()
 
     @property
@@ -79,23 +90,43 @@ class Caller:
         return self._usage
 
     def check_cancel(self) -> None:
-        if self._cancel is not None and self._cancelled():
+        if self._cancelled():
             raise ReportCancelled("the run was cancelled", usage=self._usage)
 
     def _cancelled(self) -> bool:
-        return self._cancel is not None and self._cancel.cancelled
+        return (self._cancel is not None and self._cancel.cancelled) or self._pool.stopped
 
-    def _wait_for_budget(self, tokens: int, waiting: ProgressEvent) -> None:
+    def _past_limit(self) -> bool:
+        return self._max_calls is not None and self._sent >= self._max_calls
+
+    def _refuse_past_limit(self) -> None:
+        with self._lock:
+            past = self._past_limit()
+        if past:
+            raise CallLimitReached(self._max_calls or 0, usage=self._usage)
+
+    def _take_room(self, tokens: int, waiting: ProgressEvent) -> int:
+        """Wait until the budget of the pool has room for `tokens`, and take it."""
         announced = False
         while True:
-            delay = self._budget.delay(tokens)
-            if delay <= 0:
-                return
+            delay, ticket = self._pool.reserve(tokens)
+            if ticket is not None:
+                return ticket
             if not announced:
                 self._emit(waiting)
                 announced = True
             self._runtime.sleep(min(delay, MAX_SLEEP_SLICE_SECONDS))
             self.check_cancel()
+
+    def _claim(self, ticket: int) -> None:
+        """Count the call that goes out now, or refuse the one that would pass the limit."""
+        with self._lock:
+            refused = self._past_limit()
+            if not refused:
+                self._sent += 1
+        if refused:
+            self._pool.settle(ticket, 0)
+            raise CallLimitReached(self._max_calls or 0, usage=self._usage)
 
     def send(
         self,
@@ -111,15 +142,37 @@ class Caller:
         fails in any way, and CallLimitReached for the request that would pass
         the limit of calls of this run."""
         self.check_cancel()
-        if self._max_calls is not None and self._sent >= self._max_calls:
-            raise CallLimitReached(self._max_calls, usage=self._usage)
+        self._refuse_past_limit()
         reserved = input_estimate + max_output_tokens
-        self._wait_for_budget(reserved, waiting)
-        self._emit(starting)
-        ticket = self._budget.spend(reserved)
-        self._sent += 1
+        with self._pool.slot(self.check_cancel):
+            self.check_cancel()
+            ticket = self._take_room(reserved, waiting)
+            self._claim(ticket)
+            self._emit(starting)
+            result = self._generate(messages, schema, max_output_tokens, ticket, reserved)
+        spent = usage_of(self._model_info, result.usage)
+        extra_attempts = max(1, result.attempts) - 1
+        self._pool.settle(
+            ticket,
+            spent.input_tokens + spent.output_tokens + reserved * extra_attempts,
+            moved_to_now=extra_attempts > 0,
+        )
+        with self._lock:
+            self._usage = self._usage.plus(spent)
+        return result
+
+    def _generate(
+        self,
+        messages: Sequence[ChatMessage],
+        schema: Mapping[str, Any],
+        max_output_tokens: int,
+        ticket: int,
+        reserved: int,
+    ) -> LLMResult:
+        """The request itself, counted in flight in the pool while it runs."""
+        self._pool.sending()
         try:
-            result = self._llm.generate(
+            return self._llm.generate(
                 messages,
                 schema=schema,
                 max_output_tokens=max_output_tokens,
@@ -128,19 +181,12 @@ class Caller:
         except LLMError as exc:
             # the request went out, maybe more than once; keep its room taken
             attempts = max(1, exc.attempts)
-            self._budget.settle(ticket, reserved * attempts, moved_to_now=attempts > 1)
+            self._pool.settle(ticket, reserved * attempts, moved_to_now=attempts > 1)
             raise
         except Exception as exc:
             # the port is foreign code: its error fails this call, not the run.
             # Only the type is named; a message could hold prompt or reply text.
             logger.warning("the model port raised %s", type(exc).__name__)
             raise LLMError(f"the model port raised {type(exc).__name__}") from exc
-        spent = usage_of(self._model_info, result.usage)
-        extra_attempts = max(1, result.attempts) - 1
-        self._budget.settle(
-            ticket,
-            spent.input_tokens + spent.output_tokens + reserved * extra_attempts,
-            moved_to_now=extra_attempts > 0,
-        )
-        self._usage = self._usage.plus(spent)
-        return result
+        finally:
+            self._pool.answered()

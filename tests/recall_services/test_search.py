@@ -12,8 +12,9 @@ from recall_services.names import Names
 from tests.recall_services import world
 from tests.recall_services.test_messages import RESULT_KEYS
 
-# SearchResponse in app/src/types.ts at 89ab504, plus `offset`
-RESPONSE_KEYS = {"query", "contact", "count", "total", "results", "offset"}
+# SearchResponse in app/src/types.ts at 89ab504, plus `offset`, `filters`, `order` and `prefix`
+RESPONSE_KEYS = {"query", "contact", "count", "total", "results", "offset", "filters", "order", "prefix"}
+NO_FILTERS = {"contacts": [], "since": "", "until": "", "from": "", "kind": "", "attachments": ""}
 
 
 def texts(found: dict[str, object]) -> list[str]:
@@ -23,7 +24,8 @@ def texts(found: dict[str, object]) -> list[str]:
 def test_the_payload_has_the_keys_the_app_reads(archive: Archive, saved: Names) -> None:
     found = search.payload(archive, saved, "wheelbarrow")
     assert set(found) == RESPONSE_KEYS
-    assert all(set(result) == RESULT_KEYS for result in found["results"])
+    # each result also has the ranges of its words
+    assert all(set(result) == RESULT_KEYS | {"ranges"} for result in found["results"])
     json.dumps(found)
 
 
@@ -43,6 +45,9 @@ def test_a_search_with_no_match(archive: Archive, saved: Names) -> None:
         "count": 0,
         "total": 0,
         "offset": 0,
+        "filters": NO_FILTERS,
+        "order": "newest",
+        "prefix": False,
     }
 
 
@@ -88,6 +93,9 @@ def test_a_conversation_is_never_matched_by_a_part_of_its_id(archive: Archive, s
         "count": 0,
         "total": 0,
         "offset": 0,
+        "filters": {**NO_FILTERS, "contacts": [part]},
+        "order": "newest",
+        "prefix": False,
     }
 
 
@@ -158,14 +166,6 @@ def test_no_words_and_a_conversation_browse_it_from_its_newest_message(archive: 
     assert deeper["offset"] == 2
 
 
-def test_browsing_stops_at_a_depth(archive: Archive, saved: Names, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(search, "BROWSE_DEPTH", 3)
-    inside = search.payload(archive, saved, "", contact=world.GARDEN, limit=2, offset=2)
-    assert texts(inside) == ["The wheelbarrow has a flat tire"]
-    past = search.payload(archive, saved, "", contact=world.GARDEN, limit=2, offset=3)
-    assert (past["results"], past["total"]) == ([], 5)
-
-
 def test_no_words_and_no_conversation_give_nothing(archive: Archive, saved: Names) -> None:
     assert search.payload(archive, saved, "") == {
         "query": "",
@@ -174,6 +174,9 @@ def test_no_words_and_no_conversation_give_nothing(archive: Archive, saved: Name
         "count": 0,
         "total": 0,
         "offset": 0,
+        "filters": NO_FILTERS,
+        "order": "newest",
+        "prefix": False,
     }
     assert search.payload(archive, saved, None)["total"] == 0  # type: ignore[arg-type]
 

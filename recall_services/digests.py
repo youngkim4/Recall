@@ -26,19 +26,26 @@ See "Digest for chat" in `report_engine/README.md`.
 
 A failure is a `ReportFailure` with the codes and the sentences of a report
 run, and `too_many_parts` when `max_new_periods` refuses the digest.
+
+Several conversations can be read at once: run one `build` in each thread
+and give them one pool (`call_pool`). The parts of one conversation are read
+one at a time, because the prompt of a part holds the notes of the parts
+before it. See "Several conversations at once" in `report_engine/README.md`.
 """
 
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from archive import Archive
-from recall_services import reports
+from recall_services import inputs, models, reports
 from recall_services.names import Names
 from recall_services.report_failures import ReportFailure, failure_of
-from report_engine import PeriodCache, ReportEngineError, ReportOptions, Runtime, StoreError
+from report_engine import CallPool, PeriodCache, ReportEngineError, ReportOptions, Runtime, StoreError
 from report_engine.chat_digest import (
     ConversationDigest,
     DigestEstimate,
@@ -49,7 +56,7 @@ from report_engine.chat_digest import (
 from report_engine.control import ProgressCallback
 from report_engine.tokens import TokenCounter
 
-__all__ = ["ReportFailure", "build", "estimate"]
+__all__ = ["ReportFailure", "build", "call_pool", "estimate"]
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +143,18 @@ def estimate(
             raise failure_of(error, None, reports._provider(asked.info), asked.info.id) from error
 
 
+def call_pool(model: str = "", max_parallel: int = 1, *, clock: Callable[[], float] = time.monotonic) -> CallPool:
+    """One pool for the digests that are read at the same time with one model.
+
+    At most `max_parallel` requests are in flight, and the digests share the
+    tokens per minute of the model. Give the same model to each `build`.
+    `clock` is the clock of the `runtime` of the builds. Raises a
+    ModelChoiceError for a model that can not be run.
+    """
+    info = models.model_info(inputs.text(model).strip() or models.default_id())
+    return CallPool(max_parallel=max_parallel, tokens_per_minute=info.tokens_per_minute, clock=clock)
+
+
 def build(
     conversation_id: str,
     since: str | None = None,
@@ -152,13 +171,16 @@ def build(
     counter: TokenCounter | None = None,
     runtime: Runtime | None = None,
     max_new_periods: int | None = None,
+    pool: CallPool | None = None,
 ) -> ConversationDigest:
     """Build the digest of one conversation. A part in the notes of earlier runs costs no call.
 
-    `on_progress` gets each `ProgressEvent` of the engine. `cancel` is a token
-    with `cancelled`: the digest stops before its next model call, and the
-    parts that were read stay in the notes. `max_new_periods` refuses a
-    digest that needs more model calls, before any call.
+    `on_progress` gets each `ProgressEvent` of the engine, in the thread of
+    the build. `cancel` is a token with `cancelled`: the digest stops before
+    its next model call, and the parts that were read stay in the notes.
+    `max_new_periods` refuses a digest that needs more model calls, before
+    any call. `pool` is shared by the builds that run at the same time
+    (`call_pool`); its `stop()` stops each of them before its next call.
 
     Raises ReportFailure, with a code and one plain sentence, when no digest
     was built. Raises ValueError for a missing conversation or a bad day, and
@@ -177,6 +199,7 @@ def build(
             cancel=cancel,
             runtime=runtime,
             max_new_periods=max_new_periods,
+            pool=pool,
             **_reading(archive, asked, options, counter),
         )
     except DigestTooLarge as error:

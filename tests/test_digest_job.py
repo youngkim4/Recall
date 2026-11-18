@@ -185,35 +185,7 @@ def test_a_report_and_a_build_of_the_index_run_beside_a_digest_job(held_jobs):
     assert listed() == [("digest", "queued"), ("analyze", "queued"), ("meaning", "queued")]
 
 
-# --- the function that starts it for a question ------------------------------------
-
-
-def test_the_starter_of_a_question_starts_the_job_for_the_archive_of_the_question(desk):
-    start = ui_server.digest_starter({"messagesPath": desk.file})
-    assert start(MINA, "2023-01-01", None) is True
-    (job,) = [made for made in ui_server.list_jobs() if made["action"] == "digest"]
-    done = ended(job["id"])
-    assert (done["status"], done["contact"], done["result"]["conversation"]) == ("completed", MINA, MINA)
-    assert desk.llm.calls and desk.llm.calls[0].first_day >= "2023-01-01"
-
-
-def test_the_starter_says_yes_for_a_job_of_the_same_conversation_that_runs_and_no_for_any_other(held_jobs):
-    start = ui_server.digest_starter({})
-    assert start(MINA, None, None) is True
-    assert start(MINA, None, None) is True  # it already runs: nothing more is started
-    assert start(THEO, None, None) is False  # one digest job at a time
-    assert listed() == [("digest", "queued")]
-
-
-def test_a_job_that_runs_for_other_days_or_for_another_archive_is_not_the_job_of_this_question(held_jobs, tmp_path):
-    start = ui_server.digest_starter({})
-    assert start(MINA, "2023-02-01", None) is True
-    assert start(MINA, "2023-02-01", None) is True
-    # the job that runs reads from February: it does not read the whole conversation
-    assert start(MINA, None, None) is False and start(MINA, "2023-02-01", "2023-03-31") is False
-    # the same conversation id in another archive is another conversation
-    assert ui_server.digest_starter({"messagesPath": str(tmp_path / "another.sqlite3")})(MINA, "2023-02-01", None) is False
-    assert listed() == [("digest", "queued")]
+# --- the record of the job ----------------------------------------------------------
 
 
 def test_the_record_of_a_digest_job_keeps_its_archive_its_conversation_and_its_days(desk):
@@ -227,24 +199,8 @@ def test_the_record_of_a_digest_job_keeps_its_archive_its_conversation_and_its_d
     assert report["contact"] == THEO and not {"archivePath", "since", "until"} & set(report)
 
 
-@pytest.mark.parametrize("other", IMPORTS)
-def test_the_starter_says_no_while_an_import_runs(held_jobs, other):
-    ui_server.create_job(other, {})
-    assert ui_server.digest_starter({})(MINA, None, None) is False
-    assert listed() == [(other, "queued")]
-
-
-def test_the_starter_never_raises_into_a_question(monkeypatch, capfd):
-    def broken(*_args, **_more):
-        raise RuntimeError(f"a fault that names {MINA}")
-
-    monkeypatch.setattr(ui_server, "create_job", broken)
-    assert ui_server.digest_starter({"messagesPath": 5})(MINA, None, None) is False
-    assert MINA not in "".join(capfd.readouterr())
-
-
 @pytest.mark.parametrize("route", ["/api/ask", "/api/ask/stream"])
-def test_no_chat_route_gives_the_question_a_starter_and_no_question_starts_a_job(server, desk, monkeypatch, route):
+def test_no_chat_question_starts_a_job(server, desk, monkeypatch, route):
     given = []
     real = chat_service.stream
 
@@ -258,7 +214,7 @@ def test_no_chat_route_gives_the_question_a_starter_and_no_question_starts_a_job
     from tests.loopback import _ask
 
     status, _headers, _raw = _ask(server, "POST", route, body)
-    assert status == 200 and "start_digest" not in given[0]
+    assert status == 200 and given[0] == ["archive", "names", "reasoning_effort", "use_ai"]
     assert [made for made in ui_server.list_jobs() if made["action"] == "digest"] == []
 
 
