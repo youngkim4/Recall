@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import dataclasses
 from datetime import datetime
 from typing import Any
 
 import pytest
 
 from archive import Archive
+from chat_engine.engine import EngineConfig
 from chat_engine.fake_digests import FakeDigests, period
 from chat_engine.fake_llm import FakeLLM, call, say
 from chat_engine.fake_meaning import FakeMeaning
@@ -35,12 +37,14 @@ def matches_of(request: LLMRequest) -> list[Any]:
     return list(tools_of(request)["search_messages"].parameters["properties"]["match"]["enum"])
 
 
-def given(monkeypatch: pytest.MonkeyPatch, **ports: Any) -> list[tuple[Any, Any]]:
+def given(monkeypatch: pytest.MonkeyPatch, started: list[Any] | None = None, **ports: Any) -> list[tuple[Any, Any]]:
     """Put these ports in the place of the ones of the app. Gives what `memory.ports` was asked with."""
     asked: list[tuple[Any, Any]] = []
 
-    def stand_in(archive: Any, names: Any) -> dict[str, Any]:
+    def stand_in(archive: Any, names: Any, *, start_digest: Any = None) -> dict[str, Any]:
         asked.append((archive, names))
+        if started is not None:
+            started.append(start_digest)
         return {"meaning": None, "digests": None, **ports}
 
     monkeypatch.setattr(memory, "ports", stand_in)
@@ -88,3 +92,54 @@ def test_the_local_answer_asks_for_no_port(archive: Archive, saved: Names, monke
     asked = given(monkeypatch)
     events = list(chat.stream(QUESTION, archive=archive, names=saved, use_ai=False))
     assert events[-1]["type"] == "done" and asked == []
+
+
+# --- a long conversation is read outside the question ------------------------------
+
+
+def test_the_function_that_starts_a_digest_goes_from_the_route_to_the_ports(
+    archive: Archive, saved: Names, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started: list[Any] = []
+    given(monkeypatch, started)
+
+    def start(_conversation: str, _since: Any, _until: Any) -> bool:
+        return True
+
+    ask(archive, saved, FakeLLM([say("Nothing says so.")]), start_digest=start)
+    ask(archive, saved, FakeLLM([say("Nothing says so.")]))
+    assert started == [start, None]
+
+
+def test_the_engine_gets_the_limit_of_parts_of_memory_when_it_has_such_a_limit(
+    archive: Archive, saved: Names, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The engine and the digest port read one number, so the two can not differ."""
+
+    @dataclasses.dataclass(frozen=True)
+    class WithALimit(EngineConfig):
+        digest_parts_limit: int = 7
+
+    made: list[Any] = []
+    real = chat.ChatEngine
+
+    def noted(adapter: Any, llm: Any, labeler: Any, settings: Any, **more: Any) -> Any:
+        made.append(settings)
+        return real(adapter, llm, labeler, settings, **more)
+
+    given(monkeypatch)
+    monkeypatch.setattr(chat, "ChatEngine", noted)
+    monkeypatch.setattr(chat, "EngineConfig", WithALimit)
+    ask(archive, saved, FakeLLM([say("Nothing says so.")]))
+    monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 1)
+    ask(archive, saved, FakeLLM([say("Nothing says so.")]))
+    assert [settings.digest_parts_limit for settings in made] == [2, 1]
+
+
+def test_the_engine_of_this_tree_takes_the_question_with_or_without_such_a_limit(
+    archive: Archive, saved: Names, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    given(monkeypatch)
+    named = {field.name for field in dataclasses.fields(EngineConfig)}
+    assert chat._digest_limits() == ({"digest_parts_limit": memory.DIGEST_PARTS_LIMIT} if "digest_parts_limit" in named else {})
+    assert ask(archive, saved, FakeLLM([say("Nothing says so.")]))["answer"] == "Nothing says so."
