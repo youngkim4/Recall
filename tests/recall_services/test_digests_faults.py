@@ -245,12 +245,15 @@ def test_the_estimate_and_the_digest_count_with_the_counter_of_a_report(
     reports.shared_counter.cache_clear()
     more = {name: value for name, value in desk.more().items() if name != "counter"}
     estimate_more = {name: value for name, value in desk.estimate_more().items() if name != "counter"}
-    digests.estimate(THEO, model=MODEL, **estimate_more)
     found = digests.build(THEO, model=MODEL, **more)
+    assert len(loaded) == 1
+    reports.shared_counter.cache_clear()
+    planned = digests.estimate(THEO, model=MODEL, **estimate_more)
+    assert len(loaded) == 2
     model = FakeLLM()
     reports.run(THEO, MODEL, **{**more, "llm_factory": lambda _info: model})
-    assert len(loaded) == 1
-    assert model.map_calls == [] and found.periods_built >= 1
+    assert len(loaded) == 2
+    assert model.map_calls == [] and found.periods_built == planned.periods_cached >= 1
     reports.shared_counter.cache_clear()
 
 

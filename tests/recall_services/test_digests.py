@@ -65,6 +65,44 @@ def test_the_message_ids_of_a_moment_are_messages_of_the_conversation_in_the_arc
         assert moment.date in {message["timestamp"][:10] for message in held}
 
 
+def test_a_reply_that_cites_another_conversation_or_words_nobody_wrote_gives_no_id_and_no_quote(
+    desk: Desk,
+) -> None:
+    """The summary stays. What the archive does not hold in this conversation is dropped."""
+    own = {message["id"]: message["text"] for message in desk.archive.iter_messages(MINA)}
+    # the invented talks share words: take a line of the other talk that no line of this one holds
+    theirs = next(
+        message
+        for message in desk.archive.iter_messages(THEO)
+        if not any(message["text"] in text for text in own.values())
+    )
+    assert theirs["id"] not in own
+
+    def responder(call: Any) -> Any:
+        first, second = call.lines[0], call.lines[1]
+        claim = {"date": first.day, "detail": "A detail.", "category": "milestone", "score": 0.9}
+        return {
+            "summary": "The summary stays.",
+            "moments": [
+                {**claim, "title": "Theirs", "quote": theirs["text"], "refs": [theirs["id"]]},
+                {**claim, "title": "Made up", "quote": "", "refs": ["no-such-guid", "m99999"]},
+                {**claim, "title": "Wrong words", "quote": "nobody wrote these words here", "refs": [first.ref]},
+                {**claim, "title": "Honest", "quote": second.text, "refs": [second.ref]},
+            ],
+        }
+
+    found = digests.build(MINA, "2023-01-01", "2023-01-31", model=MODEL, **desk.more(FakeLLM(responder)))
+    (period,) = found.periods
+    assert period.summary == "The summary stays."
+    by_title = {moment.title: moment for moment in period.moments}
+    assert (by_title["Theirs"].message_ids, by_title["Theirs"].quote) == ((), "")
+    assert (by_title["Made up"].message_ids, by_title["Made up"].quote) == ((), "")
+    assert by_title["Wrong words"].quote == "" and len(by_title["Wrong words"].message_ids) == 1
+    (honest,) = by_title["Honest"].message_ids
+    assert by_title["Honest"].quote in own[honest]
+    assert all(mid in own for moment in period.moments for mid in moment.message_ids)
+
+
 def test_the_model_reads_saved_names_and_no_handle(desk: Desk) -> None:
     model = FakeLLM()
     digests.build(MINA, model=MODEL, **desk.more(model))
