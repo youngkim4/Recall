@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from report_engine.control import CancelToken, ProgressEvent, Runtime
-from report_engine.errors import LLMError, ReportCancelled
+from report_engine.errors import CallLimitReached, LLMError, ReportCancelled
 from report_engine.model_info import ModelInfo
 from report_engine.models import Usage
 from report_engine.ports import LLM, ChatMessage, LLMResult, LLMUsage
@@ -59,6 +59,7 @@ class Caller:
         cancel: CancelToken | None,
         emit: Emit,
         reasoning: str | None,
+        max_calls: int | None = None,
     ) -> None:
         self._llm = llm
         self._model_info = model_info
@@ -66,6 +67,10 @@ class Caller:
         self._cancel = cancel
         self._emit = emit
         self._reasoning = reasoning
+        # a request that is sent counts, also when the port fails it: nobody
+        # knows whether it was paid
+        self._max_calls = max_calls
+        self._sent = 0
         self._budget = TokenBudget(model_info.tokens_per_minute, runtime.clock)
         self._usage = Usage()
 
@@ -103,12 +108,16 @@ class Caller:
         starting: ProgressEvent,
     ) -> LLMResult:
         """One request. Raises ReportCancelled before sending, LLMError when the port
-        fails in any way."""
+        fails in any way, and CallLimitReached for the request that would pass
+        the limit of calls of this run."""
         self.check_cancel()
+        if self._max_calls is not None and self._sent >= self._max_calls:
+            raise CallLimitReached(self._max_calls, usage=self._usage)
         reserved = input_estimate + max_output_tokens
         self._wait_for_budget(reserved, waiting)
         self._emit(starting)
         ticket = self._budget.spend(reserved)
+        self._sent += 1
         try:
             result = self._llm.generate(
                 messages,

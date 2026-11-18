@@ -53,6 +53,15 @@ class ReportCancelled(RunError):
     """The cancel token stopped the run between two model calls."""
 
 
+class CallLimitReached(RunError):
+    """The run made as many model calls as its caller allows. The next one was
+    not sent. `limit` is that number."""
+
+    def __init__(self, limit: int, usage: Usage | None = None) -> None:
+        super().__init__(f"the run made {limit} model calls; the limit is {limit}", usage=usage)
+        self.limit = limit
+
+
 class AllPeriodsFailed(RunError):
     """No period produced a summary, so there is nothing to write from."""
 
