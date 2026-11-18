@@ -7,6 +7,8 @@ import stat
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
+
 from meaning_index.store import IndexStore
 from tests.meaning_index.support import kept, unit
 
@@ -44,3 +46,59 @@ def torn(folder: Path, store: IndexStore, replaced: int) -> dict[str, bytes]:
         os.link(folder / name, folder / f"{name}.old")
         os.replace(other / name, folder / name)
     return before
+
+
+Build = tuple[list, np.ndarray]
+
+
+def two_builds() -> tuple[Build, Build]:
+    """Two invented builds of one shape: the same segments in another order, and other vectors."""
+    first = [kept(n) for n in range(4)]
+    return (first, unit(4, 8, seed=1)), (list(reversed(first)), unit(4, 8, seed=2))
+
+
+def put(store: IndexStore, build: Build) -> None:
+    with store.building():
+        store.replace("model-a", 8, build[0], [build[1]])
+
+
+def side(store: IndexStore, a: Build, b: Build) -> str:
+    """Which build the store gives: "a", "b" or "none". Segments of one with vectors of the other fail."""
+    found = store.read()
+    status = store.status()
+    if found is None:
+        assert status.state == "none"
+        return "none"
+    assert status.state == "ready"
+    for name, (segments, rows) in (("a", a), ("b", b)):
+        if list(found.segments) == segments and np.array_equal(np.asarray(found.vectors), rows):
+            return name
+    raise AssertionError("the store pairs the segments of one build with the vectors of another")
+
+
+def torn_between(folder: Path, a: Build, b: Build, replaced: int) -> IndexStore:
+    """Build `a`, then leave the folder as a process that died in the swap to `b` leaves it."""
+    store = make(folder)
+    put(store, a)
+    other = folder.parent / "other-build"
+    put(make(other), b)
+    for name in FILES[:replaced]:
+        os.link(folder / name, folder / f"{name}.old")
+        os.replace(other / name, folder / name)
+    return store
+
+
+class Faults:
+    """Stands in for os.replace: the calls with the numbers in `at` raise `error`."""
+
+    def __init__(self, at: set[int], error: BaseException | None = None) -> None:
+        self.at = at
+        self.error = error if error is not None else OSError("the disk said no")
+        self.calls = 0
+        self._real = os.replace
+
+    def __call__(self, source: object, target: object) -> None:
+        self.calls += 1
+        if self.calls in self.at:
+            raise self.error
+        self._real(source, target)  # type: ignore[arg-type]
