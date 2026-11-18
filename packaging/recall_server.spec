@@ -14,6 +14,8 @@ BUNDLE_DATAS = [
     (str(ROOT / "ui"), "ui"),
     # the facts of the offered models: recall_services/models.py reads this file from beside itself
     (str(ROOT / "recall_services" / "models.json"), "recall_services"),
+    # the facts of the embedding models: meaning_index/model_facts.py reads this file from beside itself
+    (str(ROOT / "meaning_index" / "models.json"), "meaning_index"),
 ]
 
 # tripwire: the repo root holds the founder's personal iMessage archive in
