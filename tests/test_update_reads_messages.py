@@ -322,7 +322,7 @@ class Reads:
         date. That folder holds ids and vectors, and no database of Messages.
         """
         work = work_dir(Path(archive_file)).resolve()
-        index = meaning_service.index_store().folder.resolve()
+        index = meaning_service.index_store(archive_file).folder.resolve()
         own = {Path(live).resolve(): "messages", Path(archive_file).resolve(): "archive", Path(local_store.DEFAULT_STORE_PATH).resolve(): "store"}
         folders = {work: "work", index: "index"}
         found = set()
@@ -417,10 +417,13 @@ def test_with_an_index_an_update_reads_the_index_too_and_still_no_second_source(
     assert set(reads.by_file) == {live.resolve()}
 
 
-def test_the_record_of_reads_names_a_database_beside_the_index_folder(messages_home, filled, monkeypatch):
-    # a file is "index" only inside the folder of the index: a database next to that folder is still named
+def test_the_record_of_reads_names_a_database_beside_the_index_folder(
+    messages_home, data_folder, tmp_path, monkeypatch  # noqa: F811
+):
+    # a file is "index" only inside the index folder of this archive: the folder of another archive is still named
+    filled = pulled(tmp_path / "saves" / "archive.sqlite3", FIRST)
     live = write_database(messages_home / "chat.db", [*FIRST, "still in messages"])
-    beside = write_database(meaning_service.index_store().folder.parent / "not-the-index" / "segments.sqlite3", ["a copy"])
+    beside = write_database(meaning_service.index_folder(filled).parent / "of-another-archive" / "segments.sqlite3", ["a copy"])
     reads = Reads(monkeypatch, [live])
     real = ui_server.pull_into_archive
 
@@ -431,11 +434,7 @@ def test_the_record_of_reads_names_a_database_beside_the_index_folder(messages_h
         return real(action, payload)
 
     monkeypatch.setattr(ui_server, "pull_into_archive", also_reads_it)
-    try:
-        job = run("export", {"messagesPath": str(filled)})
-    finally:
-        beside.unlink()
-        beside.parent.rmdir()
+    job = run("export", {"messagesPath": str(filled)})
 
     assert job["status"] == "completed", job["error"]
     assert reads.kinds(live, filled) == {"messages", "work", "archive", "store", f"another database: {beside.resolve()}"}

@@ -86,7 +86,7 @@ def test_a_failure_of_the_embedder_is_one_plain_sentence_and_the_index_is_as_it_
 ) -> None:
     told = failure(lake, Failing(error), limits=BatchLimits(max_tries=1))
     assert (told.code, str(told)) == (code, sentence)
-    assert meaning.status(lake.archive, store=lake.store)["state"] == "none"
+    assert meaning.status(lake.archive, lake.names, store=lake.store)["state"] == "none"
 
 
 def test_a_second_build_at_the_same_time_is_told_to_wait(lake: Lake) -> None:
@@ -101,16 +101,16 @@ def test_a_build_that_is_stopped_says_so_and_keeps_the_index_as_it_was(lake: Lak
     token.cancel()
     told = failure(lake, cancel=token if cancel == "token" else cancel)
     assert (told.code, str(told)) == ("cancelled", "The build was stopped. What was read is kept for the next build.")
-    assert meaning.status(lake.archive, store=lake.store)["state"] == "none"
+    assert meaning.status(lake.archive, lake.names, store=lake.store)["state"] == "none"
 
 
 def test_an_archive_that_can_not_be_read_is_one_plain_sentence(lake: Lake) -> None:
     broken = Unreadable(lake.archive)
     sentence = "The message archive could not be read. Update the archive, then build the index again."
     with pytest.raises(meaning.MeaningFailure) as built:
-        meaning.build(broken, store=lake.store, facts=FAKE_FACTS, embedder_factory=lambda *_: FakeEmbedder())
+        meaning.build(broken, lake.names, store=lake.store, facts=FAKE_FACTS, embedder_factory=lambda *_: FakeEmbedder())
     with pytest.raises(meaning.MeaningFailure) as estimated:
-        meaning.estimate(broken, store=lake.store, facts=FAKE_FACTS)
+        meaning.estimate(broken, lake.names, store=lake.store, facts=FAKE_FACTS)
     for told in (built.value, estimated.value):
         assert (told.code, str(told)) == ("archive_error", sentence)
 
@@ -119,15 +119,15 @@ def test_an_archive_that_fails_while_the_state_is_read_is_the_same_sentence(lake
     build(lake)
     lake.add([(MINA, "2024-07-01 08:00:00", "The lake is warm now", False)])
     with pytest.raises(meaning.MeaningFailure) as raised:
-        meaning.status(Unreadable(lake.archive), store=lake.store)
+        meaning.status(Unreadable(lake.archive), lake.names, store=lake.store)
     assert raised.value.code == "archive_error"
 
 
 def test_an_index_of_a_newer_build_of_the_app_is_not_read_and_not_replaced(lake: Lake) -> None:
     newer_format(lake.store)
     sentence = "A newer version of Recall made this index. Update Recall, then try again."
-    assert meaning.status(lake.archive, store=lake.store)["state"] == "none"
-    assert meaning.built(lake.store) is False
+    assert meaning.status(lake.archive, lake.names, store=lake.store)["state"] == "none"
+    assert meaning.built(lake.archive.path, store=lake.store) is False
     with pytest.raises(meaning.MeaningFailure) as estimated:
         estimate(lake)
     told = failure(lake)
@@ -150,7 +150,7 @@ def test_facts_that_can_not_be_read_are_a_failure_with_a_sentence(lake: Lake, mo
 
     monkeypatch.setattr(meaning, "default_facts", broken)
     with pytest.raises(meaning.MeaningFailure) as raised:
-        meaning.build(lake.archive, store=lake.store)
+        meaning.build(lake.archive, lake.names, store=lake.store)
     assert (raised.value.code, str(raised.value)) == ("build_failed", "The index could not be built. Build it again.")
 
 
@@ -164,10 +164,10 @@ def test_no_log_line_no_job_line_and_no_sentence_holds_text_or_a_handle(
     updates: list[dict[str, Any]] = []
     build(lake, on_progress=updates.append)
     estimate(lake)
-    meaning.status(lake.archive, store=lake.store)
+    meaning.status(lake.archive, lake.names, store=lake.store)
     told = [failure(lake, Failing(EmbeddingServiceError(f"said {MARK}")), store=IndexStore(lake.store.folder / "x"))]
     with pytest.raises(meaning.MeaningFailure) as raised:
-        meaning.estimate(Unreadable(lake.archive), store=lake.store, facts=FAKE_FACTS)
+        meaning.estimate(Unreadable(lake.archive), lake.names, store=lake.store, facts=FAKE_FACTS)
     told.append(raised.value)
     lines = [str(update.get("log") or "") for update in updates] + [
         str(update["progress"]["label"]) for update in updates if update.get("progress")
