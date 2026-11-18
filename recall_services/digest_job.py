@@ -55,11 +55,8 @@ def sentence_of(code: str, provider: str, model: str) -> str:
 
 
 def _provider(model: str) -> str:
-    """The name of the provider of a model for a sentence. A model that is not known has a general name."""
-    try:
-        return models.provider_name(models.facts(model.strip() or models.default_id()).provider)
-    except models.ModelChoiceError:
-        return models.SOME_PROVIDER
+    """The name of the provider of a model for a sentence. `digests.build` refused a model that is not on file before."""
+    return models.provider_name(models.facts(model).provider)
 
 
 class _Teller(Teller):
