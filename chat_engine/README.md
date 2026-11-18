@@ -541,6 +541,8 @@ Memory ports (`ports.MeaningSearch`, `ports.DigestSource`). The adapters are not
 
 - No adapter was run against the real index or the real digest. The tests use the two fakes.
 - `MeaningSearch.search` returns the hits best first. The engine does not sort them and does not read `score`.
+- The query that the port gets is masked. The conversation ids that it gets are handles: the port uses them as a filter on this machine and sends them nowhere. The same applies to the `conversation_id` of a digest.
+- The seeded search calls `MeaningSearch.search` one time for each question that has a word to search for. An adapter that asks a provider for a vector makes one request there for each such question.
 - `first_message_id` and `last_message_id` are archive ids (`Message["id"]`) of the same conversation, the first not later than the last.
 - `since` and `until` are days, both included. A hit matches when its exchange overlaps them.
 - `DigestSource.estimate` is cheap. The engine calls it while it checks the call, before the status line.

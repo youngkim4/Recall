@@ -7,13 +7,14 @@ from typing import Any, Optional
 
 from chat_engine.cancel import CancelToken
 from chat_engine.fake_archive import FakeArchive
+from chat_engine.fake_digests import FakeDigests, moment, period
 from chat_engine.labeler import MaskingLabeler
 from chat_engine.registry import ConversationAliases, EvidenceRegistry
 from chat_engine.render import Limits
 from chat_engine.scope import Scope
 from chat_engine.tool_context import Memory, ToolOutcome
 from chat_engine.tools import ToolBox
-from tests.chat_engine.tiny import SAVED_NAMES, tiny_archive, tiny_labeler
+from tests.chat_engine.tiny import MAYA_PHONE, SAVED_NAMES, tiny_archive, tiny_labeler
 
 RAW_HANDLES = ["7205550199", "720555", "555-0199", "+1720", "+1 720", "rk.unsaved", "example.org"]
 
@@ -74,3 +75,32 @@ def shown_refs(text: str) -> set[str]:
         if head[:1] == "m" and head[1:].isdigit():
             refs.add(head)
     return refs
+
+
+def maya_story() -> list:
+    return [
+        period(
+            "2021", "2021-03-04", "2021-03-04", 4, "Maya signs a lease and plans the move.",
+            [
+                moment(
+                    "2021-03-04", "The lease is signed", "Maya tells you the news.", "the lease got signed btw",
+                    ["a2", "a3"],
+                ),
+                moment("2021-03-04", "Moving day is set", "They move in April.", "", ["a4"]),
+            ],
+        ),
+        period(
+            "2023", "2023-07-11", "2023-07-11", 3, "The landlord raises the rent.",
+            [moment("2023-07-11", "Rent goes up", "Fifty more a month.", "fifty more a month", ["a7"])],
+        ),
+        period("2025", "2025-12-24", "2025-12-24", 2, "A Christmas greeting and a plan for the move."),
+    ]
+
+
+FAKE_OPTIONS = {"usd", "cached", "failed", "error", "estimate_error", "during", "honour_cancel"}
+
+
+def bench_for(story: list | None = None, **options: object) -> MemoryBench:
+    fake_options = {key: options.pop(key) for key in list(options) if key in FAKE_OPTIONS}
+    digests = FakeDigests({MAYA_PHONE: maya_story() if story is None else story}, **fake_options)
+    return MemoryBench(digests=digests, **options)
