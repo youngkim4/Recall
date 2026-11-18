@@ -151,19 +151,16 @@ def test_a_filter_by_day_means_the_same_day_as_in_the_archive(world: World, fold
     index = MeaningIndex.load(IndexStore(folder))
     assert index is not None
     (probe,) = FakeEmbedder().embed(["canoe"])
+    days_with_hits: dict[str, list[str]] = {PERSON: [], GROUP: []}
     for conversation in (PERSON, GROUP):
         counted = {row["key"]: row["total"] for row in world.archive.count(conversations=conversation, group_by="day")}
         for day in ("2024-01-14", "2024-01-15", "2024-01-16", "2024-01-17", "2024-03-01", "2024-03-02"):
             hits = index.search(probe, conversations=[conversation], since=day, until=day)
-            for hit in hits:
-                inside = world.archive.count(
-                    conversations=conversation,
-                    since=max(day, hit.segment.first_timestamp[:10]),
-                    until=min(day, hit.segment.last_timestamp[:10]),
-                )
-                assert inside >= 1
-            if not hits:
-                assert counted.get(day, 0) == 0 or conversation == PERSON and day == "2024-01-16"
+            # the index finds a segment on a day exactly when the archive counts a message on that day
+            assert bool(hits) == (counted.get(day, 0) > 0)
+            assert world.archive.count(conversations=conversation, since=day, until=day) == counted.get(day, 0)
+            days_with_hits[conversation] += [day] if hits else []
+    assert days_with_hits == {PERSON: ["2024-01-15", "2024-01-16"], GROUP: ["2024-03-01"]}
     midnight = index.search(probe, conversations=[PERSON], since="2024-01-16", until="2024-01-16")
     assert [hit.segment.last_message_id for hit in midnight] == [world.guids["tomorrow"]]
     assert world.archive.count(conversations=PERSON, since="2024-01-16", until="2024-01-16") == 1
