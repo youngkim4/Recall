@@ -90,6 +90,15 @@ class IndexStore:
             covered_until=whole.meta.covered_until,
         )
 
+    def meta(self) -> IndexMeta | None:
+        """The facts of the build on disk, with its `build_id`. None when the folder holds no whole build.
+
+        It reads no row, so a caller can ask it for each question to learn
+        whether the build that it loaded is still the build on disk.
+        """
+        whole = swapping.read_whole(self._folder, rows=False)
+        return None if whole is None else whole.meta
+
     def read(self) -> StoredIndex | None:
         """The index as one whole build, or None when the folder holds none.
 
