@@ -3,7 +3,9 @@
 A request holds at most `max_texts` texts and at most `max_tokens` counted
 tokens. A request that the service calls too large is sent again as two
 halves. A rate limit waits the time that the service names, and the request is
-tried again, `max_tries` times at most. No other failure is tried again.
+tried again, `max_tries` times at most. With no named wait the waits double:
+2, 4, 8, 16 and 32 seconds, which is longer than a limit for one minute lasts.
+No other failure is tried again.
 
 No text is logged or put in an error.
 """
@@ -38,7 +40,7 @@ class BatchLimits:
 
     max_texts: int = 96
     max_tokens: int = 100_000
-    max_tries: int = 5
+    max_tries: int = 6
     max_wait_s: float = 300.0
     backoff_s: float = 2.0
 

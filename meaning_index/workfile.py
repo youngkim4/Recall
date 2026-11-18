@@ -118,6 +118,9 @@ class WorkFile:
         return found
 
     def clear(self) -> None:
-        """Delete the file and what SQLite keeps beside it."""
-        for ending in ("", "-journal", "-wal", "-shm"):
-            remove(self._path.with_name(self._path.name + ending))
+        """Delete the file and what SQLite keeps beside it. A file that stays does no harm: a hash names its vector."""
+        try:
+            for ending in ("", "-journal", "-wal", "-shm"):
+                remove(self._path.with_name(self._path.name + ending))
+        except OSError as exc:
+            logger.warning("the work file of the index could not be removed (%s)", type(exc).__name__)

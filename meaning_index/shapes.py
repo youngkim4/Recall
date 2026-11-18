@@ -85,7 +85,7 @@ class BuildResult:
 
 @dataclass(frozen=True)
 class BuildProgress:
-    """One step of a build. `read` counts conversations; `embed` and `write` count segments."""
+    """One step of a build. `read` counts conversations, `embed` counts texts, `write` counts segments."""
 
     phase: BuildPhase
     done: int

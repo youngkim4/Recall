@@ -235,3 +235,14 @@ def test_a_segments_file_with_a_row_missing_in_the_middle_is_a_typed_error(folde
     conn.close()
     with pytest.raises(StoreError):
         store.read()
+
+
+def test_a_folder_with_odd_characters_in_its_name_is_read(tmp_path: Path) -> None:
+    odd = tmp_path / "Application Support" / "a?b#c%20d" / "meaning"
+    store = make(odd)
+    segments, rows = fill(store)
+    found = store.read()
+    assert found is not None
+    assert list(found.segments) == segments
+    assert store.folder == odd
+    assert store.status().state == "ready"

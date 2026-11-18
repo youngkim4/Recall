@@ -97,3 +97,19 @@ def test_a_repair_keeps_a_file_that_can_be_read(tmp_path: Path) -> None:
     work.put([A], unit(1, 8))
     work.repair()
     assert work.hashes() == {A}
+
+
+def test_a_file_that_can_not_be_removed_is_a_warning_and_no_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from meaning_index import workfile
+
+    def refuse(path: Path) -> None:
+        raise PermissionError("not yours")
+
+    work = WorkFile(tmp_path / "work.sqlite3", 8)
+    work.put([A], unit(1, 8))
+    monkeypatch.setattr(workfile, "remove", refuse)
+    work.clear()
+    assert any("could not be removed" in record.getMessage() for record in caplog.records)
+    assert work.hashes() == {A}

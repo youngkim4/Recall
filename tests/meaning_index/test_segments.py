@@ -72,6 +72,17 @@ def test_a_segment_ends_when_its_text_reaches_1600_characters() -> None:
     assert second.first_message_id == "m15"
 
 
+def test_no_text_is_longer_than_one_input_of_the_models_can_be() -> None:
+    # long lines, so that each segment ends as late as the rules let it
+    messages = [msg(f"m{n}", stamp(n), "\U0001f6f6" * (120 + 37 * (n % 9)), n % 3 == 0) for n in range(400)]
+    segments = cut(messages)
+    longest = max(len(segment.text) for segment in segments)
+    assert MAX_CHARS < longest <= MAX_CHARS + LINE_CHARS
+    # a token is one byte or more and a character is four bytes at most
+    assert max(len(segment.text.encode("utf-8")) for segment in segments) <= 4 * (MAX_CHARS + LINE_CHARS) < 8192
+    assert sum(segment.message_count for segment in segments) == 400
+
+
 def test_a_line_is_cut_at_400_characters() -> None:
     (segment,) = cut([msg("a", stamp(0), "y" * 1000, True)])
     line = segment.text.split("\n")[1]

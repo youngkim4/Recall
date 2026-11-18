@@ -33,7 +33,16 @@ def embed_all(embedder: object, texts: Sequence[str], counts: Sequence[int] | No
 
 def test_the_limits_are_the_ones_of_the_contract() -> None:
     assert (DEFAULT_LIMITS.max_texts, DEFAULT_LIMITS.max_tokens) == (96, 100_000)
-    assert DEFAULT_LIMITS.max_tries >= 2
+    assert (DEFAULT_LIMITS.max_tries, DEFAULT_LIMITS.max_wait_s) == (6, 300.0)
+
+
+def test_with_no_named_wait_the_default_waits_last_longer_than_one_minute() -> None:
+    embedder = ScriptedEmbedder(lambda number, texts: EmbeddingRateLimited("wait"))
+    slept: list[float] = []
+    with pytest.raises(EmbeddingRateLimited):
+        embed_all(embedder, texts_of(2), sleep=slept.append)
+    assert slept == [2.0, 4.0, 8.0, 16.0, 32.0]
+    assert sum(slept) > 60
 
 
 def test_a_request_holds_96_texts_at_most() -> None:
@@ -186,3 +195,5 @@ def test_counts_that_do_not_match_the_texts_are_refused() -> None:
         BatchLimits(max_texts=0)
     with pytest.raises(ValueError):
         BatchLimits(max_tries=0)
+    with pytest.raises(ValueError):
+        BatchLimits(max_wait_s=-1.0)
