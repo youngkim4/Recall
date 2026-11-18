@@ -432,7 +432,10 @@ A report with a scope reads only the messages of its scope. Its periods can diff
 - `message_ids` are ids of the source, not references such as `m12`. Each id is a message of the period of the moment. The tuple can be empty.
 - `quote` is part of one message of `message_ids`, or it is empty. A summary stays when a quote or a reference is dropped.
 - The check of a report accepts a quote from a message up to three days from the moment, also in another period. A report keeps the id of that message. A digest drops that id and the quote, and the moment stays.
-- The digest keeps each moment that passes the checks. It does not select moments as a report does (see "Moments").
+- `summary`, `title` and `detail` hold no line reference of the engine. A map reply cites lines as `m12`, and chat has references of the same form for other messages. `without_refs` in `chat_digest_refs.py` takes them out with what only holds them: brackets, a range (`m1–m2`), a list (`m3, m7 and m9`) and words such as "see" and "lines". `M25`, `m4a` and `40 m2` stay. A `quote` is text of a message and is not changed.
+- The cache keeps a reply as the model wrote it, with its references. A report reads them there.
+- A moment whose title is only a reference has no title after that, and is not given.
+- The digest keeps each other moment that passes the checks. It does not select moments as a report does (see "Moments").
 - `periods_built` counts the periods that a model call of this run read. `periods_cached` counts the periods from the cache. `periods_failed` counts the periods with no result: they are not in `periods`.
 - `usage` is the tokens and the cost of this run. A reply that can not be used is paid for, and its period fails.
 
