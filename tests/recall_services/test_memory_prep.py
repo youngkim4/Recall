@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -127,48 +129,62 @@ def test_when_the_archive_can_not_be_read_the_answer_says_so(desk: Desk) -> None
 
 
 @pytest.mark.parametrize(
-    ("state", "cost", "not_read", "start"),
+    ("completed", "cost", "not_read", "start"),
     [
-        ("none", 0.01, 3, False),
-        ("partial", 0.25, 3, True),
-        ("ready", 0.10, 1, True),
-        ("partial", 0.26, 3, False),
-        ("ready", 0.0, 0, False),
-        ("partial", None, 3, False),
+        (False, 0.01, 3, False),
+        (True, 0.25, 3, True),
+        (True, 0.10, 1, True),
+        (True, 0.26, 3, False),
+        (True, 0.0, 0, False),
+        (True, None, 3, False),
+        (True, True, 3, False),
     ],
 )
 def test_the_server_starts_a_reading_after_an_import_only_when_it_is_small(
-    state: str, cost: Any, not_read: int, start: bool
+    completed: bool, cost: Any, not_read: int, start: bool
 ) -> None:
-    found = {"state": state, "estimatedCost": cost, "partsNotRead": not_read, "error": None}
-    assert memory_prep.worth_starting(found) is start
+    found = {"state": "partial", "estimatedCost": cost, "partsNotRead": not_read, "error": None}
+    assert memory_prep.worth_starting(found, completed_before=completed) is start
 
 
-def test_after_an_import_that_changed_every_part_read_before_the_reading_still_starts() -> None:
-    """The parts that were read have new keys now: nothing is read, but the reader chose the memory before."""
+def test_an_answer_with_an_error_starts_nothing() -> None:
+    found = {"state": "partial", "estimatedCost": 0.0, "partsNotRead": 1, "error": "x"}
+    assert memory_prep.worth_starting(found, completed_before=True) is False
+
+
+def test_after_an_import_that_changed_every_part_a_completed_reading_still_starts() -> None:
+    """The parts that were read have new keys now: nothing is read, but a memory job of this archive completed."""
     found = {"state": "none", "estimatedCost": 0.05, "partsNotRead": 2, "error": None}
     assert memory_prep.worth_starting(found) is False
-    assert memory_prep.worth_starting(found, read_before=True) is True
-    assert memory_prep.worth_starting({**found, "estimatedCost": 0.3}, read_before=True) is False
+    assert memory_prep.worth_starting(found, completed_before=True) is True
+    assert memory_prep.worth_starting({**found, "estimatedCost": 0.3}, completed_before=True) is False
 
 
-def test_read_before_looks_for_notes_of_the_digest_model_on_a_conversation_of_the_memory(desk: Desk) -> None:
-    where = desk.places.cache_path
-    assert memory_prep.read_before(desk.archive, places=desk.places) is False
-    assert not where.exists()  # a look makes no file
-    digests.build(MINA, model="gpt-6.1-sol", **desk.more())
-    assert memory_prep.read_before(desk.archive, places=desk.places) is False
-    digests.build(THEO, model=memory.DIGEST_MODEL, **desk.more())
-    assert memory_prep.read_before(desk.archive, places=desk.places) is False  # Theo has too few messages
-    assert memory_prep.read_before(desk.archive, places=desk.places, min_messages=10) is True
-    digests.build(MINA, "2023-01-01", "2023-01-31", model=memory.DIGEST_MODEL, **desk.more())
-    assert memory_prep.read_before(desk.archive, places=desk.places) is True
+def test_the_marker_of_a_completed_reading_is_kept_for_each_archive(tmp_path: Path) -> None:
+    first, second = tmp_path / "one" / "archive.sqlite3", tmp_path / "two" / "archive.sqlite3"
+    assert memory_prep.completed_before(first) is False
+    memory_prep.mark_completed(first)
+    assert memory_prep.completed_before(first) is True and memory_prep.completed_before(second) is False
+    folder = memory_prep.marker_path(first).parent
+    assert folder.name == "memory" and oct(memory_prep.marker_path(first).stat().st_mode & 0o777) == "0o600"
+    assert str(first) not in memory_prep.marker_path(first).read_text(encoding="utf-8")
+    memory_prep.mark_completed(first)  # a second mark keeps one marker
+    assert len(list(folder.iterdir())) == 1
 
 
-def test_notes_that_can_not_be_read_say_nothing_was_read(desk: Desk) -> None:
-    desk.places.cache_path.parent.mkdir(parents=True, exist_ok=True)
-    desk.places.cache_path.write_text("not a database", encoding="utf-8")
-    assert memory_prep.read_before(desk.archive, places=desk.places) is False
+def test_a_question_or_a_report_with_the_digest_model_writes_no_marker(desk: Desk) -> None:
+    digests.build(MINA, model=memory.DIGEST_MODEL, **desk.more())
+    assert memory_prep.completed_before(desk.archive.path) is False
+
+
+def test_a_marker_that_can_not_be_written_is_a_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    blocked = tmp_path / "blocked"
+    blocked.write_text("a file where the folder would be", encoding="utf-8")
+    import recall_paths
+
+    monkeypatch.setattr(recall_paths, "SAVES_DIR", blocked)
+    memory_prep.mark_completed(tmp_path / "archive.sqlite3")  # no error
+    assert memory_prep.completed_before(tmp_path / "archive.sqlite3") is False
 
 
 def test_the_least_number_of_messages_is_read_at_each_call(desk: Desk, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -177,9 +193,6 @@ def test_the_least_number_of_messages_is_read_at_each_call(desk: Desk, monkeypat
     assert memory_prep.payload(desk.archive, desk.names, **estimate_more(desk))["minMessages"] == 10
 
 
-def test_an_answer_with_an_error_starts_nothing() -> None:
-    found = {"state": "partial", "estimatedCost": 0.0, "partsNotRead": 1, "error": "x"}
-    assert memory_prep.worth_starting(found) is False
 
 
 # --- the job -----------------------------------------------------------------------
@@ -326,14 +339,72 @@ def test_a_listener_that_fails_does_not_stop_the_job(desk: Desk) -> None:
     assert found["periodsBuilt"] == 4
 
 
-def test_an_error_that_nobody_planned_for_stops_the_pool_and_fails_the_job(desk: Desk, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_error_that_nobody_planned_for_stops_the_pool_and_says_what_was_spent(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The busiest conversation is read and paid for; the next one raises an error of no known kind."""
     pools: list[Any] = []
+    real = digests.build
 
-    def broken(*_args: Any, pool: Any = None, **_more: Any) -> Any:
+    def broken(conversation: str, *args: Any, pool: Any = None, **more: Any) -> Any:
         pools.append(pool)
-        raise RuntimeError("a fault")
+        if conversation == THEO:
+            raise RuntimeError("a fault")
+        return real(conversation, *args, pool=pool, **more)
 
     monkeypatch.setattr(digests, "build", broken)
-    with pytest.raises(RuntimeError, match="a fault"):
-        run(desk)
-    assert pools and pools[0].stopped
+    with caplog.at_level(logging.INFO, logger=memory.SPEND_LOG), pytest.raises(memory_prep.MemoryFailure) as told:
+        run(desk, min_messages=10, parallel=1)
+    assert told.value.code == "run_failed" and isinstance(told.value.__cause__, RuntimeError)
+    assert str(told.value) == "The memory could not be read. What was read is kept."
+    assert told.value.usage is not None and told.value.usage["calls"] == 4 and told.value.usage["cost_usd"] > 0
+    assert pools[-1].stopped
+    assert spend_lines(caplog) == [
+        f"the memory job stopped (run_failed): 4 parts read now, 0 from the notes, 1 not read, 4 model calls, "
+        f"{told.value.usage['cost_usd']:.4f} USD"
+    ]
+
+
+def spend_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [record.getMessage() for record in caplog.records if record.name == memory.SPEND_LOG]
+
+
+def test_a_job_that_is_paid_for_parts_and_then_fails_says_what_it_spent(
+    desk: Desk, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Four parts of the busiest conversation are paid for; then the key is refused."""
+    model = failing_for("2024", LLMError("x (HTTP 401)", status_code=401))
+    with caplog.at_level(logging.INFO, logger=memory.SPEND_LOG), pytest.raises(memory_prep.MemoryFailure) as told:
+        run(desk, model, min_messages=10, parallel=1)
+    assert told.value.code == "key_rejected"
+    assert told.value.usage["calls"] == 4 and told.value.usage["cost_usd"] > 0
+    (line,) = spend_lines(caplog)
+    assert line.startswith("the memory job stopped (key_rejected): 4 parts read now, 0 from the notes, 1 not read, 4 model calls")
+    assert MINA not in line and THEO not in line
+
+
+def test_a_job_that_ends_writes_one_line_of_what_it_spent(desk: Desk, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger=memory.SPEND_LOG):
+        found, _updates = run(desk)
+    assert spend_lines(caplog) == [
+        f"the memory job: 4 parts read now, 0 from the notes, 0 not read, 4 model calls, {found['usd']:.4f} USD"
+    ]
+
+
+def test_a_cancelled_job_after_paid_parts_says_what_it_spent(desk: Desk, caplog: pytest.LogCaptureFixture) -> None:
+    token = CancelToken()
+
+    def cancel_after_two(call: FakeCall) -> Any:
+        if len(model.calls) == 2:
+            token.cancel()
+        return None
+
+    model = FakeLLM(cancel_after_two)
+    with caplog.at_level(logging.INFO, logger=memory.SPEND_LOG), pytest.raises(memory_prep.MemoryFailure) as told:
+        run(desk, model, cancel=token)
+    assert told.value.code == "cancelled" and told.value.usage["calls"] == 2
+    # the two parts are in the notes, but the conversation gave no digest: its parts count as not read
+    assert spend_lines(caplog) == [
+        f"the memory job stopped (cancelled): 0 parts read now, 0 from the notes, 4 not read, 2 model calls, "
+        f"{told.value.usage['cost_usd']:.4f} USD"
+    ]

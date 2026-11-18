@@ -629,6 +629,9 @@ NO_CONVERSATION_TO_READ = "A conversation is needed to read it for chat."
 MEMORY_ACTIONS = frozenset({"memory"})
 MEMORY_IS_READ = "Recall is reading the memory of chat. Wait until it ends."
 IMPORT_BEFORE_MEMORY = "An import is running. Wait until it ends, then read the memory."
+# the memory job and a digest job read with one model and no limit of parts: side by side they pay twice
+MEMORY_BEFORE_DIGEST = "Recall is reading the memory of chat, and this conversation with it. Wait until it ends."
+DIGEST_BEFORE_MEMORY = "Recall is reading a conversation for chat. Wait until it ends, then read the memory."
 UNFINISHED = frozenset({"queued", "running"})
 # Jobs that do not run together: the job that is asked for, the jobs that
 # hold it up, and what the reader is told.
@@ -643,6 +646,8 @@ ONE_AT_A_TIME = (
     # one reading of the memory at a time, and no import writes the archive meanwhile
     (IMPORT_ACTIONS | MEMORY_ACTIONS, MEMORY_ACTIONS, MEMORY_IS_READ),
     (MEMORY_ACTIONS, IMPORT_ACTIONS, IMPORT_BEFORE_MEMORY),
+    (DIGEST_ACTIONS, MEMORY_ACTIONS, MEMORY_BEFORE_DIGEST),
+    (MEMORY_ACTIONS, DIGEST_ACTIONS, DIGEST_BEFORE_MEMORY),
 )
 
 
@@ -1123,7 +1128,11 @@ def refresh_meaning_index(job_id: str, action: str, payload: dict) -> None:
 
 
 def prepare_memory(job_id: str, payload: dict) -> dict:
-    """The `memory` job: read the memory of chat ahead of time, four conversations at once. Its lines hold counts only."""
+    """The `memory` job: read the memory of chat ahead of time, four conversations at once. Its lines hold counts only.
+
+    The job keeps what it spent under `spent` (`{"usd", "usage"}`), also when
+    it failed. One that completed writes the marker of its archive.
+    """
     _state, archive = archive_for(named_archive(payload))
 
     def told(update: dict) -> None:
@@ -1132,12 +1141,47 @@ def prepare_memory(job_id: str, payload: dict) -> dict:
         if update.get("log"):
             append_log(job_id, update["log"])
 
-    return memory_prep_service.run(told, archive=archive, names=saved_names())
+    try:
+        result = memory_prep_service.run(told, archive=archive, names=saved_names())
+    except memory_prep_service.MemoryFailure as failure:
+        usage = failure.usage or None
+        update_job(job_id, spent={"usd": float((usage or {}).get("cost_usd") or 0.0), "usage": usage})
+        raise
+    update_job(job_id, spent={"usd": result["usd"], "usage": result["usage"]})
+    memory_prep_service.mark_completed(archive.path)
+    return result
 
 
-def memory_answer(archive: Archive) -> dict:
-    """The answer of `GET /api/memory`: what is read of the memory, and the `memory` job that runs, if any."""
-    found = memory_prep_service.payload(archive, saved_names())
+# The answer of `GET /api/memory` for one archive, its names and the notes of the parts as they are.
+# Working it out plans every conversation of the memory (about 12 s on a large archive).
+_MEMORY_CACHE: dict = {"key": None, "value": None}
+_MEMORY_LOCK = threading.Lock()
+
+
+def memory_key(state: ArchiveState) -> tuple:
+    """What the counts of the memory are known by: the archive, the names, the notes and the settings of the memory."""
+    notes = report_service.default_places().cache_path
+    return (
+        archive_signature(state),
+        file_cache_signature(CONTACTS_CACHE_PATH),
+        file_cache_signature(notes),
+        file_cache_signature(notes.with_name(notes.name + "-wal")),
+        memory_prep_service.model(),
+        memory_prep_service.PREPARE_MIN_MESSAGES,
+    )
+
+
+def memory_answer(state: ArchiveState, archive: Archive) -> dict:
+    """The answer of `GET /api/memory`: the counts, kept for one key, and the `memory` job that runs now, read fresh.
+
+    A part that is saved changes the notes file, so the key, and the counts move.
+    """
+    key = memory_key(state)
+    # held while it is worked out: requests that arrive together wait for one answer
+    with _MEMORY_LOCK:
+        if _MEMORY_CACHE["key"] != key:
+            _MEMORY_CACHE.update({"key": key, "value": memory_prep_service.payload(archive, saved_names())})
+        found = _MEMORY_CACHE["value"]
     with JOBS_LOCK:
         running = [job["id"] for job in JOBS.values() if job["action"] in MEMORY_ACTIONS and job["status"] in UNFINISHED]
     return {**found, "jobId": running[0] if running else None}
@@ -1146,9 +1190,9 @@ def memory_answer(archive: Archive) -> dict:
 def refresh_memory(job_id: str, action: str, payload: dict) -> None:
     """After an import that changed the archive: one `memory` job reads what the import added to the memory.
 
-    Only when the memory was read before: the notes hold a part of it
-    (`memory_prep.read_before`), also when the import gave that part a new
-    key. And only when the parts that are not read cost at most
+    Only when a `memory` job of this archive completed before (its marker,
+    `memory_prep.completed_before`): parts that a question or a report read do
+    not count. And only when the parts that are not read cost at most
     `PREPARE_AUTO_USD` (`memory_prep.worth_starting`). The first reading is
     the choice of the reader. A fault here does not change how the import ended.
     """
@@ -1156,11 +1200,11 @@ def refresh_memory(job_id: str, action: str, payload: dict) -> None:
         if not changed_the_archive(job_id, action):
             return
         place = named_archive(payload)
+        if not memory_prep_service.completed_before(places.archive_path_for(place)):
+            return  # the reader never read the memory of this archive: the first reading is theirs
         _state, archive = archive_for(place, wait_for_import=False)
-        if not memory_prep_service.read_before(archive):
-            return  # no part of the memory is in the notes: the state was none
         found = memory_prep_service.payload(archive, saved_names())
-        if not memory_prep_service.worth_starting(found, read_before=True):
+        if not memory_prep_service.worth_starting(found, completed_before=True):
             parts = found["partsNotRead"]
             print(f"[memory] the memory waits for the reader: {parts:,} part{'' if parts == 1 else 's'} not read", file=sys.__stderr__)
             return
@@ -2727,8 +2771,8 @@ class RecallHandler(BaseHTTPRequestHandler):
             send_json(self, 200, meaning_service.payload(archive, saved_names()))
         elif parsed.path == "/api/memory":
             # the memory of chat: what is read, and what reading the rest would cost now
-            _state, archive = archive_for(named_archive(query))
-            send_json(self, 200, memory_answer(archive))
+            state, archive = archive_for(named_archive(query))
+            send_json(self, 200, memory_answer(state, archive))
         elif parsed.path == "/api/day":
             _state, archive = archive_for(named_archive(query))
             try:

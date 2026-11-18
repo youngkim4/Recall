@@ -403,10 +403,10 @@ Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `rec
 
 - The `digest` job reads one conversation for chat (`read_conversation` in `ui_server.py`, `digest_job.run`). The request has `conversation`, and `since` and `until` as days or null. It uses `DIGEST_MODEL` and has no limit of parts.
 - Its result has `conversation`, `periods`, `periodsBuilt`, `periodsCached`, `periodsFailed`, `usd` and `usage`. Its `progress` has `step`, `of` and `label`, as in a report job. Its lines hold the label of a part and counts.
-- One `digest` job runs at a time. A `digest` job and an import do not run together (`ONE_AT_A_TIME`). A report and the `meaning` job run beside it.
+- One `digest` job runs at a time. A `digest` job and an import do not run together, and a `digest` job and the `memory` job do not run together (`ONE_AT_A_TIME`). A report and the `meaning` job run beside it.
 - The record of a `digest` job says what it reads: `contact` is the conversation (`conversation` of the request, before `contact`), `archivePath` is the resolved path of the archive file, and `since` and `until` are the days or null (`job_record`). The record of any other job has no such field.
 - A `digest` job that fails tells a sentence of its own (`sentence_of` in `recall_services/digest_job.py`), with the code of the failure of `digests.build`. No sentence names a report: the job writes none.
-- Known limit: a `digest` job can not be stopped, and an import waits for it.
+- Known limit: a `digest` job can not be stopped. An import that is asked for while it runs is refused with 409 and a plain sentence (`ONE_AT_A_TIME`); the reader starts the import again when it has ended.
 
 ### The index job and its route
 
@@ -417,7 +417,7 @@ Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `rec
 - The `meaning` job and an import do not run together, and two `meaning` jobs do not run together (`ONE_AT_A_TIME`). The second one is refused with a plain sentence.
 - After an import that changed the archive, the server starts one `meaning` job when the archive has an index (`refresh_meaning_index`, called by `run_job`). With no index it starts nothing: the first build is the choice of the reader. That job is made by `create_job`, so the same rule holds for it.
 - The server does not spend on the index without a word. `refresh_meaning_index` takes the estimate first, and starts the job only when `meaning.small_enough` says yes: `newSegments` is at most 2,000, or at most 10 percent of the segments, whichever is more (`REFRESH_SEGMENTS`, `REFRESH_SHARE`). Above that it starts nothing, and the state is `behind`. A `meaning` job that a reader starts always builds.
-- Known limit: a `meaning` job can not be stopped, and an import waits for it. The same holds for a `digest` job.
+- Known limit: a `meaning` job can not be stopped. An import that is asked for while it runs is refused with 409 and a plain sentence (`ONE_AT_A_TIME`); the reader starts the import again when it has ended. The same holds for a `digest` job and the `memory` job.
 - `run_job` looks at the index after the import has ended in the list. A slow look or a fault there does not delay or fail the import.
 - A failure of a build is a `MeaningFailure`. The job tells its sentence and its code.
 
@@ -429,11 +429,14 @@ Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `rec
 - The limit of a digest (`max_new_periods`) holds with a pool: `Caller` counts a request when it is sent, under a lock, and refuses the one that would pass the limit before it is sent.
 - A failure that each conversation would have (`FATAL` in `memory_prep_words.py`) stops the pool: no new request is sent, and the requests in flight end and are kept. Any other failure is counted for its conversation, and the job goes on.
 - Its result has `conversations`, `conversationsRead`, `conversationsFailed`, `periodsBuilt`, `periodsCached`, `periodsFailed`, `usd` and `usage`. Its `progress` has `step`, `of`, `label`, `done` and `total`. Its lines and its progress hold counts only: no text, name, handle, id or label of a part.
+- What the job spent is in its record under `spent`, `{"usd", "usage"}`, when it ended completed or failed after `memory_prep.run` started (`prepare_memory`). A failure of the job (`MemoryFailure`) carries the usage of the calls that were paid, also an error of no known kind, which is wrapped as `run_failed`. Each end of `memory_prep.run` writes one line to the log `recall.spend`, with counts and the cost only.
 - `GET /api/memory` answers `memory_prep.payload` with `jobId` (`memory_answer` in `ui_server.py`): `state` (`none`, `partial`, `ready`), `model`, `minMessages`, the counts of conversations and parts, read and not read, `estimatedCost` of the parts not read, `error` and `code`. It makes no model call and needs no key. The shapes are in `recall_services/README.md`.
-- One `memory` job runs at a time. The `memory` job and an import do not run together (`ONE_AT_A_TIME`). A report, the `meaning` job, the `digest` job and chat run beside it.
-- After an import that changed the archive, `refresh_memory` (called by `after_job`) starts one `memory` job only when the notes hold a part of the memory (`memory_prep.read_before`: an entry of `DIGEST_MODEL` for a conversation of the memory, also when the import gave it a new key), and the parts not read cost at most `PREPARE_AUTO_USD` (0.25 USD, `memory_prep.worth_starting`). With no such part it starts nothing and takes no estimate: the first reading is the choice of the reader. Above the cost it starts nothing. A fault there does not change how the import ended.
-- The job and a question do not share a lock. The bound of a double spend in "A digest inside a question is bounded" holds for the `memory` job as for the `digest` job.
-- Known limit: a `memory` job can not be stopped from the app, and an import waits for it.
+- The counts of `GET /api/memory` are kept in the server process for one key (`memory_key`): the signature of the archive, the Contacts cache file, the notes file and its `-wal` file (time and size), `DIGEST_MODEL` and `PREPARE_MIN_MESSAGES`. A part that is saved changes the notes file, so the next answer works the counts out again. One lock is held while they are worked out: requests that arrive together wait for one answer. `jobId` is read fresh for each request.
+- One `memory` job runs at a time. The `memory` job and an import do not run together, and the `memory` job and a `digest` job do not run together (`ONE_AT_A_TIME`): both read with `DIGEST_MODEL` and no limit of parts, and side by side they would pay for each part of a conversation twice. A report, the `meaning` job and chat run beside it.
+- After an import that changed the archive, `refresh_memory` (called by `after_job`) starts one `memory` job only when a `memory` job of this archive completed before, and the parts not read cost at most `PREPARE_AUTO_USD` (0.25 USD, `memory_prep.worth_starting`). The marker of a completed job is `saves/memory/<16 hex digits of the SHA-256 of the resolved path of the archive file>.json` (`memory_prep_marker.py`). `prepare_memory` writes it when the job ends completed. A question, a report and a `digest` job never write it. With no marker the server starts nothing and takes no estimate: the first reading is the choice of the reader. Above the cost it starts nothing. A fault there does not change how the import ended.
+- The job and a question do not share a lock. The bound of a double spend in "A digest inside a question is bounded" holds for the `memory` job.
+- Known limit: a report with the model of the digest (`DIGEST_MODEL`, the low level) can run beside the `memory` job and pay for the parts of one conversation twice, when both send them at the same moment. No lock for each conversation holds the two apart.
+- Known limit: a `memory` job can not be stopped from the app. An import that is asked for while it runs is refused with 409 and a plain sentence.
 
 ## Mac shell
 
