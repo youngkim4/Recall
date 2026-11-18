@@ -1,0 +1,88 @@
+/* Scenes: the picture of a palette that has one lives in the rail.
+
+   The canvas is as wide and as tall as the rail (components/Backdrop.tsx).
+   The rail has no ground of its own: its rows stand on the picture, which is
+   composed around them and keeps to its ground colours under them
+   (lib/backdrop/craft.ts). The workspace is a plain page in the palette's
+   colours, with no picture, no glass and no blur behind it. */
+
+@layer shell {
+  .backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: -1;
+    image-rendering: pixelated;
+    pointer-events: none;
+  }
+
+  :root[data-paper] .backdrop {
+    display: none;
+  }
+
+  /* the picture is behind the rail and in front of the app's own ground */
+  :root:is([data-palette='broadsheet'], [data-palette='shoreline'], [data-palette='canopy'], [data-palette='sky']):not([data-paper]) .app {
+    isolation: isolate;
+  }
+
+  :root:is([data-palette='broadsheet'], [data-palette='shoreline'], [data-palette='canopy'], [data-palette='sky']):not([data-paper]) .rail {
+    background: none;
+  }
+
+  :root:is([data-palette='broadsheet'], [data-palette='shoreline'], [data-palette='canopy'], [data-palette='sky']):not([data-paper]) .workspace {
+    background: var(--bg);
+  }
+
+  /* A scene sets the whole interface in its serif (palettes.css). A serif
+     with a short lowercase reads smaller than the system face at the same
+     size, so every face is brought to about the height of the system
+     face's lowercase. */
+  :root:is([data-palette='broadsheet'], [data-palette='shoreline'], [data-palette='canopy'], [data-palette='sky']):not([data-paper]) {
+    font-size-adjust: 0.49;
+  }
+
+  /* The box where a question is written is square like every other surface
+     of a scene. chat.css is in a later layer, so the shape is handed to it. */
+  :root:is([data-palette='broadsheet'], [data-palette='shoreline'], [data-palette='canopy'], [data-palette='sky']):not([data-paper]) {
+    --composer-r: var(--r-lg);
+    --composer-picker-r: var(--r-md);
+  }
+}
+
+/* These answer to rules of a view, so they are in the layer of the views. */
+@layer views {
+  /* The moments are a column of a page, as on a newspaper's front: each one
+     is its own item, set apart by a hairline and not by a card. The first is
+     the lead: its name is set a size up, and what it quotes keeps its size. */
+  :root:is([data-palette='broadsheet'], [data-palette='shoreline'], [data-palette='canopy'], [data-palette='sky']):not([data-paper]) {
+    .moment-cards {
+      gap: 0;
+    }
+
+    .moment-cards > li {
+      border-top: 1px solid var(--line);
+    }
+
+    .moment-cards > li:last-child {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .moment-cards .card {
+      border-radius: 0;
+      background: none;
+      box-shadow: none;
+    }
+
+    /* the words keep the edge of the column; a fill under the pointer reaches 8px past them */
+    .moment-cards .row {
+      width: calc(100% + var(--s-4));
+      margin-inline: calc(var(--s-2) * -1);
+      padding-inline: var(--s-2);
+    }
+
+    .moment-cards > li:first-child .moment-name {
+      font-size: var(--t-reading);
+      line-height: var(--lh-reading);
+    }
+  }
+}

@@ -10,7 +10,6 @@ import {
 } from 'react'
 import { recallBridge } from '../../lib/bridge'
 import { alongAt, heldStep, stepAt, stepByKey } from '../../lib/levelSlider'
-import { rampCss, toneAt } from '../../lib/tone'
 
 export type LevelStep = { value: string; label: string }
 
@@ -31,11 +30,11 @@ const INSET = 11
 // than half a pixel is left.
 const CHASE = 0.32
 const ARRIVED_PX = 0.5
-// The colours of the track from its first step to its last: cool where the
-// model thinks little, warm where it thinks most. The fill, the glow and
-// the ring of a step all read this one ramp.
-const RAMP = ['#0a84ff', '#5e5ce6', '#bf5af2', '#ff375f', '#ff9f0a']
-const RAMP_STYLE = { '--ramp': rampCss(RAMP) } as CSSProperties
+// How long one pulse of the track takes on the first step and on the last,
+// in seconds: the more the model thinks, the faster the track beats. Even
+// the last step is slower than a resting heart.
+const PULSE_SLOW = 4.2
+const PULSE_FAST = 2.4
 const SWELL = 'cubic-bezier(0.34, 1.56, 0.64, 1)'
 const OUT = 'cubic-bezier(0.23, 1, 0.32, 1)'
 
@@ -82,21 +81,27 @@ export function LevelSlider({ label, steps, value, onChange }: LevelSliderProps)
   )
   const last = steps.length - 1
 
-  // where the knob is, and the colour of the track there
+  // where the knob is
   function place(along: number) {
-    const style = root.current?.style
-    style?.setProperty('--at', String(along))
-    style?.setProperty('--tone', toneAt(RAMP, along))
+    root.current?.style.setProperty('--at', String(along))
+  }
+
+  // How fast the track beats on a step. It is set when the step changes and
+  // not while the knob moves: a beat whose length changed at each move would
+  // start again at each move.
+  function pace(index: number) {
+    const seconds = PULSE_SLOW - (PULSE_SLOW - PULSE_FAST) * (index / Math.max(1, last))
+    root.current?.style.setProperty('--pulse', `${seconds.toFixed(2)}s`)
+    root.current?.style.setProperty('--level', String(index / Math.max(1, last)))
   }
 
   // The knob stands on its step, unless a pointer holds it: then the pointer
   // says where it is.
   useLayoutEffect(() => {
     chosen.current = at
+    pace(at)
     if (holder.current || last < 1) return
-    const style = root.current?.style
-    style?.setProperty('--at', String(at / last))
-    style?.setProperty('--tone', toneAt(RAMP, at / last))
+    place(at / last)
   }, [at, last])
 
   // a slider that leaves the page in the middle of a drag lets go of its pointer
@@ -119,7 +124,7 @@ export function LevelSlider({ label, steps, value, onChange }: LevelSliderProps)
       ?.animate([{ scale: base }, { scale: base * 1.2 }, { scale: base }], { duration: 300, easing: SWELL })
     box
       .querySelector('.level-slider-ring')
-      ?.animate([{ opacity: 0.7, scale: 1 }, { opacity: 0, scale: 2.6 }], { duration: 480, easing: OUT })
+      ?.animate([{ opacity: 0.6, scale: 1 }, { opacity: 0, scale: 2.8 }], { duration: 620, easing: OUT })
     for (const mark of box.querySelectorAll(`[data-step="${index}"]`)) {
       mark.animate([{ scale: 1 }, { scale: 2.6 }, { scale: 1 }], { duration: 300, easing: SWELL })
     }
@@ -127,7 +132,7 @@ export function LevelSlider({ label, steps, value, onChange }: LevelSliderProps)
       box.querySelector('.level-slider-shine')?.animate(
         [
           { opacity: 0, translate: '-120% 0' },
-          { opacity: 0.9, offset: 0.3 },
+          { opacity: 0.55, offset: 0.3 },
           { opacity: 0, translate: '420% 0' },
         ],
         { duration: 720, easing: 'ease-out' },
@@ -140,6 +145,7 @@ export function LevelSlider({ label, steps, value, onChange }: LevelSliderProps)
     if (!step || index === chosen.current) return
     setTurn(index > chosen.current ? 'up' : 'down')
     chosen.current = index
+    pace(index)
     onChange(step.value)
     beat(index)
   }
@@ -219,7 +225,7 @@ export function LevelSlider({ label, steps, value, onChange }: LevelSliderProps)
 
   if (steps.length < 2) return null
   return (
-    <div ref={root} className="level-slider" style={RAMP_STYLE}>
+    <div ref={root} className="level-slider">
       <div className="level-slider-head">
         <span id={labelId}>{label}</span>
         {/* the name of a new step turns in from the side the knob came from */}
@@ -245,6 +251,8 @@ export function LevelSlider({ label, steps, value, onChange }: LevelSliderProps)
         onBlur={release}
         onKeyDown={handleKeyDown}
       >
+        {/* the light the fill throws around the track: it beats, faster on a higher step */}
+        <span className="level-slider-aura" />
         {steps.map((step, index) => (
           <span
             key={step.value}

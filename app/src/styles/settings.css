@@ -70,14 +70,16 @@
     color: var(--bad);
   }
 
-  .setting > :is(.btn, .picker, .palette-picker) {
+  .setting > :is(.btn, .picker) {
     align-self: center;
   }
 
-  /* a row of rounds at the end of a row ends on the row's edge: the ring of
-     the last round is what stands there */
+  /* the cards of the palettes take the row's whole width, under its words.
+     The ring of a card stands 4px outside it, so the cards keep that much
+     from the row's edges and from the line under them. */
   .setting > .palette-picker {
-    margin-right: -0.125rem;
+    grid-column: 1 / -1;
+    padding: 0.25rem 0.25rem 0.5rem;
   }
 
   /* a picker at the end of a row ends on the row's edge */
@@ -146,8 +148,13 @@
       grid-row: 2;
     }
 
-    .setting > :is(.btn, .picker, .palette-picker) {
+    .setting > :is(.btn, .picker) {
       grid-area: 1 / 2 / span 2;
+    }
+
+    .setting > .palette-picker {
+      grid-area: 3 / 1 / auto / -1;
+      padding-top: var(--s-2);
     }
 
     /* a row with nothing to say is its label and its control on one line, in

@@ -1,114 +1,159 @@
-/* Palettes: the colours of the app after the first one, Graphite, which is
-   in tokens.css. A palette changes the grounds, the text, the two grays
-   that fills and lines are shares of, and the one hue. Everything else in
-   tokens.css follows from those.
+/* Palettes: the looks of the app after the first one, Graphite, which is in
+   tokens.css. Each of these is a scene: a picture that moves, painted in
+   the rail by components/Backdrop.tsx from lib/backdrop/ (scenes.css). This
+   file gives each scene the colours of the page beside it and of what
+   stands on it: the grounds, the text, the two grays that fills and lines
+   are shares of, and the one hue with the colour of the words on it.
+   Everything else in tokens.css follows from those. A palette can also set
+   the face of the interface and the corners.
 
-   Each palette has a light and a dark form in one block (light-dark), so it
-   goes with any Appearance. Every text step holds 4.5:1 on every ground of
-   its palette, a selected row too: palette.test.ts reads this file and
-   measures it. The names are the ones in lib/palette.ts and in index.html.
+   The page of every scene is paper by day and warm charcoal by night, from
+   a print: a page tinted blue or green is the stock dark mode the user saw
+   as vibe coded. The colour of a scene is in its picture and in its hue.
+
+   Each scene has a day and a night in one block (light-dark), so it goes
+   with any Appearance. Every text step holds 4.5:1 on every ground of its
+   palette, a selected row too, and on the picture where words stand on it:
+   palette.test.ts and backdrop/scenes.test.ts read this file and measure
+   it. The names are the ones in lib/palette.ts and in index.html.
+
+   The hue of what you sent is a deep ink in both forms, with white words
+   on it: never a bright colour on a dark ground, which the user saw as
+   vibe coded. In the dark form it holds 3:1 on the page, so a bar of it is
+   seen; palette.test.ts measures this.
 
    Paper is Graphite, whatever the app is set to: a report that is printed
    or saved is black on white. */
 
 @layer base {
-  /* a sheet of writing paper and blue-black ink */
-  [data-palette='letter']:not([data-paper]) {
-    --bg: light-dark(#fbf8f1, #1e1b16);
-    --bg-rail: light-dark(#f3eee3, #16130f);
-    --bg-raised: light-dark(#fffdf8, #2b2721);
-    --gray: rgb(131 120 105);
-    --edge: light-dark(rgb(74 62 48), rgb(245 236 222));
-    --text: light-dark(#2a2520, #f4ede1);
-    --text-2: light-dark(#524a41, #c9c0b3);
-    --text-3: light-dark(#655c51, #b5ab9d);
-    --text-off: light-dark(#b5ab9d, #6a6156);
-    --ink: light-dark(#2a2520, #f4ede1);
-    --ink-hover: light-dark(#453d35, #ffffff);
-    --on-ink: light-dark(#fffdf8, #1e1b16);
-    --you: #2f55b5;
-    --you-hover: #3760c6;
-    --you-ink: light-dark(#2a4ea8, #8fb0ff);
-    --them: light-dark(#ebe5d8, #3a352d);
+  /* Broadsheet: a newspaper. The paper, wheat, ink and claret of the
+     Financial Times (its Origami palette); the whole interface in the
+     Mac's serif (New York); square corners and ink lines, as
+     Semafor and the Obsidian theme Newspaper draw them. The rail is a print
+     in halftone. */
+  [data-palette='broadsheet']:not([data-paper]) {
+    --bg: light-dark(#fff1e5, #1d1b19);
+    --bg-rail: light-dark(#f2dfce, #262321);
+    --bg-raised: light-dark(#fff8f2, #2a2724);
+    --gray: light-dark(rgb(128 121 115), rgb(128 121 115));
+    --edge: light-dark(#33302e, #f2dfce);
+    --text: light-dark(#1a1817, #fff1e5);
+    --text-2: light-dark(#33302e, #e6d9cc);
+    --text-3: light-dark(#4d4845, #cdbfb2);
+    --text-off: light-dark(#b3a9a0, #6e6660);
+    --ink: light-dark(#1a1817, #fff1e5);
+    --ink-hover: light-dark(#33302e, #ffffff);
+    --on-ink: light-dark(#fff1e5, #1a1817);
+    --you: light-dark(#990f3d, #b54268);
+    --you-hover: light-dark(#ad1a4c, #c05275);
+    --on-you: light-dark(#ffffff, #ffffff);
+    --you-ink: light-dark(#990f3d, #e39ab0);
+    --them: light-dark(#f2dfce, #33302e);
+    --them-mark: light-dark(#807973, #a39a92);
+    --font: ui-serif, 'New York', Charter, Georgia, serif;
+    --r-xs: 1px;
+    --r-sm: 2px;
+    --r-md: 2px;
+    --r-lg: 2px;
   }
 
-  /* the inside of a shell, and a rose */
-  [data-palette='rose']:not([data-paper]) {
-    --bg: light-dark(#fdf7f6, #201a1b);
-    --bg-rail: light-dark(#f7ecea, #171213);
-    --bg-raised: light-dark(#ffffff, #2d2527);
-    --gray: rgb(135 115 119);
-    --edge: light-dark(rgb(77 55 60), rgb(247 233 236));
-    --text: light-dark(#2b2123, #f6ecee);
-    --text-2: light-dark(#55464a, #cdbfc2);
-    --text-3: light-dark(#69585c, #b8a9ad);
-    --text-off: light-dark(#b9a9ac, #6c5e61);
-    --ink: light-dark(#2b2123, #f6ecee);
-    --ink-hover: light-dark(#463a3d, #ffffff);
-    --on-ink: light-dark(#ffffff, #201a1b);
-    --you: #cf2f66;
-    --you-hover: #dc3d74;
-    --you-ink: light-dark(#b8245a, #ff8fb3);
-    --them: light-dark(#f1e4e3, #3b3134);
+  /* Shoreline: a shore from above, in the rail. The page is woodblock
+     paper and sumi ink; the hue is Prussian blue, the pigment of the Edo
+     coast prints (Hokusai, Hiroshige). The interface is set in Iowan
+     Old Style, a book face; corners are square. */
+  [data-palette='shoreline']:not([data-paper]) {
+    --bg: light-dark(#f6f1e7, #1b1a18);
+    --bg-rail: light-dark(#ece3d0, #222120);
+    --bg-raised: light-dark(#fffbf3, #272523);
+    --gray: light-dark(rgb(126 120 110), rgb(124 120 114));
+    --edge: light-dark(#23211e, #ece6dc);
+    --text: light-dark(#1c1a17, #f2ede4);
+    --text-2: light-dark(#36332e, #d9d2c6);
+    --text-3: light-dark(#423e38, #c2bab0);
+    --text-off: light-dark(#b1a99c, #6a655e);
+    --ink: light-dark(#1c1a17, #f2ede4);
+    --ink-hover: light-dark(#36332e, #ffffff);
+    --on-ink: light-dark(#f6f1e7, #1b1a18);
+    --you: light-dark(#1f4a7a, #4a76a3);
+    --you-hover: light-dark(#285689, #5682ae);
+    --on-you: light-dark(#ffffff, #ffffff);
+    --you-ink: light-dark(#1f4a7a, #a9c1da);
+    --them: light-dark(#e9e1d1, #2f2d2a);
+    --them-mark: light-dark(#8a8274, #a29a90);
+    --font: 'Iowan Old Style', ui-serif, Georgia, serif;
+    --r-xs: 1px;
+    --r-sm: 2px;
+    --r-md: 2px;
+    --r-lg: 2px;
   }
 
-  /* morning light on leaves */
-  [data-palette='garden']:not([data-paper]) {
-    --bg: light-dark(#f7f9f4, #191c19);
-    --bg-rail: light-dark(#edf1e8, #121512);
-    --bg-raised: light-dark(#ffffff, #262b26);
-    --gray: rgb(112 124 112);
-    --edge: light-dark(rgb(52 66 54), rgb(232 242 232));
-    --text: light-dark(#1f2620, #edf3ec);
-    --text-2: light-dark(#46514a, #bfc9bf);
-    --text-3: light-dark(#535f55, #a9b3a9);
-    --text-off: light-dark(#a8b3a9, #5e685f);
-    --ink: light-dark(#1f2620, #edf3ec);
-    --ink-hover: light-dark(#374038, #ffffff);
-    --on-ink: light-dark(#ffffff, #191c19);
-    --you: #2c7a4b;
-    --you-hover: #34885a;
-    --you-ink: light-dark(#256b41, #7ed6a0);
-    --them: light-dark(#e5ebe0, #333a33);
+  /* Canopy: under trees, looking up, in the rail. The page is herbarium
+     paper and ink; the hue is the sap green of botanical plates. The interface is
+     set in Palatino, a book face with an open, tall lowercase that reads well
+     small; corners are square. */
+  [data-palette='canopy']:not([data-paper]) {
+    --bg: light-dark(#f6f1e7, #1b1a18);
+    --bg-rail: light-dark(#ece3d0, #222120);
+    --bg-raised: light-dark(#fffbf3, #272523);
+    --gray: light-dark(rgb(126 120 110), rgb(124 120 114));
+    --edge: light-dark(#23211e, #ece6dc);
+    --text: light-dark(#1c1a17, #f2ede4);
+    --text-2: light-dark(#36332e, #d9d2c6);
+    --text-3: light-dark(#423e38, #c2bab0);
+    --text-off: light-dark(#b1a99c, #6a655e);
+    --ink: light-dark(#1c1a17, #f2ede4);
+    --ink-hover: light-dark(#36332e, #ffffff);
+    --on-ink: light-dark(#f6f1e7, #1b1a18);
+    --you: light-dark(#35593a, #527c58);
+    --you-hover: light-dark(#3f6745, #5c8762);
+    --on-you: light-dark(#ffffff, #ffffff);
+    --you-ink: light-dark(#2f5034, #b1cdb3);
+    --them: light-dark(#e9e1d1, #2f2d2a);
+    --them-mark: light-dark(#8a8274, #a29a90);
+    --font: Palatino, 'Palatino Linotype', 'Iowan Old Style', ui-serif, serif;
+    --r-xs: 1px;
+    --r-sm: 2px;
+    --r-md: 2px;
+    --r-lg: 2px;
   }
 
-  /* the sky after the sun is down */
-  [data-palette='dusk']:not([data-paper]) {
-    --bg: light-dark(#f8f7fc, #1b1a24);
-    --bg-rail: light-dark(#eeecf7, #13121a);
-    --bg-raised: light-dark(#ffffff, #282635);
-    --gray: rgb(120 116 140);
-    --edge: light-dark(rgb(58 54 82), rgb(236 233 250));
-    --text: light-dark(#22202c, #f0eef9);
-    --text-2: light-dark(#4a4759, #c3c0d3);
-    --text-3: light-dark(#5c596d, #adaabe);
-    --text-off: light-dark(#adaabd, #63607a);
-    --ink: light-dark(#22202c, #f0eef9);
-    --ink-hover: light-dark(#3b3848, #ffffff);
-    --on-ink: light-dark(#ffffff, #1b1a24);
-    --you: #6246d6;
-    --you-hover: #6f54e0;
-    --you-ink: light-dark(#563ac4, #b3a4ff);
-    --them: light-dark(#e8e5f3, #353344);
+  /* Sky: first light with cloud by day, stars and northern light by night,
+     in the rail. The page is paper and ink; the hue is a dusty plum, the ink
+     of a dawn sky in a print. The interface is set in Charter, which holds
+     up small on a dark page; corners are square. */
+  [data-palette='sky']:not([data-paper]) {
+    --bg: light-dark(#f6f1e7, #1b1a18);
+    --bg-rail: light-dark(#ece3d0, #222120);
+    --bg-raised: light-dark(#fffbf3, #272523);
+    --gray: light-dark(rgb(126 120 110), rgb(124 120 114));
+    --edge: light-dark(#23211e, #ece6dc);
+    --text: light-dark(#1c1a17, #f2ede4);
+    --text-2: light-dark(#36332e, #d9d2c6);
+    --text-3: light-dark(#423e38, #c2bab0);
+    --text-off: light-dark(#b1a99c, #6a655e);
+    --ink: light-dark(#1c1a17, #f2ede4);
+    --ink-hover: light-dark(#36332e, #ffffff);
+    --on-ink: light-dark(#f6f1e7, #1b1a18);
+    --you: light-dark(#6a4a68, #8a6888);
+    --you-hover: light-dark(#775675, #957393);
+    --on-you: light-dark(#ffffff, #ffffff);
+    --you-ink: light-dark(#5e4060, #d2bcd0);
+    --them: light-dark(#e9e1d1, #2f2d2a);
+    --them-mark: light-dark(#8a8274, #a29a90);
+    --font: Charter, ui-serif, Georgia, serif;
+    --r-xs: 1px;
+    --r-sm: 2px;
+    --r-md: 2px;
+    --r-lg: 2px;
   }
 
-  /* lamp light, and the last of a fire */
-  [data-palette='ember']:not([data-paper]) {
-    --bg: light-dark(#fcf8f2, #1f1a16);
-    --bg-rail: light-dark(#f5ede2, #17120f);
-    --bg-raised: light-dark(#fffdfa, #2d2620);
-    --gray: rgb(138 120 104);
-    --edge: light-dark(rgb(80 60 44), rgb(248 236 224));
-    --text: light-dark(#2c231c, #f6ece2);
-    --text-2: light-dark(#57493e, #cdbfb2);
-    --text-3: light-dark(#68594d, #b9aa9d);
-    --text-off: light-dark(#bbab9d, #6d5f53);
-    --ink: light-dark(#2c231c, #f6ece2);
-    --ink-hover: light-dark(#483c32, #ffffff);
-    --on-ink: light-dark(#fffdfa, #1f1a16);
-    --you: #c2470f;
-    --you-hover: #d05316;
-    --you-ink: light-dark(#a83b0a, #ff9f6b);
-    --them: light-dark(#efe6da, #3b322a);
+  /* Increase Contrast: the two quieter text steps come nearer the first.
+     tokens.css does this for Graphite with grays of its own; a palette keeps
+     its own tint. */
+  @media (prefers-contrast: more) {
+    [data-palette]:not([data-paper]) {
+      --text-2: color-mix(in srgb, var(--text) 90%, var(--bg));
+      --text-3: color-mix(in srgb, var(--text) 78%, var(--bg));
+    }
   }
 }

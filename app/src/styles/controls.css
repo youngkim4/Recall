@@ -414,63 +414,115 @@
     margin-top: var(--s-3);
   }
 
-  /* ---- palette picker: the palettes as a row of rounds. A round shows the
-     ground and the hue of its own palette: it carries that palette's name
-     (data-palette), so the colours inside it are that palette's and not the
-     page's. The ring of the one in use, and the ring of the keyboard, are
-     drawn by what holds the round, in the colours of the page. A choice is
-     28px: a round of 20px, 2px of the page, and a ring of 2px. ---- */
+  /* ---- palette picker: the palettes as cards. A card is a small picture
+     of the app in its palette over the palette's name. The picture carries
+     that palette's name (data-palette), so the colours inside it are that
+     palette's and not the page's. The ring of the card in use, and the ring
+     of the keyboard, are in the colours of the page: the card works them
+     out and hands them down. ---- */
   .palette-picker {
-    display: flex;
-    gap: var(--s-1);
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+    gap: var(--s-3);
   }
 
-  .palette-choice {
+  .palette-card {
+    --card-ring: var(--text);
+    --card-focus: var(--you-ink);
     display: grid;
-    place-items: center;
-    width: 1.75rem;
-    height: 1.75rem;
-    border-radius: var(--r-full);
+    gap: 0.375rem;
+    min-width: 0;
     cursor: default;
   }
 
-  .palette-choice:has(:checked) {
-    box-shadow: inset 0 0 0 2px var(--text);
-  }
-
-  .palette-choice:has(:focus-visible) {
-    outline: 2px solid var(--you-ink);
-    outline-offset: 2px;
-  }
-
-  .palette-swatch {
+  .palette-preview {
     display: grid;
-    place-items: center;
-    width: 1.25rem;
-    height: 1.25rem;
-    border-radius: var(--r-full);
-    background: var(--bg-rail);
+    grid-template-columns: 24% minmax(0, 1fr);
+    height: 3.5rem;
+    overflow: hidden;
+    border-radius: var(--r-md);
+    background: var(--bg);
     /* a line of its own palette: the page's line would be of the page's gray */
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--edge) 24%, transparent);
-    transition: scale var(--dur-micro) var(--ease-out);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--edge) 22%, transparent);
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+    transition: outline-color var(--dur-micro) ease;
   }
 
-  .palette-swatch::after {
-    content: '';
-    width: 0.625rem;
+  /* A scene's card: its picture is the rail of the card, as it is the rail
+     of the app; the page beside it is plain. */
+  .palette-preview-scene {
+    grid-area: 1 / 1;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+  }
+
+  .palette-preview[data-scene] > .palette-preview-rail {
+    grid-area: 1 / 1;
+    background: none;
+  }
+
+  .palette-preview[data-scene] > .palette-preview-page {
+    grid-area: 1 / 2;
+  }
+
+  .palette-preview-rail {
+    background: var(--bg-rail);
+    box-shadow: inset -1px 0 0 color-mix(in srgb, var(--edge) 12%, transparent);
+  }
+
+  .palette-preview-page {
+    display: grid;
+    align-content: center;
+    gap: 0.3125rem;
+    padding-inline: var(--s-2);
+  }
+
+  .palette-preview-them,
+  .palette-preview-you {
     height: 0.625rem;
     border-radius: var(--r-full);
+  }
+
+  .palette-preview-them {
+    justify-self: start;
+    width: 58%;
+    background: var(--them);
+  }
+
+  .palette-preview-you {
+    justify-self: end;
+    width: 46%;
     background: var(--you);
   }
 
-  @media (hover: hover) and (pointer: fine) {
-    .palette-choice:hover > .palette-swatch {
-      scale: 1.1;
-    }
+  .palette-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-2);
   }
 
-  .palette-choice:active > .palette-swatch {
-    scale: var(--press-scale);
+  .palette-card:has(:checked) > .palette-preview {
+    outline-color: var(--card-ring);
+  }
+
+  .palette-card:has(:checked) > .palette-name {
+    color: var(--text);
+    font-weight: var(--w-medium);
+  }
+
+  .palette-card:has(:focus-visible) > .palette-preview {
+    outline-color: var(--card-focus);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .palette-card:not(:has(:checked)):hover > .palette-preview {
+      outline-color: var(--line-field);
+    }
   }
 
   /* ---- swap: a figure that has changed fades in over the one it replaces ---- */

@@ -4,7 +4,8 @@
    faintly cool grays, blue for what you sent, gray for what you received.
    One gray family runs through surfaces, lines, fills and bubbles so nothing
    clashes in hue. The other palettes are in palettes.css: each one changes
-   the grounds, the text, the two grays below and the hue, and nothing else.
+   the grounds, the text, the two grays below and the hue, and can set the
+   display face and the corners.
    light-dark() resolves from color-scheme, which follows the system unless
    the Appearance preference pins it through data-theme.
 
@@ -68,7 +69,6 @@
     --you-hover: #0077ed;
     --on-you: #ffffff;
     --you-ink: light-dark(#0064cc, #5aa9ff);
-    --you-soft: light-dark(color-mix(in srgb, var(--you) 12%, transparent), color-mix(in srgb, var(--you-ink) 20%, transparent));
     --them: light-dark(#e9e9eb, #3a3a3c);
     --on-them: var(--text);
     --them-mark: #8e8e93;
@@ -92,19 +92,17 @@
     --bad-soft: light-dark(rgb(185 28 28 / 0.08), rgb(255 138 128 / 0.14));
 
     /* ---- elevation ----
-       raised: a hairline ring and a tight lift, for controls.
+       raised: a hairline ring and no shadow, for controls and cards. A ring
+       under a soft shadow is the ghost card: an edge is declared once.
        pop: the same ring with real depth, for surfaces that float.
        In dark the shadows drop out and the ring alone is the edge, so it is
        a step firmer than the hairlines it holds. */
     --ring: light-dark(color-mix(in srgb, var(--edge) 12%, transparent), color-mix(in srgb, var(--edge) 15%, transparent));
     --ring-hover: light-dark(color-mix(in srgb, var(--edge) 20%, transparent), color-mix(in srgb, var(--edge) 24%, transparent));
-    --lift-near: light-dark(rgb(0 0 0 / 0.06), transparent);
-    --lift-far: light-dark(rgb(0 0 0 / 0.04), transparent);
     --drop-near: light-dark(rgb(0 0 0 / 0.08), rgb(0 0 0 / 0.32));
     --drop-far: light-dark(rgb(0 0 0 / 0.12), rgb(0 0 0 / 0.44));
-    --shadow-raised: 0 0 0 1px var(--ring), 0 1px 2px -1px var(--lift-near), 0 2px 4px 0 var(--lift-far);
-    --shadow-raised-hover: 0 0 0 1px var(--ring-hover), 0 1px 2px -1px var(--lift-near),
-      0 2px 4px 0 var(--lift-far);
+    --shadow-raised: 0 0 0 1px var(--ring);
+    --shadow-raised-hover: 0 0 0 1px var(--ring-hover);
     --shadow-pop: 0 0 0 1px var(--ring), 0 4px 12px -2px var(--drop-near),
       0 16px 40px -8px var(--drop-far);
 
@@ -130,6 +128,8 @@
 
     /* ---- type: the system face, two weights ---- */
     --font: -apple-system, BlinkMacSystemFont, system-ui, 'Helvetica Neue', sans-serif;
+    /* large type and long reading; a scene sets --font itself, so this follows it */
+    --font-display: var(--font);
     --w-regular: 400;
     --w-medium: 500;
     --t-caption: 0.6875rem; /* 11 */
@@ -158,7 +158,6 @@
     /* ---- layout ---- */
     --rail-w: 14.75rem; /* 236 */
     --rail-w-collapsed: 3rem; /* 48 = 8 + a 32px row + 8 */
-    --title-h: 2.75rem; /* 44 */
     --control-h: 2rem; /* 32 */
     --control-h-sm: 1.5rem; /* 24 */
     --control-h-lg: 2.5rem; /* 40 */

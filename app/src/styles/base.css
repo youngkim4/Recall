@@ -109,6 +109,16 @@
     height: 100%;
   }
 
+  /* The display face: large type (the figures of a page, the title of a
+     detail, the opening line of a view) and words read at length. It is the
+     system face unless a palette sets a serif. Headings of sections and
+     panes are not on the list: they share a line with links and controls in
+     the system face, and two faces on one line look like a mistake. */
+  :is(.detail-title, .tile-value, .job-figures dd, .report-figure > dd:not(.report-figure-note), .chat-start, .overview-lead,
+    .story-display, .story-kicker, .prose, .answer-body) {
+    font-family: var(--font-display);
+  }
+
   /* the browser's own surfaces carry the palette too */
   ::selection {
     background: color-mix(in srgb, var(--you) 26%, transparent);

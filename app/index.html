@@ -13,7 +13,7 @@
         if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme
         // and a chosen palette (key and names mirror src/lib/palette.ts)
         var palette = localStorage.getItem('recall.palette')
-        if (['letter', 'rose', 'garden', 'dusk', 'ember'].indexOf(palette) !== -1) {
+        if (['broadsheet', 'shoreline', 'canopy', 'sky'].indexOf(palette) !== -1) {
           document.documentElement.dataset.palette = palette
         }
       } catch (error) {
