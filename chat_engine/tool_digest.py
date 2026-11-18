@@ -14,23 +14,29 @@ from dataclasses import dataclass, replace
 from typing import Any, Callable, Mapping, Optional
 
 from .digest_text import Moment, Notes, Period, write_digest
-from .ports import DigestCost
+from .ports import DigestCost, Message
 from .render import time_key
 from .scope import parse_day
 from .tool_args import ToolInputError, day_arg, text_arg
 from .tool_context import Prepared, ToolContext, ToolOutcome, plural
+from .tool_limits import DIGESTS_PER_QUESTION
 from .verify import is_quote_of
 
 logger = logging.getLogger(__name__)
-DIGESTS_PER_QUESTION = 3  # each digest can cost money: one question builds at most this many
-MOMENT_MESSAGES = 6  # the most messages of one moment that are read and shown
+MOMENT_MESSAGES = 6  # the most messages of one moment that are shown
+MOMENT_IDS_READ = 24  # the most message ids of one moment that are checked against the scope
 _FAILED = "The digest of {title} could not be built now. Go on with the other tools."
-_AGAIN = "This digest is above already. Read around one of its moments, or answer."
+_FAILED_BEFORE = (
+    "The digest of {title} could not be built earlier in this question. It is not tried again. "
+    "Go on with the other tools."
+)
+_AGAIN = "This digest is above already. Use what it shows, or answer."
 _TOO_MANY = "This question already read {count} conversations whole. Answer from them, or read around a moment."
 _TOO_COSTLY = (
-    "Reading {title} whole would cost about ${usd:.2f}: {periods} not built yet. That is above the limit "
-    "of ${limit:.2f}, so nothing was built. Narrow the days with since and until, or use the other tools."
+    "Reading {title} whole would cost about ${usd:.2f}{missing}. That is above the limit of ${limit:.2f}, "
+    "so nothing was built. Narrow the days with since and until, or use the other tools."
 )
+_SHOWN, _FAILED_STATE = "shown", "failed"
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,7 @@ class Built:
 
 
 def prepare_digest(ctx: ToolContext, arguments: Mapping[str, Any]) -> Prepared:
+    """Check a call. A repeat of a call comes here again: the tool knows what the first call gave."""
     value = text_arg(arguments, "conversation")
     if not value:
         raise ToolInputError("conversation needs an alias like c3.")
@@ -61,26 +68,36 @@ def prepare_digest(ctx: ToolContext, arguments: Mapping[str, Any]) -> Prepared:
     allowed = ctx.conversations([value])
     since, until = ctx.days(since, until)
     request = DigestRequest(allowed[0] if allowed else "", since, until)
-    own = ctx.memory.digest_tokens
-    if request.key in ctx.digests_asked:
+    before = ctx.digests_asked.get(request.key)
+    if before == _SHOWN:
         again = ToolOutcome(_AGAIN, "Did not read the same conversation again", ok=False)
-        return Prepared("", lambda budget: again, own_budget=own, repeated=True)
-    ctx.digests_asked.add(request.key)
-    label = ctx.book.label(request.conversation)
+        return _prepared(ctx, "", lambda budget: again, repeated=True)
+    if before == _FAILED_STATE:
+        return _prepared(ctx, "", lambda budget: _answer(ctx, request, "failed before"))
     if ctx.digests_built >= DIGESTS_PER_QUESTION:
         text = _TOO_MANY.format(count=DIGESTS_PER_QUESTION)
         refused = ToolOutcome(text, "Did not read another conversation whole", ok=False)
-        return Prepared("", lambda budget: refused, own_budget=own)
+        return _prepared(ctx, "", lambda budget: refused)
     cost = _estimate(ctx, request)
     if cost is None:
-        return Prepared("", lambda budget: _answer(ctx, request, "failed"), own_budget=own)
-    if cost["usd"] > ctx.memory.digest_usd_limit:
-        return Prepared("", lambda budget: _too_costly(ctx, request, cost), own_budget=own)
+        ctx.digests_asked[request.key] = _FAILED_STATE
+        return _prepared(ctx, "", lambda budget: _answer(ctx, request, "failed"))
+    if cost["usd"] > ctx.memory.digest_usd_limit:  # not kept: a narrower digest can make this one cheaper
+        return _prepared(ctx, "", lambda budget: _too_costly(ctx, request, cost))
     if cost["periods"] <= 0:
-        return Prepared("", lambda budget: _written(ctx, request, Built("ok"), budget), own_budget=own)
+        ctx.digests_asked[request.key] = _SHOWN
+        return _prepared(ctx, "", lambda budget: _written(ctx, request, Built("ok"), budget))
+    label = ctx.book.label(request.conversation)
     cached = cost["periods_cached"] >= cost["periods"]
     status = f"Recalling your conversation with {label}" if cached else f"Reading your whole conversation with {label}"
-    return Prepared(status, _lookup(ctx, request), own_budget=own)
+    return _prepared(ctx, status, _lookup(ctx, request))
+
+
+def _prepared(
+    ctx: ToolContext, status: str, run: Callable[[int], ToolOutcome], repeated: bool = False
+) -> Prepared:
+    """A digest has a budget of its own, and the tool answers a repeat itself."""
+    return Prepared(status, run, own_budget=ctx.memory.digest_tokens, repeated=repeated, answers_repeats=True)
 
 
 def _title(ctx: ToolContext, request: DigestRequest) -> str:
@@ -107,10 +124,11 @@ def _estimate(ctx: ToolContext, request: DigestRequest) -> Optional[DigestCost]:
 
 
 def _too_costly(ctx: ToolContext, request: DigestRequest, cost: DigestCost) -> ToolOutcome:
-    missing = max(1, cost["periods"] - cost["periods_cached"])
-    periods = f"{plural(missing, 'period')} {'is' if missing == 1 else 'are'}"
+    """The cost line. It counts the periods to build only when the estimate gives a count that makes sense."""
+    missing = cost["periods"] - cost["periods_cached"]
+    count = f": {plural(missing, 'period')} {'is' if missing == 1 else 'are'} not built yet" if missing >= 1 else ""
     text = _TOO_COSTLY.format(
-        title=_title(ctx, request), usd=cost["usd"], periods=periods, limit=ctx.memory.digest_usd_limit
+        title=_title(ctx, request), usd=cost["usd"], missing=count, limit=ctx.memory.digest_usd_limit
     )
     label = ctx.book.label(request.conversation)
     summary = f"Did not read the conversation with {label}: it would cost about ${cost['usd']:.2f}"
@@ -124,6 +142,8 @@ def _lookup(ctx: ToolContext, request: DigestRequest) -> Callable[[int], ToolOut
     def run(budget: int) -> ToolOutcome:
         if not built:
             built.append(_build(ctx, request))
+            if built[0].state != "stopped":
+                ctx.digests_asked[request.key] = _SHOWN if built[0].state == "ok" else _FAILED_STATE
         return _written(ctx, request, built[0], budget)
 
     return run
@@ -155,50 +175,83 @@ def _build(ctx: ToolContext, request: DigestRequest) -> Built:
 
 
 def _answer(ctx: ToolContext, request: DigestRequest, state: str) -> ToolOutcome:
-    """The outcome of a digest that gave no periods."""
+    """The outcome of a digest that gave no periods: "stopped", "failed" or "failed before"."""
     if state == "stopped":
         return ToolOutcome("", "Stopped before the conversation was read", ok=False)
     label = ctx.book.label(request.conversation)
-    text = _FAILED.format(title=ctx.book.title(request.conversation))
+    line = _FAILED if state == "failed" else _FAILED_BEFORE
+    text = line.format(title=ctx.book.title(request.conversation))
     return ToolOutcome(text, f"Could not read the story of your conversation with {label}", ok=False)
 
 
 def _written(ctx: ToolContext, request: DigestRequest, built: Built, budget: int) -> ToolOutcome:
-    if built.state != "ok":
-        return _answer(ctx, request, built.state)
+    """The digest as a result. Before every read of the archive the cancel token is looked at."""
+    if built.state != "ok" or ctx.memory.cancel.cancelled:
+        return _answer(ctx, request, built.state if built.state != "ok" else "stopped")
     ctx.listed()  # the labeler knows every handle of the archive before a summary is masked
     inside = [period for period in built.periods if _in_scope(ctx, period.first_day, period.last_day)]
-    notes = Notes(failed=built.failed, outside=len(built.periods) - len(inside))
-    periods = [_with_evidence(ctx, request, period) for period in inside]
-    text, count = write_digest(ctx, _title(ctx, request), periods, notes, budget)
+    periods, moments_outside = [], 0
+    for period in inside:
+        read = _with_evidence(ctx, request, period)
+        if read is None:
+            return _answer(ctx, request, "stopped")
+        periods.append(read)
+        moments_outside += len(period.moments) - len(read.moments)
+    notes = Notes(built.failed, len(built.periods) - len(inside), moments_outside)
+    written = write_digest(ctx, _title(ctx, request), periods, notes, budget)
     label = ctx.book.label(request.conversation)
-    return ToolOutcome(text, f"Read the story of your conversation with {label}: {plural(count, 'period')}")
+    count = plural(written.periods, "period")
+    shown = count if written.shown == written.periods else f"{written.shown:,} of {count}"
+    return ToolOutcome(written.text, f"Read the story of your conversation with {label}: {shown}")
 
 
 def _in_scope(ctx: ToolContext, *days: str) -> bool:
     return all(ctx.scope.allows_time(day) for day in days)
 
 
-def _with_evidence(ctx: ToolContext, request: DigestRequest, period: Period) -> Period:
-    """The period with the messages of its moments read from the archive.
+def _with_evidence(ctx: ToolContext, request: DigestRequest, period: Period) -> Optional[Period]:
+    """The period with the messages of its moments read from the archive. None after a cancel.
 
-    A moment outside the days of the scope goes. A quote stays only when a
-    message of its moment holds it: the answer check would flag any other.
+    A moment goes when its day is outside the scope, or when the scope
+    refuses one of its messages: its text is then about something outside the
+    scope. A quote stays only when a message of its moment holds it.
     """
     moments = []
     for moment in period.moments:
-        if not _in_scope(ctx, moment.date):
+        messages = _messages_of(ctx, request, moment) if _in_scope(ctx, moment.date) else None
+        if ctx.memory.cancel.cancelled:
+            return None
+        if messages is None:
             continue
-        found = {}
-        for message_id in moment.message_ids[:MOMENT_MESSAGES]:
-            message = ctx.archive.message(message_id)
-            if message is None or message["conversation"] != request.conversation or not ctx.allows(message):
-                continue  # dropped without a word
-            found[str(message["id"])] = message
-        messages = tuple(sorted(found.values(), key=time_key))
-        held = is_quote_of(moment.quote, [str(message.get("text") or "") for message in messages])
-        moments.append(replace(moment, messages=messages, quote=moment.quote if messages and held else ""))
+        shown = messages[:MOMENT_MESSAGES]
+        held = is_quote_of(moment.quote, [str(message.get("text") or "") for message in shown])
+        moments.append(replace(moment, messages=shown, quote=moment.quote if shown and held else ""))
     return replace(period, moments=tuple(moments))
+
+
+def _messages_of(
+    ctx: ToolContext, request: DigestRequest, moment: Moment
+) -> Optional[tuple[Message, ...]]:
+    """The messages of a moment that the archive holds, in time order. None when the scope refuses one.
+
+    An id that the archive does not hold is passed over. So is a message of
+    another conversation that the scope allows. A moment with more ids than
+    are checked cannot be proved to lie inside a scope.
+    """
+    if len(moment.message_ids) > MOMENT_IDS_READ and ctx.scope.is_limited:
+        return None
+    found = {}
+    for message_id in moment.message_ids[:MOMENT_IDS_READ]:
+        if ctx.memory.cancel.cancelled:
+            break
+        message = ctx.archive.message(message_id)
+        if message is None:
+            continue
+        if not ctx.allows(message):
+            return None
+        if message["conversation"] == request.conversation:
+            found[str(message["id"])] = message
+    return tuple(sorted(found.values(), key=time_key))
 
 
 def _whole(value: object) -> int:

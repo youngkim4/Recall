@@ -2,7 +2,9 @@
 
 The rule:
 
-1. Every period stays: its title line is never dropped.
+1. A period that is shown keeps its title line. `periods_that_fit` says how
+   many periods are shown: from the first, as many as fit with their title
+   line and the start of their summary. A note counts the rest.
 2. The summaries come first. When they do not fit together, each summary is
    cut by the same share and no moment is shown.
 3. When the summaries fit, the moments take the room that is left. Moments
@@ -18,6 +20,8 @@ from typing import Callable, Sequence
 from .render import squeeze
 
 CUT_MARK = "[cut]"
+MIN_DIGEST_TOKENS = 600  # room for the header, the notes and a few periods with the start of their summaries
+MIN_SUMMARY_TOKENS = 30  # a period is shown only with at least this much of its summary
 
 
 @dataclass(frozen=True)
@@ -36,6 +40,21 @@ class Fit:
 
     def cut(self, moments: Sequence[Sequence[int]]) -> bool:
         return self.share < 1.0 or self.dropped(moments) > 0
+
+
+def periods_that_fit(*, header: int, heads: Sequence[int], summaries: Sequence[int], room: int) -> int:
+    """How many periods fit, counted from the first.
+
+    header: tokens of the lines above the periods. heads: tokens of each
+    title line. summaries: tokens of each summary. A period fits with its
+    title line and `MIN_SUMMARY_TOKENS` of its summary, or all of a shorter one.
+    """
+    used = header
+    for index, (head, summary) in enumerate(zip(heads, summaries, strict=True)):
+        used += head + min(summary, MIN_SUMMARY_TOKENS) + 1
+        if used > room:
+            return index
+    return len(heads)
 
 
 def fit_digest(
