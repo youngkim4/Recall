@@ -2746,18 +2746,21 @@ class RecallHandler(BaseHTTPRequestHandler):
                 return
             send_json(self, 200, payload)
         elif parsed.path == "/api/search":
+            # words, filters, order, and `prefix=true` while the reader types the last word
             _state, archive = archive_for(named_archive(query))
             try:
-                payload = search_service.payload(
-                    archive,
-                    saved_names(),
-                    query.get("query", ""),
-                    query.get("contact", ""),
-                    query.get("limit", ""),
-                    query.get("offset", ""),
-                    # the reader may still be typing the last word
-                    as_you_type=True,
-                )
+                payload = search_service.answer(archive, saved_names(), query)
+            except ValueError as error:
+                send_json(self, 400, {"error": str(error)})
+                return
+            send_json(self, 200, payload)
+        elif parsed.path == "/api/stats":
+            # counts with the filters of search; imported here so that this route is one region of the file
+            from recall_services import stats as stats_service
+
+            _state, archive = archive_for(named_archive(query))
+            try:
+                payload = stats_service.answer(archive, saved_names(), query)
             except ValueError as error:
                 send_json(self, 400, {"error": str(error)})
                 return

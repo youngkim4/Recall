@@ -185,7 +185,7 @@ class TestCount:
                     assert quick == scanned, options
 
     @pytest.mark.parametrize(
-        "bad", [{"group_by": "week"}, {"since": "03/10/2024"}, {"until": "2024-3-1"}, {"from_me": 1}]
+        "bad", [{"group_by": "fortnight"}, {"since": "03/10/2024"}, {"until": "2024-3-1"}, {"from_me": 1}]
     )
     def test_bad_arguments_raise_value_error(self, harbor: Harbor, bad: dict[str, object]) -> None:
         with pytest.raises(ValueError):

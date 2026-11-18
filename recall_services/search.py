@@ -1,9 +1,10 @@
 """The /api/search payload from the archive.
 
-The keys are those of today (`query`, `contact`, `count`, `total`, `results`)
-plus `offset`. `total` is the number of matches and `count` is the number of
-matches that the response holds (CONTRACTS.md "Figures"). Each result has the
-shape of `messages.payload`. The newest match is first.
+The keys: `query`, `contact`, `count`, `total`, `offset`, `results`, and
+`filters`, `order` and `prefix`, which say what the search applied. `total`
+is the number of matches and `count` is the number of matches that the
+response holds (CONTRACTS.md "Figures"). Each result has the shape of
+`messages.payload` and one more key, `ranges`.
 
 What a caller may send as `query`:
 - Words. A message must hold all of them, each as a whole word, in any order.
@@ -14,28 +15,38 @@ What a caller may send as `query`:
 - A term in a script that writes no spaces, or with no letter or digit, is
   matched as plain text. A query is cut to 1,000 characters and 32 terms.
 
-Differences from the server at 89ab504, which matched the whole query as one
-piece of plain text:
-- `piz` no longer finds `pizza`. Send `piz*`, or set `as_you_type` while the
-  reader types: the last word is then a prefix.
-- A tapback is not a message, so its summary line is never a result.
-- No words and a conversation still list that conversation from its newest
-  message. No words and no conversation give nothing: no screen asks for the
-  newest messages of the whole archive.
+`prefix=true` makes the last word a prefix: the reader is still typing it.
+With `prefix=false` every word is whole. A request with no `prefix` is read as
+`true`: the app of today searches as the reader types and sends none. A star
+typed by the reader is always a prefix. `payload()` itself matches whole words
+unless `as_you_type=True`.
+
+`ranges` are the [start, end) places of the matched words in the `text` of
+the result, in UTF-16 units, as JavaScript counts. A word that the shown text
+cut off has no range. With no words, `ranges` is [].
+
+No words and a filter (a conversation, days, who wrote, a kind, attachments)
+list the messages of the filter, newest first or oldest first (`order` then
+says `newest` for `relevance`). Text with no word, such as a lone star,
+matches nothing. No words and no filter give nothing: no screen asks
+for the newest messages of the whole archive. The filters are those of
+`search_filters`. A tapback is not a message, so it is never a result.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from archive import Archive
+from archive.search import utf16_ranges
+from message_text import ATTACHMENT_PLACEHOLDER, display_text
 from recall_services import inputs, messages
 from recall_services.names import Names
+from recall_services.search_filters import NO_FILTERS, Filters, read_filters, read_order, read_prefix
 
 DEFAULT_LIMIT = 60
 MAX_LIMIT = 200
-# how far into one conversation a search with no words reads
-BROWSE_DEPTH = 5_000
 _CLOSING = ('*', '"', "“", "”", "„", "‟", "＂")
 
 
@@ -52,21 +63,40 @@ def as_typed(query: str) -> str:
     return f"{needle}*"
 
 
-def _browse(archive: Archive, contact: str, limit: int, offset: int) -> tuple[list[dict[str, Any]], int]:
-    """The messages of one conversation from its newest one, and how many it holds."""
-    total = int(archive.count(conversations=[contact]))  # type: ignore[arg-type]
-    reach = min(offset + limit, BROWSE_DEPTH)
-    if reach <= offset:
-        return [], total
-    newest_first = archive.messages(contact, limit=reach)["messages"][::-1]
-    return newest_first[offset:reach], total
+def _shown_places(raw: str, visible: int) -> dict[int, int]:
+    """For each character of the stored text that the result shows: its place in the shown text."""
+    places: dict[int, int] = {}
+    for index, char in enumerate(raw):
+        if len(places) >= visible:
+            break
+        if char == ATTACHMENT_PLACEHOLDER or (not places and char.isspace()):
+            continue  # display_text drops the placeholder and the outer space
+        places[index] = len(places)
+    return places
 
 
-def _matches(archive: Archive, asked: str, contact: str, limit: int, offset: int) -> tuple[list[dict[str, Any]], int]:
-    found = archive.search(
-        asked, conversations=[contact] if contact else None, limit=limit, offset=offset, order="newest"
-    )
-    return [hit["message"] for hit in found["hits"]], int(found["total"])
+def shown_ranges(raw: str, shown: str, ranges: Sequence[Sequence[int]]) -> list[list[int]]:
+    """Code point ranges of the stored text, moved onto the shown text and given in UTF-16 units.
+
+    `shown` is `messages.payload(...)["text"]`: the text without the placeholder
+    and the outer space, cut with "…" when it is long. A range is cut at the cut.
+    """
+    cut = len(display_text(raw)) > messages.MESSAGE_TEXT_LIMIT
+    places = _shown_places(raw, len(shown) - 1 if cut else len(shown))
+    moved: list[list[int]] = []
+    for start, end in ranges:
+        inside = [places[index] for index in range(start, end) if index in places]
+        if inside:
+            moved.append([inside[0], inside[-1] + 1])
+    return utf16_ranges(shown, moved)
+
+
+def _results(archive: Archive, names: Names, hits: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    shaped = messages.payloads(archive, names, [hit["message"] for hit in hits])
+    return [
+        {**result, "ranges": shown_ranges(str(hit["message"]["text"]), result["text"], hit["ranges"])}
+        for result, hit in zip(shaped, hits, strict=True)
+    ]
 
 
 def payload(
@@ -78,26 +108,34 @@ def payload(
     offset: int = 0,
     *,
     as_you_type: bool = False,
+    filters: Filters = NO_FILTERS,
+    order: str = "newest",
 ) -> dict[str, Any]:
-    """Search the archive, or one conversation of it. See the module docstring for the query.
+    """Search the archive. See the module docstring for the query.
 
     `limit` is held between 1 and 200. `offset` is the place of the first
     result among all matches. A `limit` or an `offset` that is no whole number
-    raises ValueError. A conversation id matches whole, never in part.
+    raises ValueError. `contact` is one more conversation of `filters`.
     """
-    size = inputs.whole("limit", limit, DEFAULT_LIMIT) or DEFAULT_LIMIT
-    size = max(1, min(size, MAX_LIMIT))
+    size = max(1, min(inputs.whole("limit", limit, DEFAULT_LIMIT) or DEFAULT_LIMIT, MAX_LIMIT))
     place = max(0, inputs.whole("offset", offset, 0) or 0)
     scope = inputs.text(contact)
+    applied = filters.with_contact(scope)
     raw = inputs.text(query)
     needle = raw.strip()
-    if needle:
-        found, total = _matches(archive, as_typed(raw) if as_you_type else needle, scope, size, place)
-    elif scope:
-        found, total = _browse(archive, scope, size, place)
-    else:
-        found, total = [], 0
-    results = messages.payloads(archive, names, found)
+    hits: list[dict[str, Any]] = []
+    total = 0
+    if needle or not applied.is_empty:
+        found = archive.search(
+            as_typed(raw) if as_you_type else needle,
+            limit=size,
+            offset=place,
+            order=order,
+            browse=not needle,  # typed text with no word (a star) matches nothing, as in /api/stats
+            **applied.archive_args(),
+        )
+        hits, total = found["hits"], int(found["total"])
+    results = _results(archive, names, hits)
     return {
         "query": needle,
         "contact": scope,
@@ -105,4 +143,23 @@ def payload(
         "total": total,
         "offset": place,
         "results": results,
+        "filters": applied.payload(),
+        "order": order if needle or order != "relevance" else "newest",  # no words: no rank
+        "prefix": as_you_type,
     }
+
+
+def answer(archive: Archive, names: Names, params: Mapping[str, object]) -> dict[str, Any]:
+    """The payload for the query string of /api/search. A value that is not allowed raises ValueError."""
+    filters = read_filters({**params, "contact": ""})
+    return payload(
+        archive,
+        names,
+        inputs.text(params.get("query")),
+        inputs.text(params.get("contact")),
+        params.get("limit", ""),  # type: ignore[arg-type]
+        params.get("offset", ""),  # type: ignore[arg-type]
+        as_you_type=read_prefix(params),
+        filters=filters,
+        order=read_order(params),
+    )

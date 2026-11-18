@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from archive import rows
-from archive.filters import Scope, check_choice, check_int, scope
+from archive.filters import Scope, check_bool, check_choice, check_int, scope
 from archive.schema import INDEXED_TEXT_CHARS
 from archive.search_query import ParsedQuery, ascii_lower, parse_query
 
@@ -134,9 +134,16 @@ def search(
     order: str = "newest",
     include_system: bool = False,
     no_conversation: bool = False,
+    kind: str | None = None,
+    attachments: str | None = None,
+    browse: bool = False,
 ) -> dict[str, Any]:
-    """Find messages. `conn` must be inside one read transaction so total and hits agree."""
+    """Find messages. `conn` must be inside one read transaction so total and hits agree.
+
+    With `browse=True` a query with no words lists every message of the filters, with no ranges.
+    """
     parsed = parse_query(query)
+    lists = check_bool("browse", browse) and parsed.is_empty
     check_int("limit", limit, 0)
     check_int("offset", offset, 0)
     check_choice("order", order, ORDERS)
@@ -146,9 +153,11 @@ def search(
         since=since,
         until=until,
         from_me=from_me,
-        text=parsed,
+        text=None if lists else parsed,
         include_system=include_system,
         no_conversation=no_conversation,
+        kind=kind,
+        attachments=attachments,
     )
     if where.matches_nothing:
         return {"total": 0, "hits": []}
