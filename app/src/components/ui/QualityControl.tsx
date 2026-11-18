@@ -1,7 +1,9 @@
 import { useMemo } from 'react'
 import type { PanelAlign } from '../../lib/anchor'
 import { qualityOptions } from '../../lib/models'
+import { useReasoning } from '../../lib/useReasoning'
 import { ChoiceMenu } from './ChoiceMenu'
+import { LevelSlider } from './LevelSlider'
 
 type QualityControlProps = {
   // the models this server can run
@@ -13,11 +15,17 @@ type QualityControlProps = {
   align?: PanelAlign
   // set where "Quality" is already written beside the button
   quietLabel?: boolean
+  // set where the level is used for chat questions: the menu then also sets
+  // how hard the model in use thinks
+  reasoning?: boolean
 }
 
 // How carefully the AI reads, from Low to High. Each level is a model: the
-// menu names it and says in a few words what choosing it means.
-export function QualityControl({ models, value, onChange, align, quietLabel }: QualityControlProps) {
+// menu names it and says in a few words what choosing it means. For chat the
+// menu has a slider under the levels: how hard the model in use thinks about
+// a question. Each model keeps its own.
+export function QualityControl({ models, value, onChange, align, quietLabel, reasoning }: QualityControlProps) {
+  const { steps, effort, setEffort } = useReasoning(value)
   const choices = useMemo(
     () =>
       qualityOptions(models.length ? models : [value]).map((option) => ({
@@ -30,6 +38,18 @@ export function QualityControl({ models, value, onChange, align, quietLabel }: Q
   )
   if (choices.length < 2) return null
   return (
-    <ChoiceMenu label="Quality" value={value} choices={choices} onChange={onChange} align={align} quietLabel={quietLabel} />
+    <ChoiceMenu
+      label="Quality"
+      value={value}
+      choices={choices}
+      onChange={onChange}
+      align={align}
+      quietLabel={quietLabel}
+      extra={
+        reasoning && steps.length > 1 ? (
+          <LevelSlider label="Reasoning" steps={steps} value={effort} onChange={setEffort} />
+        ) : undefined
+      }
+    />
   )
 }

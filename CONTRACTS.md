@@ -275,6 +275,8 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 - `recall_services/models.json` is the one source for the offered models: id, label, level, limits and prices. `ai_config.py` and `cli.py` hold tables for the hand tools only.
 - These three change together: `/api/defaults` (`models.defaults_payload`), each route and job that takes a model, and `app/src/lib/models.ts`, which builds its levels from `modelChoices`. No model id is written in the app.
 - A model that is not in the file, or that is not offered, is an error with a code before any call. It is never run or priced as another model.
+- `reasoning_levels` of a model are the efforts that its page at the provider lists, least first. `null` means that the page was not read. Do not write a level that the page does not list.
+- `modelChoices` gives each offered model `reasoningLevels` and `reasoningDefault` (`models.offered`). `reasoningDefault` is `chat.reasoning_effort` of the file when the model lists it, and `null` when it does not.
 - The packaged server ships `models.json` (`packaging/recall_server.spec`).
 
 ### The key of the provider
@@ -289,6 +291,12 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 - A failure is one plain sentence and a `code`. No keyword answer stands in for an answer that failed.
 - Each "user" row of the history holds `contact`: the conversation that its question was asked of. A row with no `contact` was asked of everything, and its answer does not go to a question that has a scope.
 - The app gives each question a `requestId`. `/api/ask/cancel` stops the question with that id (`ASKING`). A write to a reader who left stops it too.
+- A question can ask for a reasoning effort: `reasoningEffort` in the body of `/api/ask` and `/api/ask/stream`. These change together: `ask_arguments` in `ui_server.py`, `chat.stream`, `models.chat_config`, `askBody` in `app/src/lib/api.ts`, and `effortOf` in `app/src/lib/reasoning.ts`.
+  - The effort must be one of the `reasoning_levels` of the model. Another word ends the question with the code `reasoning_level` before any call. `/api/ask` answers 400 (`ASK_REQUEST_FAULTS`). `/api/ask/stream` sends the code as its error event.
+  - Reasoning is counted as output, and the model sends nothing while it reasons. Thus `chat.by_effort` in `models.json` gives an effort above medium more output and more time between two pieces of an answer (`chat_config`, `default_llm`). The limits of high, xhigh and max were not tried with a real call.
+  - A question that asks for no effort gets `reasoningDefault` of the model. Do not lower `chat.reasoning_effort` below medium: at low, a model answered a question about a relationship from one keyword hit.
+  - With the effort `none` the model port does not ask for carried reasoning (`chat.default_llm`).
+  - The effort is for chat only. A report does not take it.
 - Text for the model holds a saved name or a mask, never a handle that is not saved (`names.chat_labeler`).
 
 ### Reports
@@ -305,6 +313,7 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 - A saved message is known by its conversation, its time and its text, never by its id (`bookmarkId` in `app/src/lib/bookmarks.ts`). A message has three ids in its life.
 - A saved chat shows a citation from its stored copy and opens its day by conversation and time (`quotedIndex`).
 - A stored model id that is not offered falls back to the default model (`preferredModel`).
+- The reasoning level that a person sets is kept for each model under `recall.reasoning.v1` (`app/src/lib/reasoning.ts`). A kept level that the model does not list falls back to `reasoningDefault` (`effortOf`). The app sends only a level that the server listed, and the slider shows the level that is sent. Where the browser keeps nothing, a level holds while the page is open.
 
 ## Mac shell
 
@@ -341,6 +350,7 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
   - The row of the two heat maps is cut so that a day and an hour have the same size. The cut in `overview.css` and the cell sizes in `charts.css` use the same numbers: 53 weeks, 24 hours, gaps of 2px, 2rem of weekday names for each map, 2.5rem between the maps.
 - A chart of the two voices that has a `heading` puts the heading, the day or month that is picked out, and the two totals in one band (`VoicesOverTime`, `VoicesSkeleton`). The day or month is `.readout-when` between the heading and `.readout`. It takes only the space that is left, so a pick does not move the totals to a second line. The rules for `.section-head > .readout` and `.section-head > .readout-when` in `charts.css` need this structure.
 - A row of Settings with no value has an empty `.setting-value`. In a narrow workspace `settings.css` reads `:empty` to keep the label and the control on one line. Do not put a space or a comment in that element.
+- The Quality menu of the chat (`QualityControl` with `reasoning`) has a slider below its levels: `LevelSlider` in `.choice-extra` of `ChoiceMenu`. The slider sets the reasoning level of the model in use. Its look is a thick track that is filled up to a round knob, with a mark at each step. The track is 30px high in `slider.css` (`--track`), and `INSET` in `LevelSlider.tsx` is half of it. Change the two together. The knob follows the pointer while it is held (`data-held`) and settles on the nearest step when it is let go.
 - A placeholder has the structure and the classes of the content that replaces it. Thus no block moves when the content arrives.
   - `MomentsSkeleton` has the number of cards and the height that the list of moments had last. `app/src/lib/keptShape.ts` keeps these two numbers in the browser under `recall.shape.<name>`.
   - WARNING: `keptShape.ts` keeps numbers only. Do not keep a name or the text of a message there.

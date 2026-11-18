@@ -23,6 +23,8 @@ export type AskParams = {
   question: string
   contact: string
   model: string
+  // one of the model's reasoning levels; '' or nothing leaves it to the server
+  reasoningEffort?: string
   // not sent: the server decides how much it reads
   limit?: number
 }
@@ -204,6 +206,7 @@ export const chatStore = {
           question: text,
           contact: ask.contact,
           model: ask.model,
+          reasoningEffort: ask.reasoningEffort,
           history,
           requestId: run.requestId,
         },

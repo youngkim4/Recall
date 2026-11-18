@@ -7,12 +7,20 @@
     "The tokenizer family of the 6 series is not confirmed. o200k_base is an assumption, so every token budget keeps a safety margin.",
     "The limits and the long-context rule of the 5 series are the ones that ai_config.py and cli.py hold at commit 89ab504. They were not read again on 2026-11-16. Their prices were.",
     "The labels are Recall's wording.",
+    "The limits of chat are Recall's own. Reasoning is counted as output, and the model sends nothing while it reasons, so an effort above medium has more output and more time between two pieces of an answer. The limits of high, xhigh and max were set on 2026-11-17 and were not tried with a real call.",
+    "The reasoning levels of gpt-6-luna and gpt-6.1-terra were read from the provider's model pages on 2026-11-17. The level none asks for no reasoning.",
     "The list of offered models is a proposal. The owner has not confirmed it."
   ],
   "default": "gpt-6.1-sol",
   "chat": {
     "max_output_tokens": 8000,
-    "reasoning_effort": "medium"
+    "timeout_seconds": 60,
+    "reasoning_effort": "medium",
+    "by_effort": {
+      "high": {"max_output_tokens": 16000, "timeout_seconds": 120},
+      "xhigh": {"max_output_tokens": 32000, "timeout_seconds": 240},
+      "max": {"max_output_tokens": 64000, "timeout_seconds": 480}
+    }
   },
   "models": [
     {
@@ -31,7 +39,7 @@
       "tokens_per_minute": null,
       "tokenizer_family": "o200k_base",
       "tokenizer_family_assumed": true,
-      "reasoning_levels": null,
+      "reasoning_levels": ["none", "low", "medium", "high", "xhigh", "max"],
       "shutdown_date": null,
       "facts_read_on": "2026-11-16"
     },
@@ -51,7 +59,7 @@
       "tokens_per_minute": null,
       "tokenizer_family": "o200k_base",
       "tokenizer_family_assumed": true,
-      "reasoning_levels": null,
+      "reasoning_levels": ["none", "low", "medium", "high", "xhigh", "max"],
       "shutdown_date": null,
       "facts_read_on": "2026-11-16"
     },

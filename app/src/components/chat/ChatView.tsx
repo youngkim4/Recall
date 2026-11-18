@@ -5,6 +5,7 @@ import { contactTitle, conversationName } from '../../lib/conversations'
 import { dayOfMessage } from '../../lib/dayParts'
 import { scopeChoices } from '../../lib/scope'
 import { useMediaQuery } from '../../lib/useMediaQuery'
+import { useReasoning } from '../../lib/useReasoning'
 import type { Contact, Defaults, SearchResult } from '../../types'
 import { ChevronLeftIcon } from '../Icons'
 import { DaySheet } from '../ui/DaySheet'
@@ -48,6 +49,8 @@ export function ChatView({
     chatStore.getState,
   )
   const [draft, setDraft] = useState('')
+  // how hard the model in use is asked to think; the slider in the Quality menu sets it
+  const { effort } = useReasoning(model)
   const [scope, setScope] = useState('')
   const [scopeChatId, setScopeChatId] = useState<string | null>(activeChatId)
   const [openedAt, setOpenedAt] = useState(() => Date.now())
@@ -145,6 +148,7 @@ export function ChatView({
       question,
       contact: scope,
       model,
+      reasoningEffort: effort,
       limit: 10,
     })
   }

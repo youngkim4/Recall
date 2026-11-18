@@ -31,6 +31,11 @@ export function offerModels(choices: ModelChoice[] | undefined) {
   offered = Array.isArray(choices) ? [...choices] : []
 }
 
+// What the server last said of one model, for a control that has only its id.
+export function choiceOf(model: string, choices: ModelChoice[] = offered): ModelChoice | undefined {
+  return choices.find((choice) => choice.id === model)
+}
+
 function levelled(choice: ModelChoice): QualityOption {
   const level = LEVELS[choice.level]
   // a level this build does not know: the model's own name says the most

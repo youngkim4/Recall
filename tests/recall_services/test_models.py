@@ -98,17 +98,25 @@ def test_the_facts_that_only_one_model_has() -> None:
         # not read from the page: the file says so with null, and no number is made up
         assert facts.max_input_tokens is None
         assert facts.tokens_per_minute is None
-        assert facts.reasoning_levels is None
+    assert models.facts("gpt-6-astra").reasoning_levels is None
+
+
+def test_the_reasoning_levels_are_the_ones_the_pages_of_the_models_give() -> None:
+    # read from the provider's model pages on 2026-11-17: the two smaller models can also reason not at all
+    for model_id in ("gpt-6-luna", "gpt-6.1-terra"):
+        assert models.facts(model_id).reasoning_levels == ("none", "low", "medium", "high", "xhigh", "max")
+    assert "none" not in (models.facts("gpt-6.1-sol").reasoning_levels or ())
 
 
 def test_the_offered_list_and_the_default() -> None:
     assert models.offered_ids() == ["gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol"]
     assert models.default_id() == "gpt-6.1-sol"
     assert models.default_id() in models.offered_ids()
+    wide = ["none", "low", "medium", "high", "xhigh", "max"]
     assert models.offered() == [
-        {"id": "gpt-6-luna", "label": "GPT-6 Luna", "level": "low"},
-        {"id": "gpt-6.1-terra", "label": "GPT-6.1 Terra", "level": "medium"},
-        {"id": "gpt-6.1-sol", "label": "GPT-6.1 Sol", "level": "high"},
+        {"id": "gpt-6-luna", "label": "GPT-6 Luna", "level": "low", "reasoningLevels": wide, "reasoningDefault": "medium"},
+        {"id": "gpt-6.1-terra", "label": "GPT-6.1 Terra", "level": "medium", "reasoningLevels": wide, "reasoningDefault": "medium"},
+        {"id": "gpt-6.1-sol", "label": "GPT-6.1 Sol", "level": "high", "reasoningLevels": wide[1:], "reasoningDefault": "medium"},
     ]
 
 
@@ -218,10 +226,108 @@ def test_chat_config_for_a_model_that_reasons() -> None:
     assert 1 <= config.max_output_tokens <= 128_000
 
 
-def test_chat_config_sends_no_effort_when_the_levels_were_not_read() -> None:
-    config = models.chat_config("gpt-6-luna")
-    assert config.reasoning_effort is None
-    assert config.max_output_tokens == models.chat_config("gpt-6.1-sol").max_output_tokens
+def test_chat_config_gives_each_offered_model_the_effort_of_the_file() -> None:
+    for model_id in models.offered_ids():
+        assert models.chat_config(model_id).reasoning_effort == "medium"
+    assert models.chat_config("gpt-6-luna").max_output_tokens == models.chat_config("gpt-6.1-sol").max_output_tokens
+
+
+@pytest.mark.parametrize(
+    ("model_id", "asked", "given"),
+    [
+        ("gpt-6-luna", "none", "none"),
+        ("gpt-6.1-terra", "xhigh", "xhigh"),
+        ("gpt-6.1-sol", "max", "max"),
+        ("gpt-6.1-sol", " high ", "high"),
+        # no effort asked for: the effort of the file
+        ("gpt-6.1-sol", "", "medium"),
+        ("gpt-6.1-sol", None, "medium"),
+    ],
+)
+def test_chat_config_takes_the_effort_that_a_question_asks_for(model_id: str, asked: str | None, given: str) -> None:
+    assert models.chat_config(model_id, asked).reasoning_effort == given
+
+
+@pytest.mark.parametrize(("model_id", "asked"), [("gpt-6.1-sol", "none"), ("gpt-6-luna", "extreme"), ("gpt-6.1-terra", "High")])
+def test_chat_config_refuses_an_effort_that_the_model_does_not_list(model_id: str, asked: str) -> None:
+    with pytest.raises(models.ReasoningLevelError) as refused:
+        models.chat_config(model_id, asked)
+    assert refused.value.code == "reasoning_level"
+    assert refused.value.model_id == model_id
+    assert "low, medium, high" in str(refused.value)
+    assert issubclass(models.ReasoningLevelError, models.ModelChoiceError)
+
+
+@pytest.mark.parametrize(
+    ("effort", "most_output", "quiet_seconds"),
+    [
+        # up to the effort of the file, a question has the limits that real runs were made with
+        ("none", 8_000, 60),
+        ("low", 8_000, 60),
+        ("medium", 8_000, 60),
+        # above it the model reasons for longer and spends more of its output on that
+        ("high", 16_000, 120),
+        ("xhigh", 32_000, 240),
+        ("max", 64_000, 480),
+    ],
+)
+def test_a_higher_effort_has_more_output_and_more_time(effort: str, most_output: int, quiet_seconds: int) -> None:
+    config = models.chat_config("gpt-6-luna", effort)
+    assert (config.max_output_tokens, config.timeout_seconds) == (most_output, quiet_seconds)
+
+
+def test_the_limits_of_an_effort_never_go_above_the_limit_of_the_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    raw = json.loads(Path(models.FACTS_PATH).read_text(encoding="utf-8"))
+    small = [{**entry, "max_output_tokens": 20_000} if entry["id"] == "gpt-6.1-sol" else entry for entry in raw["models"]]
+    path = tmp_path / "models.json"
+    path.write_text(json.dumps({**raw, "models": small}), encoding="utf-8")
+    registry = models.load_registry(path)
+    monkeypatch.setattr(models, "_registry", lambda: registry)
+    assert models.chat_config("gpt-6.1-sol", "max").max_output_tokens == 20_000
+    assert models.chat_config("gpt-6.1-sol", "high").max_output_tokens == 16_000
+
+
+def test_an_effort_with_no_limits_of_its_own_has_the_limits_of_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    raw = json.loads(Path(models.FACTS_PATH).read_text(encoding="utf-8"))
+    plain = {**raw, "chat": {"max_output_tokens": 9_000, "reasoning_effort": "medium"}}
+    path = tmp_path / "models.json"
+    path.write_text(json.dumps(plain), encoding="utf-8")
+    registry = models.load_registry(path)
+    monkeypatch.setattr(models, "_registry", lambda: registry)
+    config = models.chat_config("gpt-6.1-sol", "max")
+    # a file with no word on time has the 60 seconds that chat always had
+    assert (config.max_output_tokens, config.timeout_seconds) == (9_000, 60)
+
+
+@pytest.mark.parametrize(
+    "limits",
+    [
+        {"max": {"max_output_tokens": 0, "timeout_seconds": 60}},
+        {"max": {"max_output_tokens": 8_000, "timeout_seconds": -1}},
+        {"max": {"max_output_tokens": 8_000}},
+        {"max": {"max_output_tokens": 8_000, "timeout_seconds": 60, "surprise": 1}},
+    ],
+)
+def test_limits_of_an_effort_that_can_not_be_used_are_refused(tmp_path: Path, limits: dict) -> None:
+    raw = json.loads(Path(models.FACTS_PATH).read_text(encoding="utf-8"))
+    path = tmp_path / "models.json"
+    path.write_text(json.dumps({**raw, "chat": {**raw["chat"], "by_effort": limits}}), encoding="utf-8")
+    with pytest.raises(models.ModelFactsError):
+        models.load_registry(path)
+
+
+def test_a_model_whose_levels_were_not_read_gets_no_effort(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    raw = json.loads(Path(models.FACTS_PATH).read_text(encoding="utf-8"))
+    unread = [{**entry, "reasoning_levels": None} for entry in raw["models"]]
+    path = tmp_path / "models.json"
+    path.write_text(json.dumps({**raw, "models": unread}), encoding="utf-8")
+    registry = models.load_registry(path)
+    monkeypatch.setattr(models, "_registry", lambda: registry)
+    assert models.chat_config("gpt-6-luna").reasoning_effort is None
+    assert models.offered()[0]["reasoningLevels"] == [] and models.offered()[0]["reasoningDefault"] is None
+    # an effort can not be asked of it
+    with pytest.raises(models.ReasoningLevelError):
+        models.chat_config("gpt-6-luna", "low")
 
 
 def test_every_offered_model_can_be_run() -> None:

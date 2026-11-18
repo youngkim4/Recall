@@ -414,8 +414,37 @@ def test_the_model_port_of_the_app_goes_to_the_address_of_the_provider_only(monk
     client = llm._client
     assert str(client.base_url).startswith("https://api.openai.com/")
     assert client.max_retries == 0
-    assert llm._reasoning_effort == "medium"
-    assert chat.default_llm(models.chat_config("gpt-6-luna"))._reasoning_effort is None
+    assert llm._reasoning_effort == "medium" and llm._carry_reasoning is True
+    assert chat.default_llm(models.chat_config("gpt-6-luna"))._reasoning_effort == "medium"
+
+
+def test_a_model_that_is_asked_not_to_reason_has_no_reasoning_to_carry() -> None:
+    quiet = chat.default_llm(models.chat_config("gpt-6-luna", "none"))
+    assert quiet._reasoning_effort == "none" and quiet._carry_reasoning is False
+    deep = chat.default_llm(models.chat_config("gpt-6-luna", "max"))
+    assert deep._reasoning_effort == "max" and deep._carry_reasoning is True
+
+
+def test_the_model_port_waits_as_long_as_the_effort_of_the_question_needs() -> None:
+    usual = chat.default_llm(models.chat_config("gpt-6.1-sol"))
+    deep = chat.default_llm(models.chat_config("gpt-6.1-sol", "max"))
+    assert usual._timeout == 60.0 and deep._timeout == 480.0
+    assert deep._client.timeout == 480.0 and usual._client.timeout == 60.0
+
+
+def test_a_question_takes_the_reasoning_effort_that_it_asks_for(archive: Archive, saved: Names) -> None:
+    factory = Factory([cite(FLAT_TIRE)])
+    run(archive, saved, factory, model="gpt-6.1-sol", reasoning_effort="xhigh")
+    assert factory.configs == [models.chat_config("gpt-6.1-sol", "xhigh")]
+    assert factory.configs[0].reasoning_effort == "xhigh"
+
+
+def test_an_effort_that_the_model_does_not_list_ends_the_question_with_its_code(archive: Archive, saved: Names) -> None:
+    factory = Factory([cite(FLAT_TIRE)])
+    events = run(archive, saved, factory, model="gpt-6.1-sol", reasoning_effort="none")
+    assert [event["type"] for event in events] == ["error"]
+    assert events[0]["code"] == "reasoning_level" and events[0]["error"].endswith(".")
+    assert factory.llm.requests == []
 
 
 def test_with_no_way_out_the_real_port_says_offline(archive: Archive, saved: Names) -> None:
