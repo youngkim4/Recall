@@ -11,7 +11,7 @@ from urllib.parse import quote
 import pytest
 
 import ui_server
-from meaning_index import EmbedderFacts, EmbeddingKeyError, FakeEmbedder
+from meaning_index import EmbedderFacts, EmbeddingKeyError, FakeEmbedder, IndexStore, StoreError
 from recall_services import meaning as meaning_service
 from recall_services import places
 from tests.archive_kit import (
@@ -355,6 +355,49 @@ def test_the_job_that_the_server_starts_holds_up_the_next_import(archive_file, e
     finally:
         let_go.set()
     assert refreshed()["status"] == "completed"
+
+
+@pytest.mark.parametrize("fault", [StoreError("the folder says nothing"), OSError("the disk is gone")])
+def test_an_index_folder_that_can_not_be_looked_at_does_not_fail_the_import_and_starts_nothing(
+    archive_file, embedder, messages_home, monkeypatch, fault
+):
+    build(archive_file)
+
+    def broken(_store):
+        raise fault
+
+    monkeypatch.setattr(IndexStore, "status", broken)
+    write_database(messages_home / "chat.db", [*FIRST, *MORE])
+    job = run("export", {"messagesPath": archive_file})
+    assert (job["status"], job["error"], job["code"]) == ("completed", None, None)
+    assert meaning_jobs() == []
+
+
+def test_the_server_looks_at_the_index_after_the_import_has_ended_in_the_list(
+    archive_file, embedder, messages_home, monkeypatch
+):
+    """A slow look at the index folder delays no import: the job says completed before the look starts."""
+    seen = []
+
+    def noted(*_args, **_more):
+        with ui_server.JOBS_LOCK:
+            seen.extend((job["action"], job["status"], job["result"] is not None) for job in ui_server.JOBS.values())
+        return False
+
+    monkeypatch.setattr(meaning_service, "built", noted)
+    write_database(messages_home / "chat.db", [*FIRST, *MORE])
+    assert run("export", {"messagesPath": archive_file})["status"] == "completed"
+    assert seen == [("export", "completed", True)]
+
+
+def test_with_no_index_folder_the_server_asks_no_database_about_the_index(archive_file, messages_home, monkeypatch):
+    """With no index there is nothing to read: an import opens no file of the index."""
+    asked = []
+    monkeypatch.setattr(IndexStore, "status", lambda store: asked.append(store) or pytest.fail("the store was asked"))
+    write_database(messages_home / "chat.db", [*FIRST, *MORE])
+    assert run("export", {"messagesPath": archive_file})["status"] == "completed"
+    assert asked == [] and meaning_service.built() is False
+    assert not meaning_service.index_store().folder.exists()
 
 
 def test_a_fault_while_the_server_looks_at_the_index_does_not_change_how_the_import_ended(
