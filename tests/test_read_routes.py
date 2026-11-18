@@ -272,10 +272,11 @@ def test_a_phrase_in_quotes_matches_as_a_phrase(app_archive, server):
     assert turned["total"] == 0
 
 
-def test_the_last_word_of_a_search_is_read_as_a_prefix(app_archive, server):
-    _status, typing = get(server, "/api/search", query="good piz")
-    _status, whole_word = get(server, "/api/search", query="piz good")
-    _status, middle = get(server, "/api/search", query="izz")
+def test_the_last_word_of_a_search_is_a_prefix_only_while_the_reader_types(app_archive, server):
+    _status, typing = get(server, "/api/search", query="good piz", prefix="true")
+    _status, whole_word = get(server, "/api/search", query="piz good", prefix="true")
+    _status, middle = get(server, "/api/search", query="izz", prefix="true")
+    _status, typed = get(server, "/api/search", query="good piz")
 
     # the reader may still be typing the last word
     assert texts(typing) == ["that was a good pizza"]
@@ -283,6 +284,8 @@ def test_the_last_word_of_a_search_is_read_as_a_prefix(app_archive, server):
     # a word before the last one is whole, and a part from the middle of a word matches nothing
     assert texts(whole_word) == []
     assert middle["total"] == 0
+    # after the reader stops typing, every word is whole
+    assert (typed["total"], typed["prefix"]) == (0, False)
 
 
 def test_a_search_in_one_conversation_stays_in_it(app_archive, server):
@@ -318,6 +321,8 @@ def test_a_found_message_has_the_shape_the_app_reads(named, server):
         "text": "pizza on friday?",
         "attachment": "",
         "isFromMe": False,
+        # where the word is in `text`, in UTF-16 units
+        "ranges": [[9, 15]],
     }]
 
 
@@ -368,9 +373,11 @@ def test_a_day_is_opened_from_a_search_hit_at_the_message_that_was_found(long_da
     assert (day["contact"], day["day"], day["total"]) == (AVERY, LONG_DAY, LONG_DAY_MESSAGES)
     # a part of the long day, with the found message in it
     assert len(day["messages"]) == 200 and 0 < day["offset"] <= 300
+    # the same message, without the ranges that only a search result has
+    shown = {key: value for key, value in hit.items() if key != "ranges"}
     found = [message for message in day["messages"] if message["messageId"] == hit["messageId"]]
-    assert found == [hit]
-    assert day["messages"].index(hit) == 300 - day["offset"]
+    assert found == [shown]
+    assert day["messages"].index(shown) == 300 - day["offset"]
     assert (day["previousDay"], day["nextDay"]) == ("2024-03-01", "2024-03-05")
 
 
