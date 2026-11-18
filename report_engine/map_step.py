@@ -216,11 +216,16 @@ def map_periods(
     conversation: str,
     notes_budget: int,
     emit: Emit,
+    earlier_notes: Sequence[Note] = (),
 ) -> MapResult:
-    """Run every period in order. Raises ReportCancelled; never LLMError."""
+    """Run every period in order. Raises ReportCancelled; never LLMError.
+
+    `earlier_notes` are the notes of periods that stand before the first
+    period of the plan, oldest first. A report has none: its plan starts at
+    its first period."""
     warnings: list[str] = []
     cached = _read_cache(cache, [planned.key for planned in plan.periods], warnings)
-    notes: list[_SizedNote] = []
+    notes = [_SizedNote(note, plan.meter.count(note_line(note))) for note in earlier_notes]
     outcomes: list[PeriodOutcome] = []
     unsaved: list[str] = []
     total = len(plan.periods)
