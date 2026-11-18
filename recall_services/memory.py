@@ -158,6 +158,23 @@ def _period(note: PeriodNote) -> DigestPeriod:
     }
 
 
+def _spent_for_nothing(failure: ReportFailure) -> float:
+    """What a digest that failed or was stopped cost, from the usage that its failure carries.
+
+    A failure that was paid for leaves one line in the spend log. A failure
+    before any call carries no usage: it cost nothing and leaves no line.
+    """
+    usage = failure.usage
+    if not usage:
+        return 0.0
+    usd = float(usage.get("cost_usd") or 0.0)
+    spend.info(
+        "a digest inside a question gave nothing (%s): %d model calls, %.4f USD",
+        failure.code, int(usage.get("calls") or 0), usd,
+    )  # fmt: skip
+    return usd
+
+
 class DigestPort:
     """`chat_engine.ports.DigestSource` over `recall_services.digests`."""
 
@@ -200,6 +217,9 @@ class DigestPort:
     ) -> DigestResult:
         """Build the digest, and say what it cost. It stops before its next model call when `cancel` is cancelled.
 
+        A digest that fails or is stopped raises the failure of `digests.build`
+        with `usd` set on it: what the run cost until then.
+
         It reads at most `DIGEST_PARTS_LIMIT` parts that are not read yet: a
         digest that needs more raises, and no call is made. One lock for the
         archive, the conversation and the model is held, so a second question
@@ -208,17 +228,21 @@ class DigestPort:
         chosen = self._settings
         limit = DIGEST_PARTS_LIMIT if chosen.parts_limit is None else chosen.parts_limit
         lock = digest_lock(self._archive, conversation_id, self.model)
-        with _turn(lock, cancel), _report_cancel(cancel) as token:
-            found = digests.build(
-                conversation_id,
-                since,
-                until,
-                token,
-                llm_factory=chosen.llm_factory or question_llm,
-                runtime=chosen.runtime,
-                max_new_periods=limit,
-                **self._same(),
-            )
+        try:
+            with _turn(lock, cancel), _report_cancel(cancel) as token:
+                found = digests.build(
+                    conversation_id,
+                    since,
+                    until,
+                    token,
+                    llm_factory=chosen.llm_factory or question_llm,
+                    runtime=chosen.runtime,
+                    max_new_periods=limit,
+                    **self._same(),
+                )
+        except ReportFailure as failure:
+            failure.usd = _spent_for_nothing(failure)  # type: ignore[attr-defined]
+            raise
         usd = float(found.usage.cost_usd)
         spend.info(
             "a digest inside a question: %d parts read now, %d from the notes, %d failed, %d model calls, %.4f USD",

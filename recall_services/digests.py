@@ -71,8 +71,7 @@ def _too_many(error: DigestTooLarge) -> ReportFailure:
     waiting = "1 part that is not read yet" if new == 1 else f"{new} parts that are not read yet"
     return ReportFailure(
         "too_many_parts",
-        f"This conversation has {waiting}, and {error.limit} can be read now. "
-        "Choose fewer dates, or run a report on the conversation first.",
+        f"This conversation has {waiting}, and {error.limit} can be read now. Choose fewer dates.",
     )
 
 
