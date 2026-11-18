@@ -101,7 +101,9 @@ class ToolContext:
         self.memory = memory or Memory()
         # the digests of this question that gave an answer: "shown" or "failed"
         self.digests_asked: dict[tuple[str, Optional[str], Optional[str]], str] = {}
+        self.digests_long: dict[tuple[str, Optional[str], Optional[str]], ToolOutcome] = {}  # the line each got
         self.digests_built = 0
+        self.digest_estimates = 0
         self.digest_usd = 0.0  # what the digests of this question cost, as far as the source said
         self.book = ConversationBook(archive, labeler, aliases)
         self._directory: Optional[Directory] = None

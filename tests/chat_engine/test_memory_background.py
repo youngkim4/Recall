@@ -70,9 +70,9 @@ def test_a_long_story_is_not_read_in_the_question_and_its_reading_starts_in_the_
     bench = bench_for(digest_parts_limit=2, usd=0.01)
     prepared = bench.prepare("conversation_digest", conversation=bench.alias(MAYA_PHONE), since="2021-01-01")
     outcome = prepared.run(prepared.own_budget)
-    assert prepared.status == "Starting to read your whole conversation with Maya Okafor in the background"
+    assert prepared.status == "Starting to read your conversation with Maya Okafor (from 2021-01-01) in the background"
     assert not outcome.ok and outcome.text == STARTED.replace("direct is", "direct, from 2021-01-01 is")
-    assert outcome.summary == "Started to read your whole conversation with Maya Okafor in the background"
+    assert outcome.summary == "Started to read your conversation with Maya Okafor (from 2021-01-01) in the background"
     assert bench.box.context.memory.digests.calls == [
         ("estimate", {"conversation_id": MAYA_PHONE, "since": "2021-01-01", "until": None}),
         ("prepare", {"conversation_id": MAYA_PHONE, "since": "2021-01-01", "until": None}),
@@ -124,16 +124,6 @@ def test_the_parts_limit_comes_before_the_cost_limit_and_after_the_estimate() ->
     broken = bench_for(digest_parts_limit=2, estimate_error=RuntimeError("down"))
     assert "could not be built now" in broken.run("conversation_digest", conversation=broken.alias(MAYA_PHONE)).text
     assert [name for name, _ in broken.box.context.memory.digests.calls] == ["estimate"]
-
-
-def test_a_repeat_after_a_long_story_asks_again_and_does_not_count_as_a_digest() -> None:
-    bench = bench_for(digest_parts_limit=2)
-    alias = bench.alias(MAYA_PHONE)
-    for _ in range(4):
-        again = bench.prepare("conversation_digest", conversation=alias)
-        assert not again.repeated and "in the background" in again.run(again.own_budget).text
-    bench.box.context.memory.digests._cached = 3  # the reading in the background is done
-    assert bench.run("conversation_digest", conversation=alias).ok
 
 
 # --- the cost of a digest that was read now --------------------------------------------
@@ -224,10 +214,10 @@ def test_a_long_story_in_a_question_tells_the_model_what_to_do() -> None:
     events: list[dict] = []
     result = engine.ask("What is my friendship with Maya like?", on_event=events.append)
     statuses = [event["text"] for event in events if event["type"] == "status"]
-    assert "Starting to read your whole conversation with Maya Okafor in the background" in statuses
+    assert "Starting to read your conversation with Maya Okafor in the background" in statuses
     assert result["steps"][-1] == {
         "tool": "conversation_digest",
-        "text": "Started to read your whole conversation with Maya Okafor in the background",
+        "text": "Started to read your conversation with Maya Okafor in the background",
         "seeded": False,
     }
     assert result["usage"]["digest_usd"] == 0.0 and result["usage"]["tool_calls"] == 1

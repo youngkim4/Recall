@@ -16,6 +16,14 @@ class DigestStopped(RuntimeError):
     """The fake stopped a digest because its cancel token was cancelled."""
 
 
+class DigestFailed(RuntimeError):
+    """A digest that failed after it was paid for. Give it as `error`: `usd` is what the failed call cost."""
+
+    def __init__(self, message: str = "the digest failed", *, usd: Any = 0.0) -> None:
+        super().__init__(message)
+        self.usd = usd
+
+
 def moment(
     date: str, title: str, detail: str, quote: str = "", message_ids: Sequence[str] = ()
 ) -> DigestMoment:
