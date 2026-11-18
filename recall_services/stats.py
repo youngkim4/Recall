@@ -1,7 +1,9 @@
 """The /api/stats payload: counts over the whole archive, with the filters of search.
 
 The query string takes the filters of `search_filters`, `query` and `prefix`
-as /api/search reads them (no `prefix` is true; `prefix=false` counts whole words) (count only the messages that match the words), and:
+as /api/search reads them, with one difference: no `prefix` is false, so the
+words are whole (`hi` never counts "hit"). `prefix=true` makes the last word a
+prefix. Only the messages that match the words are counted. It also takes:
 
 - `by`: day, week, month, year, weekday, hour, weekday_hour, person,
   conversation, or empty for the totals only.
@@ -47,6 +49,8 @@ from recall_services.stats_time import COUNTS, RANGED, TIME_GROUPS, Span, time_r
 PEOPLE_GROUPS = ("person", "conversation")
 GROUPINGS = (*TIME_GROUPS, *PEOPLE_GROUPS)
 DEFAULT_LIMIT = 50
+# no client counts as the reader types: a word is whole unless `prefix=true`
+PREFIX_WHEN_NOT_GIVEN = False
 MAX_LIMIT = 500
 Row = dict[str, Any]
 
@@ -166,5 +170,5 @@ def answer(archive: Archive, names: Names, params: Mapping[str, object]) -> dict
         words=inputs.text(params.get("query")),
         by=read_by(params),
         limit=read_limit(params),
-        prefix=read_prefix(params),
+        prefix=read_prefix(params, default=PREFIX_WHEN_NOT_GIVEN),
     )

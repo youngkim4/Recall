@@ -142,7 +142,7 @@ Each filter is optional. All of them are combined with AND. A value of a filter,
 | `kind` | `direct`, `group` or empty |
 | `attachments` | `any`, `none`, `image`, `video`, `audio`, `other` or empty |
 | `query` | the words. A star is always a prefix. |
-| `prefix` | `false`: every word is whole. Send it for whole words. `true`: the last word is a prefix. No `prefix` (or an empty one): `true`, the search of the app of today as the reader types. |
+| `prefix` | `false`: every word is whole. `true`: the last word is a prefix. No `prefix` (or an empty one): `true` on `/api/search`, the search of the app of today as the reader types; `false` on `/api/stats`. Send `prefix=false` to `/api/search` for whole words. |
 | `order` | `/api/search` only: `newest` (default), `oldest`, `relevance` |
 
 - The kind of an attachment comes from its mime type: `image/*`, `video/*`, `audio/*`. `other` is every other type and an attachment with no type. A GIF is an image.
@@ -204,7 +204,7 @@ Each filter is optional. All of them are combined with AND. A value of a filter,
 - `by`: `day`, `week`, `month`, `year`, `weekday`, `hour`, `weekday_hour`, `person`, `conversation`, or empty. Empty gives `rows` `[]` and the totals only.
 - `totals` covers the whole filtered set. `first` and `last` are its first and last local day, or `null` when the set is empty. `received` is the count of the archive. In the archive every message is sent or received (`is_from_me` is 0 or 1), so its `received` is `total` less `sent`; the service adds the counts of the archive and never works one out itself.
 - `rowsTotal` is the number of rows before `limit`.
-- `prefix` reads as on `/api/search`: no `prefix` is `true`. Send `prefix=false` to count whole words only.
+- No `prefix` is `false` here: `query=hi` counts the word "hi" only, never "hit", "him" or "hiking". `prefix=true` counts the words that start with the last word. `prefix` says what was applied.
 - Time rows: `{"key", "label", "total", "sent", "received"}`.
   - `day` (`YYYY-MM-DD`), `week` (the Monday, `YYYY-MM-DD`), `month` (`YYYY-MM`), `year` (`YYYY`): every bucket from `since` to `until`, in time order. With no `since`, the range starts at `first`. With no `until`, it ends at `last`. The range never goes past the first or the last day of the archive. An empty bucket is a row of zeros. The label is the key.
   - `weekday` (`0` is Monday to `6`, label `Monday`), `hour` (`00` to `23`, label `09:00`), `weekday_hour` (`W-HH`, label `Monday 09:00`): every bucket, always.
