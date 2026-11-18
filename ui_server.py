@@ -78,6 +78,7 @@ from recall_services import conversations as conversation_service
 from recall_services import day as day_service
 from recall_services import frame as frame_service
 from recall_services import inputs, models, places
+from recall_services import meaning as meaning_service
 from recall_services import names as names_service
 from recall_services import reports as report_service
 from recall_services import search as search_service
@@ -609,13 +610,18 @@ def pull_into_archive(action: str, payload: dict) -> PullDone:
     raise ImportStopped(outcome.reason)
 
 
-JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge"})
+JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge", "meaning"})
 # each of these writes the archive
 IMPORT_ACTIONS = frozenset({"setup_import", "export", "bridge"})
 UNFINISHED = frozenset({"queued", "running"})
 # Jobs that do not run together: the job that is asked for, the jobs that
 # hold it up, and what the reader is told.
-ONE_AT_A_TIME = ((IMPORT_ACTIONS, IMPORT_ACTIONS, ALREADY_RUNNING),)
+ONE_AT_A_TIME = (
+    (IMPORT_ACTIONS, IMPORT_ACTIONS, ALREADY_RUNNING),
+    # the index for the search by meaning is built from the whole archive: no import writes the archive meanwhile
+    (IMPORT_ACTIONS | {"meaning"}, frozenset({"meaning"}), "The index for the search by meaning is being built. Wait until it ends."),
+    (frozenset({"meaning"}), IMPORT_ACTIONS, "An import is running. Wait until it ends, then build the index."),
+)
 
 
 class JobRefused(Exception):
@@ -875,6 +881,7 @@ def run_job(job_id: str, action: str, payload: dict):
         work_job(job_id, action, payload)
     finally:
         fail_unfinished(job_id)
+    refresh_meaning_index(job_id, action, payload)
 
 
 WRITTEN_NOT_COUNTED = "The archive is written. Recall could not read it back to count it."
@@ -991,6 +998,47 @@ def import_messages(job_id: str, action: str, payload: dict) -> dict:
     return {**counted(named_archive(payload), pulled, job_id), "contactsSkipped": contacts_skipped}
 
 
+def build_meaning_index(job_id: str, payload: dict) -> dict:
+    """The `meaning` job: build the index for the search by meaning, or bring it up to date. Its lines hold counts only."""
+    _state, archive = archive_for(named_archive(payload))
+
+    def told(update: dict) -> None:
+        if update.get("progress"):
+            update_job(job_id, progress=update["progress"])
+        if update.get("log"):
+            append_log(job_id, update["log"])
+
+    try:
+        return meaning_service.build(archive, None, told)
+    except meaning_service.MeaningFailure as failure:
+        raise JobStopped(str(failure), failure.code) from failure
+
+
+def refresh_meaning_index(job_id: str, action: str, payload: dict) -> None:
+    """After an import that changed the archive: one `meaning` job brings an index that is there up to date.
+
+    With no index nothing is started: the first build is the choice of the
+    reader. The job is made as every job is made, so it runs one at a time
+    with the imports. A fault here does not change how the import ended.
+    """
+    if action not in IMPORT_ACTIONS:
+        return
+    try:
+        with JOBS_LOCK:
+            job = JOBS.get(job_id) or {}
+            result = job.get("result") if isinstance(job.get("result"), dict) else {}
+            # a pull that ends well changed the archive; a load says whether it did
+            changed = job.get("status") == "completed" and (action != "bridge" or result.get("status") == "built")
+        if changed and meaning_service.built():
+            named = payload.get("messagesPath")
+            create_job("meaning", {"messagesPath": named} if named else {})
+    except JobRefused:
+        pass  # an import that started meanwhile brings its own job
+    except Exception as exc:  # noqa: BLE001 - the import ended: nothing here is a reason to say otherwise
+        with contextlib.suppress(Exception):
+            print(f"[meaning] the index was not brought up to date: {type(exc).__name__}", file=sys.__stderr__)
+
+
 def do_job(job_id: str, action: str, payload: dict) -> dict:
     """The work of one job. What it returns is the result of the job."""
     if action == "export":
@@ -1007,6 +1055,8 @@ def do_job(job_id: str, action: str, payload: dict) -> dict:
         return import_messages(job_id, action, payload)
     if action == "bridge":
         return load_export(job_id, payload)
+    if action == "meaning":
+        return build_meaning_index(job_id, payload)
     raise ValueError(f"Unknown job action: {action}")
 
 
@@ -2497,6 +2547,10 @@ class RecallHandler(BaseHTTPRequestHandler):
             send_json(self, 200, {"jobs": list_jobs()})
         elif parsed.path == "/api/reports":
             send_json(self, 200, {"reports": list_report_files()})
+        elif parsed.path == "/api/meaning":
+            # the index for the search by meaning: what it holds, and what a build would send and cost now
+            _state, archive = archive_for(named_archive(query))
+            send_json(self, 200, meaning_service.payload(archive))
         elif parsed.path == "/api/day":
             _state, archive = archive_for(named_archive(query))
             try:

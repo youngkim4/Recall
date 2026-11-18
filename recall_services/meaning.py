@@ -123,6 +123,18 @@ def failure_of(error: BaseException) -> MeaningFailure:
     return MeaningFailure("build_failed", BUILD_FAILED)
 
 
+def _failed(error: BaseException, doing: str) -> MeaningFailure:
+    """The failure for the person, and one line for the log: the type of the error and the facts of the service.
+
+    The caller does not chain the error: what an archive raises can hold an id.
+    """
+    facts = ""
+    if isinstance(error, EmbeddingError):
+        facts = f", HTTP {error.status_code}, code {error.code}"
+    logger.warning("%s failed: %s%s", doing, type(error).__name__, facts)
+    return failure_of(error)
+
+
 def index_store() -> IndexStore:
     """The index of the app: the folder `meaning` in the saves folder, read at each call."""
     import recall_paths
@@ -220,7 +232,7 @@ def status(archive: Archive, *, store: IndexStore | None = None) -> dict[str, An
     try:
         behind = _later_text(archive, held.covered_until)
     except (MeaningIndexError, ArchiveFault) as error:
-        raise failure_of(error) from error
+        raise _failed(error, "the status of the index") from None
     return _shown(held, "behind" if behind else "ready")
 
 
@@ -243,7 +255,7 @@ def estimate(
             count_tokens or default_count_tokens,
         )
     except (MeaningIndexError, ArchiveFault) as error:
-        raise failure_of(error) from error
+        raise _failed(error, "the estimate of an index build") from None
     return {
         "segments": found.segments,
         "newSegments": found.new_segments,
@@ -345,8 +357,7 @@ def build(
             limits=limits or BatchLimits(),
         )
     except (MeaningIndexError, ArchiveFault) as error:
-        logger.warning("an index build failed (%s)", type(error).__name__)
-        raise failure_of(error) from error
+        raise _failed(error, "an index build") from None
     teller.tell(
         {
             "log": f"The index holds {_count(found.segments, 'exchange')}: {found.embedded:,} new, "
