@@ -102,10 +102,6 @@ UI_DIR = ROOT / "ui"
 REACT_DIST_DIR = ROOT / "app" / "dist"
 JOBS = {}
 JOBS_LOCK = threading.Lock()
-# How the last `digest` job of an archive, a conversation and days ended, when a new job would
-# read nothing more: by (archive path, conversation, since, until). `JOBS_LOCK` guards it.
-# It is kept until an import changes that archive. It does not outlive the server.
-DIGEST_ENDS: dict[tuple, str] = {}
 ANALYSIS_CACHE = OrderedDict()
 ANALYSIS_CACHE_LOCK = threading.Lock()
 ANALYSIS_CACHE_LIMIT = 32
@@ -292,7 +288,6 @@ def update_job(job_id: str, **fields):
         if job_id in JOBS:
             JOBS[job_id].update(fields)
             JOBS[job_id]["updatedAt"] = datetime.now().isoformat(timespec="seconds")
-            keep_digest_end(JOBS[job_id])
 
 
 _REPORT_HEADING = re.compile(r"^# Conversation Analysis - (.+)$", re.MULTILINE)
@@ -734,13 +729,8 @@ def archive_named(payload: dict) -> str:
     """The resolved path of the archive file that a request names, as text. "" for a name that cannot be used."""
     try:
         return str(places.archive_path_for(named_archive(payload)).resolve())
-    except Exception:  # noqa: BLE001 - a record and a starter are made for any request
+    except Exception:  # noqa: BLE001 - a record is made for any request
         return ""
-
-
-def digest_key(job: dict) -> tuple:
-    """What a `digest` job reads: the archive, the conversation and the days."""
-    return (job.get("archivePath", ""), job["contact"], job.get("since"), job.get("until"))
 
 
 def job_copy(job: dict) -> dict:
@@ -923,7 +913,6 @@ def fail_unfinished(job_id: str) -> None:
                 error="The job stopped before it ended.",
                 updatedAt=datetime.now().isoformat(timespec="seconds"),
             )
-            keep_digest_end(job)
 
 
 def run_job(job_id: str, action: str, payload: dict):
@@ -946,37 +935,8 @@ def changed_the_archive(job_id: str, action: str) -> bool:
         return job.get("status") == "completed" and (action != "bridge" or result.get("status") == "built")
 
 
-def keep_digest_end(job: dict) -> None:
-    """Keep how a `digest` job ended when a new job of the same reading would read nothing more.
-
-    That is a job that failed, and a job that read no new part while parts
-    failed. The starter of a question then starts no job. Any other end lets
-    the reading start again. The caller holds JOBS_LOCK, and calls this with
-    the change that ends the job: the next question never sees the job ended
-    and no word of how.
-    """
-    if job["action"] not in DIGEST_ACTIONS or job["status"] in UNFINISHED:
-        return
-    result = job["result"] if isinstance(job.get("result"), dict) else {}
-    nothing_new = result.get("periodsBuilt") == 0 and (result.get("periodsFailed") or 0) > 0
-    if job["status"] == "failed" or nothing_new:
-        DIGEST_ENDS[digest_key(job)] = job["status"]
-    else:
-        DIGEST_ENDS.pop(digest_key(job), None)
-
-
 def after_job(job_id: str, action: str, payload: dict) -> None:
     """What the server does by itself when a job has ended in the list. A fault here does not change how the job ended."""
-    try:
-        if changed_the_archive(job_id, action):
-            archive = archive_named(payload)
-            with JOBS_LOCK:
-                # the archive holds other messages now: a reading that failed can be tried again
-                for key in [key for key in DIGEST_ENDS if key[0] == archive]:
-                    del DIGEST_ENDS[key]
-    except Exception as exc:  # noqa: BLE001 - the job ended: nothing here is a reason to say otherwise
-        with contextlib.suppress(Exception):
-            print(f"[jobs] what follows a job did not run: {type(exc).__name__}", file=sys.__stderr__)
     refresh_meaning_index(job_id, action, payload)
     refresh_memory(job_id, action, payload)
 
@@ -1114,42 +1074,6 @@ def read_conversation(job_id: str, payload: dict) -> dict:
     except ValueError as exc:
         # a day that is no day, a first day after the last: the service says it in one sentence
         raise JobStopped(str(exc), "bad_request") from exc
-
-
-def digest_starter(payload: dict) -> memory_service.StartDigest:
-    """The function that reads a long conversation outside one question: it starts a `digest` job.
-
-    It is made for the archive that the question names. It says True when the
-    job started, or when a `digest` job of the same archive, conversation and
-    days already runs. It says False in every other case, and it never raises.
-
-    It starts nothing when the last job of the same reading failed, or read
-    no new part while parts failed (`DIGEST_ENDS`): each question would pay
-    for the same parts again. An import that changes the archive lets the
-    reading start again.
-    """
-    named = payload.get("messagesPath")
-    archive = archive_named(payload)
-
-    def start(conversation: str, since: str | None, until: str | None) -> bool:
-        asked = {"conversation": conversation, "since": since, "until": until}
-        key = (archive, conversation, since or None, until or None)
-        try:
-            with JOBS_LOCK:
-                if key in DIGEST_ENDS:
-                    return False
-            create_job("digest", {**asked, "messagesPath": named} if named else asked)
-            return True
-        except JobRefused:
-            with JOBS_LOCK:
-                reading = [job for job in JOBS.values() if job["action"] in DIGEST_ACTIONS and job["status"] in UNFINISHED]
-                return any(digest_key(job) == key for job in reading)
-        except Exception as exc:  # noqa: BLE001 - a job that cannot be started is a no, never an error of the question
-            with contextlib.suppress(Exception):
-                print(f"[digest] the reading of a conversation was not started: {type(exc).__name__}", file=sys.__stderr__)
-            return False
-
-    return start
 
 
 def build_meaning_index(job_id: str, payload: dict) -> dict:

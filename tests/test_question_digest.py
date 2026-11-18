@@ -1,9 +1,8 @@
-"""A question reads a conversation itself and starts no job; the starter of a `digest` job keeps how the last one ended.
+"""A question reads a conversation itself through the route of the app, and starts no job.
 
-Part F4 took the chain from a question to the job away: a question reads at
-most `memory.DIGEST_PARTS_LIMIT` parts itself, and a longer story is named in
-the payload. `digest_starter` stays in the server, and no question calls it.
-Mina's conversation has four parts here. Each model is a fake.
+A question reads at most `memory.DIGEST_PARTS_LIMIT` parts itself, and a
+longer story is named in the payload. Mina's conversation has four parts
+here. Each model is a fake.
 """
 import pytest
 
@@ -14,12 +13,11 @@ from recall_services import chat as chat_service
 from recall_services import memory
 from recall_services import reports as report_service
 from report_engine import chat_digest
-from report_engine.fake_llm import FakeLLM, completed
-from tests.archive_kit import ended
+from report_engine.fake_llm import FakeLLM
 from tests.integration.test_chat_memory import digest_of, tool_results
 from tests.recall_services.report_world import OPTIONS, PERIOD_LABELS
 from tests.report_engine.synth import MINA, WordCounter
-from tests.test_digest_job import desk, held_jobs, run  # noqa: F401
+from tests.test_digest_job import desk  # noqa: F401
 
 pytestmark = pytest.mark.usefixtures("no_jobs")
 
@@ -53,15 +51,6 @@ def digest_jobs():
     return sorted((job for job in ui_server.list_jobs() if job["action"] == "digest"), key=lambda job: job["createdAt"])
 
 
-def wait():
-    """Each digest job that the server started has ended. Gives them, oldest first."""
-    return [ended(job["id"]) for job in digest_jobs()]
-
-
-def refuses_all(call):
-    return completed(call, None, text="", status="refused")
-
-
 # --- a question reads what it can, and starts nothing ----------------------------
 
 
@@ -84,55 +73,3 @@ def test_a_story_too_long_for_a_question_is_named_and_no_question_pays_or_starts
     # narrower days fit inside the question
     _payload, (january,) = question(world, digest_of(until="2023-01-31"))
     assert "== Jan 2023" in january and len(world.in_question.calls) == 1 and digest_jobs() == []
-
-
-# --- the starter of a `digest` job, which no question calls -------------------------
-
-
-def test_the_starter_keeps_how_the_last_job_of_the_same_archive_conversation_and_days_ended(world):
-    world.llm = FakeLLM(refuses_all)
-    start = ui_server.digest_starter({"messagesPath": world.file})
-    assert start(MINA, None, None) is True
-    wait()
-    assert start(MINA, None, None) is False and len(digest_jobs()) == 1
-    # other days are another reading
-    assert start(MINA, "2023-01-01", "2023-01-31") is True
-    wait()
-    assert start(MINA, "2023-01-01", "2023-01-31") is False and len(digest_jobs()) == 2
-
-
-def test_a_job_that_read_new_parts_or_left_nothing_unread_can_be_started_again(world):
-    start = ui_server.digest_starter({"messagesPath": world.file})
-    assert start(MINA, None, None) is True
-    (job,) = wait()
-    assert job["result"]["periodsFailed"] == 0
-    assert start(MINA, None, None) is True
-    assert wait()[1]["result"]["periodsBuilt"] == 0 and len(world.llm.calls) == 4
-
-
-@pytest.mark.parametrize(
-    ("action", "result", "starts_again"),
-    [("export", {}, True), ("setup_import", {}, True), ("bridge", {"status": "built"}, True), ("bridge", {"status": "current"}, False)],
-)
-def test_an_import_that_changed_the_archive_lets_the_reading_start_again(world, action, result, starts_again):
-    world.llm = FakeLLM(refuses_all)
-    start = ui_server.digest_starter({"messagesPath": world.file})
-    start(MINA, None, None)
-    wait()
-    assert start(MINA, None, None) is False
-    real = ui_server.do_job
-    world.monkeypatch.setattr(ui_server, "do_job", lambda _job_id, _action, _payload: dict(result))
-    run({"messagesPath": world.file}, action=action)
-    world.monkeypatch.setattr(ui_server, "do_job", real)
-    assert start(MINA, None, None) is starts_again
-    wait()
-
-
-def test_an_import_into_another_archive_changes_nothing_for_this_one(world, tmp_path):
-    world.llm = FakeLLM(refuses_all)
-    start = ui_server.digest_starter({"messagesPath": world.file})
-    start(MINA, None, None)
-    wait()
-    world.monkeypatch.setattr(ui_server, "do_job", lambda _job_id, _action, _payload: {})
-    run({"messagesPath": str(tmp_path / "another.sqlite3")}, action="export")
-    assert start(MINA, None, None) is False

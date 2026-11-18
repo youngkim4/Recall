@@ -232,8 +232,10 @@ def test_only_a_change_of_a_part_is_told(event: ProgressEvent) -> None:
 
 def test_no_question_starts_a_reading_outside_itself(desk: Desk) -> None:
     assert not hasattr(bounded(desk), "prepare")
-    assert "start_digest" not in inspect.signature(memory.ports).parameters
-    assert "start_digest" not in inspect.signature(memory.DigestPort).parameters
+    assert list(inspect.signature(memory.ports).parameters) == [
+        "archive", "names", "store", "embedder_factory", "digest",
+    ]  # fmt: skip
+    assert list(inspect.signature(memory.DigestPort).parameters) == ["archive", "names", "settings"]
 
 
 # --- a digest that was paid for and gave nothing -----------------------------------
