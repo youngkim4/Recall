@@ -36,6 +36,7 @@ class EngineConfig:
     total_tool_tokens: the most all tool results of one question may hold.
     history_tokens: the most the earlier turns of the chat may hold.
     digest_tokens: the most one conversation digest may hold. It has this budget of its own, at least 600.
+    digest_parts_limit: the most periods not yet read that one digest reads inside a question. 0 reads none.
     digest_usd_limit: a digest that costs more to build is not built.
     timezone: the name shown in the prompt; "" takes the zone of the clock.
     count_tokens: a tokenizer; the default is a cautious estimate.
@@ -52,7 +53,8 @@ class EngineConfig:
     timezone: str = ""
     count_tokens: Callable[[str], int] = estimate_tokens
     digest_tokens: int = 24_000
-    digest_usd_limit: float = 2.0
+    digest_usd_limit: float = 0.5
+    digest_parts_limit: int = 2
 
     def __post_init__(self) -> None:
         if not str(self.model or "").strip():
@@ -67,6 +69,8 @@ class EngineConfig:
             raise ValueError("history_tokens must not be negative")
         if int(self.digest_tokens) < MIN_DIGEST_TOKENS:  # less does not hold the header, the notes and a few periods
             raise ValueError(f"digest_tokens must be at least {MIN_DIGEST_TOKENS}")
+        if int(self.digest_parts_limit) < 0:
+            raise ValueError("digest_parts_limit must not be negative")
         if not float(self.digest_usd_limit) >= 0:  # also refuses a value that is not a number
             raise ValueError("digest_usd_limit must not be negative")
 
@@ -180,7 +184,10 @@ class ChatEngine:
             scope=scope,
             session=session if session is not None else ChatSession(),
             cancel=token,
-            memory=Memory(self._meaning, self._digests, config.digest_tokens, config.digest_usd_limit, token),
+            memory=Memory(
+                self._meaning, self._digests, config.digest_tokens, config.digest_usd_limit, token,
+                config.digest_parts_limit,
+            ),
         )
 
 

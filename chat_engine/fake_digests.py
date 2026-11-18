@@ -6,7 +6,7 @@ of the call, so a test can script a period that the engine must drop.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from .cancel import CancelToken
 from .ports import DigestCost, DigestMoment, DigestPeriod, DigestResult
@@ -48,11 +48,14 @@ class FakeDigests:
     """Periods by conversation id. Every call is recorded in `calls`.
 
     usd: what `estimate` gives for the periods that are not cached.
-    cached: every period is in the cache, so the cost is 0.
+    cached: True when every period is in the cache, or the number of periods that are.
     failed: the `periods_failed` of every digest.
+    spent: the `usd` of every digest. None: the result has no `usd`.
     error: raised by `digest`. estimate_error: raised by `estimate`.
     during: called inside `digest`, before it returns. A test cancels there.
     honour_cancel: `digest` raises DigestStopped when its token is cancelled.
+    prepare: what `prepare` returns. None: the source has no `prepare`, as an older source.
+    prepare_error: raised by `prepare`.
     """
 
     def __init__(
@@ -60,17 +63,25 @@ class FakeDigests:
         periods: Mapping[str, Sequence[DigestPeriod]],
         *,
         usd: float = 0.0,
-        cached: bool = False,
+        cached: Union[bool, int] = False,
         failed: int = 0,
+        spent: Any = None,
         error: Optional[Exception] = None,
         estimate_error: Optional[Exception] = None,
         during: Optional[Callable[[], None]] = None,
         honour_cancel: bool = True,
+        prepare: Optional[bool] = True,
+        prepare_error: Optional[Exception] = None,
     ) -> None:
         self._periods = {str(key): list(rows) for key, rows in periods.items()}
         self._usd = float(usd)
         self._cached = cached
         self._failed = int(failed)
+        self._spent = spent
+        self._prepared = prepare
+        self._prepare_error = prepare_error
+        if prepare is not None or prepare_error is not None:
+            self.prepare = self._prepare
         self._error = error
         self._estimate_error = estimate_error
         self._during = during
@@ -82,9 +93,8 @@ class FakeDigests:
         if self._estimate_error is not None:
             raise self._estimate_error
         count = len(self._periods.get(str(conversation_id), []))
-        if self._cached or not count:
-            return {"periods": count, "periods_cached": count, "usd": 0.0}
-        return {"periods": count, "periods_cached": 0, "usd": self._usd}
+        cached = count if self._cached is True else min(count, int(self._cached))
+        return {"periods": count, "periods_cached": cached, "usd": self._usd if cached < count else 0.0}
 
     def digest(
         self, conversation_id: str, *, since: Optional[str], until: Optional[str], cancel: CancelToken
@@ -98,4 +108,13 @@ class FakeDigests:
             raise self._error
         rows = self._periods.get(str(conversation_id), [])
         copied = [period(**{**row, "moments": row["moments"]}) for row in rows]
-        return {"periods": copied, "periods_failed": self._failed if rows else 0}
+        result: DigestResult = {"periods": copied, "periods_failed": self._failed if rows else 0}
+        if self._spent is not None:
+            result["usd"] = self._spent
+        return result
+
+    def _prepare(self, conversation_id: str, *, since: Optional[str], until: Optional[str]) -> bool:
+        self.calls.append(("prepare", {"conversation_id": conversation_id, "since": since, "until": until}))
+        if self._prepare_error is not None:
+            raise self._prepare_error
+        return bool(self._prepared)

@@ -31,12 +31,13 @@ class MemoryBench:
         limits: Optional[Limits] = None,
         digest_usd_limit: float = 2.0,
         digest_tokens: int = 24_000,
+        digest_parts_limit: int = 1000,  # no limit, so that a test of another rule reads a story of any length
     ) -> None:
         self.archive = archive or tiny_archive()
         self.registry = EvidenceRegistry()
         self.aliases = ConversationAliases()
         self.cancel = CancelToken()
-        memory = Memory(meaning, digests, digest_tokens, digest_usd_limit, self.cancel)
+        memory = Memory(meaning, digests, digest_tokens, digest_usd_limit, self.cancel, digest_parts_limit)
         self.box = ToolBox(
             self.archive, labeler or tiny_labeler(), self.registry, self.aliases, scope or Scope(),
             limits or Limits(), memory,
@@ -97,7 +98,10 @@ def maya_story() -> list:
     ]
 
 
-FAKE_OPTIONS = {"usd", "cached", "failed", "error", "estimate_error", "during", "honour_cancel"}
+FAKE_OPTIONS = {
+    "usd", "cached", "failed", "spent", "error", "estimate_error", "during", "honour_cancel", "prepare",
+    "prepare_error",
+}
 
 
 def bench_for(story: list | None = None, **options: object) -> MemoryBench:

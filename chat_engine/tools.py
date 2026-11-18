@@ -85,6 +85,12 @@ class ToolBox:
             return self._refuse(f"Cannot run {name}: {error}", name)
         return self.wrap(name, prepared)
 
+    def usage(self, totals: Mapping[str, Any]) -> dict[str, Any]:
+        """The usage of the question. With a digest source it also holds `digest_usd`: what the digests cost."""
+        if self.context.memory.digests is None:
+            return dict(totals)
+        return {**totals, "digest_usd": float(self.context.digest_usd)}
+
     def wrap(self, name: str, prepared: Prepared) -> Prepared:
         """Give a lookup the guard and the redaction every tool result gets."""
         redact = self.context.labeler.redact

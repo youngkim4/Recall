@@ -10,7 +10,7 @@ conversation. An engine that gets none of them offers no tool for them.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterator, Mapping, Optional, Protocol, Sequence, TypedDict, Union
+from typing import Any, Iterator, Mapping, NotRequired, Optional, Protocol, Sequence, TypedDict, Union
 
 from .cancel import CancelToken
 
@@ -304,14 +304,17 @@ class DigestCost(TypedDict):
 class DigestResult(TypedDict):
     periods: list[DigestPeriod]
     periods_failed: int
+    usd: NotRequired[float]  # what this call cost; absent means not known
 
 
 class DigestSource(Protocol):
     """The story of one conversation, period by period.
 
     `estimate` builds nothing and costs nothing. `digest` builds the periods
-    that are not cached. It stops when `cancel` is cancelled. A failure here
-    does not fail the question.
+    that are not cached. It stops when `cancel` is cancelled. `prepare` starts
+    the reading of a conversation outside the question: True when it started
+    or already runs. A source can have no `prepare`: then nothing starts. A
+    failure here does not fail the question.
     """
 
     def estimate(
@@ -321,3 +324,5 @@ class DigestSource(Protocol):
     def digest(
         self, conversation_id: str, *, since: Optional[str], until: Optional[str], cancel: CancelToken
     ) -> DigestResult: ...
+
+    def prepare(self, conversation_id: str, *, since: Optional[str], until: Optional[str]) -> bool: ...
