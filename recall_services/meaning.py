@@ -174,11 +174,11 @@ class _OnDemand:
 
 
 def _held(store: IndexStore) -> IndexStatus:
-    """What the folder holds. An index of a newer build of the app is not read: it counts as none."""
+    """What the folder holds. An index that this build of the app can not read counts as none."""
     try:
         return store.status()
-    except IndexFormatError:
-        logger.warning("the index was made by a newer version of the app; it is not read")
+    except StoreError as error:  # a newer format is one of these
+        logger.warning("the index can not be read (%s); it counts as none", type(error).__name__)
         return IndexStatus(state="none")
 
 
@@ -243,9 +243,11 @@ def estimate(
     facts: EmbedderFacts | None = None,
     count_tokens: CountTokens | None = None,
 ) -> dict[str, Any]:
-    """`segments`, `newSegments`, `tokens` and `estimatedCost` of a build that starts now.
+    """`segments`, `newSegments`, `tokens`, `estimatedCost` and `upperBound` of a build that starts now.
 
-    It reads every conversation. It makes no request and no file. Raises MeaningFailure.
+    `upperBound` is true when the vectors that a stopped build paid for could
+    not be read: the build then sends at most this much. It reads every
+    conversation. It makes no request and no file. Raises MeaningFailure.
     """
     try:
         found = estimate_build(
@@ -261,6 +263,8 @@ def estimate(
         "newSegments": found.new_segments,
         "tokens": found.tokens,
         "estimatedCost": found.usd,
+        # a field of a later meaning_index: an estimate without it is exact
+        "upperBound": bool(getattr(found, "upper_bound", False)),
     }
 
 

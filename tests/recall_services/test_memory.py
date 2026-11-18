@@ -355,3 +355,24 @@ def test_the_embedder_of_a_description_is_the_one_of_the_app_with_a_short_wait(
     assert found.search(kit.BOAT_QUERY, **EVERYWHERE)
     assert made == [(FAKE_FACTS.model, FAKE_FACTS.dimensions, memory.QUERY_TIMEOUT_SECONDS)]
     assert memory.QUERY_TIMEOUT_SECONDS < meaning.BUILD_TIMEOUT_SECONDS
+
+
+@pytest.mark.parametrize("bad", ["not a number", "short"])
+def test_a_vector_that_a_search_can_not_use_is_raised_and_not_kept(lake: Lake, bad: str) -> None:
+    build(lake)
+
+    class Broken(Asked):
+        broken = True
+
+        def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
+            (vector,) = self.embedder.embed(texts)
+            if not self.broken:
+                return [vector]
+            return [[float("nan"), *vector[1:]]] if bad == "not a number" else [vector[:-1]]
+
+    asked = Broken()
+    found = port(lake, asked)
+    with pytest.raises(ValueError, match="finite numbers with the dimensions"):
+        found.search(kit.BOAT_QUERY, **EVERYWHERE)
+    asked.broken = False
+    assert texts_of(lake, found.search(kit.BOAT_QUERY, **EVERYWHERE)[0])[0] == kit.FERRY_LINE

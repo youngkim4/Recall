@@ -13,6 +13,7 @@ from report_engine.fake_llm import FakeCall, FakeLLM
 from tests.recall_services.report_world import MODEL, PERIOD_LABELS, Desk
 from tests.report_engine.synth import MINA
 
+CHEAP = "gpt-6-luna"
 COST_KEYS = {"periods", "periods_cached", "usd"}
 PERIOD_KEYS = {"label", "first_day", "last_day", "messages", "summary", "moments"}
 MOMENT_KEYS = {"date", "title", "detail", "quote", "message_ids"}
@@ -140,8 +141,10 @@ def test_a_failure_of_the_digest_is_raised_for_the_line_of_the_engine(desk: Desk
         asked.estimate(MINA, since="yesterday", until=None)
 
 
-def test_with_no_model_named_the_digest_uses_the_model_of_the_reports(desk: Desk, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert memory.DIGEST_MODEL == ""
+def test_the_digest_of_the_app_is_read_by_the_cheap_model_and_an_empty_name_is_the_model_of_the_reports(
+    desk: Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert memory.DIGEST_MODEL == CHEAP and CHEAP in models.offered_ids() and CHEAP != models.default_id()
     seen: list[str] = []
     model = FakeLLM()
 
@@ -156,11 +159,24 @@ def test_with_no_model_named_the_digest_uses_the_model_of_the_reports(desk: Desk
     )  # fmt: skip
     asked = memory.ports(desk.archive, desk.names, digest=plain)["digests"]
     asked.digest(MINA, since="2023-01-01", until="2023-01-31", cancel=CancelToken())
-    monkeypatch.setattr(memory, "DIGEST_MODEL", MODEL)
+    monkeypatch.setattr(memory, "DIGEST_MODEL", "")
     memory.ports(desk.archive, desk.names, digest=plain)["digests"].digest(
         MINA, since="2023-01-01", until="2023-01-31", cancel=CancelToken()
     )
-    assert seen == [models.default_id(), MODEL]
+    assert seen == [CHEAP, models.default_id()]
+
+
+def test_the_digest_of_the_app_shares_the_notes_only_with_a_report_of_the_same_model(desk: Desk) -> None:
+    """The notes of a part belong to one model: a report by another model saves a digest nothing."""
+    more = desk.more()
+    plain = memory.DigestSettings(places=more["places"], options=more["options"], counter=more["counter"])
+    asked = memory.ports(desk.archive, desk.names, digest=plain)["digests"]
+    reports.run(MINA, models.default_id(), **desk.more())
+    after_another = asked.estimate(MINA, since=None, until=None)
+    assert after_another["periods_cached"] == 0 and after_another["usd"] > 0
+    reports.run(MINA, CHEAP, **desk.more())
+    after_the_same = asked.estimate(MINA, since=None, until=None)
+    assert (after_the_same["periods_cached"], after_the_same["usd"]) == (after_the_same["periods"], 0.0)
 
 
 def test_notes_of_earlier_runs_that_can_not_be_opened_give_no_digest_port(

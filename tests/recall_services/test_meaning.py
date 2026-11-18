@@ -10,6 +10,7 @@ import json
 import logging
 from collections.abc import Iterator, Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -38,7 +39,7 @@ from tests.recall_services.memory_kit import FAKE_FACTS, MARK, SEGMENTS, Lake
 from tests.report_engine.synth import MINA, THEO
 
 STATUS_KEYS = {"state", "segments", "model", "dimensions", "builtAt", "coveredUntil"}
-ESTIMATE_KEYS = {"segments", "newSegments", "tokens", "estimatedCost"}
+ESTIMATE_KEYS = {"segments", "newSegments", "tokens", "estimatedCost", "upperBound"}
 BUILD_KEYS = {"segments", "embedded", "reused", "removed", "tokens"}
 NO_KEY = "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then build the index again."
 HANDLE_PARTS = (MINA, THEO, "2025550143", "theo@", "example.com")
@@ -179,6 +180,37 @@ def test_the_build_sends_what_the_estimate_said_and_the_next_estimate_is_zero(la
     assert done["tokens"] == said["tokens"] and len(embedder.texts) == SEGMENTS - 1
     after = estimate(lake)
     assert (after["segments"], after["newSegments"], after["tokens"], after["estimatedCost"]) == (SEGMENTS, 0, 0, 0.0)
+
+
+def test_an_estimate_that_counts_too_much_says_that_it_is_an_upper_bound(
+    lake: Lake, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later meaning_index says so when the vectors of a stopped build could not be read."""
+    assert estimate(lake)["upperBound"] is False
+    real = meaning.estimate_build
+
+    def too_much(*args: Any, **more: Any) -> Any:
+        found = real(*args, **more)
+        return SimpleNamespace(
+            segments=found.segments, new_segments=found.new_segments, tokens=found.tokens, usd=found.usd, upper_bound=True
+        )
+
+    monkeypatch.setattr(meaning, "estimate_build", too_much)
+    assert estimate(lake)["upperBound"] is True
+
+
+def test_a_folder_whose_status_can_not_be_read_counts_as_no_index(lake: Lake, caplog: pytest.LogCaptureFixture) -> None:
+    from meaning_index import StoreError
+
+    build(lake)
+
+    class Broken(IndexStore):
+        def status(self) -> Any:
+            raise StoreError(f"a file that says {MARK}")
+
+    broken = Broken(lake.store.folder)
+    assert meaning.status(lake.archive, store=broken)["state"] == "none" and meaning.built(broken) is False
+    assert "StoreError" in caplog.text and MARK not in caplog.text
 
 
 def test_the_index_holds_the_ids_of_the_archive(lake: Lake) -> None:

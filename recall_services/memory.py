@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Iterator, Sequence
@@ -45,10 +46,11 @@ from report_engine.tokens import TokenCounter
 
 logger = logging.getLogger(__name__)
 
-# The model of a digest: an id of models.py, or "" for the model of the reports.
-# WARNING: the notes of a part belong to one model. With another model than the
-# reports use, a digest pays again for each part that a report read.
-DIGEST_MODEL = ""
+# The model of a digest: an id of models.py, or "" for the default model of the reports.
+# The digest only sums up the periods; the chat model answers and checks against the messages.
+# WARNING: the notes of a part belong to one model. A digest shares the notes of
+# a report only when the report was run with this model.
+DIGEST_MODEL = "gpt-6-luna"
 QUERY_VECTORS = 64
 QUERY_TIMEOUT_SECONDS = 10.0
 # segments read for each hit that is asked for: the same words said again are one hit
@@ -96,11 +98,15 @@ def _load(store: IndexStore) -> MeaningIndex | None:
     return None
 
 
-def _one_vector(reply: Sequence[Sequence[float]]) -> tuple[float, ...]:
+def _one_vector(reply: Sequence[Sequence[float]], dimensions: int) -> tuple[float, ...]:
+    """The vector of one description. A reply that a search can not use is not kept."""
     rows = list(reply)
     if len(rows) != 1:
         raise ValueError("the embedder must give one vector for one description")
-    return tuple(float(value) for value in rows[0])
+    vector = tuple(float(value) for value in rows[0])
+    if len(vector) != dimensions or not all(math.isfinite(value) for value in vector):
+        raise ValueError("the embedder must give one vector of finite numbers with the dimensions of the index")
+    return vector
 
 
 class _Kept:
@@ -142,7 +148,7 @@ class _Kept:
             if found is not None:
                 self._vectors.move_to_end(key)
                 return found
-        made = _one_vector(factory(index.model, index.dimensions).embed([query]))
+        made = _one_vector(factory(index.model, index.dimensions).embed([query]), index.dimensions)
         with self._lock:
             self._vectors[key] = made
             self._vectors.move_to_end(key)
