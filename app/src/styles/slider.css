@@ -1,15 +1,30 @@
 /* A slider with a few named steps: its name and the step it is on, over a
-   thick track with a mark at each step. The track is filled up to a round
-   knob that sits inside the end of the fill. */
+   track with a mark at each step. The track is filled up to a round knob
+   that sits inside the end of the fill. The fill runs through a ramp of
+   colours, cool at the first step and warm at the last. */
 
 @layer controls {
   .level-slider {
     /* the height of the track; LevelSlider.tsx holds half of it as INSET */
-    --track: 30px;
+    --track: 22px;
     /* the room between the knob and the edge of the track */
-    --knob-room: 3px;
+    --knob-room: 2px;
+    /* a spring that goes a little past its place and comes back: 5% of the
+       way at most, so a knob that crosses the whole track stays inside it */
+    --spring: cubic-bezier(0.3, 1.2, 0.5, 1);
+    /* LevelSlider.tsx sets these three: where the knob is (0 to 1), the
+       colour of the ramp there, and the ramp itself */
+    --at: 0;
+    --tone: var(--you);
+    --ramp: var(--you);
     display: grid;
     gap: var(--s-2);
+  }
+
+  @supports (transition-timing-function: linear(0, 1)) {
+    .level-slider {
+      --spring: linear(0, 0.38 9%, 0.76 18%, 0.99 28%, 1.05 37%, 1.045 45%, 1.015 57%, 0.998 70%, 1);
+    }
   }
 
   .level-slider-head {
@@ -19,36 +34,62 @@
     gap: var(--s-3);
   }
 
+  /* the name of a higher step comes up from below, of a lower one down from above */
   .level-slider-value {
+    display: inline-block;
     color: var(--text-3);
     font-variant-numeric: tabular-nums;
+    animation: level-turn-up var(--dur-short) var(--ease-out);
   }
 
-  /* The whole track takes the pointer. A press anywhere brings the knob
-     there, and the pointer then drags it. The page under it does not scroll
-     or select while it does. The first and last marks stand half the
-     track's height in from its ends, where the knob's middle comes to rest. */
+  .level-slider-value[data-turn='down'] {
+    animation-name: level-turn-down;
+  }
+
+  @keyframes level-turn-up {
+    from {
+      opacity: 0;
+      translate: 0 calc(0.5em * var(--travel));
+    }
+  }
+
+  @keyframes level-turn-down {
+    from {
+      opacity: 0;
+      translate: 0 calc(-0.5em * var(--travel));
+    }
+  }
+
+  /* The whole track takes the pointer. The page under it does not scroll
+     or select while the knob is moved. What is inside measures itself
+     against the track's width (cqi). The first and last marks stand half
+     the track's height in from its ends, where the knob's middle comes to
+     rest. The track glows in the colour of its step, more with each step. */
   .level-slider-track {
     position: relative;
     height: var(--track);
     border-radius: var(--r-full);
     background: var(--fill-track);
+    box-shadow: 0 0 calc(0.25rem + var(--at) * 0.75rem)
+      color-mix(in srgb, var(--tone) calc(18% + var(--at) * 37%), transparent);
+    container-type: inline-size;
     cursor: default;
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
   }
 
-  /* The fill is a pill that ends in a half circle around the knob. At the
-     first step it is a circle. While the knob is held it keeps up with the
-     pointer; let go, it takes longer to settle on its step. */
+  /* The fill lies over the whole track, so the ramp runs the track's whole
+     length, and is cut back to where the knob is: a pill that ends in a half
+     circle around the knob. Cutting the fill and moving the knob change no
+     layout, so both keep up with the pointer. */
   .level-slider-fill {
     position: absolute;
-    inset: 0 auto 0 0;
-    width: calc(var(--track) + (100% - var(--track)) * var(--at));
-    border-radius: var(--r-full);
-    background: var(--you);
-    transition: width var(--dur-long) var(--ease-out);
+    inset: 0;
+    border-radius: inherit;
+    background: var(--ramp);
+    clip-path: inset(0 calc((100cqi - var(--track)) * (1 - var(--at))) 0 0 round var(--r-full));
+    transition: clip-path 420ms var(--spring);
   }
 
   /* a mark at each step: grey on the track, pale on the fill */
@@ -56,55 +97,83 @@
     position: absolute;
     top: 50%;
     left: calc(var(--track) / 2 + (100% - var(--track)) * var(--stop));
-    width: 0.25rem;
-    height: 0.25rem;
+    width: 3px;
+    height: 3px;
     border-radius: var(--r-full);
-    background: var(--text-3);
-    opacity: 0.55;
+    background: color-mix(in srgb, var(--text-3) 55%, transparent);
     translate: -50% -50%;
-    transition:
-      background-color var(--dur-short) ease,
-      opacity var(--dur-short) ease;
   }
 
-  .level-slider-stop[data-passed] {
-    background: #fff;
-    opacity: 0.5;
+  .level-slider-fill > .level-slider-stop {
+    background: rgb(255 255 255 / 0.55);
   }
 
-  /* white in both themes, as a knob is; its edge is a shadow, not a line */
-  .level-slider-knob {
+  /* a light that goes along the fill once, when the last step is reached */
+  .level-slider-shine {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 25%;
+    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.85), transparent);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* The knob and the ring that goes out from it stand at the same place.
+     They are moved with translate and swell with scale, which are two
+     properties: a swell does not move them. The knob is white in both
+     themes, as a knob is; its edge is a shadow, and a halo in the colour of
+     its step. */
+  .level-slider-knob,
+  .level-slider-ring {
     position: absolute;
     top: var(--knob-room);
-    right: calc((100% - var(--track)) * (1 - var(--at)) + var(--knob-room));
+    left: var(--knob-room);
     width: calc(var(--track) - var(--knob-room) * 2);
     height: calc(var(--track) - var(--knob-room) * 2);
     border-radius: var(--r-full);
+    translate: calc((100cqi - var(--track)) * var(--at)) 0;
+    transition:
+      translate 420ms var(--spring),
+      scale var(--dur-short) var(--ease-out);
+  }
+
+  .level-slider-knob {
     background: #fff;
     box-shadow:
       0 1px 2px rgb(0 0 0 / 0.2),
-      0 3px 8px rgb(0 0 0 / 0.22);
-    transition:
-      right var(--dur-long) var(--ease-out),
-      width var(--dur-short) var(--ease-out);
+      0 2px 6px rgb(0 0 0 / 0.22),
+      0 0 0.625rem color-mix(in srgb, var(--tone) 75%, transparent);
   }
 
-  /* held, the knob keeps up with the pointer: a short, even step behind it */
-  .level-slider-track[data-held] > :is(.level-slider-fill, .level-slider-knob) {
-    transition-duration: 90ms, var(--dur-short);
-    transition-timing-function: linear, var(--ease-out);
+  .level-slider-ring {
+    box-shadow: 0 0 0 2px var(--tone);
+    opacity: 0;
+    pointer-events: none;
   }
 
-  /* with motion reduced the knob is where the pointer or the step is, at once */
+  /* held: the knob is where LevelSlider.tsx puts it, with nothing in between */
+  .level-slider-track[data-held] > .level-slider-fill {
+    transition: none;
+  }
+
+  .level-slider-track[data-held] > :is(.level-slider-knob, .level-slider-ring) {
+    transition: scale var(--dur-short) var(--ease-out);
+  }
+
+  /* held, the knob comes up a little */
+  .level-slider-track[data-held] > .level-slider-knob {
+    scale: 1.06;
+  }
+
+  /* with motion reduced the knob is on its step or under the pointer at once */
   @media (prefers-reduced-motion: reduce) {
-    .level-slider-track > :is(.level-slider-fill, .level-slider-knob),
-    .level-slider-track[data-held] > :is(.level-slider-fill, .level-slider-knob) {
+    .level-slider-track > :is(.level-slider-fill, .level-slider-knob, .level-slider-ring),
+    .level-slider-track[data-held] > :is(.level-slider-fill, .level-slider-knob, .level-slider-ring) {
       transition: none;
     }
-  }
 
-  /* held, the knob grows longer behind itself, the way a switch's knob does */
-  .level-slider-track:active > .level-slider-knob {
-    width: calc(var(--track) - var(--knob-room) * 2 + 0.25rem);
+    .level-slider-track[data-held] > .level-slider-knob {
+      scale: 1;
+    }
   }
 }
