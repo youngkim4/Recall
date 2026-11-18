@@ -29,13 +29,13 @@ class IndexBusyError(StoreError):
 class BuildCancelled(MeaningIndexError):
     """The caller stopped the build. The index is as it was.
 
-    `embedded` and `tokens` say what the build paid for before it stopped.
+    `texts_embedded` and `tokens` say what the build paid for before it stopped.
     The work file keeps those vectors for the next build.
     """
 
-    def __init__(self, message: str, *, embedded: int = 0, tokens: int = 0) -> None:
+    def __init__(self, message: str, *, texts_embedded: int = 0, tokens: int = 0) -> None:
         super().__init__(message)
-        self.embedded = embedded
+        self.texts_embedded = texts_embedded
         self.tokens = tokens
 
 

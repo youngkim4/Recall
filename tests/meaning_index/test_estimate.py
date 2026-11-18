@@ -18,7 +18,7 @@ FACTS = EmbedderFacts(model="fake-embedding-1", dimensions=64, usd_per_mtok=0.13
 
 
 def small() -> dict:
-    return {"chat-a": run(3, prefix="a") + run(3, prefix="a-late", start=600), "chat-b": run(40, prefix="b")}
+    return {"chat-a": run(3, prefix="a") + run(3, prefix="a-late", start=600, text="a later line"), "chat-b": run(40, prefix="b")}
 
 
 def test_before_a_build_every_segment_is_new(folder: Path) -> None:

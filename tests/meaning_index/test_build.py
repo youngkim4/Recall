@@ -29,7 +29,7 @@ FILES = ("segments.sqlite3", "vectors.npy", "meta.json")
 def small() -> dict:
     """Three conversations: 2, 3 and 1 segments."""
     return {
-        "chat-a": run(3, prefix="a") + run(3, prefix="a-late", start=600),
+        "chat-a": run(3, prefix="a") + run(3, prefix="a-late", start=600, text="a later line"),
         "chat-b": run(40, prefix="b"),
         "chat-c": [msg("c0", stamp(0), "the ferry leaves at nine")],
     }
@@ -89,7 +89,7 @@ def test_only_a_new_segment_is_embedded(folder: Path) -> None:
     data["chat-c"] = [*data["chat-c"], msg("c1", stamp(900), "a new line about the canoe")]
     embedder = FakeEmbedder()
     result = build(ListSource(data), folder, embedder)
-    assert result == BuildResult(segments=7, embedded=1, reused=6, removed=0, tokens=7)
+    assert result == BuildResult(segments=7, embedded=1, reused=6, removed=0, tokens=8)
     assert embedder.texts == ["2024-06-04\nThem: a new line about the canoe"]
 
 
