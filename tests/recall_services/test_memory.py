@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 import recall_paths
-from meaning_index import EmbeddingNetworkError, FakeEmbedder, MeaningIndex
+from meaning_index import EmbeddingNetworkError, FakeEmbedder, IndexStore, MeaningIndex
 from recall_services import meaning, memory
 from tests.recall_services import memory_kit as kit
 from tests.recall_services.memory_kit import FAKE_FACTS, MARK, Lake, build
@@ -263,31 +263,31 @@ def test_forget_lets_go_of_the_index_and_of_the_vectors(lake: Lake) -> None:
 def test_files_of_two_builds_are_never_read_as_one_index(lake: Lake, monkeypatch: pytest.MonkeyPatch) -> None:
     """A load that ends on another build than it started on is thrown away and tried again."""
     build(lake)
-    real = memory.usable_meta
+    real = IndexStore.meta
     seen: list[str] = []
 
-    def other_build_once(folder: Path) -> Any:
-        found = real(folder)
+    def other_build_once(store: IndexStore) -> Any:
+        found = real(store)
         seen.append("look")
         # the second look is the check after the first load: it finds another build there
         return replace(found, build_id="another-build") if len(seen) == 2 and found is not None else found
 
-    monkeypatch.setattr(memory, "usable_meta", other_build_once)
+    monkeypatch.setattr(IndexStore, "meta", other_build_once)
     hits = port(lake).search(kit.BOAT_QUERY, **EVERYWHERE)
     assert texts_of(lake, hits[0])[0] == kit.FERRY_LINE and len(seen) >= 3
 
 
 def test_a_folder_that_never_holds_one_whole_build_gives_no_port(lake: Lake, monkeypatch: pytest.MonkeyPatch) -> None:
     build(lake)
-    real = memory.usable_meta
+    real = IndexStore.meta
     looks: list[int] = []
 
-    def always_another(folder: Path) -> Any:
+    def always_another(store: IndexStore) -> Any:
         looks.append(1)
-        found = real(folder)
+        found = real(store)
         return replace(found, build_id=f"build-{len(looks)}") if found is not None else found
 
-    monkeypatch.setattr(memory, "usable_meta", always_another)
+    monkeypatch.setattr(IndexStore, "meta", always_another)
     assert memory.ports(lake.archive, lake.names, store=lake.store)["meaning"] is None
 
 

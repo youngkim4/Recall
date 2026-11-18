@@ -35,7 +35,7 @@ from typing import Any
 from archive import Archive
 from chat_engine.cancel import CancelToken
 from chat_engine.ports import DigestCost, DigestMoment, DigestPeriod, DigestResult, MeaningHit
-from meaning_index import Embedder, IndexMeta, IndexStore, MeaningIndex, MeaningIndexError, SearchHit
+from meaning_index import Embedder, IndexStore, MeaningIndex, MeaningIndexError, SearchHit
 from recall_services import digests, keys, meaning, models, reports
 from recall_services.names import Names
 from report_engine import CancelToken as ReportCancelToken
@@ -85,18 +85,13 @@ def _query_embedder(model: str, dimensions: int) -> Embedder:
     return meaning.embedder_for(model, dimensions, timeout_s=QUERY_TIMEOUT_SECONDS)
 
 
-def usable_meta(folder: Any) -> IndexMeta | None:
-    """The build on disk, or None when the folder holds no whole build."""
-    return IndexStore(folder).meta()
-
-
 def _load(store: IndexStore) -> MeaningIndex | None:
     """One whole build, or None while a build swaps the files. Files of two builds are never read as one index."""
     for _ in range(LOAD_TRIES):
         index = MeaningIndex.load(store)
         if index is None:
             return None
-        now = usable_meta(store.folder)
+        now = store.meta()
         if now is not None and now.build_id == index.meta.build_id:
             return index
     return None
@@ -128,7 +123,7 @@ class _Kept:
         index that was loaded before answers then. None when there is none.
         """
         with self._lock:
-            on_disk = usable_meta(store.folder)
+            on_disk = store.meta()
             held = self._index
             if on_disk is None or (held is not None and held.meta.build_id == on_disk.build_id):
                 return held
