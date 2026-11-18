@@ -252,6 +252,51 @@ def test_a_reader_who_leaves_ends_the_model_call(server, archive_file, monkeypat
     assert (llm.closed_early, llm.finished, len(llm.requests)) == (1, 0, 1)
 
 
+PART_SECONDS = 0.4
+QUESTION_THREADS = ("chat-lookup", "chat-reader-watch")
+
+
+def question_threads():
+    return [thread.name for thread in threading.enumerate() if thread.name in QUESTION_THREADS]
+
+
+def test_a_reader_who_leaves_while_a_digest_is_read_pays_for_the_part_in_flight_at_most(
+    server, archive_file, monkeypatch
+):
+    """The close is seen without a write: no part starts after the reader left, and no thread of the question stays."""
+    from chat_engine.fake_digests import FakeDigests, period
+    from chat_engine.fake_llm import call
+    from recall_services import memory
+
+    started = []
+
+    def per_part(number):
+        started.append((number, time.monotonic()))
+        time.sleep(PART_SECONDS)
+
+    story = [period(f"P{n}", f"2024-04-0{n + 1}", f"2024-04-0{n + 1}", 3, f"Part {n}.") for n in range(4)]
+    digests = FakeDigests({world.GARDEN: story}, usd=0.01, per_part=per_part)
+    monkeypatch.setattr(memory, "ports", lambda _archive, _names: {"meaning": None, "digests": digests})
+    scripted(monkeypatch, [call("conversation_digest", "d1", conversation=world.GARDEN_TITLE)], say("ok"))
+    body = json.dumps({"messagesPath": archive_file, "question": QUESTION, "contact": world.GARDEN}).encode()
+    reader = socket.create_connection(("127.0.0.1", server.server_port), timeout=5)
+    reader.sendall(
+        b"POST /api/ask/stream HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+        + f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
+    )
+    seen = b""
+    while b'"state": "start"' not in seen:
+        seen += reader.recv(65536)
+    reader.close()
+    left = time.monotonic()
+    limit = left + PART_SECONDS * 4 + 3
+    while (question_threads() or not started) and time.monotonic() < limit:
+        time.sleep(0.02)
+    time.sleep(PART_SECONDS)  # time for a next part to start, if one would
+    assert [number for number, at in started if at > left] == []
+    assert [number for number, _ in started] == [1] and question_threads() == []
+
+
 def wait_for_the_import():
     limit = time.monotonic() + 10
     while ui_server.unfinished_import() and time.monotonic() < limit:
