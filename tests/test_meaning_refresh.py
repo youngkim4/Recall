@@ -5,33 +5,39 @@ saved. The server brings an index up to date by itself only when little is
 new, and the status says `behind` when the ids of the index are dead.
 The embedder is a stand-in: no request leaves this machine.
 """
+import threading
+
 import pytest
 
 import ui_server
-from meaning_index import MeaningIndex
+from meaning_index import IndexStore, MeaningIndex, StoreError
 from recall_services import meaning as meaning_service
 from recall_services import memory, places
 from tests.archive_kit import (
     PERSON,
     bridged,
     data_folder,  # noqa: F401
+    ended,
     import_from,
     jobs_end,  # noqa: F401
     no_names,  # noqa: F401
     own_archives,  # noqa: F401
     pulled,
     run,
+    said,
     write_database,
+    write_export,
 )
 from tests.test_meaning_routes import (
     FIRST,
+    INDEX_IS_BUILT,
+    MARK,
     MORE,
     archive_file,  # noqa: F401
     build,
     embedder,  # noqa: F401
     meaning_jobs,
     meaning_of,
-    refreshed,
 )
 
 pytestmark = pytest.mark.usefixtures(
@@ -161,3 +167,154 @@ def test_an_estimate_that_fails_starts_nothing_and_does_not_fail_the_import(
     write_database(messages_home / "chat.db", [*FIRST, *MORE])
     job = run("export", {"messagesPath": archive_file})
     assert (job["status"], job["error"]) == ("completed", None) and meaning_jobs() == []
+
+
+# --- after an import ---------------------------------------------------------------
+
+
+def refreshed():
+    """The one job that the server started for the index, as it ended."""
+    (job,) = meaning_jobs()
+    return ended(job["id"])
+
+
+@pytest.mark.parametrize("action", ["setup_import", "export"])
+def test_after_an_import_that_changed_the_archive_the_server_brings_the_index_up_to_date(
+    archive_file, embedder, messages_home, action
+):
+    build(archive_file)
+    write_database(messages_home / "chat.db", [*FIRST, *MORE])
+    job = run(action, {"messagesPath": archive_file, "includeContacts": False})
+    assert job["status"] == "completed", job["error"]
+    done = refreshed()
+    assert (done["status"], done["error"]) == ("completed", None)
+    assert (done["result"]["embedded"], done["result"]["reused"]) == (1, 1)
+    status = meaning_service.status(places.state_for(archive_file).archive(), ui_server.saved_names())
+    assert (status["state"], status["coveredUntil"]) == ("ready", "2024-07-01 09:22:00")
+
+
+def test_after_an_import_with_no_index_the_server_starts_nothing(archive_file, embedder, tmp_path):
+    job = import_from(write_database(tmp_path / "next" / "chat.db", [*FIRST, *MORE]), archive_file)
+    assert job["status"] == "completed", job["error"]
+    assert meaning_jobs() == [] and embedder.calls == []
+    assert not meaning_service.index_store(archive_file).folder.exists()
+
+
+def test_after_an_import_that_failed_the_server_starts_nothing(archive_file, embedder, messages_home):
+    build(archive_file)
+    job = run("export", {"messagesPath": archive_file})  # Messages keeps no database here
+    assert job["status"] == "failed"
+    assert meaning_jobs() == []
+
+
+def test_after_an_export_is_loaded_again_the_server_brings_the_index_up_to_date(embedder, tmp_path):
+    export = bridged(tmp_path / "earlier" / "messages.csv", ["one", "two", "three"])
+    assert build(str(export))["status"] == "completed"
+    write_export(export, ["one", "two", "three", "four"])
+    job = run("bridge", {"messagesPath": str(export)})
+    assert (job["status"], job["result"]["status"]) == ("completed", "built")
+    assert refreshed()["status"] == "completed"
+
+
+def test_after_an_export_is_loaded_into_an_archive_with_no_index_of_its_own_nothing_is_started(
+    archive_file, embedder, tmp_path
+):
+    build(archive_file)  # another archive has an index
+    export = write_export(tmp_path / "earlier" / "messages.csv", ["one", "two", "three"])
+    job = run("bridge", {"messagesPath": str(export)})
+    assert (job["status"], job["result"]["status"]) == ("completed", "built")
+    assert meaning_jobs() == []
+
+
+def test_after_a_load_that_changed_nothing_the_server_starts_nothing(archive_file, embedder, tmp_path):
+    build(archive_file)
+    export = bridged(tmp_path / "earlier" / "messages.csv", ["one", "two", "three"])
+    job = run("bridge", {"messagesPath": str(export)})
+    assert (job["status"], job["result"]["status"]) == ("completed", "current")
+    assert meaning_jobs() == []
+
+
+def test_a_report_job_starts_no_build_of_the_index(archive_file, embedder):
+    build(archive_file)
+    run("analyze", {"messagesPath": archive_file})  # it fails: no conversation is named
+    assert meaning_jobs() == []
+
+
+def test_the_job_that_the_server_starts_holds_up_the_next_import(archive_file, embedder, messages_home, monkeypatch):
+    build(archive_file)
+    write_database(messages_home / "chat.db", [*FIRST, *MORE])
+    started, let_go = threading.Event(), threading.Event()
+    real = meaning_service.build
+
+    def slow(*args, **more):
+        started.set()
+        let_go.wait(timeout=5)
+        return real(*args, **more)
+
+    monkeypatch.setattr(meaning_service, "build", slow)
+    try:
+        assert run("export", {"messagesPath": archive_file})["status"] == "completed"
+        assert started.wait(timeout=5)
+        with pytest.raises(ui_server.JobRefused) as refused:
+            ui_server.create_job("export", {"messagesPath": archive_file})
+        assert str(refused.value) == INDEX_IS_BUILT
+    finally:
+        let_go.set()
+    assert refreshed()["status"] == "completed"
+
+
+@pytest.mark.parametrize("fault", [StoreError("the folder says nothing"), OSError("the disk is gone")])
+def test_an_index_folder_that_can_not_be_looked_at_does_not_fail_the_import_and_starts_nothing(
+    archive_file, embedder, messages_home, monkeypatch, fault
+):
+    build(archive_file)
+
+    def broken(_store):
+        raise fault
+
+    monkeypatch.setattr(IndexStore, "status", broken)
+    write_database(messages_home / "chat.db", [*FIRST, *MORE])
+    job = run("export", {"messagesPath": archive_file})
+    assert (job["status"], job["error"], job["code"]) == ("completed", None, None)
+    assert meaning_jobs() == []
+
+
+def test_the_server_looks_at_the_index_after_the_import_has_ended_in_the_list(
+    archive_file, embedder, messages_home, monkeypatch
+):
+    """A slow look at the index folder delays no import: the job says completed before the look starts."""
+    seen = []
+
+    def noted(*_args, **_more):
+        with ui_server.JOBS_LOCK:
+            seen.extend((job["action"], job["status"], job["result"] is not None) for job in ui_server.JOBS.values())
+        return False
+
+    monkeypatch.setattr(meaning_service, "built", noted)
+    write_database(messages_home / "chat.db", [*FIRST, *MORE])
+    assert run("export", {"messagesPath": archive_file})["status"] == "completed"
+    assert seen == [("export", "completed", True)]
+
+
+def test_with_no_index_folder_the_server_asks_no_database_about_the_index(archive_file, messages_home, monkeypatch):
+    """With no index there is nothing to read: an import opens no file of the index."""
+    asked = []
+    monkeypatch.setattr(IndexStore, "status", lambda store: asked.append(store) or pytest.fail("the store was asked"))
+    write_database(messages_home / "chat.db", [*FIRST, *MORE])
+    assert run("export", {"messagesPath": archive_file})["status"] == "completed"
+    assert asked == [] and meaning_service.built(archive_file) is False
+    assert not meaning_service.index_store(archive_file).folder.exists()
+
+
+def test_a_fault_while_the_server_looks_at_the_index_does_not_change_how_the_import_ended(
+    archive_file, embedder, messages_home, monkeypatch, capfd
+):
+    def broken(*_args, **_more):
+        raise RuntimeError(f"a fault that says {MARK}")
+
+    monkeypatch.setattr(meaning_service, "built", broken)
+    write_database(messages_home / "chat.db", [*FIRST, *MORE])
+    job = run("export", {"messagesPath": archive_file})
+    assert (job["status"], job["error"]) == ("completed", None)
+    assert meaning_jobs() == [] and MARK not in said(job)
+    assert MARK not in "".join(capfd.readouterr())
