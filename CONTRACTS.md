@@ -328,6 +328,15 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
   - The request carries only the filters that are set (`filterParams`). Best match needs words: with none it is not offered and not sent.
   - A filter with no words is a search: it lists the messages it lets through, newest first, and asks once.
 
+### The work before an answer
+
+- The user asked for the motion of Claude's and ChatGPT's chats. Each piece follows a shipped app, and only these: a step that shimmers (ChatGPT, Copilot), the steps before it with a check (Grok), a thin bar for a conversation read part by part (ChatGPT's research), "Worked for 6s" over the answer that opens to the steps (ChatGPT's "Thought for 42s"), and words that fade in as they stream. The lamp stands beside the step in the place of Claude's spark.
+- Each `status` event is a step, and the step before it is then done; a `progress` event counts the parts on the step that reads (`app/src/lib/chatWork.ts`). The store keeps the steps of a question until its answer is whole, not until its first piece: a `status` with `reset` takes the streamed text away, and the work goes on.
+- The first piece of an answer opens it with `work` (`withDelta`), and the whole answer keeps it (`withAnswer`). It is saved with the chat. An answer with no streamed text takes the work at its end.
+- While an answer streams, each word is a span with a key that holds from piece to piece (`wordsOf` in `AnswerBody.tsx`), so only new words fade in. Do not key a word by its text or its place in the whole answer: the words before it would fade again.
+- The shimmer is the text's own colours (`--text-3` with a band of `--text`), one pass in 2.4s. With motion reduced it is plain `--text-2`, and words do not fade.
+- To see these states without a question that costs money, stand in for `/api/ask/stream` in the preview tab: replace `window.fetch` for that path with a `ReadableStream` of frames, and release each frame by hand. The hidden preview runs timers ahead of time and stops CSS animations.
+
 ## Chat memory
 
 Chat has two optional tools: a search by meaning, and a digest of one conversation.
