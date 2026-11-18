@@ -127,7 +127,7 @@ A group that nobody named gets a name from its saved people. Two differences fro
 
 ### Filters
 
-Each filter is optional. All of them are combined with AND. A value that is not allowed is a `ValueError` with one sentence, and the route answers 400 with it: `{"error": "kind must be direct, group or empty."}`. The sentence never repeats the value.
+Each filter is optional. All of them are combined with AND. A value of a filter, of `order`, `prefix` or `by` that is not allowed is a `ValueError` with one sentence, and the route answers 400 with it: `{"error": "kind must be direct, group or empty."}`. That sentence never repeats the value. A `limit` or an `offset` that is no whole number gives the error of `inputs.whole`, as before: `limit must be a whole number, got 'many'`.
 
 | Parameter | Values |
 |---|---|
@@ -142,7 +142,7 @@ Each filter is optional. All of them are combined with AND. A value that is not 
 - The kind of an attachment comes from its mime type: `image/*`, `video/*`, `audio/*`. `other` is every other type and an attachment with no type. A GIF is an image.
 - `any` is a message with one attachment record or more. A message of kind `attachment` with no record (an old export) is `none`.
 - A message with an image and a video is in `image` and in `video`.
-- `relevance` with no words is `newest`.
+- `relevance` with no words is `newest`, and `order` in the payload says `newest`.
 
 ### `/api/search`
 
@@ -171,6 +171,7 @@ Each filter is optional. All of them are combined with AND. A value that is not 
 - `ranges` are `[start, end)` in UTF-16 units of `text`, as JavaScript counts. They are the ranges that the index matched: a prefix marks the whole word. They follow the shown text: no outer space, no attachment placeholder. A word after the cut of a long text (600 characters) has no range. A range across the cut stops at the cut.
 - With no words, `ranges` is `[]`.
 - No words and a filter list the messages of the filter, newest first. `total` counts all of them. The pages have no depth limit.
+- Typed text with no word (`*`, `""`) matches nothing, also with a filter. `/api/stats` counts 0 for it.
 
 ### `/api/stats`
 
@@ -192,7 +193,7 @@ Each filter is optional. All of them are combined with AND. A value that is not 
 ```
 
 - `by`: `day`, `week`, `month`, `year`, `weekday`, `hour`, `weekday_hour`, `person`, `conversation`, or empty. Empty gives `rows` `[]` and the totals only.
-- `totals` covers the whole filtered set. `first` and `last` are its first and last local day, or `null` when the set is empty. `received` is read from the archive, never worked out from `total`.
+- `totals` covers the whole filtered set. `first` and `last` are its first and last local day, or `null` when the set is empty. `received` is the count of the archive. In the archive every message is sent or received (`is_from_me` is 0 or 1), so its `received` is `total` less `sent`; the service adds the counts of the archive and never works one out itself.
 - `rowsTotal` is the number of rows before `limit`.
 - Time rows: `{"key", "label", "total", "sent", "received"}`.
   - `day` (`YYYY-MM-DD`), `week` (the Monday, `YYYY-MM-DD`), `month` (`YYYY-MM`), `year` (`YYYY`): every bucket from `since` to `until`, in time order. With no `since`, the range starts at `first`. With no `until`, it ends at `last`. The range never goes past the first or the last day of the archive. An empty bucket is a row of zeros. The label is the key.

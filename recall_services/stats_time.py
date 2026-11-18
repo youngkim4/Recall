@@ -75,5 +75,5 @@ def time_rows(by: str, counted: Sequence[Mapping[str, Any]], span: Span | None) 
 
 
 def _sums(row: Mapping[str, Any] | None) -> dict[str, int]:
-    """The three counts of a row; an empty bucket is 0. Received is read, never worked out."""
+    """The three counts of a row as the archive gives them; an empty bucket is 0."""
     return {name: int(row[name]) if row else 0 for name in COUNTS}

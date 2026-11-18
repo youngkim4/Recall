@@ -124,3 +124,17 @@ def test_filters_given_as_an_object(archive: Archive, saved: Names) -> None:
 def test_a_value_that_is_not_allowed_is_refused(archive: Archive, saved: Names, params: dict[str, str]) -> None:
     with pytest.raises(ValueError):
         asked(archive, saved, query="wheelbarrow", **params)
+
+
+def test_a_query_with_no_word_and_a_filter_gives_nothing(archive: Archive, saved: Names) -> None:
+    # a star or empty quotes are typed text with no word: as /api/stats counts them, nothing
+    for typed in ("*", '""', "***"):
+        found = asked(archive, saved, query=typed, contacts=world.GARDEN)
+        assert (found["results"], found["total"]) == ([], 0)
+
+
+def test_the_order_said_is_the_order_used(archive: Archive, saved: Names) -> None:
+    assert asked(archive, saved, query="tire", order="relevance")["order"] == "relevance"
+    # with no words there is no rank: the newest come first, and the payload says so
+    assert asked(archive, saved, contacts=world.GARDEN, order="relevance")["order"] == "newest"
+    assert asked(archive, saved, contacts=world.GARDEN, order="oldest")["order"] == "oldest"

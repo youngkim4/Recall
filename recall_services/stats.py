@@ -64,7 +64,7 @@ def read_limit(params: Mapping[str, object]) -> int:
 
 
 def _totals(rows: Sequence[Row]) -> dict[str, int]:
-    """The three counts of rows added up. Received is read, never worked out from the total."""
+    """The three counts of rows added up, as the archive gives them."""
     return {name: sum(int(row[name]) for row in rows) for name in COUNTS}
 
 

@@ -23,8 +23,10 @@ reader is always a prefix.
 the result, in UTF-16 units, as JavaScript counts. A word that the shown text
 cut off has no range. With no words, `ranges` is [].
 
-No words and a filter (a conversation, days, a kind, attachments) list the
-messages of the filter. No words and no filter give nothing: no screen asks
+No words and a filter (a conversation, days, who wrote, a kind, attachments)
+list the messages of the filter, newest first or oldest first (`order` then
+says `newest` for `relevance`). Text with no word, such as a lone star,
+matches nothing. No words and no filter give nothing: no screen asks
 for the newest messages of the whole archive. The filters are those of
 `search_filters`. A tapback is not a message, so it is never a result.
 """
@@ -127,7 +129,7 @@ def payload(
             limit=size,
             offset=place,
             order=order,
-            browse=not applied.is_empty,
+            browse=not needle,  # typed text with no word (a star) matches nothing, as in /api/stats
             **applied.archive_args(),
         )
         hits, total = found["hits"], int(found["total"])
@@ -140,7 +142,7 @@ def payload(
         "offset": place,
         "results": results,
         "filters": applied.payload(),
-        "order": order,
+        "order": order if needle or order != "relevance" else "newest",  # no words: no rank
         "prefix": as_you_type,
     }
 
