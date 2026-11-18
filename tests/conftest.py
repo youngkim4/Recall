@@ -20,6 +20,19 @@ def stay_on_this_machine(monkeypatch):
     guards.hold(monkeypatch)
 
 
+@pytest.fixture(autouse=True)
+def no_index_in_the_shared_folder():
+    """The data folder that every test shares holds no index of meanings, before a test and after it.
+
+    A test that builds an index gives it a folder of its own. An index that
+    is left at the shared place is read by each import of a later test.
+    """
+    shared = guards.data_folder() / "saves" / "meaning"
+    assert not shared.exists(), "an earlier test left an index of meanings in the shared data folder"
+    yield
+    assert not shared.exists(), "this test left an index of meanings in the shared data folder"
+
+
 @pytest.fixture
 def tmp_dir(tmp_path):
     return tmp_path
@@ -59,6 +72,8 @@ def no_jobs():
     def clear():
         with ui_server.JOBS_LOCK:
             ui_server.JOBS.clear()
+            # what the server keeps about digest jobs that ended, beside the jobs
+            getattr(ui_server, "DIGEST_ENDS", {}).clear()
 
     clear()
     yield

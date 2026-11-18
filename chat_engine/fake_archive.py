@@ -139,6 +139,11 @@ class FakeArchive:
         index = rows.index(anchor)
         return [_copy(m) for m in rows[max(0, index - radius):index + radius + 1]]
 
+    def message(self, message_id: str) -> Optional[Message]:
+        self._record("message", message_id=message_id)
+        found = self._by_id.get(str(message_id))
+        return _copy(found) if found is not None and found["kind"] != "system" else None
+
     def search(
         self,
         query: str,

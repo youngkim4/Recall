@@ -168,6 +168,7 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 ### Jobs
 
 - One import writes the archive at a time. `create_job` in `ui_server.py` decides this once, with `JOBS_LOCK` held, when the job is made. `IMPORT_ACTIONS` holds the jobs that write the archive: `setup_import`, `export` and `bridge`.
+- `ONE_AT_A_TIME` lists the jobs that do not run together. An import, the `meaning` job and the `digest` job are in it. See "Chat memory".
 - The first job runs. The second is refused: `/api/jobs` answers 409 with a plain sentence, and no job is made.
 - `check_request` refuses a request that cannot be a job. `/api/jobs` answers 400, and no job is made.
   - The action is text, and it is one of `JOB_ACTIONS`.
@@ -314,6 +315,111 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 - A saved chat shows a citation from its stored copy and opens its day by conversation and time (`quotedIndex`).
 - A stored model id that is not offered falls back to the default model (`preferredModel`).
 - The reasoning level that a person sets is kept for each model under `recall.reasoning.v1` (`app/src/lib/reasoning.ts`). A kept level that the model does not list falls back to `reasoningDefault` (`effortOf`). The app sends only a level that the server listed, and the slider shows the level that is sent. Where the browser keeps nothing, a level holds while the page is open.
+
+## Chat memory
+
+Chat has two optional tools: a search by meaning, and a digest of one conversation.
+Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `recall_services/digests.py`, the two ports of `chat_engine/ports.py`, and the wiring in `recall_services/` (`memory.py`, `meaning_port.py`, `meaning.py`, `digest_job.py`) and `ui_server.py`.
+
+### Real messages are the proof
+
+- An answer cites message references only. A reference is given by the evidence registry of the engine, for a message that the engine read from the archive.
+- A hit of the index names two message ids. The engine reads the messages of the exchange from the archive (`_read_segment` in `chat_engine/tool_meaning.py`). The index gives no text.
+- A moment of a digest names message ids that the report engine verified. The engine reads each one from the archive with `message` and shows it with a reference (`_with_evidence` in `chat_engine/tool_digest.py`). An id that the archive does not hold is dropped.
+- A summary from a digest is never a quote and never a citation. The prompt says so, and the first line of each digest says so (`chat_engine/prompt.py`, `chat_engine/digest_text.py`).
+- A quote of a moment is shown only when a shown message of the moment holds it.
+- The ids in the index are the ids of the archive (`_Masked` in `recall_services/meaning.py`). `ChatArchive.message` must find them. `tests/integration/test_chat_memory.py` holds this.
+- The ids of an archive can change under the same words: the first pull over a loaded export gives each message a new id. The estimate counts such segments as `staleSegments`, and the state is then `behind` until a build. That build costs nothing.
+
+### The scope binds both ports
+
+- The conversations and the days of a question go to both ports through `ToolContext.conversations` and `ToolContext.days`. A day is `YYYY-MM-DD` on each side: `Scope` in `chat_engine/scope.py`, `MeaningIndex.search`, and `_day` in `recall_services/reports.py`.
+- The engine checks each hit of the search again. A hit outside the conversations or the days is dropped, also when a port gives one by mistake.
+- A digest is built for one conversation of the scope. A period that reaches outside the days of the scope is not shown.
+- `memory.py` adds no conversation and no day to a call.
+
+### What leaves the machine
+
+- The description of a search by meaning is masked by the engine before it reaches the port (`ask_port`). `MeaningPort` sends only the description to the embedding provider.
+- A conversation id is a handle. It filters the search on this machine. It is in no request.
+- A build sends the text of each new segment to the embedding provider: the day, then `Me:` or `Them:` and the text of each message. No name and no handle is added.
+- A handle that a person typed into a message is masked in that text when it is not saved. The build, the estimate and the status read the messages through `reports._Masked`, with the saved names of the server: the same function as in a report and in a digest. Do not give `meaning_index` the archive directly.
+- A contact that is saved later is no longer masked. The segments that held its handle get a new content hash and are embedded again.
+- A digest sends what a report sends, with the same masks (`_Masked` and the labeler of `recall_services/reports.py`).
+- Each client goes to the address of the provider and takes no proxy (`build_client`).
+- No log line, no line of a job and no failure sentence holds text of a message, a name, a handle or an id. An error of the archive is not chained to a `MeaningFailure`.
+
+### The index files
+
+- Each archive has an index of its own, in `saves/meaning/<name>`. The name is the first 16 hex digits of the SHA-256 of the resolved path of the archive file. `meaning.index_folder` is the one function that builds this path: `meaning.py`, `memory.py` and `ui_server.py` take the folder from the archive that they were given.
+- `segments.sqlite3` holds conversation ids and message ids. `vectors.npy` and `work.sqlite3` hold vectors. No file of the index holds text of a message.
+- No test leaves an index in the data folder that the tests share (`no_index_in_the_shared_folder` in `tests/conftest.py` looks at `saves/meaning`).
+- A build swaps the files in this order: segments, vectors, meta (`SWAP_ORDER` in `meaning_index/store_swap.py`). A put-back goes the other way. Each file names its build, and three files are an index only when they name one build.
+- A reader takes files of one build only (`read_whole`). `MeaningPort` asks `IndexStore.meta()` for the build id after a load and loads again when it changed (`_load` in `recall_services/meaning_port.py`).
+- A process keeps one loaded index for each folder. It asks `IndexStore.meta()` for each search, which reads no row, and loads again only when the build on disk is another one. While the folder holds no whole build, the index that was loaded before answers.
+- With no index folder the services ask for no file (`_held` in `recall_services/meaning.py`). So an import with no index opens no database of the index. `Reads` in `tests/test_update_reads_messages.py` names a database in the index folder of its archive `index`, and any other unknown database by its path.
+- An index of a newer format is not read and not replaced. Chat then has no search by meaning, and the status of the index is `none`.
+
+### What is embedded again
+
+- The content hash of a segment is a hash of the text to embed, the model and the dimensions. A segment whose hash has a vector is not sent again.
+- The segment rules are in `meaning_index/segments.py`: a gap of more than 120 minutes, 16 messages, 1,600 characters, a line of 400 characters, the day on the first line. WARNING: A change to a rule, to the model or to the dimensions makes the next build embed every segment again.
+- The app builds with the default model of `meaning_index/models.json` (`meaning.default_facts`). `MeaningPort` embeds a description with the model and the dimensions of the index that it searches.
+- The packaged server ships `meaning_index/models.json` (`packaging/recall_server.spec`). `tests/test_packaged_facts.py` holds this.
+- A hit with the content hash of a better hit is left out only inside one conversation (`_hits` in `recall_services/meaning_port.py`). The hash holds no conversation: the same words in two conversations are two hits.
+- Known limit: the day in a segment and the clock times in a transcript are local times. After a change of the time zone of the Mac, segments have a new day and the parts of a digest are new. A build embeds those segments again, and a digest reads those parts again. The refresh of the server is bounded (see "The index job and its route"); the reader sees the cost of a larger build first.
+
+### One cache for reports and digests
+
+- A digest and a report share `saves/report-cache.sqlite3` (`PeriodCache`). The key of a period is a hash of the prompt version, the model id, the speaker names and the transcript of the period.
+- These must be equal on both sides, or the keys differ and a digest pays again: the source with its masks, the labeler, the model, the options, the token counter and the cache file. `recall_services/digests.py` takes each one from `recall_services/reports.py` (`_reading`).
+- `DIGEST_MODEL` in `recall_services/memory.py` is `gpt-6-luna`: the digest only sums up the periods, and the chat model answers and checks against the messages. Thus a digest shares the period cache with a report only when the report was run with the same model.
+- A report with dates reads only the messages of its dates. Its periods can differ from the periods of a digest.
+- A digest writes no report and no file but the cache.
+
+### The ports
+
+- `memory.ports(archive, names, start_digest=...)` gives the engine `meaning` and `digests` (`_events` in `recall_services/chat.py`). A port is None when its tool would fail at its first call: no key, no whole index, a folder that can not be read, a digest model that can not be run, notes of earlier runs that can not be opened.
+- With a port that is None the tool is not offered and the prompt does not name it.
+- A failure of a port never fails a question. The search falls back to the word ranking. A digest that failed is one line for the model.
+- `report_engine.CancelToken` and `chat_engine.cancel.CancelToken` are two classes. `DigestPort` sets the first when the second is cancelled.
+
+### A digest inside a question is bounded
+
+- One digest inside a question reads at most `DIGEST_PARTS_LIMIT` parts that are not read yet (2, in `recall_services/memory.py`). These change together: `DigestPort.digest` gives the number to `digests.build` as `max_new_periods`, and `_events` in `recall_services/chat.py` gives it to `EngineConfig.digest_parts_limit`. Both read the one constant.
+- A longer conversation is read outside the question. The engine calls `DigestSource.prepare`. `DigestPort.prepare` calls the `start_digest` function that goes `digest_starter` in `ui_server.py` -> `chat.stream(..., start_digest=...)` -> `memory.ports(..., start_digest=...)`. It starts a `digest` job for the archive of the question. It never raises into a question.
+- `start_digest` says True when the job started, or when a `digest` job of the same archive, conversation and days already runs. It says False in every other case.
+- A reading that fails is not started again and again. The server keeps how the last `digest` job of an archive, a conversation and days ended (`DIGEST_ENDS` in `ui_server.py`, written by `keep_digest_end` with the change that ends the job). When that job failed, or read no new part while parts failed (`periodsBuilt == 0` and `periodsFailed > 0`), `start_digest` says False and starts nothing. The model then gets the line that advises narrower days, and a digest of narrower days shows the parts that are in the notes.
+- `DIGEST_ENDS` is kept in the server process only. An import that changed the archive drops the entries of that archive (`after_job`). A job that read a new part, or that left no part unread, drops its own entry.
+- `DigestPort.digest` returns `usd`, the cost of the usage of the run, for the usage of the question. The log `recall.spend` gets one line with counts and the cost at the level INFO. `log_to_the_server_log` lets that level through for this log only.
+- A digest inside a question that was paid for and failed, or that was stopped, says what it cost too. `DigestPort.digest` writes the line of the spend log from the usage that the failure carries, sets `usd` on the failure and raises it again. The engine adds that `usd` to `digest_usd`.
+- A refusal does not mean that nothing was paid. The report engine can stop a digest at the limit after calls that were paid for (`DigestTooLarge` with `usage`). `_too_many` in `recall_services/digests.py` passes that usage on, and its sentence then names no count of the parts that are left. Code that reads a failure of a digest looks at the usage.
+- One lock for the archive path, the conversation and the model is held around the build inside a question (`digest_lock`). A second question waits and then finds the parts read.
+- The model port of a digest inside a question has a timeout of 120 s and one more try (`question_llm`). The `digest` job and a report keep the port of a report: 300 s and two more tries.
+- Known limits: a reader who leaves during the 2 parts of a digest inside a question does not stop them. A digest under a scope with days can pay for a period that is then not shown.
+- A question and the `digest` job do not share a lock. A part is paid for twice only when two runs send it at the same moment, before either has saved it; so a question beside a `digest` job pays again for at most the parts of its own limit (2), and two runs with no limit pay again only for the parts whose calls overlap. In the worst case two runs with no limit that move in step each pay for every part, because nothing marks a part as being read. The mechanism: just before a part is sent, its key is looked up one more time (`report_engine/map_step.py`, for a report run too).
+
+### The digest job
+
+- The `digest` job reads one conversation for chat (`read_conversation` in `ui_server.py`, `digest_job.run`). The request has `conversation`, and `since` and `until` as days or null. It uses `DIGEST_MODEL` and has no limit of parts.
+- Its result has `conversation`, `periods`, `periodsBuilt`, `periodsCached`, `periodsFailed`, `usd` and `usage`. Its `progress` has `step`, `of` and `label`, as in a report job. Its lines hold the label of a part and counts.
+- One `digest` job runs at a time. A `digest` job and an import do not run together (`ONE_AT_A_TIME`). A report and the `meaning` job run beside it.
+- The record of a `digest` job says what it reads: `contact` is the conversation (`conversation` of the request, before `contact`), `archivePath` is the resolved path of the archive file, and `since` and `until` are the days or null (`job_record`). `digest_starter` finds a running job of the same reading by these four (`digest_key`). The record of any other job has no such field.
+- A `digest` job that fails tells a sentence of its own (`sentence_of` in `recall_services/digest_job.py`), with the code of the failure of `digests.build`. No sentence names a report: the job writes none.
+- Known limit: a `digest` job can not be stopped, and an import waits for it.
+
+### The index job and its route
+
+- `GET /api/meaning` answers `{status, estimate, error, code}` (`meaning.payload`). `status` has `state`, `segments`, `model`, `dimensions`, `builtAt` and `coveredUntil`. `estimate` has `segments`, `newSegments`, `staleSegments`, `tokens`, `estimatedCost` and `upperBound`, or it is null when `error` and `code` say why.
+- `state` is `none`, `ready` or `behind`. The status and the estimate need no key and make no request.
+- `behind` in this answer means one of three things: the archive holds a later message with text; a build would embed a segment (`newSegments`); or the index does not hold the id of a segment (`staleSegments`). `meaning.status` alone knows only the first.
+- The `meaning` job builds the index or brings it up to date (`build_meaning_index` in `ui_server.py`). Its result has `segments`, `embedded`, `reused`, `removed` and `tokens`. Its `progress` has `step`, `of`, `label`, `done` and `total`. Its lines hold counts only.
+- The `meaning` job and an import do not run together, and two `meaning` jobs do not run together (`ONE_AT_A_TIME`). The second one is refused with a plain sentence.
+- After an import that changed the archive, the server starts one `meaning` job when the archive has an index (`refresh_meaning_index`, called by `run_job`). With no index it starts nothing: the first build is the choice of the reader. That job is made by `create_job`, so the same rule holds for it.
+- The server does not spend on the index without a word. `refresh_meaning_index` takes the estimate first, and starts the job only when `meaning.small_enough` says yes: `newSegments` is at most 2,000, or at most 10 percent of the segments, whichever is more (`REFRESH_SEGMENTS`, `REFRESH_SHARE`). Above that it starts nothing, and the state is `behind`. A `meaning` job that a reader starts always builds.
+- Known limit: a `meaning` job can not be stopped, and an import waits for it. The same holds for a `digest` job.
+- `run_job` looks at the index after the import has ended in the list. A slow look or a fault there does not delay or fail the import.
+- A failure of a build is a `MeaningFailure`. The job tells its sentence and its code.
 
 ## Mac shell
 

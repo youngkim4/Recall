@@ -39,6 +39,11 @@ Ask for `state.archive()` and for `names.cached(...)` at the start of each reque
 | `/api/ask` | `chat.ask(...)`, the same arguments |
 | `/api/preview` (estimate) | `reports.estimate(contact, model, since, until, archive=..., names=...)` |
 | job `analyze` | `reports.run(contact, model, since, until, on_progress, cancel, archive=..., names=...)` |
+| `/api/meaning` | `meaning.payload(archive, names)` |
+| job `meaning` | `meaning.build(archive, names, cancel, on_progress)` |
+| the refresh after an import | `meaning.built(archive_file)`, `meaning.estimate(archive, names)`, `meaning.small_enough(estimate)` |
+| job `digest` | `digest_job.run(conversation, since, until, on_progress, archive=..., names=...)` |
+| the two optional ports of the chat engine | `memory.ports(archive, names, start_digest=...)` |
 | the saved report of a report file | `reports.saved_report(contact, report_text)` |
 | the moments of a report | `reports.moments_for(report, archive)` |
 | a story that the server shows plain | `reports.shown_plain(report_text)` |
@@ -121,6 +126,186 @@ A group that nobody named gets a name from its saved people. Two differences fro
 - A row with no `contact` was asked of everything. Its answer does not go to a question that has a scope.
 - A question over 8,000 characters is the error `question_too_long`.
 - `cancel` is a `CancelToken` that the route makes for each request.
+- The engine gets the two ports of `memory.ports(archive, names, start_digest=...)`. See "The two ports of chat".
+- `chat.stream(..., start_digest=...)` takes the function of the server that reads a long conversation outside the question.
+
+## The index of meanings
+
+`meaning.py` gives the routes the index of `meaning_index`. `meaning_failures.py` holds its failure sentences.
+
+A segment of the index is a short exchange. A line for a person says "exchange".
+
+```python
+from recall_services import meaning
+
+meaning.index_folder(archive.path)   # saves/meaning/<16 hex digits>: the folder of the index of this archive
+meaning.status(archive, names)       # {"state", "segments", "model", "dimensions", "builtAt", "coveredUntil"}
+meaning.estimate(archive, names)     # {"segments", "newSegments", "staleSegments", "tokens", "estimatedCost", "upperBound"}
+meaning.build(archive, names, cancel=None, on_progress=None)   # {"segments", "embedded", "reused", "removed", "tokens"}
+meaning.payload(archive, names)      # {"status", "estimate", "error", "code"}: the answer of GET /api/meaning
+meaning.small_enough(estimate)       # can the server bring the index up to date by itself
+```
+
+One index for one archive:
+
+- The folder of an index is `saves/meaning/<name>`. The name is the first 16 hex digits of the SHA-256 of the resolved path of the archive file.
+- `index_folder` is the one function that builds this path. Each function takes the folder from the archive that it was given.
+- A build for one archive does not touch the index of another archive.
+
+What a build sends:
+
+- The messages come through `reports._Masked`, with the saved names of the server. A handle that is not saved is masked in the text, by the same function as in a report and in a digest.
+- A message with no text is in no segment.
+- A contact that is saved later is no longer masked. The segments that held its handle then have a new content hash, and the next build embeds them again.
+
+Status:
+
+- `state` is `none`, `ready` or `behind`.
+- `status` is the quick look. Its `behind` means that the archive holds a later message with text than the index covers. A later photo with no caption does not make the state `behind`.
+- `payload` also uses the estimate. Its `behind` means, in addition, that a build would embed a segment (`newSegments`) or write a segment whose id the index does not hold (`staleSegments`).
+- `coveredUntil` is the local time of the last message in the index. `builtAt` is UTC.
+- An index that this build of the app can not read has the state `none`. The estimate and the build then fail with the code `index_newer`.
+- With no index folder the status asks for no file. An import with no index thus opens no database of the index.
+
+Estimate:
+
+- The estimate reads every conversation. It makes no request and no file. It needs no key.
+- WARNING: Do not ask for `GET /api/meaning` on a timer. Ask when the screen opens and after a job.
+- `newSegments` are the segments that a build embeds. They cost. `estimatedCost` is in USD, from the price in `meaning_index/models.json`.
+- `staleSegments` are the segments whose id the index does not hold. After the first pull over a loaded export each message has a new id: every segment is stale and none is new, so the build costs nothing.
+- `upperBound` is true when the vectors that a stopped build paid for could not be read. The build then sends at most this much. The app shows "at most" before the cost.
+- An estimate and a build use the token counter of `meaning_index` (`default_count_tokens`), so their numbers agree.
+
+Build:
+
+- A build embeds only the segments that are new. It uses the default model of `meaning_index/models.json`.
+- A build asks for the key when the first text must be embedded. A build with nothing new needs no key.
+- `cancel` is a callable that returns a bool, or a token with `cancelled`.
+- `on_progress` gets `{"progress": {"step", "of", "label", "done", "total"}}`. A step that starts, and the end of the build, also give `log`: one line for the job. A line holds counts only.
+- The three steps are `Reading your conversations`, `Reading the meaning of your messages` and `Saving the index`.
+
+The refresh of the server:
+
+- After an import the server brings an index that is there up to date by itself. It takes the estimate first.
+- `small_enough` says yes when `newSegments` is at most 2,000, or at most 10 percent of the segments, whichever is more (`REFRESH_SEGMENTS`, `REFRESH_SHARE`).
+- Above that the server starts nothing. The state is `behind`, and the reader starts the build and sees the cost first.
+- A `meaning` job that a reader starts always builds.
+
+A failure is a `MeaningFailure` with a code and one plain sentence:
+
+| Code | Cause |
+|---|---|
+| `no_key` | No key is set. |
+| `key_rejected` | The provider refused the key. |
+| `rate_limit` | The provider limits requests, or the account has no credit. |
+| `offline` | The provider could not be reached. |
+| `model_error` | Any other failure of the embedder. |
+| `busy` | Another build holds the folder. |
+| `cancelled` | The caller stopped the build. |
+| `archive_error` | The archive could not be read. |
+| `index_newer` | A newer build of the app wrote the index. |
+| `index_error` | The files of the index could not be read or written. |
+| `build_failed` | Any other failure, such as a facts file that can not be read. |
+
+- After a failure the index is as it was. The vectors that were paid for are kept for the next build.
+- The error of the archive or of the provider is not chained to the failure. The log gets the type of the error, and the HTTP status and the code of the provider.
+
+Tests put a stand-in at `meaning.embedder_for` and at `meaning.default_facts`, or give `store`, `facts`, `embedder_factory` and `count_tokens` to the call.
+
+Known limits:
+
+- The day in a segment is a local day. After a change of the time zone of the Mac some segments have a new day, and a build embeds them again. The refresh of the server is bounded by `small_enough`; above it the reader sees the cost first.
+- A `meaning` job can not be stopped, and an import waits for it. The same holds for a `digest` job.
+- The first use of the token counter fetches a vocabulary file. When that fails, the count is one token for three bytes.
+- The status compares times to the second. A new message in the same second as `coveredUntil` does not make the quick status `behind`.
+- An index of an archive file that was moved or deleted stays in `saves/meaning`. Nothing removes it.
+- An estimate reads every row of the index a second time, to compare the ids. For 100,000 segments that is about half a second more.
+
+## The two ports of chat
+
+`memory.ports(archive, names, start_digest=None)` gives `{"meaning": ..., "digests": ...}` for `ChatEngine`. `chat.py` calls it for each question that uses the model.
+
+| Port | Class | None when |
+|---|---|---|
+| `meaning` | `MeaningPort` in `meaning_port.py`, over `meaning_index` | No key is set. The archive has no whole index. The folder can not be read. |
+| `digests` | `DigestPort` in `memory.py`, over `digests.py` | No key is set. The model of the digest can not be run. The notes of earlier report runs can not be opened. |
+
+With a port that is None the engine does not offer its tool. A reason goes to the log as one line with no private text.
+
+`MeaningPort`:
+
+- It searches the index of the archive of the question (`meaning.index_store(archive.path)`).
+- It embeds the description with the model and the dimensions of the index, not with the default model.
+- Only the description goes to the provider. The engine masked it. The conversation ids filter the search on this machine.
+- The process keeps one loaded index for each folder. It asks `IndexStore.meta()` for each search and loads again only when the build on disk is another one (`IndexMeta.build_id`).
+- While a build swaps the files, the folder holds no whole build. The index that was loaded before answers then. A question that finds no loaded index gets no port.
+- A load is checked: when the build on disk changed during the load, the load is thrown away and tried again.
+- The process keeps the vectors of the last 64 descriptions (`QUERY_VECTORS`). The seeded search and a repeat do not pay twice.
+- A hit with the content hash of a better hit of the same conversation is left out: the same words said again. The hash holds no conversation, so the same words in two conversations are two hits.
+- A request for a vector has a timeout of 10 seconds (`QUERY_TIMEOUT_SECONDS`). A build has 120 seconds for one request.
+- Every failure is raised. The engine then ranks by words alone.
+
+`DigestPort`:
+
+- `estimate` and `digest` pass the conversation and the days to `digests.estimate` and `digests.build`.
+- `digest` reads at most `DIGEST_PARTS_LIMIT` (2) parts that are not read yet. It gives that number to `digests.build` as `max_new_periods`. A digest that needs more raises `too_many_parts`. When the check before the first call refuses it, no call is made. The report engine can also stop a digest at the limit after calls that were paid for: the failure then carries their usage, and `usd` and the spend line say what they cost. Do not take a refusal to mean that nothing was paid: look at the usage. `chat.py` gives the engine the same constant (`EngineConfig.digest_parts_limit` in `_events`), so the two can not differ.
+- `digest` returns `usd`: the cost of the usage of the run. The log `recall.spend` gets one line with counts and the cost. `log_to_the_server_log` in `ui_server.py` lets that line through.
+- A digest that was paid for and failed, or that was stopped, says what it cost too. `digest` takes the usage from the failure of `digests.build` (`ReportFailure.usage`), writes the line `a digest inside a question gave nothing (<code>): N model calls, X USD`, sets `usd` on the failure and raises the same failure again. A failure before any call has no usage: its `usd` is 0.0 and it leaves no line.
+- One lock for the archive path, the conversation and the model is held around the build (`digest_lock`). A second question waits and then finds the parts read. A question that is cancelled while it waits stops waiting (`DigestStopped`).
+- The model port of a digest inside a question has a timeout of 120 seconds and one more try (`question_llm`, `DIGEST_TIMEOUT_SECONDS`, `DIGEST_RETRIES`). A report job keeps 300 seconds and two more tries.
+- `prepare` calls the `start_digest` function of the server and returns its answer. With none given, or when it fails, the answer is False.
+- The cancel token of chat sets a cancel token of the report engine (`_report_cancel`). The two classes have the same name and are not the same class.
+- A `ReportFailure` is raised. The engine then prints its one line for a digest that failed.
+- `DIGEST_MODEL` is the model of a digest: `gpt-6-luna`. The digest only sums up the periods. The chat model answers and checks against the messages.
+- WARNING: A digest shares the period cache with a report only when the report was run with the same model. A report by another model saves a digest nothing.
+- The moments of a period come in the order of the report engine. That is the order of the reply of the model, not the strongest first.
+
+`memory.forget()` lets go of each loaded index and each kept vector.
+
+A test gives `store`, `embedder_factory` and `digest` (`DigestSettings`) to `memory.ports`, or puts its own function at `memory.ports`.
+
+Known limits:
+
+- A reader who leaves during a digest inside a question does not stop it: the turn gives no event while a tool runs. It reads 2 parts at most.
+- A question and the `digest` job do not share a lock. A part is paid for twice only when two runs send it at the same moment, before either has saved it; so a question beside a `digest` job pays again for at most the parts of its own limit (2), and two runs with no limit pay again only for the parts whose calls overlap. In the worst case two runs with no limit that move in step each pay for every part, because nothing marks a part as being read. The mechanism: just before a part is sent, its key is looked up one more time (`report_engine/map_step.py`, for a report run too).
+- The clock times in a transcript are local times. After a change of the time zone of the Mac the parts of a digest are new, and they are read and paid for again.
+- A digest under a scope with days can pay for a period that is then not shown. The app sets no days in a scope today.
+
+## The digest job
+
+`digest_job.run(conversation_id, since, until, on_progress, archive=..., names=...)` reads one conversation for chat, outside a question. The `digest` job of the server calls it.
+
+- It uses `DIGEST_MODEL`, so a later question finds the parts in the notes. It has no limit of parts, and the model port of a report.
+- The result has `conversation`, `periods`, `periodsBuilt`, `periodsCached`, `periodsFailed`, `usd` and `usage`.
+- A listener gets `{"progress": {"step", "of", "label"}}` and a line under `log`, as in a report job. A line holds the label of a part and counts.
+- A failure is a `DigestFailure`: a `ReportFailure` with the code of the failure of `digests.build`, its usage, and a sentence of this job (`sentence_of`). No sentence names a report. A missing conversation and a bad day are a ValueError.
+- `digest_starter` in `ui_server.py` makes the `start_digest` function of one question. It starts a `digest` job for the archive of the question.
+- The starter says True when the job started, or when a `digest` job of the same archive, conversation and days already runs.
+- The starter starts nothing when the last job of the same archive, conversation and days failed, or read no new part while parts failed. Each question would pay for the same parts again. An import that changed the archive, and a new start of the server, let the reading start again.
+
+The sentences of a `digest` job that failed:
+
+| Code | Sentence |
+|---|---|
+| `no_key` | No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then ask again. |
+| `key_rejected` | OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, then ask again. |
+| `unknown_model` | OpenAI does not know the model gpt-6-luna. The conversation was not read. |
+| `rate_limit` | OpenAI is limiting requests, or the account has no credit left. Wait a moment, then ask again. |
+| `offline` | OpenAI could not be reached. Check the internet connection, then ask again. |
+| `timeout` | The model took too long to answer. Ask again. |
+| `model_error` | The model could not read the conversation. Ask again. |
+| `empty` | This conversation has no messages with text in these dates. |
+| `too_large` | The model can not read this conversation with its limits. The conversation was not read. |
+| `archive_error` | The messages of this conversation could not be read. Update the archive, then ask again. |
+| `cache_unreadable` | What earlier runs read could not be read or kept. The conversation was not read. |
+| `cancelled` | The reading was stopped. What was read is kept. |
+| `run_failed` | The reading failed. What was read is kept: ask again. |
+| any other code | The conversation could not be read for chat. Ask again. |
+
+Known limits:
+
+- A `digest` job can not be stopped, and an import waits for it.
+- A job that failed for a reason that passes, such as no connection, is not started again by a question until an import changed the archive or the server started again. A reader can still start the job.
 
 ## Reports
 
@@ -169,6 +354,8 @@ Each one has a test that states it.
 ```bash
 venv/bin/python -m pytest tests/recall_services tests/integration --cov=recall_services --cov-report=term-missing
 ```
+
+`tests/integration/test_chat_memory.py` runs whole questions through `chat.py` with the two ports on a real archive. `tests/test_meaning_routes.py` runs `GET /api/meaning` and the `meaning` job.
 
 The tests use invented data, a scripted model and a dummy key. `tests/guards.py` blocks every socket that leaves the machine and points the home folder and the data folder at temp folders.
 

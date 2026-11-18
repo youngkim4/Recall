@@ -53,7 +53,7 @@ from chat_engine.local_answer import local_answer
 from chat_engine.ports import LLM
 from chat_engine.scope import EVERYTHING, Scope
 from chat_engine.session import ChatSession
-from recall_services import inputs, keys, messages, models
+from recall_services import inputs, keys, memory, messages, models
 from recall_services.models import ChatModelConfig, ModelChoiceError
 from recall_services.names import Names
 
@@ -209,6 +209,7 @@ def _events(
     use_ai: bool,
     llm_factory: LLMFactory,
     clock: Callable[[], datetime],
+    start_digest: memory.StartDigest | None = None,
 ) -> Iterator[Event]:
     labeler = names.chat_labeler(archive.conversations())
     adapter = ArchiveAdapter(archive)
@@ -219,8 +220,15 @@ def _events(
             yield {"type": "done", "payload": _payload(found, asked, archive, names)}
             return
         config = models.chat_config(model.strip() or models.default_id(), reasoning_effort)
-        settings = EngineConfig(model=config.model, max_output_tokens=config.max_output_tokens)
-        engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock)
+        settings = EngineConfig(
+            model=config.model,
+            max_output_tokens=config.max_output_tokens,
+            # the digest port refuses a longer digest with the same number
+            digest_parts_limit=memory.DIGEST_PARTS_LIMIT,
+        )
+        # the search by meaning and the digest, each None when it can not work; a test puts its own `memory.ports`
+        ports = memory.ports(archive, names, start_digest=start_digest)
+        engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock, **ports)
         answering = engine.stream(asked.question, scope=asked.scope, session=_session(history), cancel=cancel)
     except engine_errors.ChatEngineError as error:
         yield _failure(error.to_event(), config)
@@ -250,6 +258,7 @@ def stream(
     reasoning_effort: object = "",
     llm_factory: LLMFactory | None = None,
     clock: Callable[[], datetime] = datetime.now,
+    start_digest: memory.StartDigest | None = None,
 ) -> Iterator[Event]:
     """Answer one question. See the module docstring for the events.
 
@@ -261,7 +270,10 @@ def stream(
     `{role, content}` rows that the browser keeps; a "user" row can hold
     `contact`, the conversation that its question was asked of. `cancel` stops the model
     call and the lookups: the question then ends with `done` and `cancelled`.
-    Closing the iterator stops the model call too.
+    Closing the iterator stops the model call too. `start_digest` is the
+    function of the server that reads a long conversation outside the
+    question: it gets the conversation id and the two days, and says whether
+    the reading started.
 
     Nothing is raised for a failure of the model, of the archive or of the
     request: the last event says it.
@@ -285,6 +297,7 @@ def stream(
         use_ai,
         llm_factory or default_llm,
         clock,
+        start_digest,
     )
     try:
         yield from answering
