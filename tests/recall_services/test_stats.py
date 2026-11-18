@@ -37,7 +37,7 @@ def test_one_total_for_the_whole_archive(archive: Archive, saved: Names) -> None
     assert set(found) == PAYLOAD_KEYS
     assert found["totals"] == {"total": 479, "sent": 159, "received": 320}
     assert (found["first"], found["last"], found["rows"], found["rowsTotal"]) == ("2024-03-01", "2024-05-01", [], 0)
-    assert (found["by"], found["query"], found["prefix"], found["filters"]) == ("", "", True, NOTHING_APPLIED)
+    assert (found["by"], found["query"], found["prefix"], found["filters"]) == ("", "", False, NOTHING_APPLIED)
     json.dumps(found)
 
 
@@ -106,8 +106,9 @@ def test_the_filters_and_the_words_narrow_every_figure(archive: Archive, saved: 
     assert (typing["totals"]["total"], typing["prefix"], typing["filters"]["kind"]) == (2, True, "group")
     whole = asked(archive, saved, query="wheelb", prefix="false")
     assert (whole["totals"]["total"], whole["prefix"]) == (0, False)
-    # no `prefix` at all: the last word is a prefix, as /api/search does then
-    assert asked(archive, saved, query="wheelb")["totals"]["total"] == 2
+    # no `prefix` at all: whole words, unlike /api/search, which keeps the prefix for the app of today
+    unasked = asked(archive, saved, query="wheelb")
+    assert (unasked["totals"]["total"], unasked["prefix"]) == (0, False)
     images = asked(archive, saved, attachments="image", contacts=f"{world.INES_PHONE},{world.GARDEN}")
     assert images["totals"] == {"total": 2, "sent": 1, "received": 1}
 

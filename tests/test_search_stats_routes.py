@@ -84,14 +84,22 @@ def test_hi_with_prefix_false_is_the_word_hi_only(hi_archive, server):
     assert (counted["totals"]["total"], counted["prefix"]) == (2, False)
 
 
-def test_with_no_prefix_parameter_the_last_word_is_a_prefix_as_today(app_archive, server):
+def test_with_no_prefix_parameter_stats_count_whole_words(hi_archive, server):
+    _status, counted = get(server, "/api/stats", query="Hi")
+    _status, typing = get(server, "/api/stats", query="Hi", prefix="true")
+
+    # the word "hi" only: no "this", "which", "hit" or "him"
+    assert (counted["totals"]["total"], counted["prefix"]) == (2, False)
+    # a prefix only when asked: then "hit" and "him" count too
+    assert (typing["totals"]["total"], typing["prefix"]) == (4, True)
+
+
+def test_with_no_prefix_parameter_search_reads_the_last_word_as_a_prefix_as_today(app_archive, server):
     _status, answer = get(server, "/api/search", query="piz")
     _status, hi = get(server, "/api/search", query="Hi")
-    _status, counted = get(server, "/api/stats", query="piz")
 
     assert (answer["total"], answer["prefix"]) == (5, True)
     assert "🍕 pizza night at mine" in texts(answer)
-    assert (counted["totals"]["total"], counted["prefix"]) == (5, True)
     # as the reader types "Hi", the words that start with it match, never a part inside a word
     assert sorted(texts(hi)) == ["hi, your pizza order is ready", "this is which hi"]
 

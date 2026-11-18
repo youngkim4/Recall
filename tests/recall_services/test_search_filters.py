@@ -103,5 +103,9 @@ def test_prefix() -> None:
     assert read_prefix({"prefix": ""}) is True
     assert read_prefix({"prefix": "true"}) is True
     assert read_prefix({"prefix": "FALSE"}) is False
+    # a route can choose its own default for a request with no `prefix`
+    assert read_prefix({}, default=False) is False
+    assert read_prefix({"prefix": ""}, default=False) is False
+    assert read_prefix({"prefix": "true"}, default=False) is True
     with pytest.raises(ValueError, match="^prefix must be true or false.$"):
         read_prefix({"prefix": "1"})
