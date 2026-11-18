@@ -53,7 +53,7 @@ from chat_engine.local_answer import local_answer
 from chat_engine.ports import LLM
 from chat_engine.scope import EVERYTHING, Scope
 from chat_engine.session import ChatSession
-from recall_services import inputs, keys, messages, models
+from recall_services import inputs, keys, memory, messages, models
 from recall_services.models import ChatModelConfig, ModelChoiceError
 from recall_services.names import Names
 
@@ -62,7 +62,6 @@ logger = logging.getLogger(__name__)
 Event = dict[str, Any]
 LLMFactory = Callable[[ChatModelConfig], LLM]
 
-CHAT_TIMEOUT_SECONDS = 60.0
 # the browser sends the last few turns; more than this is no chat that a person had
 HISTORY_ROWS = 40
 QUESTION_CHARS = 8_000
@@ -70,6 +69,8 @@ HISTORY_ROW_CHARS = 8_000
 EMPTY_QUESTION = "Type a question first."
 TOO_LONG = "The question is too long. Shorten it, then ask again."
 ASK_AGAIN = "then ask again."
+# the effort that asks a model for no reasoning
+NO_REASONING = "none"
 _ENGINE_WORDS = {
     kind.code: kind.default_message
     for kind in (engine_errors.ChatEngineError, engine_errors.ArchiveError, *engine_errors.MODEL_ERRORS)
@@ -106,11 +107,15 @@ def default_llm(config: ChatModelConfig) -> LLM:
     key = keys.api_key()
     if not key:
         raise engine_errors.NoApiKeyError()
+    # a model that reasons harder is silent for longer: the registry gives the effort its own time
+    wait = float(config.timeout_seconds)
     return OpenAIResponsesLLM(
-        build_client(key, timeout_s=CHAT_TIMEOUT_SECONDS),
+        build_client(key, timeout_s=wait),
         api_key=key,
-        timeout_seconds=CHAT_TIMEOUT_SECONDS,
+        timeout_seconds=wait,
         reasoning_effort=config.reasoning_effort,
+        # a model that is asked not to reason has no reasoning to hand back
+        carry_reasoning=config.reasoning_effort not in (None, NO_REASONING),
     )
 
 
@@ -196,6 +201,7 @@ def _session(history: object) -> ChatSession:
 def _events(
     asked: _Asked,
     model: str,
+    reasoning_effort: str,
     history: object,
     cancel: CancelToken | None,
     archive: Archive,
@@ -212,9 +218,11 @@ def _events(
             found = local_answer(adapter, asked.question, asked.scope, labeler=labeler)
             yield {"type": "done", "payload": _payload(found, asked, archive, names)}
             return
-        config = models.chat_config(model.strip() or models.default_id())
+        config = models.chat_config(model.strip() or models.default_id(), reasoning_effort)
         settings = EngineConfig(model=config.model, max_output_tokens=config.max_output_tokens)
-        engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock)
+        # the search by meaning and the digest, each None when it can not work; a test puts its own `memory.ports`
+        ports = memory.ports(archive, names)
+        engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock, **ports)
         answering = engine.stream(asked.question, scope=asked.scope, session=_session(history), cancel=cancel)
     except engine_errors.ChatEngineError as error:
         yield _failure(error.to_event(), config)
@@ -241,13 +249,17 @@ def stream(
     archive: Archive,
     names: Names,
     use_ai: bool = True,
+    reasoning_effort: object = "",
     llm_factory: LLMFactory | None = None,
     clock: Callable[[], datetime] = datetime.now,
 ) -> Iterator[Event]:
     """Answer one question. See the module docstring for the events.
 
     `contact` is a conversation id, or "" for the whole archive. `model` is an
-    id of the registry, or "" for its default. `history` is the list of
+    id of the registry, or "" for its default. `reasoning_effort` is one of
+    the reasoning levels of that model, or "" for the effort of the registry;
+    a word that the model does not list ends the question with the code
+    `reasoning_level`. `history` is the list of
     `{role, content}` rows that the browser keeps; a "user" row can hold
     `contact`, the conversation that its question was asked of. `cancel` stops the model
     call and the lookups: the question then ends with `done` and `cancelled`.
@@ -265,7 +277,16 @@ def stream(
         yield {"type": "error", "code": "question_too_long", "error": TOO_LONG}
         return
     answering = _events(
-        asked, inputs.text(model), history, cancel, archive, names, use_ai, llm_factory or default_llm, clock
+        asked,
+        inputs.text(model),
+        inputs.text(reasoning_effort),
+        history,
+        cancel,
+        archive,
+        names,
+        use_ai,
+        llm_factory or default_llm,
+        clock,
     )
     try:
         yield from answering

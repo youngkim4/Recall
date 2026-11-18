@@ -63,6 +63,9 @@ export type AskInput = {
   question: string
   contact?: string
   model?: string
+  // how hard the model is asked to think: one of its reasoning levels, or
+  // nothing for the server's own choice
+  reasoningEffort?: string
   history?: AskTurn[]
   // made by the app for each question; /api/ask/cancel names it
   requestId?: string
@@ -81,6 +84,7 @@ function askBody(input: AskInput) {
     question: input.question,
     contact: input.contact,
     model: input.model,
+    reasoningEffort: input.reasoningEffort || undefined,
     history: input.history,
     requestId: input.requestId,
   }

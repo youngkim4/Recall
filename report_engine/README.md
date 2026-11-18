@@ -17,6 +17,8 @@ It does not import `ui_server` or any other module at the repository root.
 
 A period result goes into a cache. A second run calls the model only for periods whose text changed.
 
+Chat reads the same period results without a report: see "Digest for chat".
+
 ## Run a report
 
 ```python
@@ -368,6 +370,103 @@ Retries inside the model port are counted after the call, at the time of the las
 `labeler` is necessary: the speaker names are part of the cache key.
 An empty scope gives zeros. `estimate` raises the same `ConfigError` as `run_report` when the model limits leave no room.
 The engine has no spend limit of its own. Call `estimate` and ask the user before a run.
+
+## Digest for chat
+
+`report_engine.chat_digest` gives chat the result of the map step for one conversation: the summary of each period, and the moments of each period with the ids of the messages that back them.
+It makes no reduce call and writes no report.
+
+```python
+from report_engine.chat_digest import conversation_digest, estimate_digest
+
+same = dict(source=source, conversation=chat_id, model_info=model_info, labeler=labeler, cache=cache)
+quote = estimate_digest(**same, since="2024-01-01", until="2024-06-30")
+digest = conversation_digest(**same, llm=llm, since="2024-01-01", until="2024-06-30", cancel=cancel)
+```
+
+WARNING: Give a digest the source, labeler, model facts, options, counter and cache of the reports.
+Different values give different periods and different cache keys, and then a digest pays again for what a report read.
+
+### When a digest shares the cache with reports
+
+The digest lays out the whole conversation with `build_plan`, as a report on all dates does, and runs the periods with `map_periods`.
+The key of a period does not hold the notes of earlier periods, but the prompt does.
+So a digest uses the keys of a report only when its prompts are the prompts of a report.
+
+A digest shares the cache with reports in these two cases:
+
+- The span starts at the first period of the conversation. A digest with no span is such a digest.
+- The cache holds each period before the span. The digest then sends the notes of all of them, as a report does.
+
+In these cases an entry of a digest is the entry that a report writes.
+A period that a report read costs the digest no call, and a period that the digest read costs a report no call.
+
+In each other case the digest does not share the cache with reports:
+
+- It sends no notes from before the span. The notes of an earlier period that happens to be in the cache are not sent.
+- Its periods get keys of their own. The key is `period_key` with the prompt version `<map prompt version>/span-from/<label of the first period of the span>`. The entry holds that prompt version.
+- A digest of a span that starts at the same period reads these entries again. It makes no call for them.
+- A report never reads them. A digest of a span that starts at another period never reads them.
+
+A period with a key of its own is never sent with notes from before the span. So such an entry does not depend on what the cache held, or on the order of the questions.
+As in a report, a period that fails leaves no notes for the periods after it.
+The case depends on what the cache holds when the digest starts. The same span can be read with no notes at first, and with the notes of the reports after a report filled the cache.
+`reading_of` in `chat_digest_span.py` decides the case. `estimate_digest` and `max_new_periods` count a period as cached with the keys of that case.
+
+A report with a scope reads only the messages of its scope. Its periods can differ from the periods of a digest. Then the two share no entry for those periods.
+
+### The span
+
+- `since` and `until` select the periods that overlap the span. Both ends are included. A bound is a day or a full timestamp, and only its day is used.
+- The span does not cut the conversation. Each selected period is read whole, so a `PeriodNote` can start before `since` and end after `until`.
+- The digest runs no period outside the span. See "When a digest shares the cache with reports" for the notes that its first period gets.
+- A span with no period raises `EmptyConversationError`. A span that a report refuses is a `ConfigError`.
+
+### What a digest holds
+
+`ConversationDigest` has `conversation_id`, `periods`, `periods_built`, `periods_cached`, `periods_failed` and `usage`.
+
+- `periods` has one `PeriodNote` for each period that gave a result, oldest first: `label`, `first_day`, `last_day`, `messages`, `summary`, `moments`.
+- A `MomentNote` has `date`, `title`, `detail`, `quote` and `message_ids`.
+- Each moment passes the checks of a report (see "Checks"). The cache holds the reply of the model, so the checks run on each read.
+- `message_ids` are ids of the source, not references such as `m12`. Each id is a message of the period of the moment. The tuple can be empty.
+- `quote` is part of one message of `message_ids`, or it is empty. A summary stays when a quote or a reference is dropped.
+- The check of a report accepts a quote from a message up to three days from the moment, also in another period. A report keeps the id of that message. A digest drops that id and the quote, and the moment stays.
+- `summary`, `title` and `detail` hold no line reference of the engine. A map reply cites lines as `m12`, and chat has references of the same form for other messages. `without_refs` in `chat_digest_refs.py` takes them out with what only holds them: brackets, a range (`m1–m2`), a list (`m3, m7 and m9`) and words such as "see" and "lines". `M25`, `m4a` and `40 m2` stay. A `quote` is text of a message and is not changed.
+- The cache keeps a reply as the model wrote it, with its references. A report reads them there.
+- A moment whose title is only a reference has no title after that, and is not given.
+- The digest keeps each other moment that passes the checks. It does not select moments as a report does (see "Moments").
+- `periods_built` counts the periods that a model call of this run read. `periods_cached` counts the periods from the cache. `periods_failed` counts the periods with no result: they are not in `periods`.
+- `usage` is the tokens and the cost of this run. A reply that can not be used is paid for, and its period fails.
+
+### Cost
+
+One period that is not in the cache is one model call. Its transcript has `period_token_budget` tokens at most.
+`estimate_digest` returns `DigestEstimate`: `periods`, `periods_cached`, `input_tokens`, `output_tokens` and `usd`. It makes no model call and writes nothing.
+The numbers of a period are the numbers of its map call in `estimate` for a report on all dates. When the digest does not share the cache with reports, the notes from before the span are not counted.
+
+To limit the cost of a digest:
+
+- Give a span. Fewer periods overlap it. A span that starts after periods that the cache does not hold fills no entry for a report: a later report reads those periods again.
+- Give `max_new_periods`. A digest that needs more model calls raises `DigestTooLarge` before any call. The error has `periods`, `periods_cached`, `new_periods` and `limit`. With `max_new_periods=0` a digest reads the cache only.
+
+A digest reads and counts the whole conversation each time, also when the cache holds each period.
+
+### Failures, cancel and progress
+
+| Event | Result |
+|-------|--------|
+| A period fails | It is counted in `periods_failed`. It has no cache entry. The next digest tries it again. |
+| All periods of the span fail | `AllPeriodsFailed`. No digest. |
+| The cancel token is set | `ReportCancelled`. The periods that were read stay in the cache. |
+| More new periods than `max_new_periods` | `DigestTooLarge`. No model call. |
+| An error in the engine after the first call | `RunError`. The cause is in `__cause__`. |
+
+Before the first call a digest raises the errors of a report: `EmptyConversationError`, `SourceError` and `ConfigError`.
+`on_progress` gets the events of a report with no `reduce` step. `index` and `total` count the periods of the span.
+A digest has no list of warnings. The log (`report_engine.chat_digest`) gets the counts of the checks. No log line and no error holds text of a message, a name or a handle.
+
+`recall_services/digests.py` wires a digest for the app as `recall_services/reports.py` wires a report.
 
 ## Store
 

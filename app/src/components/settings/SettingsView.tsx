@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { formatDate, formatLongDate, formatNumber, plural } from '../../lib/format'
+import { applyPalette, paletteOptions, readPalette, storePalette, type Palette } from '../../lib/palette'
 import {
   applyThemePreference,
   readThemePreference,
@@ -10,6 +11,7 @@ import {
 import type { ArchiveSummary, Defaults, PreviewCacheSummary, RuntimePaths } from '../../types'
 import { ChoiceMenu } from '../ui/ChoiceMenu'
 import { Disclosure } from '../ui/Disclosure'
+import { PalettePicker } from '../ui/PalettePicker'
 import { QualityControl } from '../ui/QualityControl'
 import { FileLocations } from './FileLocations'
 
@@ -50,6 +52,7 @@ export function SettingsView({
   onOpenSetup,
 }: SettingsViewProps) {
   const [theme, setTheme] = useState<ThemePreference>(() => readThemePreference())
+  const [palette, setPalette] = useState<Palette>(() => readPalette())
   const names = contactNameCount || defaults?.contactNames?.count || 0
   const namesUpdated = defaults?.contactNames?.exportedAt || defaults?.contactNames?.updatedAt
 
@@ -58,6 +61,12 @@ export function SettingsView({
     setTheme(preference)
     applyThemePreference(preference)
     storeThemePreference(preference)
+  }
+
+  function choosePalette(next: Palette) {
+    setPalette(next)
+    applyPalette(next)
+    storePalette(next)
   }
 
   return (
@@ -74,6 +83,16 @@ export function SettingsView({
                 <span className="setting-label">Theme</span>
                 <span className="setting-value" />
                 <ChoiceMenu label="Theme" value={theme} choices={themeOptions} onChange={chooseTheme} align="end" quietLabel />
+              </div>
+              <div className="setting">
+                <span className="setting-label" id="settings-colour">
+                  Colour
+                </span>
+                {/* the name of a new palette fades in over the old one */}
+                <span key={palette} className="setting-value swap">
+                  {paletteOptions.find((option) => option.value === palette)?.label}
+                </span>
+                <PalettePicker value={palette} onChange={choosePalette} labelledBy="settings-colour" />
               </div>
             </div>
           </section>

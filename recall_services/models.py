@@ -83,6 +83,12 @@ class ModelNotOfferedError(ModelChoiceError):
     code = "model_not_offered"
 
 
+class ReasoningLevelError(ModelChoiceError):
+    """A request asked a model for a reasoning effort that the file does not list for it."""
+
+    code = "reasoning_level"
+
+
 class _Record(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
@@ -132,11 +138,27 @@ class ModelFacts(_Record):
         return self
 
 
-class ChatSettings(_Record):
-    """What a chat question asks of a model: the most output of one call, and the effort."""
+class EffortLimits(_Record):
+    """The limits of a chat question that asks for one effort."""
 
     max_output_tokens: Count
+    timeout_seconds: Count
+
+
+class ChatSettings(_Record):
+    """What a chat question asks of a model.
+
+    `max_output_tokens` is the most output of one call: reasoning is counted
+    in it. `timeout_seconds` is the longest time between two pieces of an
+    answer: a model sends nothing while it reasons. `reasoning_effort` is the
+    effort of a question that asks for none. `by_effort` gives an effort its
+    own two limits; an effort that is not in it has the limits above.
+    """
+
+    max_output_tokens: Count
+    timeout_seconds: Count = 60
     reasoning_effort: Name | None = None
+    by_effort: dict[Name, EffortLimits] = Field(default_factory=dict)
 
 
 class _FactsFile(_Record):
@@ -157,6 +179,8 @@ class ChatModelConfig:
     provider: str
     max_output_tokens: int
     reasoning_effort: str | None
+    # the longest time between two pieces of an answer
+    timeout_seconds: int = 60
 
 
 @dataclass(frozen=True)
@@ -259,9 +283,30 @@ def offered_ids() -> list[str]:
     return [found.id for found in _registry().offered()]
 
 
-def offered() -> list[dict[str, str]]:
-    """Each offered model as the interface names it: `{"id", "label", "level"}`."""
-    return [{"id": found.id, "label": found.label, "level": found.level} for found in _registry().offered()]
+def _default_effort(found: ModelFacts) -> str | None:
+    """The effort of the file for chat, when the model lists it. A model with no levels on file gets none."""
+    effort = _registry().chat.reasoning_effort
+    return effort if effort in (found.reasoning_levels or ()) else None
+
+
+def offered() -> list[dict[str, Any]]:
+    """Each offered model as the interface names it.
+
+    `id`, `label` and `level`, then `reasoningLevels`: the efforts that a chat
+    question can ask of the model, least first, and `reasoningDefault`: the
+    effort of a question that asks for none. A model with no levels on file
+    has an empty list and no default.
+    """
+    return [
+        {
+            "id": found.id,
+            "label": found.label,
+            "level": found.level,
+            "reasoningLevels": list(found.reasoning_levels or ()),
+            "reasoningDefault": _default_effort(found),
+        }
+        for found in _registry().offered()
+    ]
 
 
 def default_id() -> str:
@@ -300,20 +345,37 @@ def model_info(model_id: str) -> ModelInfo:
     )
 
 
-def chat_config(model_id: str) -> ChatModelConfig:
+def _effort(found: ModelFacts, asked: object) -> str | None:
+    """The effort for one question: the one it asks for, or the effort of the file."""
+    wanted = asked.strip() if isinstance(asked, str) else ""
+    if not wanted:
+        return _default_effort(found)
+    levels = found.reasoning_levels or ()
+    if wanted in levels:
+        return wanted
+    can = f"Choose one of: {', '.join(levels)}." if levels else "It has no reasoning levels on file."
+    raise ReasoningLevelError(found.id, f"The model {found.id} does not take the reasoning level {wanted[:40]}. {can}")
+
+
+def chat_config(model_id: str, reasoning_effort: object = None) -> ChatModelConfig:
     """What a chat question needs for an offered model.
 
-    The effort is given only when the file lists it among the reasoning levels
-    of the model. With no effort the model port does not ask for reasoning.
+    `reasoning_effort` is the effort that the question asks for. It must be
+    one of the reasoning levels that the file lists for the model: another
+    word is a ReasoningLevelError. With none asked for, the effort of the file
+    is given when the model lists it. With no effort the model port does not
+    ask for reasoning. The most output and the time between two pieces of an
+    answer are the ones of the effort (`by_effort`), or the ones of chat.
     """
     found = _runnable(model_id)
     settings = _registry().chat
-    levels = found.reasoning_levels or ()
-    effort = settings.reasoning_effort if settings.reasoning_effort in levels else None
-    cap = settings.max_output_tokens
+    effort = _effort(found, reasoning_effort)
+    limits = settings.by_effort.get(effort or "")
+    cap = limits.max_output_tokens if limits else settings.max_output_tokens
     return ChatModelConfig(
         model=found.id,
         provider=found.provider,
         max_output_tokens=cap if found.max_output_tokens is None else min(cap, found.max_output_tokens),
         reasoning_effort=effort,
+        timeout_seconds=limits.timeout_seconds if limits else settings.timeout_seconds,
     )

@@ -39,6 +39,10 @@ Ask for `state.archive()` and for `names.cached(...)` at the start of each reque
 | `/api/ask` | `chat.ask(...)`, the same arguments |
 | `/api/preview` (estimate) | `reports.estimate(contact, model, since, until, archive=..., names=...)` |
 | job `analyze` | `reports.run(contact, model, since, until, on_progress, cancel, archive=..., names=...)` |
+| `/api/meaning` | `meaning.payload(archive)` |
+| job `meaning` | `meaning.build(archive, cancel, on_progress)` |
+| whether an index is there (after an import) | `meaning.built()` |
+| the two optional ports of the chat engine | `memory.ports(archive, names)` |
 | the saved report of a report file | `reports.saved_report(contact, report_text)` |
 | the moments of a report | `reports.moments_for(report, archive)` |
 | a story that the server shows plain | `reports.shown_plain(report_text)` |
@@ -121,6 +125,110 @@ A group that nobody named gets a name from its saved people. Two differences fro
 - A row with no `contact` was asked of everything. Its answer does not go to a question that has a scope.
 - A question over 8,000 characters is the error `question_too_long`.
 - `cancel` is a `CancelToken` that the route makes for each request.
+- The engine gets the two ports of `memory.ports(archive, names)`. See "The two ports of chat".
+
+## The index of meanings
+
+`meaning.py` gives the routes the index of `meaning_index`. The index is in the folder `meaning` of the saves folder. The folder is read from `recall_paths` at each call.
+
+A segment of the index is a short exchange. A line for a person says "exchange".
+
+```python
+from recall_services import meaning
+
+meaning.status(archive)      # {"state", "segments", "model", "dimensions", "builtAt", "coveredUntil"}
+meaning.estimate(archive)    # {"segments", "newSegments", "tokens", "estimatedCost", "upperBound"}
+meaning.build(archive, cancel=None, on_progress=None)   # {"segments", "embedded", "reused", "removed", "tokens"}
+meaning.payload(archive)     # {"status", "estimate", "error", "code"}: the answer of GET /api/meaning
+```
+
+Status:
+
+- `state` is `none`, `ready` or `behind`.
+- `behind` means that the archive holds a later message with text than the index covers. A later photo with no caption is in no segment, so it does not make the state `behind`.
+- `coveredUntil` is the local time of the last message in the index. `builtAt` is UTC.
+- An index that this build of the app can not read has the state `none`. The estimate and the build then fail with the code `index_newer`.
+- With no index folder the status asks for no file. An import with no index thus opens no database of the index.
+- A message that was edited or removed leaves the state `ready`. The next build still brings the index up to date.
+
+Estimate:
+
+- The estimate reads every conversation. It makes no request and no file. It needs no key.
+- WARNING: Do not ask for `GET /api/meaning` on a timer. Ask when the screen opens and after a job.
+- `estimatedCost` is in USD, from the price in `meaning_index/models.json`.
+- `upperBound` is true when the vectors that a stopped build paid for could not be read. The build then sends at most this much. The app shows "at most" before the cost.
+- An estimate and a build use the token counter of `meaning_index` (`default_count_tokens`), so their numbers agree.
+
+Build:
+
+- A build embeds only the segments that are new. It uses the default model of `meaning_index/models.json`.
+- A build asks for the key when the first text must be embedded. A build with nothing new needs no key.
+- `cancel` is a callable that returns a bool, or a token with `cancelled`.
+- `on_progress` gets `{"progress": {"step", "of", "label", "done", "total"}}`. A step that starts, and the end of the build, also give `log`: one line for the job. A line holds counts only.
+- The three steps are `Reading your conversations`, `Reading the meaning of your messages` and `Saving the index`.
+
+A failure is a `MeaningFailure` with a code and one plain sentence:
+
+| Code | Cause |
+|---|---|
+| `no_key` | No key is set. |
+| `key_rejected` | The provider refused the key. |
+| `rate_limit` | The provider limits requests, or the account has no credit. |
+| `offline` | The provider could not be reached. |
+| `model_error` | Any other failure of the embedder. |
+| `busy` | Another build holds the folder. |
+| `cancelled` | The caller stopped the build. |
+| `archive_error` | The archive could not be read. |
+| `index_newer` | A newer build of the app wrote the index. |
+| `index_error` | The files of the index could not be read or written. |
+| `build_failed` | Any other failure, such as a facts file that can not be read. |
+
+- After a failure the index is as it was. The vectors that were paid for are kept for the next build.
+- The error of the archive or of the provider is not chained to the failure. The log gets the type of the error, and the HTTP status and the code of the provider.
+
+Tests put a stand-in at `meaning.embedder_for` and at `meaning.default_facts`, or give `store`, `facts`, `embedder_factory` and `count_tokens` to the call.
+
+Limits:
+
+- One index folder serves the app. A request that names another archive with `messagesPath` reads the same index. A hit of another archive names a message that the archive of the request does not hold, and chat drops it.
+- The status compares times to the second. A new message in the same second as `coveredUntil` does not make the state `behind`.
+
+## The two ports of chat
+
+`memory.ports(archive, names)` gives `{"meaning": ..., "digests": ...}` for `ChatEngine`. `chat.py` calls it for each question that uses the model.
+
+| Port | Class | None when |
+|---|---|---|
+| `meaning` | `MeaningPort`, over `meaning_index` | No key is set. No whole index is in the folder. The folder can not be read. |
+| `digests` | `DigestPort`, over `digests.py` | No key is set. The model of the digest can not be run. The notes of earlier report runs can not be opened. |
+
+With a port that is None the engine does not offer its tool. A reason goes to the log as one line with no private text.
+
+`MeaningPort`:
+
+- It embeds the description with the model and the dimensions of the index, not with the default model.
+- Only the description goes to the provider. The engine masked it. The conversation ids filter the search on this machine.
+- The process keeps one loaded index for each folder. It asks `IndexStore.meta()` for each search and loads again only when the build on disk is another one (`IndexMeta.build_id`).
+- While a build swaps the files, the folder holds no whole build. The index that was loaded before answers then. A question that finds no loaded index gets no port.
+- A load is checked: when the build on disk changed during the load, the load is thrown away and tried again.
+- The process keeps the vectors of the last 64 descriptions (`QUERY_VECTORS`). The seeded search and a repeat do not pay twice.
+- A hit with the content hash of a better hit is left out: the same words said again.
+- A request for a vector has a timeout of 10 seconds (`QUERY_TIMEOUT_SECONDS`). A build has 120 seconds for one request.
+- Every failure is raised. The engine then ranks by words alone.
+
+`DigestPort`:
+
+- `estimate` and `digest` pass the conversation and the days to `digests.estimate` and `digests.build`.
+- The cancel token of chat sets a cancel token of the report engine (`_report_cancel`). The two classes have the same name and are not the same class.
+- A `ReportFailure` is raised. The engine then prints its one line for a digest that failed.
+- `DIGEST_MODEL` is the model of a digest: `gpt-6-luna`. The digest only sums up the periods. The chat model answers and checks against the messages.
+- WARNING: A digest shares the period cache with a report only when the report was run with the same model. A report by another model saves a digest nothing.
+- The moments of a period come in the order of the report engine. That is the order of the reply of the model, not the strongest first.
+- The tokens and the cost of a digest are not in the `usage` of the answer. The log gets the number of parts.
+
+`memory.forget()` lets go of each loaded index and each kept vector.
+
+A test gives `store`, `embedder_factory` and `digest` (`DigestSettings`) to `memory.ports`, or puts its own function at `memory.ports`.
 
 ## Reports
 
@@ -169,6 +277,8 @@ Each one has a test that states it.
 ```bash
 venv/bin/python -m pytest tests/recall_services tests/integration --cov=recall_services --cov-report=term-missing
 ```
+
+`tests/integration/test_chat_memory.py` runs whole questions through `chat.py` with the two ports on a real archive. `tests/test_meaning_routes.py` runs `GET /api/meaning` and the `meaning` job.
 
 The tests use invented data, a scripted model and a dummy key. `tests/guards.py` blocks every socket that leaves the machine and points the home folder and the data folder at temp folders.
 

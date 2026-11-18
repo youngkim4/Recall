@@ -168,6 +168,7 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 ### Jobs
 
 - One import writes the archive at a time. `create_job` in `ui_server.py` decides this once, with `JOBS_LOCK` held, when the job is made. `IMPORT_ACTIONS` holds the jobs that write the archive: `setup_import`, `export` and `bridge`.
+- `ONE_AT_A_TIME` lists the jobs that do not run together. An import and the `meaning` job are in it. See "Chat memory".
 - The first job runs. The second is refused: `/api/jobs` answers 409 with a plain sentence, and no job is made.
 - `check_request` refuses a request that cannot be a job. `/api/jobs` answers 400, and no job is made.
   - The action is text, and it is one of `JOB_ACTIONS`.
@@ -275,6 +276,8 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 - `recall_services/models.json` is the one source for the offered models: id, label, level, limits and prices. `ai_config.py` and `cli.py` hold tables for the hand tools only.
 - These three change together: `/api/defaults` (`models.defaults_payload`), each route and job that takes a model, and `app/src/lib/models.ts`, which builds its levels from `modelChoices`. No model id is written in the app.
 - A model that is not in the file, or that is not offered, is an error with a code before any call. It is never run or priced as another model.
+- `reasoning_levels` of a model are the efforts that its page at the provider lists, least first. `null` means that the page was not read. Do not write a level that the page does not list.
+- `modelChoices` gives each offered model `reasoningLevels` and `reasoningDefault` (`models.offered`). `reasoningDefault` is `chat.reasoning_effort` of the file when the model lists it, and `null` when it does not.
 - The packaged server ships `models.json` (`packaging/recall_server.spec`).
 
 ### The key of the provider
@@ -289,6 +292,12 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 - A failure is one plain sentence and a `code`. No keyword answer stands in for an answer that failed.
 - Each "user" row of the history holds `contact`: the conversation that its question was asked of. A row with no `contact` was asked of everything, and its answer does not go to a question that has a scope.
 - The app gives each question a `requestId`. `/api/ask/cancel` stops the question with that id (`ASKING`). A write to a reader who left stops it too.
+- A question can ask for a reasoning effort: `reasoningEffort` in the body of `/api/ask` and `/api/ask/stream`. These change together: `ask_arguments` in `ui_server.py`, `chat.stream`, `models.chat_config`, `askBody` in `app/src/lib/api.ts`, and `effortOf` in `app/src/lib/reasoning.ts`.
+  - The effort must be one of the `reasoning_levels` of the model. Another word ends the question with the code `reasoning_level` before any call. `/api/ask` answers 400 (`ASK_REQUEST_FAULTS`). `/api/ask/stream` sends the code as its error event.
+  - Reasoning is counted as output, and the model sends nothing while it reasons. Thus `chat.by_effort` in `models.json` gives an effort above medium more output and more time between two pieces of an answer (`chat_config`, `default_llm`). The limits of high, xhigh and max were not tried with a real call.
+  - A question that asks for no effort gets `reasoningDefault` of the model. Do not lower `chat.reasoning_effort` below medium: at low, a model answered a question about a relationship from one keyword hit.
+  - With the effort `none` the model port does not ask for carried reasoning (`chat.default_llm`).
+  - The effort is for chat only. A report does not take it.
 - Text for the model holds a saved name or a mask, never a handle that is not saved (`names.chat_labeler`).
 
 ### Reports
@@ -305,9 +314,82 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 - A saved message is known by its conversation, its time and its text, never by its id (`bookmarkId` in `app/src/lib/bookmarks.ts`). A message has three ids in its life.
 - A saved chat shows a citation from its stored copy and opens its day by conversation and time (`quotedIndex`).
 - A stored model id that is not offered falls back to the default model (`preferredModel`).
+- The reasoning level that a person sets is kept for each model under `recall.reasoning.v1` (`app/src/lib/reasoning.ts`). A kept level that the model does not list falls back to `reasoningDefault` (`effortOf`). The app sends only a level that the server listed, and the slider shows the level that is sent. Where the browser keeps nothing, a level holds while the page is open.
+
+## Chat memory
+
+Chat has two optional tools: a search by meaning, and a digest of one conversation.
+Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `recall_services/digests.py`, the two ports of `chat_engine/ports.py`, and the wiring in `recall_services/memory.py`, `recall_services/meaning.py` and `ui_server.py`.
+
+### Real messages are the proof
+
+- An answer cites message references only. A reference is given by the evidence registry of the engine, for a message that the engine read from the archive.
+- A hit of the index names two message ids. The engine reads the messages of the exchange from the archive (`_read_segment` in `chat_engine/tool_meaning.py`). The index gives no text.
+- A moment of a digest names message ids that the report engine verified. The engine reads each one from the archive with `message` and shows it with a reference (`_with_evidence` in `chat_engine/tool_digest.py`). An id that the archive does not hold is dropped.
+- A summary from a digest is never a quote and never a citation. The prompt says so, and the first line of each digest says so (`chat_engine/prompt.py`, `chat_engine/digest_text.py`).
+- A quote of a moment is shown only when a shown message of the moment holds it.
+- The ids in the index are the ids of the archive (`ArchiveSource` in `meaning_index/archive_source.py`). `ChatArchive.message` must find them. `tests/integration/test_chat_memory.py` holds this.
+
+### The scope binds both ports
+
+- The conversations and the days of a question go to both ports through `ToolContext.conversations` and `ToolContext.days`. A day is `YYYY-MM-DD` on each side: `Scope` in `chat_engine/scope.py`, `MeaningIndex.search`, and `_day` in `recall_services/reports.py`.
+- The engine checks each hit of the search again. A hit outside the conversations or the days is dropped, also when a port gives one by mistake.
+- A digest is built for one conversation of the scope. A period that reaches outside the days of the scope is not shown.
+- `memory.py` adds no conversation and no day to a call.
+
+### What leaves the machine
+
+- The description of a search by meaning is masked by the engine before it reaches the port (`ask_port`). `MeaningPort` sends only the description to the embedding provider.
+- A conversation id is a handle. It filters the search on this machine. It is in no request.
+- A build sends the text of each new segment to the embedding provider: the day, then `Me:` or `Them:` and the text of each message. No name and no handle is added. A handle that a person typed into a message is part of that text.
+- A digest sends what a report sends, with the same masks (`_Masked` and the labeler of `recall_services/reports.py`).
+- Each client goes to the address of the provider and takes no proxy (`build_client`).
+- No log line, no line of a job and no failure sentence holds text of a message, a name, a handle or an id. An error of the archive is not chained to a `MeaningFailure`.
+
+### The index files
+
+- The index is in `saves/meaning` (`meaning.index_store`). `segments.sqlite3` holds conversation ids and message ids. `vectors.npy` and `work.sqlite3` hold vectors. No file of the index holds text of a message.
+- A build swaps the files in this order: segments, vectors, meta (`SWAP_ORDER` in `meaning_index/store_swap.py`). A put-back goes the other way. Each file names its build, and three files are an index only when they name one build.
+- A reader takes files of one build only (`read_whole`). `MeaningPort` asks `IndexStore.meta()` for the build id after a load and loads again when it changed (`_load` in `recall_services/memory.py`).
+- A process keeps one loaded index for each folder. It asks `IndexStore.meta()` for each search, which reads no row, and loads again only when the build on disk is another one. While the folder holds no whole build, the index that was loaded before answers.
+- With no index folder the services ask for no file (`_held` in `recall_services/meaning.py`). So an import with no index opens no database of the index. `Reads` in `tests/test_update_reads_messages.py` names a database in the index folder `index`, and any other unknown database by its path.
+- An index of a newer format is not read and not replaced. Chat then has no search by meaning, and the status of the index is `none`.
+
+### What is embedded again
+
+- The content hash of a segment is a hash of the text to embed, the model and the dimensions. A segment whose hash has a vector is not sent again.
+- The segment rules are in `meaning_index/segments.py`: a gap of more than 120 minutes, 16 messages, 1,600 characters, a line of 400 characters, the day on the first line. WARNING: A change to a rule, to the model or to the dimensions makes the next build embed every segment again.
+- The app builds with the default model of `meaning_index/models.json` (`meaning.default_facts`). `MeaningPort` embeds a description with the model and the dimensions of the index that it searches.
+- The packaged server ships `meaning_index/models.json` (`packaging/recall_server.spec`). `tests/test_packaged_facts.py` holds this.
+
+### One cache for reports and digests
+
+- A digest and a report share `saves/report-cache.sqlite3` (`PeriodCache`). The key of a period is a hash of the prompt version, the model id, the speaker names and the transcript of the period.
+- These must be equal on both sides, or the keys differ and a digest pays again: the source with its masks, the labeler, the model, the options, the token counter and the cache file. `recall_services/digests.py` takes each one from `recall_services/reports.py` (`_reading`).
+- `DIGEST_MODEL` in `recall_services/memory.py` is `gpt-6-luna`: the digest only sums up the periods, and the chat model answers and checks against the messages. Thus a digest shares the period cache with a report only when the report was run with the same model.
+- A report with dates reads only the messages of its dates. Its periods can differ from the periods of a digest.
+- A digest writes no report and no file but the cache.
+
+### The ports
+
+- `memory.ports(archive, names)` gives the engine `meaning` and `digests` (`_events` in `recall_services/chat.py`). A port is None when its tool would fail at its first call: no key, no whole index, a folder that can not be read, a digest model that can not be run, notes of earlier runs that can not be opened.
+- With a port that is None the tool is not offered and the prompt does not name it.
+- A failure of a port never fails a question. The search falls back to the word ranking. A digest that failed is one line for the model.
+- `report_engine.CancelToken` and `chat_engine.cancel.CancelToken` are two classes. `DigestPort` sets the first when the second is cancelled.
+
+### The index job and its route
+
+- `GET /api/meaning` answers `{status, estimate, error, code}` (`meaning.payload`). `status` has `state`, `segments`, `model`, `dimensions`, `builtAt` and `coveredUntil`. `estimate` has `segments`, `newSegments`, `tokens`, `estimatedCost` and `upperBound`, or it is null when `error` and `code` say why.
+- `state` is `none`, `ready` or `behind`. The status and the estimate need no key and make no request.
+- The `meaning` job builds the index or brings it up to date (`build_meaning_index` in `ui_server.py`). Its result has `segments`, `embedded`, `reused`, `removed` and `tokens`. Its `progress` has `step`, `of`, `label`, `done` and `total`. Its lines hold counts only.
+- The `meaning` job and an import do not run together, and two `meaning` jobs do not run together (`ONE_AT_A_TIME`). The second one is refused with a plain sentence.
+- After an import that changed the archive, the server starts one `meaning` job when an index is there (`refresh_meaning_index`, called by `run_job`). With no index it starts nothing: the first build is the choice of the reader. That job is made by `create_job`, so the same rule holds for it.
+- `run_job` looks at the index after the import has ended in the list. A slow look or a fault there does not delay or fail the import.
+- A failure of a build is a `MeaningFailure`. The job tells its sentence and its code.
 
 ## Mac shell
 
+- The page sends the command `tick` to the shell when a control with steps goes to another step (`recallBridge.tick` in `app/src/lib/bridge.ts`). The shell gives one tick of the trackpad (`NSHapticFeedbackManager`, `.levelChange`). The command has no answer. In a browser it does nothing.
 - What the page keeps in `localStorage` belongs to the origin `http://127.0.0.1:<port>`. `portForThisLaunch` in `macos/Recall/RecallApp.swift` remembers one port in the defaults of `local.recall.app` and asks for it at each launch: `RecallServerPort` for the packaged app, `RecallServerPortDev` for the development build. On another port the page starts with an empty store.
 - The shell waits about 3 s for a remembered port that is in use (`rememberedPortChecks`, `rememberedPortPause`). `main` in `ui_server.py` must let go of the port in less time: it calls `server_close()` when it stops serving. Change the two sides together.
 - A remembered port that is still in use is not replaced. That launch gets a drawn port and an empty store.
@@ -315,6 +397,12 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 
 ## Interface
 
+- The app has palettes: Graphite (the first, in `tokens.css`) and the ones in `app/src/styles/palettes.css`. These three hold the same names and change together: `paletteOptions` in `app/src/lib/palette.ts`, the blocks of `palettes.css`, and the list in the script of `app/index.html`. `palette.test.ts` reads the two files and fails when they differ.
+  - A palette sets only the grounds, the text steps, `--gray`, `--edge`, `--ink` and the hue (`--you`, `--you-hover`, `--you-ink`, `--them`). Fills, lines, rings and heat steps are shares of `--gray`, `--edge` and `--text` in `tokens.css`. Do not write a fill or a line as a colour of its own.
+  - Each text step of each palette holds 4.5:1 on each ground, light and dark, a selected row also. `palette.test.ts` measures this from the style sheets. A new palette is not done until that test passes.
+  - No colour is written outside `tokens.css` and `palettes.css`, other than white on a hue and the ramp of the reasoning slider.
+  - Paper is Graphite: the blocks of `palettes.css` do not apply to `[data-paper]`.
+  - `[data-palette]` on an element gives that element the colours of the palette. `PalettePicker` uses this for its rounds. Light or dark is the page's alone: no palette block sets `color-scheme`.
 - The interface needs `light-dark()` colors and the `popover` attribute (Safari 17.5). `app/src/main.tsx` checks for both and shows a message if one is missing.
 - A view asks for the width of the block that holds it, not for the width of the window (container queries). The blocks of a view are `workspace`, `detail`, `half`, `report-pane` and `chat`. A part that fits itself to its own width has its own block: `ranked`, `activity`, `days`, `hours`.
 - One left edge: the title in the strip is 16px in. A page or a pane that fills its width starts on the same 16px. A column that sits in the middle has gutters of 32px or more.
@@ -341,6 +429,15 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
   - The row of the two heat maps is cut so that a day and an hour have the same size. The cut in `overview.css` and the cell sizes in `charts.css` use the same numbers: 53 weeks, 24 hours, gaps of 2px, 2rem of weekday names for each map, 2.5rem between the maps.
 - A chart of the two voices that has a `heading` puts the heading, the day or month that is picked out, and the two totals in one band (`VoicesOverTime`, `VoicesSkeleton`). The day or month is `.readout-when` between the heading and `.readout`. It takes only the space that is left, so a pick does not move the totals to a second line. The rules for `.section-head > .readout` and `.section-head > .readout-when` in `charts.css` need this structure.
 - A row of Settings with no value has an empty `.setting-value`. In a narrow workspace `settings.css` reads `:empty` to keep the label and the control on one line. Do not put a space or a comment in that element.
+- The Quality menu of the chat (`QualityControl` with `reasoning`) has a slider below its levels: `LevelSlider` in `.choice-extra` of `ChoiceMenu`. The slider sets the reasoning level of the model in use. Its look is a track that is filled up to a round knob, with a mark at each step. The track is 22px high in `slider.css` (`--track`), and `INSET` in `LevelSlider.tsx` is half of it. Change the two together.
+  - While a pointer holds the knob, `LevelSlider` writes `--at` on the track itself. React does not draw the slider again for each move. Do not put `--at` in the `style` of the JSX: a new drawing would take the knob from the pointer.
+  - The fill is cut with `clip-path` and the knob is moved with `translate`. Neither changes layout. Do not move them with `width`, `left` or `right`.
+  - WARNING: Do not move the knob with `transform`. The knob swells with `scale`, and `scale` also scales a `transform`: the knob then jumps to the side at each step.
+  - A knob that is taken stays under the pointer where it was taken (`offset` in `LevelSlider.tsx`). It is not pulled toward a step while it is held.
+  - A press away from the knob brings the knob to the pointer frame by frame (`chase` in `LevelSlider.tsx`). The knob has no CSS transition while a pointer holds it (`[data-held]`): a transition that is started again at each move makes the knob trail and then jump.
+  - A held knob changes its step only when it is well past half way to the next step (`heldStep` in `app/src/lib/levelSlider.ts`). Without this, a hand that rests between two steps makes the step change back and forth, and each change ticks the trackpad.
+  - On a new step the knob and the mark of the step swell one time, a ring goes out from the knob, and the page sends `tick` to the shell. The last step also sends a light along the fill.
+  - The colours of the track are one ramp: `RAMP` in `LevelSlider.tsx`. The fill, the glow of the track and the ring read it (`--ramp`, `--tone`; `toneAt` and `rampCss` in `app/src/lib/tone.ts`). No other control uses these colours.
 - A placeholder has the structure and the classes of the content that replaces it. Thus no block moves when the content arrives.
   - `MomentsSkeleton` has the number of cards and the height that the list of moments had last. `app/src/lib/keptShape.ts` keeps these two numbers in the browser under `recall.shape.<name>`.
   - WARNING: `keptShape.ts` keeps numbers only. Do not keep a name or the text of a message there.

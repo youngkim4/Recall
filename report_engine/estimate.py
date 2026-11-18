@@ -66,7 +66,7 @@ def _usable(entry: CacheEntry) -> bool:
     return True
 
 
-def _known(cache: ReadableCache | None, keys: Sequence[str]) -> frozenset[str]:
+def known_keys(cache: ReadableCache | None, keys: Sequence[str]) -> frozenset[str]:
     """Keys whose entry a run would use. An entry that does not parse is not one:
     the run would call the model for that period."""
     if cache is None:
@@ -79,38 +79,44 @@ def _known(cache: ReadableCache | None, keys: Sequence[str]) -> frozenset[str]:
     return frozenset(key for key, entry in entries.items() if _usable(entry))
 
 
-def _calls(plan: Plan, options: ReportOptions, known: frozenset[str]) -> tuple[PlannedCall, ...]:
-    limits = plan.limits
+def _padded(plan: Plan, tokens: int) -> int:
+    return math.ceil(tokens * plan.meter.margin)
 
-    def padded(tokens: int) -> int:
-        return math.ceil(tokens * plan.meter.margin)
 
-    map_output = min(options.map_output_estimate_tokens, limits.map_max_output)
-    maps = [
+def map_calls(
+    plan: Plan, options: ReportOptions, known: frozenset[str]
+) -> tuple[PlannedCall, ...]:
+    """The map call of each period of the plan, in order. A digest for chat
+    counts these too, so the two estimates agree on a period."""
+    map_output = min(options.map_output_estimate_tokens, plan.limits.map_max_output)
+    return tuple(
         PlannedCall(
             kind="map",
             label=planned.period.label,
             input_tokens=planned.request_tokens
-            + min(options.carry_over_token_budget, padded(NOTE_TOKENS) * position),
+            + min(options.carry_over_token_budget, _padded(plan, NOTE_TOKENS) * position),
             output_tokens=map_output,
             cached=planned.key in known,
         )
         for position, planned in enumerate(plan.periods)
-    ]
+    )
+
+
+def _reduce_call(plan: Plan, options: ReportOptions) -> PlannedCall:
+    limits = plan.limits
     count = len(plan.periods)
     reduce_input = (
         limits.reduce_overhead
         + plan.meter.count(plan.figures)
-        + count * padded(SUMMARY_TOKENS)
-        + min(options.max_moments, count * MOMENTS_PER_PERIOD) * padded(MOMENT_TOKENS)
+        + count * _padded(plan, SUMMARY_TOKENS)
+        + min(options.max_moments, count * MOMENTS_PER_PERIOD) * _padded(plan, MOMENT_TOKENS)
     )
-    reduce = PlannedCall(
+    return PlannedCall(
         kind="reduce",
         label="reduce",
         input_tokens=reduce_input,
         output_tokens=min(options.reduce_output_estimate_tokens, limits.reduce_max_output),
     )
-    return (*maps, reduce)
 
 
 def planned_calls(
@@ -138,7 +144,8 @@ def planned_calls(
         )
     except EmptyConversationError:
         return ()
-    return _calls(plan, chosen, _known(cache, [planned.key for planned in plan.periods]))
+    known = known_keys(cache, [planned.key for planned in plan.periods])
+    return (*map_calls(plan, chosen, known), _reduce_call(plan, chosen))
 
 
 def estimate(

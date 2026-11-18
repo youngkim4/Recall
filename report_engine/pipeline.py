@@ -33,7 +33,7 @@ from report_engine.verify import Checked, MessageIndex, check_moments
 logger = logging.getLogger(__name__)
 
 
-def _emitter(callback: ProgressCallback | None) -> Emit:
+def emitter(callback: ProgressCallback | None) -> Emit:
     """Progress goes to foreign code. Its errors are logged, not raised."""
 
     def emit(event: ProgressEvent) -> None:
@@ -106,8 +106,10 @@ def _summary(outcome: PeriodOutcome, checked: Checked | None) -> PeriodSummary:
     )
 
 
-def _summaries(plan: Plan, mapped: MapResult) -> tuple[tuple[PeriodSummary, ...], list[str]]:
-    """Verify each period's moments against the whole conversation."""
+def period_summaries(plan: Plan, mapped: MapResult) -> tuple[tuple[PeriodSummary, ...], list[str]]:
+    """Verify each period's moments against the whole conversation. Returns the
+    periods and the warnings of the checks. A digest for chat calls this too,
+    so a moment passes one check wherever it is shown."""
     index = MessageIndex(plan.lines)
     checks = [
         check_moments(outcome.digest.moments, outcome.planned.lines, index)
@@ -151,7 +153,7 @@ def _after_prepare(
             f"no period could be analysed; the first failure: {failures[0]}", usage=caller.usage
         )
 
-    periods, check_warnings = _summaries(plan, mapped)
+    periods, check_warnings = period_summaries(plan, mapped)
     moments = select_moments(
         [period.moments for period in periods],
         score_floor=options.score_floor,
@@ -213,7 +215,7 @@ def run_report(
     chosen = options or ReportOptions()
     clock = runtime or Runtime()
     safe_stats = jsonable(dict(stats or {}))
-    emit = _emitter(on_progress)
+    emit = emitter(on_progress)
     caller = Caller(
         llm=llm,
         model_info=model_info,
