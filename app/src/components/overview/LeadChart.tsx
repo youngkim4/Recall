@@ -1,34 +1,29 @@
-import type { CSSProperties } from 'react'
 import type { ActivityPoint } from '../../lib/activity'
-import { peakAt, yearTotals } from '../../lib/leadChart'
+import { sparkArea, sparkLine } from '../../lib/spark'
 
 type LeadChartProps = {
   months: ActivityPoint[]
 }
 
-// How the messages of the lead figure came: a bar for each year, the
-// busiest one darker. Under the bars stand the first year, the busiest and
-// the last, so the chart says where it starts, where it peaks and where it
-// stops. (A line by month, a bar for each month and the running total were
-// tried beside it and set aside: at this size they were noise, or said
-// again what the figure says.)
+// the box the line is drawn in; it is stretched to its place
+const BOX = { width: 400, height: 56 }
+
+// How the messages of the lead figure came: a line through the months, the
+// first year under its start and the last under its end. (A bar for each
+// year, a bar for each month and the running total were tried beside the
+// figure; the user kept the line.)
 export function LeadChart({ months }: LeadChartProps) {
-  const years = yearTotals(months)
-  if (years.length < 2) return null
-  const largest = Math.max(1, ...years.map((year) => year.total))
-  const peak = peakAt(years.map((year) => year.total))
-  const named = (index: number) => index === 0 || index === years.length - 1 || index === peak
+  if (months.length < 2) return null
+  const totals = months.map((point) => point.total)
   return (
     <figure className="lead-chart" aria-hidden="true">
-      <div className="lead-bars">
-        {years.map((year, index) => (
-          <span key={year.year} data-peak={index === peak || undefined} style={{ '--share': year.total / largest } as CSSProperties} />
-        ))}
-      </div>
-      <figcaption className="lead-years">
-        {years.map((year, index) => (
-          <span key={year.year}>{named(index) ? year.year : ''}</span>
-        ))}
+      <svg viewBox={`0 0 ${BOX.width} ${BOX.height}`} preserveAspectRatio="none">
+        <path className="lead-area" d={sparkArea(totals, BOX.width, BOX.height)} />
+        <path className="lead-line" d={sparkLine(totals, BOX.width, BOX.height)} />
+      </svg>
+      <figcaption>
+        <span>{months[0].key.slice(0, 4)}</span>
+        <span>{months.at(-1)!.key.slice(0, 4)}</span>
       </figcaption>
     </figure>
   )

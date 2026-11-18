@@ -33,7 +33,7 @@ function ago(days: number) {
 // The archive in four figures. The first, how many messages there are,
 // leads: it is set large over half the row, its name and figure in the
 // middle of the row's height, with a chart beside it of how those messages
-// came, a bar for each year. The other three each have one line of words under them and no
+// came, a line through the months. The other three each have one line of words under them and no
 // chart: a small chart under every figure is the row of identical stat
 // tiles that reads as generated.
 export function ArchiveTiles({ archive, months, waiting, ranked, onOpenSetup }: ArchiveTilesProps) {
