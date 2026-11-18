@@ -1,7 +1,10 @@
 """Ports of the chat engine.
 
 The engine reads the archive, calls a model and names people only through the
-three interfaces below. Tests replace all three.
+first three interfaces below. Tests replace all three.
+
+Two more ports are optional: a search by meaning and a digest of one
+conversation. An engine that gets none of them offers no tool for them.
 """
 
 from __future__ import annotations
@@ -126,6 +129,10 @@ class ChatArchive(Protocol):
         self, conversation_id: str, *, since: Optional[str] = None, until: Optional[str] = None
     ) -> dict[str, Any]: ...
 
+    def message(self, message_id: str) -> Optional[Message]:
+        """One message by its id. None when the archive does not hold it, or holds it as a system row."""
+        ...
+
 
 # --- model -----------------------------------------------------------------
 
@@ -235,3 +242,82 @@ class Labeler(Protocol):
     def redact(self, text: str) -> str:
         """Mask raw handles of people who are not saved inside free text."""
         ...
+
+
+# --- memory: search by meaning ---------------------------------------------
+
+
+class MeaningHit(TypedDict):
+    """One short exchange that a search by meaning found."""
+
+    conversation: str  # conversation id
+    first_message_id: str  # the exchange runs from this message
+    last_message_id: str  # to this message, in the same conversation
+    score: float  # higher is nearer
+
+
+class MeaningSearch(Protocol):
+    """Finds short exchanges by what they are about. The hits come best first.
+
+    `since` and `until` are days, both included. The engine checks every hit
+    against the scope again, so a hit outside it is dropped. A failure here
+    does not fail the question: the engine then ranks by words alone.
+    """
+
+    def search(
+        self,
+        query: str,
+        *,
+        conversations: Optional[Sequence[str]],
+        since: Optional[str],
+        until: Optional[str],
+        limit: int,
+    ) -> list[MeaningHit]: ...
+
+
+# --- memory: digest of one conversation ------------------------------------
+
+
+class DigestMoment(TypedDict):
+    date: str  # "YYYY-MM-DD"
+    title: str
+    detail: str
+    quote: str  # verified by the source, or ""
+    message_ids: list[str]  # archive ids, verified by the source
+
+
+class DigestPeriod(TypedDict):
+    label: str
+    first_day: str
+    last_day: str
+    messages: int
+    summary: str
+    moments: list[DigestMoment]  # the strongest first
+
+
+class DigestCost(TypedDict):
+    periods: int
+    periods_cached: int
+    usd: float  # cost of the periods that are not cached
+
+
+class DigestResult(TypedDict):
+    periods: list[DigestPeriod]
+    periods_failed: int
+
+
+class DigestSource(Protocol):
+    """The story of one conversation, period by period.
+
+    `estimate` builds nothing and costs nothing. `digest` builds the periods
+    that are not cached. It stops when `cancel` is cancelled. A failure here
+    does not fail the question.
+    """
+
+    def estimate(
+        self, conversation_id: str, *, since: Optional[str], until: Optional[str]
+    ) -> DigestCost: ...
+
+    def digest(
+        self, conversation_id: str, *, since: Optional[str], until: Optional[str], cancel: CancelToken
+    ) -> DigestResult: ...

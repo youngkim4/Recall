@@ -77,6 +77,11 @@ class ArchiveAdapter:
     def context(self, message_id: str, *, radius: int = 6) -> list[Message]:
         return self._archive.context(message_id, radius=radius, include_system=False)
 
+    def message(self, message_id: str) -> Optional[Message]:
+        """One message by its id. A system row is no message here, as in every other call."""
+        found = self._archive.message(message_id)
+        return None if found is None or found.get("kind") == "system" else found
+
     def search(
         self,
         query: str,

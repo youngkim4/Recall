@@ -7,140 +7,33 @@ reference from the evidence registry. The scope of the user limits every tool.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any, Callable, Mapping, Optional
 
 from .errors import ArchiveError, ChatEngineError
-from .ports import ChatArchive, Labeler, ToolSpec
+from .ports import ChatArchive, Labeler
+from .prompt import DIGEST, MEANING
 from .registry import ConversationAliases, EvidenceRegistry
 from .render import Limits, squeeze
 from .scope import Scope
 from .tool_args import ToolInputError, parse_arguments
-from .tool_context import Prepared, ToolContext, ToolOutcome
-from .tool_figures import GROUPS, LIST_LIMIT_MAX, prepare_count, prepare_list, prepare_stats
-from .tool_limits import SEARCH_LIMIT_MAX
-from .tool_search import READ_RADIUS_MAX, prepare_read, prepare_search
+from .tool_context import Memory, Prepared, ToolContext, ToolOutcome
+from .tool_digest import prepare_digest
+from .tool_figures import prepare_count, prepare_list, prepare_stats
+from .tool_meaning import prepare_search_or_meaning
+from .tool_search import prepare_read, prepare_search
+from .tool_specs import TOOL_SPECS, tool_specs
+
+__all__ = ["TOOL_SPECS", "ToolBox"]
 
 logger = logging.getLogger(__name__)
 _WRITES = 2  # a result is written at most this many times to fit its budget
 _TOO_LARGE = "The result does not fit. Ask for less: a smaller limit, fewer conversations, or a shorter period."
 
 _ECHO_CHARS = 40
-_DAY = "A day as YYYY-MM-DD in local time. The day itself is included."
-_CONVERSATIONS = (
-    "Conversation aliases such as c3, from list_conversations or an earlier result. "
-    "Null means every conversation in the scope."
-)
+Builder = Callable[[ToolContext, Mapping[str, Any]], Prepared]
 
-
-def _nullable(kind: str, description: str, **extra: Any) -> dict[str, Any]:
-    return {"type": [kind, "null"], "description": description, **extra}
-
-
-def _schema(properties: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": dict(properties),
-        "required": list(properties),
-    }
-
-
-TOOL_SPECS: tuple[ToolSpec, ...] = (
-    ToolSpec(
-        "search_messages",
-        "Find messages by their words. Each hit comes with the messages around it; every line has a "
-        "reference such as m12. All words must be in the same message. Put a phrase in double quotes. "
-        "End a word with * to match its beginning. Case and accents do not matter. Use few, distinctive "
-        'words. Set match to "any" to rank messages that hold any of the words: good for synonyms and '
-        "for words in other languages. For the first or the last time, set order. "
-        "To read one conversation with no search word, leave query empty and give that one conversation: "
-        'order "oldest" reads it from its start, "newest" from its end; since and until read a period.',
-        _schema(
-            {
-                "query": _nullable("string", "Words to look for. Empty or null reads one conversation."),
-                "match": _nullable("string", '"all" (default) or "any".', enum=["all", "any", None]),
-                "conversations": _nullable("array", _CONVERSATIONS, items={"type": "string"}),
-                "since": _nullable("string", _DAY),
-                "until": _nullable("string", _DAY),
-                "from_me": _nullable(
-                    "boolean", "true: only messages the user sent. false: only messages from others."
-                ),
-                "order": _nullable(
-                    "string", '"newest" (default), "oldest" or "relevance".',
-                    enum=["newest", "oldest", "relevance", None],
-                ),
-                "limit": _nullable(
-                    "integer",
-                    f"Hits to show, 1 to {SEARCH_LIMIT_MAX}. Default 8. "
-                    "Each hit also shows up to 2 messages before it and 2 after it.",
-                ),
-            }
-        ),
-    ),
-    ToolSpec(
-        "read_around",
-        "Read the exchange around one message: the messages before and after it in the same "
-        "conversation. Use it before you rely on a hit, and to read on from the edge of a result.",
-        _schema(
-            {
-                "reference": {"type": "string", "description": "A message reference such as m12."},
-                "radius": _nullable(
-                    "integer", f"Messages on each side, 1 to {READ_RADIUS_MAX}. Default 6."
-                ),
-            }
-        ),
-    ),
-    ToolSpec(
-        "count_messages",
-        "Count messages exactly. Use it for every number: how many, how often, who most, which month. "
-        "Without group_by it gives one number. With group_by it gives one row per group, each with the "
-        "total, the count the user sent and the count from others.",
-        _schema(
-            {
-                "conversations": _nullable("array", _CONVERSATIONS, items={"type": "string"}),
-                "since": _nullable("string", _DAY),
-                "until": _nullable("string", _DAY),
-                "from_me": _nullable(
-                    "boolean", "true: only messages the user sent. false: only messages from others."
-                ),
-                "text": _nullable(
-                    "string", "Count only messages that match these words. Same rules as search_messages."
-                ),
-                "group_by": _nullable("string", "One row per group.", enum=[*GROUPS, None]),
-            }
-        ),
-    ),
-    ToolSpec(
-        "list_conversations",
-        "Find conversations and people by name. Gives the alias (c3), the name, direct or group, message "
-        "counts and the first and last day. One person can have several threads and be in groups: all "
-        "are listed. Digits match the last four digits of a phone number, or the whole number. Without a "
-        "name it lists the conversations "
-        "with the most messages.",
-        _schema(
-            {
-                "name": _nullable(
-                    "string", "A name, a part of a name, or the last four digits of a phone number."
-                ),
-                "limit": _nullable("integer", f"Rows to show, 1 to {LIST_LIMIT_MAX}. Default 10."),
-            }
-        ),
-    ),
-    ToolSpec(
-        "conversation_stats",
-        "Figures for one conversation: totals, sent and received, first and last time, active days, "
-        "busiest day, longest gap. Give days to limit the period.",
-        _schema(
-            {
-                "conversation": {"type": "string", "description": "A conversation alias such as c3."},
-                "since": _nullable("string", _DAY),
-                "until": _nullable("string", _DAY),
-            }
-        ),
-    ),
-)
-
-_BUILDERS: dict[str, Callable[[ToolContext, Mapping[str, Any]], Prepared]] = {
+_BUILDERS: dict[str, Builder] = {
     "search_messages": prepare_search,
     "read_around": prepare_read,
     "count_messages": prepare_count,
@@ -150,9 +43,14 @@ _BUILDERS: dict[str, Callable[[ToolContext, Mapping[str, Any]], Prepared]] = {
 
 
 class ToolBox:
-    """Checks and runs tool calls for one question."""
+    """Checks and runs tool calls for one question.
+
+    `memory` holds the optional ports. A tool of a port that is missing is
+    not in `specs`, and a call of it is refused as an unknown tool.
+    """
 
     specs = TOOL_SPECS
+    offered: frozenset[str] = frozenset()
 
     def __init__(
         self,
@@ -162,12 +60,23 @@ class ToolBox:
         aliases: ConversationAliases,
         scope: Scope,
         limits: Optional[Limits] = None,
+        memory: Optional[Memory] = None,
     ) -> None:
-        self.context = ToolContext(archive, labeler, registry, aliases, scope, limits or Limits())
+        self.context = ToolContext(archive, labeler, registry, aliases, scope, limits or Limits(), memory)
+        self._builders = dict(_BUILDERS)
+        ports = self.context.memory
+        if ports.meaning is not None:
+            self._builders["search_messages"] = prepare_search_or_meaning
+        if ports.digests is not None:
+            self._builders[DIGEST] = prepare_digest
+        names = {MEANING: ports.meaning, DIGEST: ports.digests}
+        self.offered = frozenset(name for name, port in names.items() if port is not None)
+        if self.offered:
+            self.specs = tool_specs(meaning=MEANING in self.offered, digest=DIGEST in self.offered)
 
     def prepare(self, name: str, raw_arguments: str) -> Prepared:
         """Check a call. A refused call still runs: it tells the model why."""
-        builder = _BUILDERS.get(name)
+        builder = self._builders.get(name)
         if builder is None:
             return self._refuse(f'There is no tool named "{_brief(name)}".', name)
         try:
@@ -179,7 +88,9 @@ class ToolBox:
     def wrap(self, name: str, prepared: Prepared) -> Prepared:
         """Give a lookup the guard and the redaction every tool result gets."""
         redact = self.context.labeler.redact
-        return Prepared(redact(prepared.status), lambda budget: self._run(name, prepared, budget))
+        return replace(
+            prepared, status=redact(prepared.status), run=lambda budget: self._run(name, prepared, budget)
+        )
 
     def guard(self, action: Callable[[], Any]) -> Any:
         """Run archive work. An unexpected failure becomes a typed ArchiveError."""

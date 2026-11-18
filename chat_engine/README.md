@@ -23,6 +23,9 @@ engine = ChatEngine(archive, llm, labeler, EngineConfig(model=MODEL, max_output_
 result = engine.ask("When did we first talk about the lease?")
 ```
 
+`ChatEngine` also takes two optional ports, by name: `meaning=` and `digests=`. See "Memory ports".
+Without them the engine has the five tools of the table in "Tools" and nothing else changes.
+
 Give `reasoning_effort` only for a model that reasons.
 The adapter then asks for the encrypted reasoning and sends it back in the next call of the question.
 A model that does not reason refuses that request.
@@ -112,6 +115,7 @@ engine.ask(question, scope=Scope(since="2024-01-01", until="2024-12-31"))
 - An earlier answer of the chat goes to the model only when its scope lies inside the scope of the new question. If not, a note takes its place. The earlier questions stay.
 - A message outside the scope is never a citation and never a source for a quote.
 - The engine lists the conversations of the whole archive one time for each question. It needs the handles to mask them. It reads no message there, and the list does not go to the model.
+- The scope also limits the two memory tools. See "Search by meaning" and "Conversation digest".
 
 ## Names and privacy
 
@@ -132,6 +136,8 @@ How the masking works:
 - An address of the archive in an unusual form (with an apostrophe, with letters of another script) is masked as it is written.
 - A number or an address that a cut would split is dropped at the cut.
 - All text for the model passes one function: `QuestionTurn._outbound` in `turn.py`.
+- The description of a search by meaning is masked before it goes to the port. The port can send it to a model provider.
+- Every text of a digest (label, summary, title, detail, quote) is masked as message text is.
 
 Limits of the masking:
 
@@ -152,6 +158,12 @@ A tool result contains the text of the messages that match, and of the messages 
 | `count_messages` | Count exactly, with or without groups. |
 | `list_conversations` | Find conversations and people by name, by the last four digits of a number, or by the whole number. |
 | `conversation_stats` | Figures for one conversation. |
+| `search_messages` with `match="meaning"` | Find exchanges by what they are about. Only with the port `meaning`. |
+| `conversation_digest` | The story of one conversation, period by period. Only with the port `digests`. |
+
+`tool_specs(meaning=..., digest=...)` in `tool_specs.py` gives the tool list of one engine.
+`TOOL_SPECS` is the list of an engine with no memory port.
+A call of a tool that is not offered gets the answer "There is no tool named ...".
 
 Before the first model call, the engine runs one search on the words of the question.
 It also looks up the names in the question. The results go into the prompt.
@@ -186,6 +198,106 @@ What `limit` of `search_messages` counts:
 To read a conversation with no search word, the engine first counts the messages of the period.
 A period with no message is empty at once. No page walk can prove that in a very long conversation.
 
+## Memory ports
+
+Chat finds messages by their words, and it reads small windows.
+Two optional ports add a search by meaning and a view of a whole conversation.
+Both are in `chat_engine/ports.py`. The engine imports no package that implements them.
+
+```python
+engine = ChatEngine(archive, llm, labeler, config, meaning=meaning_search, digests=digest_source)
+```
+
+| Port | Calls | Tool |
+|---|---|---|
+| `MeaningSearch` | `search(query, *, conversations, since, until, limit) -> list[MeaningHit]`, best first | `search_messages` with `match="meaning"` |
+| `DigestSource` | `estimate(conversation_id, *, since, until) -> DigestCost` and `digest(conversation_id, *, since, until, cancel) -> DigestResult` | `conversation_digest` |
+
+- A `MeaningHit` names one exchange: `conversation`, `first_message_id`, `last_message_id`, `score`.
+- A `DigestResult` has `periods` and `periods_failed`. A `DigestPeriod` has `label`, `first_day`, `last_day`, `messages`, `summary` and `moments`.
+- A `DigestMoment` has `date`, `title`, `detail`, `quote` and `message_ids`. The moments of a period are in order, the strongest first.
+- `ChatArchive.message(message_id)` gives one message by its id. Both tools use it. A system row is not a message of the port.
+- With a port missing, its tool is not in the tool list and the prompt does not name it. `tests/chat_engine/test_no_memory_ports.py` holds the tool list, the prompt and the requests of such an engine to commit `82f55e0`.
+- A failure of a port never fails the question. The log gets the class of the failure only: no query, no name and no message text.
+- `fake_meaning.FakeMeaning` and `fake_digests.FakeDigests` are scripted ports for tests. They record their calls.
+
+### Search by meaning
+
+`search_messages` takes `match="meaning"` when the engine has a `MeaningSearch`.
+The query is then a short description of the exchange, such as "we made up after a fight".
+
+The result joins two rankings of exchanges by reciprocal rank fusion (`fusion.py`):
+
+1. The hits of `MeaningSearch.search`, in the order of the port.
+2. The hits of the word search (`match="any"`) for the same query. A word hit counts for the exchange that holds it. A word hit outside every exchange of the first ranking is an exchange of its own: the messages around it.
+
+- An exchange gets `1 / (60 + rank)` from each ranking that found it. The sums decide the order. An exchange that only one ranking found still counts.
+- On equal sums the exchange with the better single rank comes first, then the exchange found by meaning.
+- The engine reads ranks only. It does not compare the score of the port with the weight of a word.
+- For each exchange that `limit` asks for, each ranking gives up to 3 hits, and never more than 60.
+- `limit` counts exchanges. Every line has a reference from the evidence registry, as in a word search. A line that holds a word of the query has the mark `<<< match`.
+- Two exchanges that share a message are shown as one.
+- A long exchange is cut to fit the result budget: first its messages are cut shorter, then it loses messages, and a note says how many are shown. The engine reads at most 40 messages of one exchange.
+- `from_me` does not work with `match="meaning"`. An empty query is refused.
+
+Scope:
+
+- The conversations and the days of the request go through `ToolContext.conversations` and `ToolContext.days`, as for every search. Both rankings get the same values.
+- The engine checks every hit of the port again. A hit in another conversation, a hit that does not overlap the days, and a hit whose ends the archive does not hold in that conversation are dropped.
+- A message of an exchange is shown only when `ToolContext.allows` allows it. An exchange that starts before the days of the scope shows only the part inside.
+
+The seeded search uses the joined ranking when the engine has a `MeaningSearch`:
+
+- The question, masked, is the query of the search by meaning. The words of the question are the query of the word search, as before.
+- The prompt shows this lookup as `search_messages(match="meaning", query=the question)`.
+- A question with no word to search for runs no seeded search.
+
+When the port fails, the result holds the word ranking alone, and its first line says:
+"The search by meaning was not available: these were found by their words only."
+
+### Conversation digest
+
+`conversation_digest(conversation, since, until)` gives the story of one conversation.
+For each period it shows the label, the days, the number of messages, the summary, and the moments (day, title, detail, quote).
+
+Evidence:
+
+- The tool reads the messages of each moment from the archive with `message`, registers them as evidence, and shows them with their references. The answer can cite them.
+- A message id that the archive does not hold is dropped without a note. So is a message outside the scope, and a message of another conversation.
+- The tool shows at most 6 messages for one moment, each cut at 300 characters. `read_around` shows the whole of a message.
+- A quote is shown only when a shown message of its moment holds it, by the rule of the quote check (`verify.is_quote_of`). So the digest never offers a quote that the answer check would flag.
+- A summary is not a quote and not a citation. The prompt and the first line of the result say so.
+
+Cost guard:
+
+1. The tool calls `estimate` first. `estimate` builds nothing.
+2. When `usd` (the cost of the periods that are not cached) is above `EngineConfig.digest_usd_limit`, the tool builds nothing. The model gets one line with the cost and the advice to narrow the days.
+3. When `estimate` gives no period, the tool builds nothing and says that there is nothing to show.
+4. In every other case the tool calls `digest`.
+5. One question calls `digest` at most 3 times (`DIGESTS_PER_QUESTION`). Each call can cost up to the limit.
+
+Budget:
+
+- A digest has a budget of its own, `EngineConfig.digest_tokens`. It does not spend from `total_tool_tokens`.
+- When the periods do not fit, every period keeps its title line. The rule is in `digest_fit.py`:
+  1. The summaries come first. When they do not fit together, each summary is cut by the same share and no moment is shown.
+  2. When the summaries fit, the moments take the room that is left. Moments are dropped one at a time from the weakest end of the period that still has the most.
+- The last line of a digest that was cut says what was cut.
+- A message of a moment that was dropped is not registered.
+
+Other rules:
+
+- Status line: "Reading your whole conversation with NAME" when periods must be built. "Recalling your conversation with NAME" when all are cached.
+- The days of the call are cut down to the scope before they go to the source.
+- A period that reaches outside the days of the scope is not shown, because its summary covers days outside the scope. A note says how many periods that is. A moment with a day outside the scope is dropped.
+- A period in a wrong form counts as a period that failed. A note says how many periods are missing.
+- The cancel token of the question goes to `digest`. After a cancel the tool reads nothing from the archive, and the question ends as any cancelled question does.
+- When the source fails, the model gets one line: "The digest of ... could not be built now. Go on with the other tools."
+- A second call for the same conversation and the same days gets the answer of a repeated lookup. The engine compares the conversation and the days, not the text of the arguments. The source is not asked again.
+- When less than 300 tokens of `total_tool_tokens` are left, no lookup runs. This applies to a digest too.
+
+The prompt, with `conversation_digest` offered: a pattern question about one person or one conversation starts with the figures, then the digest, then `read_around` on the moments that matter. With several people the model calls the digest for at most three conversations.
+
 ## Reactions and attachments
 
 - A reaction is not a message. Search, counts, lists and figures do not see it.
@@ -207,6 +319,8 @@ A period with no message is empty at once. No page walk can prove that in a very
 | `total_tool_tokens` | 30000 | All tool results of one question. |
 | `history_tokens` | 6000 | Earlier turns sent with a follow-up. `0` sends none. |
 | `max_message_chars` | 4000 | The longest message text in a result and in a citation. |
+| `digest_tokens` | 24000 | The largest conversation digest. A digest does not spend from `total_tool_tokens`. |
+| `digest_usd_limit` | 2.0 | A digest that costs more to build is not built. `0` allows only a digest that is cached. |
 | `timezone` | `""` | The name in the prompt. Empty uses the zone of the clock. |
 | `count_tokens` | estimate | Pass a tokenizer for exact budgets. |
 
@@ -260,6 +374,7 @@ token.cancel()                                      # from another thread
 ```
 
 A cancel stops the model stream and the tool loop. After a cancel, the engine reads nothing more from the archive.
+The token also goes to `DigestSource.digest`, which can run for a long time. The source must stop when the token is cancelled.
 The question ends with a `done` event. Its payload has `"cancelled": true`.
 A cancelled question is not added to the session, and its evidence is forgotten.
 If you close the iterator of `engine.stream`, the model call also stops.
@@ -351,6 +466,8 @@ What a score checks:
 venv/bin/python -m pytest tests/chat_engine --cov=chat_engine --cov-report=term-missing
 ```
 
+The tests of the two memory tools use `FakeMeaning` and `FakeDigests`. `tests/chat_engine/memory_bench.py` builds a tool box with them.
+
 `tests/guards.py` sets a dummy API key and blocks outbound sockets. `tests/chat_engine/conftest.py` also blocks loopback.
 No linter and no type checker is configured in this repository.
 
@@ -420,6 +537,21 @@ Archive (`archive.queries.Archive`, read through `archive_adapter.py`):
 - Messages are ordered by `sent_at`, then by the local time.
 - The engine does not use `people()`, `person()` or `reactions()`.
 
+Memory ports (`ports.MeaningSearch`, `ports.DigestSource`). The adapters are not in this package:
+
+- No adapter was run against the real index or the real digest. The tests use the two fakes.
+- `MeaningSearch.search` returns the hits best first. The engine does not sort them and does not read `score`.
+- The query that the port gets is masked. The conversation ids that it gets are handles: the port uses them as a filter on this machine and sends them nowhere. The same applies to the `conversation_id` of a digest.
+- The seeded search calls `MeaningSearch.search` one time for each question that has a word to search for. An adapter that asks a provider for a vector makes one request there for each such question.
+- `first_message_id` and `last_message_id` are archive ids (`Message["id"]`) of the same conversation, the first not later than the last.
+- `since` and `until` are days, both included. A hit matches when its exchange overlaps them.
+- `DigestSource.estimate` is cheap. The engine calls it while it checks the call, before the status line.
+- `DigestCost.usd` is the cost of the periods that are not cached. It is a finite number, not negative.
+- `DigestSource.digest` gets the `CancelToken` of `chat_engine/cancel.py`. `report_engine` has a class with the same name and another shape: the adapter must connect the two.
+- A digest that is cancelled can raise or return. The engine looks at the token after the call.
+- The moments of a period come the strongest first. The engine drops moments from the end.
+- A summary can cover days outside the days of the call. So the engine does not show a period that reaches outside the days of the scope.
+
 Model port (`ports.LLM`):
 
 - One call streams `TextDelta`, `ToolCall` and one `Completed` with the usage.
@@ -440,7 +572,10 @@ Screens (redesign commit `ab20b5e`):
 ## Known limits
 
 - The seeded search splits words at spaces. A language that writes no spaces gets a weak seeded search. The model can still search, and the archive matches such a term as plain text.
-- The search has no meaning search. The model can use `match="any"` with other words for the same thing.
+- An engine with no `MeaningSearch` has no search by meaning. The model can use `match="any"` with other words for the same thing.
+- A search by meaning needs a word hit or a hit of the port. The engine does not rank an exchange again after the fusion.
+- The digest tool trusts the order of the moments and the days of a period as the source gives them.
+- No real model has read the two new tool descriptions or the new prompt rules. The tests use a scripted model.
 - The engine reads message text only. It does not read attachments or reactions.
 - The default token count is an estimate of three bytes for each token.
 - Each question lists and labels every conversation again. The parsed handles are remembered, so this costs about 25 microseconds for each conversation.
