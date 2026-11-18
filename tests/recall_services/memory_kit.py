@@ -123,11 +123,11 @@ def build(lake: Lake, embedder: Any = None, **more: Any) -> dict[str, Any]:
     """Build the index of the lake with a fixed embedder, or with the one that is given."""
     made = embedder or FakeEmbedder()
     settings = {"store": lake.store, "facts": FAKE_FACTS, "count_tokens": words, **more}
-    return meaning.build(lake.archive, embedder_factory=lambda _model, _dimensions: made, **settings)
+    return meaning.build(lake.archive, lake.names, embedder_factory=lambda _model, _dimensions: made, **settings)
 
 
 def estimate(lake: Lake) -> dict[str, Any]:
-    return meaning.estimate(lake.archive, store=lake.store, facts=FAKE_FACTS, count_tokens=words)
+    return meaning.estimate(lake.archive, lake.names, store=lake.store, facts=FAKE_FACTS, count_tokens=words)
 
 
 def failure(lake: Lake, embedder: Any = None, **more: Any) -> meaning.MeaningFailure:
