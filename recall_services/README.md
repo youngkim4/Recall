@@ -203,7 +203,17 @@ Each filter is optional. All of them are combined with AND. A value that is not 
   - `person`: one row per person. The phone thread and the email thread of one person are one row: the archive joins handles of one contact record (`Conversation["person_id"]`). A group is its own row. The key is the id of the busiest thread in the set.
   - The label is `conversation_label(names.conversation(record), id)` from `conversation.py`: the words of `conversationName` in the app. A saved name, a group name, "Unnamed group", "Number ending in 1234", or an email address as it is. No full phone number of a person who is not saved.
   - The busiest come first (a tie: the key). `limit` is 50 by default, held between 1 and 500.
-- `GET /api/stats/words` (the most used words) is not built. See the README of the archive for the time it needs.
+- One answer reads one state of the archive (`Archive.snapshot()`): the totals and the rows agree also while an import commits.
+- `GET /api/stats/words` (the most used words) is not built. On the invented archive below, a count of the words of every message took 3.9 s in Python (2.4 s of it to read the texts), and `fts5vocab` with a filter of one year took 1.7 s. Both miss the limit of 2 s.
+
+### Speed
+
+Measured on an invented archive of 545,000 messages and 1,400 conversations (`tests/archive/synthetic.py` with 1,300 people and 100 groups, 2017 to 2037), on the Mac of the build, best of three:
+
+- `/api/stats` on the whole archive: 212 ms (`person`) to 626 ms (`year`). The total alone: 235 ms. A grouping by time makes two counts: the days, and the grouping.
+- `/api/stats` with filters (one year, `from=me&kind=group`, `attachments=image`, a word): 6 ms to 244 ms.
+- `/api/search` with words: 27 ms to 88 ms, also with filters and with `prefix=true`. With no words and a filter: 16 ms (one year) to 506 ms (`attachments=none`, 490,673 messages).
+
 
 ## Chat
 

@@ -254,6 +254,7 @@ Additions to the contract. None of them changes a name, an argument or a shape:
 - `kind=None` and `attachments=None` on `search` and `count`. See "Kind and attachments".
 - `browse=False` on `search`. With `browse=True` a query with no words lists every message of the filters, with `ranges` `[]`. The order is `newest` or `oldest`; `relevance` is `newest`.
 - `group_by` of `count` also takes `week`, `weekday` and `hour`.
+- `snapshot()` is a context manager. Every query of the calling thread inside the block reads one state of the archive: the state of its first query.
 
 Argument checks: a number that is not an `int` in range, or a flag that is not a `bool`, raises `ValueError`. An id that is not text raises `TypeError`. `limit` has no upper bound below 2^63: `messages()` and `context()` read the page into memory, so use `iter_messages()` for a whole conversation.
 
