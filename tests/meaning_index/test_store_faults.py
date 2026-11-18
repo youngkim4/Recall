@@ -19,28 +19,41 @@ def leftovers(folder: Path) -> list[str]:
     return sorted(path.name for path in folder.iterdir() if path.name.endswith((".old", ".new")))
 
 
-@pytest.mark.parametrize("first", [1, 2, 3])
+def no_sync(path: Path) -> None:
+    raise OSError("the folder can not be synced")
+
+
+@pytest.mark.parametrize("first", [1, 2, 3, 4])
 @pytest.mark.parametrize("second", [None, 1, 2, 3])
 def test_a_fault_in_the_swap_and_a_second_fault_in_the_put_back_keep_the_old_build(
     folder: Path, monkeypatch: pytest.MonkeyPatch, first: int, second: int | None
 ) -> None:
+    """`first` is the step of the swap that fails: one of the three renames, or the sync after them (4).
+
+    `second` is the step of the put-back that fails too.
+    """
     a, b = two_builds()
     store = make(folder)
     put(store, a)
     before = content(folder)
-    faults = Faults({first} | ({first + second} if second else set()))
+    renames = min(first, 4) if first < 4 else 3
+    faults = Faults(({first} if first < 4 else set()) | ({renames + second} if second else set()))
     monkeypatch.setattr(store_files.os, "replace", faults)
+    if first == 4:
+        monkeypatch.setattr(store_files, "sync_folder", no_sync)
     with pytest.raises(StoreError), store.building():
         store.replace("model-a", 8, b[0], [b[1]])
     monkeypatch.undo()
-    # the old build is given at once, also when the put-back did not end
-    assert side(store, a, b) == "a"
-    assert store.status().model == "model-a"
+    # every file of the new build is in place and the put-back could not start: the new build stays whole
+    expected = "b" if (first, second) == (4, 1) else "a"
+    # the build is given at once, also when the put-back did not end
+    assert side(store, a, b) == expected
     with store.building():
         pass
-    assert side(store, a, b) == "a"
-    assert content(folder) == before
+    assert side(store, a, b) == expected
     assert leftovers(folder) == []
+    if expected == "a":
+        assert content(folder) == before
 
 
 @pytest.mark.parametrize("at", [1, 2, 3])
@@ -124,21 +137,20 @@ def test_the_put_back_goes_in_the_reverse_order_of_the_swap(folder: Path, monkey
     a, b = two_builds()
     store = make(folder)
     put(store, a)
-    faults = Faults({4})  # after the three files are in place: the folder can not be synced
+    real = Faults(set())
     order: list[str] = []
 
     def replace(source: object, target: object) -> None:
         order.append(Path(str(target)).name)
-        faults(source, target)
-
-    def no_sync(path: Path) -> None:
-        raise OSError("the folder can not be synced")
+        real(source, target)
 
     monkeypatch.setattr(store_files.os, "replace", replace)
-    monkeypatch.setattr(store_files, "sync_folder", no_sync, raising=False)
+    monkeypatch.setattr(store_files, "sync_folder", no_sync)  # the three files are in place, then the swap fails
     with pytest.raises(StoreError), store.building():
         store.replace("model-a", 8, b[0], [b[1]])
     assert order == [*FILES, *reversed(FILES)]
+    monkeypatch.undo()
+    assert side(store, a, b) == "a"
 
 
 def test_a_nested_build_on_one_store_is_refused_and_the_outer_one_keeps_the_folder(folder: Path) -> None:
@@ -169,9 +181,56 @@ def test_a_cleanup_that_fails_does_not_hide_the_failure_of_the_build(
     def refuse(path: Path) -> None:
         raise PermissionError("not yours")
 
-    monkeypatch.setattr(store_files, "remove", refuse)
     with pytest.raises(RuntimeError, match="the rows stopped"), store.building():
+        monkeypatch.setattr(store_files, "remove", refuse)
         store.replace("model-a", 8, b[0], stream())
     monkeypatch.undo()
     assert any("could not be removed" in record.getMessage() for record in caplog.records)
     assert side(store, a, b) == "a"
+
+
+def test_a_lock_that_can_not_be_closed_does_not_hide_the_failure_of_the_build(
+    folder: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    from meaning_index import store as store_module
+
+    store = make(folder)
+    held: list[int] = []
+    real_lock, real_close = store_module.fcntl.flock, store_module.os.close
+
+    def lock(descriptor: int, how: int) -> None:
+        held.append(descriptor)
+        real_lock(descriptor, how)
+
+    def close(descriptor: int) -> None:
+        real_close(descriptor)
+        if descriptor in held:
+            raise OSError("closed too late")
+
+    monkeypatch.setattr(store_module.fcntl, "flock", lock)
+    monkeypatch.setattr(store_module.os, "close", close)
+    with pytest.raises(RuntimeError, match="the build failed"), store.building():
+        raise RuntimeError("the build failed")
+    monkeypatch.undo()
+    assert any("could not be closed" in record.getMessage() for record in caplog.records)
+    with store.building():
+        pass
+
+
+def test_a_build_id_of_another_form_is_not_written(folder: Path) -> None:
+    folder.mkdir(parents=True)
+    with pytest.raises(StoreError):
+        store_files.write_vectors(folder / "vectors.npy.new", "not an id", 0, 8, [])
+
+
+def test_a_segments_file_that_names_no_build_is_no_index(folder: Path) -> None:
+    import sqlite3
+
+    a, b = two_builds()
+    store = make(folder)
+    put(store, a)
+    conn = sqlite3.connect(folder / "segments.sqlite3")
+    conn.execute("DELETE FROM build")
+    conn.commit()
+    conn.close()
+    assert side(store, a, b) == "none"

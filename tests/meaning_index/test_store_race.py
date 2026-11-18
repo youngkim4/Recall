@@ -115,3 +115,20 @@ def test_the_vectors_file_is_still_an_array_that_numpy_loads(folder: Path) -> No
     put(make(folder), a)
     assert np.array_equal(np.load(folder / "vectors.npy", allow_pickle=False), a[1])
     assert np.array_equal(np.load(folder / "vectors.npy", mmap_mode="r"), a[1])
+
+
+@pytest.mark.parametrize("kind", ["float32", "one row of numbers", "one byte too long"])
+def test_a_vectors_file_of_another_kind_is_no_index(folder: Path, kind: str) -> None:
+    a, b = two_builds()
+    store = make(folder)
+    put(store, a)
+    path = folder / "vectors.npy"
+    if kind == "float32":
+        with open(path, "wb") as handle:
+            np.save(handle, a[1].astype(np.float32))
+    elif kind == "one row of numbers":
+        with open(path, "wb") as handle:
+            np.save(handle, a[1].reshape(-1))
+    else:
+        path.write_bytes(path.read_bytes() + b"x")
+    assert side(store, a, b) == "none"

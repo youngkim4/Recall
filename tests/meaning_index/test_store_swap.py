@@ -99,9 +99,14 @@ def test_the_segments_file_is_replaced_first_and_the_meta_file_last(
 
 
 @pytest.mark.parametrize("replaced", [1, 2])
-def test_files_of_two_builds_are_read_as_no_index(folder: Path, replaced: int) -> None:
+def test_a_swap_that_did_not_end_still_gives_the_build_before_it(folder: Path, replaced: int) -> None:
     store = make(folder)
     torn(folder, store, replaced)
+    assert store.status().model == "model-a"
+    found = store.read()
+    assert found is not None and found.meta.segments == 5
+    for name in FILES:
+        (folder / f"{name}.old").unlink(missing_ok=True)
     assert store.status() == IndexStatus(state="none")
     assert store.read() is None
 

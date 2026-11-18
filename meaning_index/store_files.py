@@ -1,23 +1,23 @@
-"""Read and write the three files of the index, and swap a new set for the old one.
+"""Read and write each of the three files of the index.
 
 - `segments.sqlite3`: one row for each segment, and the id of the build.
-- `vectors.npy`: N by D, float16, each row of length 1.
-- `meta.json`: the facts of the build. It is replaced last.
+- `vectors.npy`: N by D, float16, each row of length 1. After the rows the
+  file holds one line with the id of the build. numpy reads the file as it is.
+- `meta.json`: the facts of the build, with its id.
 
-Each file is for its owner only. A new set is written beside the old one and
-put in place file by file: segments, vectors, meta. Until the meta file is in
-place, the build id of the segments file differs from the one in the meta
-file, so files of two builds are never read as one index.
+Each file names its build. A reader takes each file through one open handle,
+so the id that it reads belongs to the content that it reads.
+Each file is for its owner only.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import os
+import re
 import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import quote
 
@@ -26,18 +26,18 @@ import numpy as np
 from meaning_index.errors import IndexFormatError, StoreError
 from meaning_index.shapes import IndexMeta, Segment
 
-logger = logging.getLogger(__name__)
-
 FORMAT_VERSION = 1
 SEGMENTS_FILE = "segments.sqlite3"
 VECTORS_FILE = "vectors.npy"
 META_FILE = "meta.json"
-SWAP_ORDER = (SEGMENTS_FILE, VECTORS_FILE, META_FILE)
-NEW_ENDING = ".new"
-OLD_ENDING = ".old"
 PRIVATE_FILE_MODE = 0o600
 VECTOR_TYPE = np.dtype("<f2")
+FINITE_CHUNK = 8192
+BUILD_MARK = b"\nRECALL-BUILD "
+BUILD_ID_CHARS = 16
+TAIL_BYTES = len(BUILD_MARK) + BUILD_ID_CHARS + 1
 
+_BUILD_ID = re.compile(rf"[0-9a-f]{{{BUILD_ID_CHARS}}}")
 _CREATE = (
     """
 CREATE TABLE segments (
@@ -69,6 +69,24 @@ _META_TYPES: Mapping[str, tuple[type, ...]] = {
 }
 
 
+@dataclass(frozen=True)
+class SegmentsFile:
+    """What one read of the segments file gave. `segments` is None when only the count was asked for."""
+
+    build_id: str
+    count: int
+    segments: tuple[Segment, ...] | None
+
+
+@dataclass(frozen=True)
+class VectorsFile:
+    """What one read of the vectors file gave. `rows` is None when only the shape was asked for."""
+
+    build_id: str
+    shape: tuple[int, int]
+    rows: np.ndarray | None
+
+
 def private_file(path: Path) -> int:
     """Open a new, empty file that only its owner can read. Returns the descriptor."""
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, PRIVATE_FILE_MODE)
@@ -81,6 +99,20 @@ def remove(path: Path) -> None:
         os.unlink(path)
     except FileNotFoundError:
         pass
+
+
+def sync_folder(folder: Path) -> None:
+    descriptor = os.open(folder, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def all_finite(rows: np.ndarray) -> bool:
+    """True when no value of the rows is NaN or infinite. Reads the rows in chunks."""
+    starts = range(0, len(rows), FINITE_CHUNK)
+    return all(bool(np.isfinite(rows[start : start + FINITE_CHUNK]).all()) for start in starts)
 
 
 # --- write -------------------------------------------------------------------
@@ -113,8 +145,13 @@ def write_segments(path: Path, build_id: str, segments: Sequence[Segment]) -> No
         conn.close()
 
 
-def write_vectors(path: Path, count: int, dimensions: int, chunks: Iterable[np.ndarray]) -> None:
-    """Write `count` rows from the chunks, in order. Rows that do not fit are a StoreError."""
+def write_vectors(path: Path, build_id: str, count: int, dimensions: int, chunks: Iterable[np.ndarray]) -> None:
+    """Write `count` rows from the chunks, in order, and then the id of the build.
+
+    Rows that do not fit, and a row with a value that is no number, are a StoreError.
+    """
+    if not _BUILD_ID.fullmatch(build_id):
+        raise StoreError("the id of a build is 16 characters, 0 to 9 and a to f")
     header = {"descr": np.lib.format.dtype_to_descr(VECTOR_TYPE), "fortran_order": False, "shape": (count, dimensions)}
     written = 0
     with os.fdopen(private_file(path), "wb") as handle:
@@ -123,12 +160,15 @@ def write_vectors(path: Path, count: int, dimensions: int, chunks: Iterable[np.n
             rows = np.asarray(chunk)
             if rows.dtype != VECTOR_TYPE or rows.ndim != 2 or rows.shape[1] != dimensions:
                 raise StoreError(f"rows of the index must be float16 with {dimensions} dimensions")
+            if not np.isfinite(rows).all():
+                raise StoreError("a row of the index holds a value that is no number")
             written += rows.shape[0]
             if written > count:
                 break
             handle.write(np.ascontiguousarray(rows).tobytes())
         if written != count:
             raise StoreError(f"the index has {count} segments and was given another number of rows")
+        handle.write(BUILD_MARK + build_id.encode("ascii") + b"\n")
         handle.flush()
         os.fsync(handle.fileno())
 
@@ -136,18 +176,14 @@ def write_vectors(path: Path, count: int, dimensions: int, chunks: Iterable[np.n
 # --- read --------------------------------------------------------------------
 
 
-def _connect_to_read(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"file:{quote(str(path))}?mode=ro", uri=True)
-
-
 def read_meta(path: Path) -> IndexMeta | None:
-    """The meta file, or None when there is none or it can not be read. A newer format is an IndexFormatError."""
+    """The meta file, or None when there is none or it is not the meta file of a build.
+
+    An index of a newer format is an IndexFormatError.
+    """
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as exc:
-        logger.warning("the meta file of the index can not be read (%s); the index is read as none", type(exc).__name__)
+    except (OSError, ValueError):
         return None
     version = raw.get("format_version") if isinstance(raw, dict) else None
     if isinstance(version, int) and version > FORMAT_VERSION:
@@ -155,134 +191,57 @@ def read_meta(path: Path) -> IndexMeta | None:
     fits = isinstance(raw, dict) and all(
         isinstance(raw.get(key), kinds) and not isinstance(raw.get(key), bool) for key, kinds in _META_TYPES.items()
     )
-    if not fits:
-        logger.warning("the meta file of the index has not the fields of a build; the index is read as none")
-        return None
-    return IndexMeta(**{key: raw[key] for key in _META_TYPES})
+    return IndexMeta(**{key: raw[key] for key in _META_TYPES}) if fits else None
 
 
-def read_build_id(path: Path) -> str | None:
-    """The build that wrote the segments file, or None when the file can not be read."""
+def read_segments(path: Path, *, rows: bool) -> SegmentsFile | None:
+    """The build id and the segments of the file, through one connection. None when it can not be read.
+
+    With `rows`, every segment in the order of its row in the vectors file. The rows must be 0 to N-1.
+    """
     try:
-        conn = _connect_to_read(path)
+        conn = sqlite3.connect(f"file:{quote(str(path))}?mode=ro", uri=True)
         try:
-            found = conn.execute("SELECT build_id FROM build").fetchone()
+            conn.execute("BEGIN")  # the id and the rows are read from one state of the file
+            build = conn.execute("SELECT build_id FROM build").fetchone()
+            if not rows:
+                count = conn.execute("SELECT COUNT(*) FROM segments").fetchone()[0]
+                return SegmentsFile(str(build[0]), int(count), None) if build else None
+            found = conn.execute(f'SELECT {_COLUMNS}, "row" FROM segments ORDER BY "row"').fetchall()
         finally:
             conn.close()
     except sqlite3.Error:
         return None
-    return str(found[0]) if found else None
+    if build is None or [row[8] for row in found] != list(range(len(found))):
+        return None
+    return SegmentsFile(str(build[0]), len(found), tuple(Segment(*row[:8]) for row in found))
 
 
-def read_segments(path: Path) -> tuple[Segment, ...]:
-    """Every segment, in the order of its row in the vectors file."""
-    try:
-        conn = _connect_to_read(path)
-        try:
-            found = conn.execute(f'SELECT {_COLUMNS}, "row" FROM segments ORDER BY "row"').fetchall()
-        finally:
-            conn.close()
-    except sqlite3.Error as exc:
-        raise StoreError(f"the segments file can not be read ({type(exc).__name__})") from exc
-    if [row[8] for row in found] != list(range(len(found))):
-        raise StoreError("the rows of the segments file are not 0 to N-1")
-    return tuple(Segment(*row[:8]) for row in found)
+def open_vectors(path: Path, *, rows: bool) -> VectorsFile | None:
+    """The shape, the build id and the rows of the file, through one handle. None when it can not be read.
 
-
-def vectors_shape(path: Path) -> tuple[int, ...] | None:
-    """The shape that the vectors file names, or None when it is no float16 array of this package."""
+    The rows are a read-only map of the file. The map keeps its file when a build replaces it.
+    """
     try:
         with open(path, "rb") as handle:
             if np.lib.format.read_magic(handle) != (1, 0):
                 return None
             shape, fortran, kind = np.lib.format.read_array_header_1_0(handle)
-            body = os.fstat(handle.fileno()).st_size - handle.tell()
+            start, size = handle.tell(), os.fstat(handle.fileno()).st_size
+            if len(shape) != 2 or fortran or kind != VECTOR_TYPE:
+                return None
+            data = shape[0] * shape[1] * VECTOR_TYPE.itemsize
+            handle.seek(start + data)
+            tail = handle.read(TAIL_BYTES + 1)  # one byte more shows a file that is too long
+            build_id = tail[len(BUILD_MARK) : -1].decode("ascii", "replace")
+            named = len(tail) == TAIL_BYTES and tail.startswith(BUILD_MARK) and _BUILD_ID.fullmatch(build_id)
+            if size != start + data + TAIL_BYTES or not named:
+                return None
+            if not rows:
+                return VectorsFile(build_id, (shape[0], shape[1]), None)
+            if data == 0:
+                return VectorsFile(build_id, (shape[0], shape[1]), np.zeros(shape, dtype=VECTOR_TYPE))
+            mapped = np.memmap(handle, dtype=VECTOR_TYPE, mode="r", offset=start, shape=shape)
     except (OSError, ValueError):
         return None
-    whole = len(shape) == 2 and body == shape[0] * shape[1] * VECTOR_TYPE.itemsize
-    return tuple(shape) if whole and not fortran and kind == VECTOR_TYPE else None
-
-
-def open_vectors(path: Path, count: int, dimensions: int) -> np.ndarray:
-    """The rows as a read-only map of the file. The map keeps its file when a build replaces it."""
-    if count == 0:
-        return np.zeros((0, dimensions), dtype=VECTOR_TYPE)
-    try:
-        return np.load(path, mmap_mode="r", allow_pickle=False)
-    except (OSError, ValueError) as exc:
-        raise StoreError(f"the vectors file can not be read ({type(exc).__name__})") from exc
-
-
-def usable_meta(folder: Path) -> IndexMeta | None:
-    """The meta file when the three files belong to one build. None when there is no whole index."""
-    meta = read_meta(folder / META_FILE)
-    if meta is None:
-        return None
-    one_build = read_build_id(folder / SEGMENTS_FILE) == meta.build_id
-    if not one_build or vectors_shape(folder / VECTORS_FILE) != (meta.segments, meta.dimensions):
-        logger.warning("the files of the index do not belong to one build; the index is read as none")
-        return None
-    return meta
-
-
-# --- swap --------------------------------------------------------------------
-
-
-def _sync_folder(folder: Path) -> None:
-    descriptor = os.open(folder, os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _put_back(folder: Path, replaced: Sequence[str]) -> None:
-    for name in replaced:
-        backup = folder / (name + OLD_ENDING)
-        if backup.exists():
-            os.replace(backup, folder / name)
-        else:
-            remove(folder / name)
-
-
-def drop_leftovers(folder: Path) -> None:
-    for name in SWAP_ORDER:
-        remove(folder / (name + OLD_ENDING))
-        remove(folder / (name + NEW_ENDING))
-
-
-def swap(folder: Path, staged: Mapping[str, Path]) -> None:
-    """Put the staged files in place. A failure puts the old files back and raises StoreError."""
-    replaced: list[str] = []
-    try:
-        for name in SWAP_ORDER:
-            final = folder / name
-            if final.exists():
-                remove(folder / (name + OLD_ENDING))
-                os.link(final, folder / (name + OLD_ENDING))
-            os.replace(staged[name], final)
-            replaced.append(name)
-        _sync_folder(folder)
-    except OSError as exc:
-        try:
-            _put_back(folder, replaced)
-            drop_leftovers(folder)
-        except OSError:
-            logger.error("the old index files could not be put back; the next build repairs the folder")
-        raise StoreError(f"the new index files could not be put in place ({type(exc).__name__})") from exc
-    drop_leftovers(folder)
-
-
-def recover(folder: Path) -> None:
-    """Repair a folder that a build left in the middle of a swap. Call it with the build lock held."""
-    backups = [name for name in SWAP_ORDER if (folder / (name + OLD_ENDING)).exists()]
-    if backups:
-        try:
-            whole = usable_meta(folder) is not None
-        except IndexFormatError:
-            whole = True  # a newer build wrote these files: they are left alone
-        if not whole:
-            for name in backups:
-                os.replace(folder / (name + OLD_ENDING), folder / name)
-            logger.warning("a swap of the index files did not end; the files of the build before it are back")
-    drop_leftovers(folder)
+    return VectorsFile(build_id, (shape[0], shape[1]), mapped)

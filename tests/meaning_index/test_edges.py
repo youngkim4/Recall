@@ -46,10 +46,10 @@ def test_a_vectors_file_that_is_cut_short_is_no_index(folder: Path) -> None:
     assert store.status().state == "none"
 
 
-def test_a_vectors_file_that_goes_away_after_the_check_is_a_typed_error(folder: Path) -> None:
+def test_a_vectors_file_that_is_not_there_is_read_as_none(folder: Path) -> None:
     fill(make(folder))
-    with pytest.raises(StoreError):
-        store_files.open_vectors(folder / "missing.npy", 5, 8)
+    assert store_files.open_vectors(folder / "missing.npy", rows=True) is None
+    assert store_files.open_vectors(folder / "vectors.npy", rows=False).shape == (5, 8)  # type: ignore[union-attr]
 
 
 def test_a_swap_that_can_not_put_the_old_files_back_says_so_and_the_next_build_repairs(
@@ -71,7 +71,8 @@ def test_a_swap_that_can_not_put_the_old_files_back_says_so_and_the_next_build_r
         store.replace("model-b", 8, [kept(n) for n in range(4)], [unit(4, 8)])
     monkeypatch.undo()
     assert any("could not be put back" in record.getMessage() for record in caplog.records)
-    assert store.status().state == "none"
+    assert store.status().model == "model-a"  # read through the files that the swap kept
+    assert sorted(path.name for path in folder.glob("*.old"))
     with store.building():
         assert content(folder) == before
     assert store.status().model == "model-a"
@@ -168,7 +169,7 @@ def test_a_meta_file_with_a_field_of_the_wrong_kind_is_no_index(folder: Path, ch
     assert store.read() is None
 
 
-def test_a_segments_file_with_no_table_of_segments_is_a_typed_error(folder: Path) -> None:
+def test_a_segments_file_with_no_table_of_segments_is_no_index(folder: Path) -> None:
     import sqlite3
 
     store = make(folder)
@@ -177,8 +178,8 @@ def test_a_segments_file_with_no_table_of_segments_is_a_typed_error(folder: Path
     conn.execute("DROP TABLE segments")
     conn.commit()
     conn.close()
-    with pytest.raises(StoreError):
-        store.read()
+    assert store.read() is None
+    assert store.status().state == "none"
 
 
 def test_a_vectors_file_of_another_file_version_is_no_index(folder: Path) -> None:
