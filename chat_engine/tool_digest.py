@@ -31,7 +31,7 @@ from .ports import DigestCost, DigestProgressCallback, Message
 from .render import time_key
 from .scope import parse_day
 from .tool_args import ToolInputError, day_arg, text_arg
-from .tool_context import Fetch, Prepared, ToolContext, ToolOutcome, plural
+from .tool_context import Fetch, Prepared, Report, ToolContext, ToolOutcome, plural
 from .tool_limits import DIGEST_ESTIMATES_PER_QUESTION, DIGESTS_PER_QUESTION
 from .verify import is_quote_of
 
@@ -200,7 +200,7 @@ def _lookup(ctx: ToolContext, request: DigestRequest) -> tuple[Callable[[int], T
     """The lookup of one digest, and its fetch. The source is asked one time, also when the result is written twice."""
     built: list[Built] = []
 
-    def fetch(report: DigestProgressCallback) -> None:
+    def fetch(report: Report) -> None:
         if not built:
             built.append(_build(ctx, request, report))
 
@@ -212,7 +212,7 @@ def _lookup(ctx: ToolContext, request: DigestRequest) -> tuple[Callable[[int], T
         return _written(ctx, request, built[0], budget)
 
     told = progress_events(ctx.book.label(request.conversation))
-    return run, Fetch(fetch, told)  # type: ignore[arg-type]
+    return run, Fetch(fetch, told)
 
 
 def _build(ctx: ToolContext, request: DigestRequest, report: Optional[DigestProgressCallback]) -> Built:
