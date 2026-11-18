@@ -212,7 +212,7 @@ With a port that is None the engine does not offer its tool. A reason goes to th
 - A load is checked: when the build on disk changed during the load, the load is thrown away and tried again.
 - The process keeps the vectors of the last 64 descriptions (`QUERY_VECTORS`). The seeded search and a repeat do not pay twice.
 - A hit with the content hash of a better hit is left out: the same words said again.
-- A request for a vector waits 10 seconds at most (`QUERY_TIMEOUT_SECONDS`).
+- A request for a vector has a timeout of 10 seconds (`QUERY_TIMEOUT_SECONDS`). A build has 120 seconds for one request.
 - Every failure is raised. The engine then ranks by words alone.
 
 `DigestPort`:

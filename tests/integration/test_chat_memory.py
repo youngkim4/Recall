@@ -285,6 +285,19 @@ def test_with_no_scope_the_ports_are_asked_for_every_conversation(harbor: Harbor
     assert kit.LATE_FERRY_LINE not in tool_results(llm.requests[1])[0]
 
 
+def test_the_days_of_a_call_reach_both_ports_in_the_form_that_each_one_reads(harbor: Harbor) -> None:
+    script = [
+        [by_meaning(since="2023-01-01", until="2023-12-31"), digest_of(since="2023-02-01", until="2023-02-28")],
+        say("Read."),
+    ]
+    events, llm = ask(harbor, script)
+    done(events)
+    found, story = tool_results(llm.requests[1])
+    assert kit.FERRY_LINE in found and kit.LATE_FERRY_LINE not in found
+    assert "== Feb 2023" in story and "== Jan 2023" not in story
+    assert len(harbor.digest_llm.map_calls) == 1
+
+
 # --- when a piece is missing or fails ----------------------------------------------
 
 
