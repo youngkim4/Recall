@@ -67,6 +67,21 @@ def _notes_to_read(cache_path: Path) -> PeriodCache | None:
 
 
 def _too_many(error: DigestTooLarge) -> ReportFailure:
+    """The failure of a digest that needs more model calls than its limit.
+
+    The engine refuses before the first call, or it stops at the limit after
+    calls that were paid for. After a stop the error carries the usage of
+    those calls, and it does not know how many parts are left: the sentence
+    then names no such number.
+    """
+    usage = getattr(error, "usage", None)
+    if usage is not None:
+        return ReportFailure(
+            "too_many_parts",
+            f"This conversation has more parts that are not read yet than the {error.limit} that can be read now. "
+            "What was read is kept. Choose fewer dates.",
+            usage.model_dump(mode="json"),
+        )
     new = error.new_periods
     waiting = "1 part that is not read yet" if new == 1 else f"{new} parts that are not read yet"
     return ReportFailure(
