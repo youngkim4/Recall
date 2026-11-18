@@ -21,7 +21,8 @@ and keeps entries of its own, which no report reads (`reading_of`).
 
 Every moment passes `period_summaries`, the check of a report. The cache
 holds a reply as the model gave it, so the check runs on each read. A digest
-then gives only messages of the period of the moment.
+then gives only messages of the period of the moment, and text with no line
+reference of the engine (`chat_digest_refs`).
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from report_engine.calls import Caller, Emit
+from report_engine.chat_digest_refs import without_refs
 from report_engine.chat_digest_span import (
     DigestTooLarge,
     Reading,
@@ -125,22 +127,26 @@ def _moment_note(moment: Moment, own: frozenset[str]) -> MomentNote:
     kept = tuple(mid for mid in moment.message_ids if mid in own)
     return MomentNote(
         date=moment.date,
-        title=moment.title,
-        detail=moment.detail,
+        title=without_refs(moment.title),
+        detail=without_refs(moment.detail),
         quote=moment.quote if moment.quote_message_id in kept else "",
         message_ids=kept,
     )
 
 
 def _period_note(period: PeriodSummary, lines: Sequence[Line]) -> PeriodNote:
+    """A period for chat. Its text holds no line reference of the engine: chat
+    has references of the same form for other messages. The cache keeps them.
+    A moment whose title was a reference only has no title, and is not given."""
     own = frozenset(line.id for line in lines)
+    moments = (_moment_note(moment, own) for moment in period.moments)
     return PeriodNote(
         label=period.label,
         first_day=period.first_day,
         last_day=period.last_day,
         messages=period.message_count,
-        summary=period.summary,
-        moments=tuple(_moment_note(moment, own) for moment in period.moments),
+        summary=without_refs(period.summary),
+        moments=tuple(moment for moment in moments if moment.title),
     )
 
 
