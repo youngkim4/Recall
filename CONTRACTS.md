@@ -315,6 +315,18 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 - A saved chat shows a citation from its stored copy and opens its day by conversation and time (`quotedIndex`).
 - A stored model id that is not offered falls back to the default model (`preferredModel`).
 - The reasoning level that a person sets is kept for each model under `recall.reasoning.v1` (`app/src/lib/reasoning.ts`). A kept level that the model does not list falls back to `reasoningDefault` (`effortOf`). The app sends only a level that the server listed, and the slider shows the level that is sent. Where the browser keeps nothing, a level holds while the page is open.
+- `useLoad` keeps the last answer of each loader for each key in memory while the app is open (`app/src/lib/kept.ts`). A page that opens again shows it at once and changes in place when the fresh answer comes. Two asks at once share one request. A loader must be one function for the life of the app (a constant of its module), or nothing is kept for it.
+  - The app asks for the Overview's moments and charts as soon as it knows the archive (`preloadOverview`), not when the Overview opens. The user asked for an Overview with no wait.
+  - An import calls `forgetKept` with `clearPreviewCache`: an answer about the archive before the import is never shown again. A new place that changes the archive must do the same.
+
+### Search
+
+- A result marks the `ranges` that the server sends, not a match of the typed words (`splitByRanges`). The substring match (`splitByTerm`) is only for a server that sends no `ranges`. With it, "hi" lit up inside "this" and "which", and the user saw that.
+- Search asks twice for each set of words: 250ms after a key with `prefix=true`, and 900ms after it with `prefix=false`. `keepFound` (`app/src/lib/searchFound.ts`) says which answer stays: whole words, unless they find nothing where the first ask found something. A search left at "pizz" still shows "pizza".
+- The filters stand in a row under the field, after Slack's search (`SearchFilterBar`): where to search, From, Has, and the dates. A filter with nothing chosen says only its name (`bare` on `ChoiceMenu`); a filter that is set shows its value and is filled with the theme's hue. The sort stands at the end of the line that counts the matches.
+  - One picker says where to search: everywhere, one-to-one chats, group chats, or one conversation (`whereChoices`). A conversation and a kind of chat are never both set (`withWhere`).
+  - The request carries only the filters that are set (`filterParams`). Best match needs words: with none it is not offered and not sent.
+  - A filter with no words is a search: it lists the messages it lets through, newest first, and asks once.
 
 ## Chat memory
 
