@@ -112,6 +112,30 @@ def _from_cache(planned: PlannedPeriod, entry: CacheEntry | None) -> PeriodOutco
     )
 
 
+def _look_again(cache: PeriodStore | None, key: str) -> CacheEntry | None:
+    """The entry of one period as the cache holds it now. A look that fails
+    finds nothing: the period is then sent."""
+    if cache is None:
+        return None
+    try:
+        return cache.get_many([key], touch=True).get(key)
+    except StoreError:
+        return None
+
+
+def _held(
+    cache: PeriodStore | None, planned: PlannedPeriod, at_start: Mapping[str, CacheEntry]
+) -> PeriodOutcome | None:
+    """The result of a period from the cache, or None when it must be sent.
+    A period that the read at the start of the run did not find is looked up
+    one more time, just before it would be sent: another run can have read it
+    meanwhile, and then it is not paid again."""
+    entry = at_start.get(planned.key)
+    if entry is None:
+        entry = _look_again(cache, planned.key)
+    return _from_cache(planned, entry)
+
+
 def _recorded_usage(entry: CacheEntry) -> Usage:
     """What the call cost when it was made. The price of that day stays."""
     input_tokens = max(0, entry.usage.input_tokens)
@@ -238,7 +262,7 @@ def map_periods(
     for index, planned in enumerate(plan.periods, start=1):
         caller.check_cancel()
         events = _events(planned, index, total)
-        outcome = _from_cache(planned, cached.get(planned.key))
+        outcome = _held(cache, planned, cached)
         if outcome is not None:
             emit(events["cached"])
         else:

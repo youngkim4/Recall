@@ -42,7 +42,12 @@ from report_engine.chat_digest_span import (
     span_plan,
 )
 from report_engine.control import CancelToken, ProgressCallback, ProgressEvent, Runtime
-from report_engine.errors import AllPeriodsFailed, EmptyConversationError, RunError
+from report_engine.errors import (
+    AllPeriodsFailed,
+    CallLimitReached,
+    EmptyConversationError,
+    RunError,
+)
 from report_engine.estimate import ReadableCache, known_keys, map_calls
 from report_engine.map_step import PeriodStore, map_periods
 from report_engine.model_info import ModelInfo
@@ -221,10 +226,16 @@ def _guarded_digest(
     options: ReportOptions,
     emit: Emit,
 ) -> ConversationDigest:
-    """`_mapped_digest`. An error that nobody planned for becomes a RunError
-    that names its type only and holds the usage of the run."""
+    """`_mapped_digest`. A run that reaches its limit of calls ends as
+    DigestTooLarge. An error that nobody planned for becomes a RunError that
+    names its type only and holds the usage of the run."""
     try:
         return _mapped_digest(reading, caller, cache, model_info, conversation, options, emit)
+    except CallLimitReached as exc:
+        # the cache held less than the check of the limit counted
+        total = len(reading.plan.periods)
+        cached = max(0, total - exc.limit - 1)
+        raise DigestTooLarge(total, cached, exc.limit, usage=caller.usage) from exc
     except RunError:
         raise
     except Exception as exc:
@@ -267,6 +278,7 @@ def conversation_digest(
         cancel=cancel,
         emit=emit,
         reasoning=chosen.reasoning,
+        max_calls=limit,
     )
     caller.check_cancel()
 

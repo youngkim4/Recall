@@ -28,6 +28,7 @@ from report_engine.errors import (
 )
 from report_engine.estimate import ReadableCache, known_keys
 from report_engine.model_info import ModelInfo
+from report_engine.models import Usage
 from report_engine.options import ReportOptions
 from report_engine.plan import Plan, PlannedPeriod, build_plan
 from report_engine.ports import Labeler, ReportSource
@@ -41,15 +42,27 @@ SPAN_MARK = "/span-from/"
 
 
 class DigestTooLarge(ReportEngineError):
-    """More periods need a model call than the caller allows. No call was made."""
+    """More periods need a model call than the caller allows.
 
-    def __init__(self, periods: int, periods_cached: int, limit: int) -> None:
+    The check before the first call raises it with no `usage`: nothing was
+    sent. A digest that reaches the limit in the middle raises it too, when
+    the cache held less than the check counted. Then `usage` is what the run
+    spent, the periods that were read are in the cache, and `new_periods` is
+    the least number of periods that needed a call."""
+
+    def __init__(
+        self, periods: int, periods_cached: int, limit: int, usage: Usage | None = None
+    ) -> None:
+        new = periods - periods_cached
         super().__init__(
-            f"the digest needs {periods - periods_cached} model calls; the limit is {limit}"
+            f"the digest needs {new} model calls; the limit is {limit}"
+            if usage is None
+            else f"the digest made {limit} model calls and needs more; the limit is {limit}"
         )
         self.periods = periods
         self.periods_cached = periods_cached
         self.limit = limit
+        self.usage = usage
 
     @property
     def new_periods(self) -> int:
