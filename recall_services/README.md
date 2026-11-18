@@ -262,8 +262,8 @@ With a port that is None the engine does not offer its tool. A reason goes to th
 - One lock for the archive path, the conversation and the model is held around the build (`digest_lock`). A second question waits and then finds the parts read. A question that is cancelled while it waits stops waiting (`DigestStopped`).
 - The model port of a digest inside a question has a timeout of 120 seconds and one more try (`question_llm`, `DIGEST_TIMEOUT_SECONDS`, `DIGEST_RETRIES`). A report job keeps 300 seconds and two more tries.
 - `digest` tells its `progress` callback each change of a part (`progress_relay`): a map event of the report engine with the state `start`, `done`, `cached` or `failed` becomes `{"part": index, "of": total, "label": period, "state": state}`. The events `prepare`, `waiting`, `reduce` and `done` of the run are not told.
-- The parts are read one at a time until `digests.build` takes `max_parallel` (part F3). The seam is one comment line in `DigestPort.digest`.
-- The port has no `prepare`. Nothing here starts a `digest` job.
+- One question reads the parts of one conversation one at a time, in order: the carry-over notes of a part go to the next part. `digest` gives `digests.build` no `pool`.
+- Nothing here starts a `digest` job.
 - The cancel token of chat sets a cancel token of the report engine (`_report_cancel`). The two classes have the same name and are not the same class.
 - A `ReportFailure` is raised. The engine then prints its one line for a digest that failed.
 - `DIGEST_MODEL` is the model of a digest: `gpt-6-luna`. The digest only sums up the periods. The chat model answers and checks against the messages.
@@ -289,9 +289,7 @@ Known limits:
 - The result has `conversation`, `periods`, `periodsBuilt`, `periodsCached`, `periodsFailed`, `usd` and `usage`.
 - A listener gets `{"progress": {"step", "of", "label"}}` and a line under `log`, as in a report job. A line holds the label of a part and counts.
 - A failure is a `DigestFailure`: a `ReportFailure` with the code of the failure of `digests.build`, its usage, and a sentence of this job (`sentence_of`). No sentence names a report. A missing conversation and a bad day are a ValueError.
-- `digest_starter` in `ui_server.py` makes a function that starts a `digest` job for one archive. No question calls it since part F4: a question reads what it can itself.
-- The starter says True when the job started, or when a `digest` job of the same archive, conversation and days already runs.
-- The starter starts nothing when the last job of the same archive, conversation and days failed, or read no new part while parts failed. Each question would pay for the same parts again. An import that changed the archive, and a new start of the server, let the reading start again.
+- The job starts only when a request asks for it. No question starts it.
 
 The sentences of a `digest` job that failed:
 
