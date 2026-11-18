@@ -107,7 +107,7 @@ def harbor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Harbor]:
         digest_llm, settings,
     )  # fmt: skip
     meaning.build(
-        made.archive, store=made.store, facts=kit.FAKE_FACTS, count_tokens=kit.words,
+        made.archive, made.names, store=made.store, facts=kit.FAKE_FACTS, count_tokens=kit.words,
         embedder_factory=lambda _model, _dimensions: FakeEmbedder(),
     )  # fmt: skip
     memory.forget()

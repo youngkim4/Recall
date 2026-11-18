@@ -14,15 +14,18 @@ from tests.recall_services.report_world import MODEL, PERIOD_LABELS, Desk
 from tests.report_engine.synth import MINA
 
 CHEAP = "gpt-6-luna"
+# room for each part of the long conversation of the desk, for the tests that read all of it
+WHOLE = 4
 COST_KEYS = {"periods", "periods_cached", "usd"}
 PERIOD_KEYS = {"label", "first_day", "last_day", "messages", "summary", "moments"}
 MOMENT_KEYS = {"date", "title", "detail", "quote", "message_ids"}
 
 
-def settings(desk: Desk, llm: Any = None) -> memory.DigestSettings:
+def settings(desk: Desk, llm: Any = None, parts_limit: int | None = WHOLE) -> memory.DigestSettings:
     more = desk.more(llm)
     return memory.DigestSettings(
         model=MODEL,
+        parts_limit=parts_limit,
         places=more["places"],
         options=more["options"],
         counter=more["counter"],
@@ -48,7 +51,7 @@ def test_the_estimate_is_the_cost_of_the_parts_that_are_not_read_yet(desk: Desk)
 def test_the_digest_has_the_shape_of_the_chat_port_and_ids_of_the_archive(desk: Desk) -> None:
     model = FakeLLM()
     found = port(desk, model).digest(MINA, since=None, until=None, cancel=CancelToken())
-    assert set(found) == {"periods", "periods_failed"} and found["periods_failed"] == 0
+    assert set(found) == {"periods", "periods_failed", "usd"} and found["periods_failed"] == 0
     assert [period["label"] for period in found["periods"]] == PERIOD_LABELS
     for period in found["periods"]:
         assert set(period) == PERIOD_KEYS and isinstance(period["moments"], list)
@@ -155,7 +158,7 @@ def test_the_digest_of_the_app_is_read_by_the_cheap_model_and_an_empty_name_is_t
     more = desk.more()
     plain = memory.DigestSettings(
         places=more["places"], options=more["options"], counter=more["counter"], llm_factory=factory,
-        runtime=more["runtime"],
+        runtime=more["runtime"], parts_limit=WHOLE,
     )  # fmt: skip
     asked = memory.ports(desk.archive, desk.names, digest=plain)["digests"]
     asked.digest(MINA, since="2023-01-01", until="2023-01-31", cancel=CancelToken())

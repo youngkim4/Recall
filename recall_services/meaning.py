@@ -6,11 +6,14 @@ says what a build that starts now would send and cost. `build` builds the
 index, or brings it up to date: it embeds only what is new. `payload` is the
 answer of `GET /api/meaning`.
 
-The index is in the folder `meaning` of the saves folder. `meaning_index`
-does the work: this module gives it the archive, the key and the model facts,
-and turns its results into the shapes of the routes.
+Each archive has an index of its own: `index_folder` gives its folder, and no
+other code builds that path. `meaning_index` does the work: this module gives
+it the messages, the key and the model facts, and turns its results into the
+shapes of the routes.
 
 Rules:
+- The text of a message is read as a report reads it: each handle that is not
+  saved is masked (`reports._Masked`). So no such handle goes to the provider.
 - A status and an estimate make no request and no file. They need no key.
 - A build asks for the key when the first text must be embedded. A build with
   nothing new needs no key.
@@ -22,9 +25,11 @@ Rules:
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -33,113 +38,66 @@ from archive import ArchiveError as ArchiveFault
 from meaning_index import (
     ArchiveSource,
     BatchLimits,
-    BuildCancelled,
     BuildProgress,
     Embedder,
     EmbedderFacts,
-    EmbeddingError,
-    EmbeddingKeyError,
-    EmbeddingNetworkError,
-    EmbeddingRateLimited,
-    IndexBusyError,
-    IndexFormatError,
     IndexStatus,
     IndexStore,
     MeaningIndexError,
-    SourceError,
+    SourceMessage,
     StoreError,
     build_index,
+    cut_segments,
     default_count_tokens,
     embedder_facts,
     estimate_build,
 )
-from recall_services import keys
+from recall_services import keys, reports
+from recall_services.meaning_failures import MeaningFailure as MeaningFailure
+from recall_services.meaning_failures import NoKey as NoKey
+from recall_services.meaning_failures import failed
+from recall_services.meaning_failures import failure_of as failure_of
+from recall_services.names import Names
+from report_engine import ReportEngineError
 
 logger = logging.getLogger(__name__)
 
 STORE_LEAF = "meaning"
-# the embedder of the app is the adapter of this provider
-PROVIDER = "OpenAI"
+FOLDER_NAME_CHARS = 16
 BUILD_TIMEOUT_SECONDS = 120.0
-AGAIN = "then build the index again."
-NO_KEY = f"No API key is set. Add {keys.KEY_NAME} to {keys.KEY_PLACE}, {AGAIN}"
-KEY_REJECTED = f"{PROVIDER} rejected the API key. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {AGAIN}"
-RATE_LIMIT = f"{PROVIDER} is limiting requests, or the account has no credit left. Wait a moment, {AGAIN}"
-OFFLINE = f"{PROVIDER} could not be reached. Check the internet connection, {AGAIN}"
-MODEL_ERROR = "The embedding model did not answer. What was read is kept: build the index again."
-BUSY = "The index is being built now. Wait until that ends."
-CANCELLED = "The build was stopped. What was read is kept for the next build."
-ARCHIVE_UNREADABLE = f"The message archive could not be read. Update the archive, {AGAIN}"
-INDEX_NEWER = "A newer version of Recall made this index. Update Recall, then try again."
-INDEX_ERROR = f"The index could not be written. Check the free space on the disk, {AGAIN}"
-BUILD_FAILED = "The index could not be built. Build it again."
-_TOO_MANY = 429
+# The server brings an index up to date by itself only when a build would embed
+# at most this many segments, or at most this share of the segments, whichever is more.
+REFRESH_SEGMENTS = 2_000
+REFRESH_SHARE = 0.10
 # the three steps of a build, as a job shows them
 STEPS = {
     "read": (1, "Reading your conversations"),
     "embed": (2, "Reading the meaning of your messages"),
     "write": (3, "Saving the index"),
 }
+_FAULTS = (MeaningIndexError, ArchiveFault, ReportEngineError)
 
 EmbedderFactory = Callable[[str, int], Embedder]
 Listener = Callable[[dict[str, Any]], None]
 CountTokens = Callable[[str], int]
 
 
-class MeaningFailure(Exception):
-    """A status, an estimate or a build that gave no result. The message is the sentence for the person."""
+def index_folder(archive_file: str | os.PathLike[str]) -> Path:
+    """The folder of the index of one archive: `meaning/<name>` in the saves folder, read at each call.
 
-    def __init__(self, code: str, sentence: str) -> None:
-        super().__init__(sentence)
-        self.code = code
-
-
-class NoKey(EmbeddingKeyError):
-    """No key is set. No request was made."""
-
-
-def failure_of(error: BaseException) -> MeaningFailure:
-    """The failure for the person. It holds nothing of what the error said."""
-    if isinstance(error, NoKey):
-        return MeaningFailure("no_key", NO_KEY)
-    if isinstance(error, EmbeddingKeyError):
-        return MeaningFailure("key_rejected", KEY_REJECTED)
-    if isinstance(error, EmbeddingRateLimited) or getattr(error, "status_code", None) == _TOO_MANY:
-        return MeaningFailure("rate_limit", RATE_LIMIT)
-    if isinstance(error, EmbeddingNetworkError):
-        return MeaningFailure("offline", OFFLINE)
-    if isinstance(error, EmbeddingError):
-        return MeaningFailure("model_error", MODEL_ERROR)
-    if isinstance(error, IndexBusyError):
-        return MeaningFailure("busy", BUSY)
-    if isinstance(error, BuildCancelled):
-        return MeaningFailure("cancelled", CANCELLED)
-    if isinstance(error, (SourceError, ArchiveFault)):
-        return MeaningFailure("archive_error", ARCHIVE_UNREADABLE)
-    if isinstance(error, IndexFormatError):
-        return MeaningFailure("index_newer", INDEX_NEWER)
-    if isinstance(error, StoreError):
-        return MeaningFailure("index_error", INDEX_ERROR)
-    return MeaningFailure("build_failed", BUILD_FAILED)
-
-
-def _failed(error: BaseException, doing: str) -> MeaningFailure:
-    """The failure for the person, and one line for the log: the type of the error and the facts of the service.
-
-    The caller does not chain the error: what an archive raises can hold an id.
+    The name is the first 16 hex digits of the SHA-256 of the resolved path of
+    the archive file. No other code builds this path.
     """
-    facts = ""
-    if isinstance(error, EmbeddingError):
-        facts = f", HTTP {error.status_code}, code {error.code}"
-    logger.warning("%s failed: %s%s", doing, type(error).__name__, facts)
-    return failure_of(error)
-
-
-def index_store() -> IndexStore:
-    """The index of the app: the folder `meaning` in the saves folder, read at each call."""
     import recall_paths
 
-    return IndexStore(Path(recall_paths.SAVES_DIR) / STORE_LEAF)
+    resolved = str(Path(archive_file).expanduser().resolve())
+    name = hashlib.sha256(resolved.encode("utf-8", "surrogatepass")).hexdigest()[:FOLDER_NAME_CHARS]
+    return Path(recall_paths.SAVES_DIR) / STORE_LEAF / name
+
+
+def index_store(archive_file: str | os.PathLike[str]) -> IndexStore:
+    """The index of one archive."""
+    return IndexStore(index_folder(archive_file))
 
 
 def default_facts() -> EmbedderFacts:
@@ -173,6 +131,43 @@ class _OnDemand:
         return self._made.embed(texts)
 
 
+class _Masked:
+    """The messages of the archive for the index, with the text that a report sends.
+
+    The rows come through `reports._Masked`, so a handle that is not saved is
+    masked by the same function in a report, in a digest and here. A message
+    with no text is in no segment. With `note_ids`, `segment_ids` holds the id
+    of each segment that the messages read so far make.
+    """
+
+    def __init__(self, archive: Archive, names: Names, since: str | None = None, *, note_ids: bool = False) -> None:
+        redact = names.chat_labeler(archive.conversations()).redact
+        self._archive = archive
+        self._rows = reports._Masked(archive, redact)
+        self._since = since
+        self._note_ids = note_ids
+        self.segment_ids: set[str] = set()
+
+    def conversation_ids(self) -> Sequence[str]:
+        return ArchiveSource(self._archive).conversation_ids()
+
+    def messages(self, conversation_id: str) -> Iterator[SourceMessage]:
+        read: list[SourceMessage] = []
+        for row in self._rows.messages(conversation_id, self._since, None):
+            if not row["text"].strip():
+                continue
+            message: SourceMessage = {
+                "id": row["id"],
+                "timestamp": row["timestamp"],
+                "text": row["text"],
+                "is_from_me": row["is_from_me"],
+            }
+            if self._note_ids:
+                read.append(message)
+            yield message
+        self.segment_ids.update(cut.segment_id for cut in cut_segments(conversation_id, read))
+
+
 def _held(store: IndexStore) -> IndexStatus:
     """What the folder holds. An index that this build of the app can not read counts as none.
 
@@ -199,97 +194,105 @@ def _shown(held: IndexStatus, state: str) -> dict[str, Any]:
     }
 
 
-class _Since:
-    """The archive as `ArchiveSource` reads it, from one day on."""
-
-    def __init__(self, archive: Archive, day: str | None) -> None:
-        self._archive = archive
-        self._day = day
-
-    def iter_messages(self, conversation_id: str) -> Any:
-        return self._archive.iter_messages(conversation_id, since=self._day)
-
-
-def _later_text(archive: Archive, covered_until: str | None) -> bool:
+def _later_text(archive: Archive, names: Names, covered_until: str | None) -> bool:
     """True when the archive holds a message that a build would index, later than the index covers."""
     covered = covered_until or ""
-    source = ArchiveSource(_Since(archive, covered[:10] or None))
-    for conversation in archive.conversations():
-        if str(conversation.get("last_timestamp") or "") <= covered:
-            continue
-        if any(message["timestamp"] > covered for message in source.messages(str(conversation["id"]))):
-            return True
-    return False
+    later = [str(row["id"]) for row in archive.conversations() if str(row.get("last_timestamp") or "") > covered]
+    if not later:
+        return False
+    source = _Masked(archive, names, covered[:10] or None)
+    return any(message["timestamp"] > covered for chat in later for message in source.messages(chat))
 
 
-def built(store: IndexStore | None = None) -> bool:
-    """True when the folder holds a whole index that this build of the app reads. It reads no archive."""
-    return _held(store or index_store()).state == "ready"
+def _stored_ids(store: IndexStore) -> set[str]:
+    """The id of each segment in the store. No folder and no whole build hold none."""
+    held = store.read() if store.folder.is_dir() else None
+    return set() if held is None else {segment.segment_id for segment in held.segments}
 
 
-def status(archive: Archive, *, store: IndexStore | None = None) -> dict[str, Any]:
+def built(archive_file: str | os.PathLike[str], *, store: IndexStore | None = None) -> bool:
+    """True when this archive has a whole index that this build of the app reads. It reads no archive."""
+    return _held(store or index_store(archive_file)).state == "ready"
+
+
+def status(archive: Archive, names: Names, *, store: IndexStore | None = None) -> dict[str, Any]:
     """`state`, `segments`, `model`, `dimensions`, `builtAt` and `coveredUntil` of the index.
 
-    `state` is `none`, `ready` or `behind`. Raises MeaningFailure (`archive_error`).
+    `state` is `none`, `ready` or `behind`. This is the quick look: `behind`
+    means a later message with text. `payload` also knows what the estimate
+    found. Raises MeaningFailure (`archive_error`).
     """
-    held = _held(store or index_store())
+    held = _held(store or index_store(archive.path))
     if held.state != "ready":
         return _shown(held, held.state)
     try:
-        behind = _later_text(archive, held.covered_until)
-    except (MeaningIndexError, ArchiveFault) as error:
-        raise _failed(error, "the status of the index") from None
+        behind = _later_text(archive, names, held.covered_until)
+    except _FAULTS as error:
+        raise failed(error, "the status of the index") from None
     return _shown(held, "behind" if behind else "ready")
 
 
 def estimate(
     archive: Archive,
+    names: Names,
     *,
     store: IndexStore | None = None,
     facts: EmbedderFacts | None = None,
     count_tokens: CountTokens | None = None,
 ) -> dict[str, Any]:
-    """`segments`, `newSegments`, `tokens`, `estimatedCost` and `upperBound` of a build that starts now.
+    """What a build that starts now would do: `segments`, `newSegments`, `staleSegments`, `tokens`,
+    `estimatedCost` and `upperBound`.
 
-    `upperBound` is true when the vectors that a stopped build paid for could
-    not be read: the build then sends at most this much. It reads every
-    conversation. It makes no request and no file. Raises MeaningFailure.
+    `newSegments` are embedded, and they cost. `staleSegments` are the
+    segments whose id the store does not hold: a build writes them, and it
+    pays only for those that are also new. `upperBound` is true when the
+    vectors that a stopped build paid for could not be read: the build then
+    sends at most this much. It reads every conversation. It makes no request
+    and no file. Raises MeaningFailure.
     """
     try:
-        found = estimate_build(
-            ArchiveSource(archive),
-            store or index_store(),
-            facts or default_facts(),
-            count_tokens or default_count_tokens,
-        )
-    except (MeaningIndexError, ArchiveFault) as error:
-        raise _failed(error, "the estimate of an index build") from None
+        chosen = store or index_store(archive.path)
+        source = _Masked(archive, names, note_ids=True)
+        found = estimate_build(source, chosen, facts or default_facts(), count_tokens or default_count_tokens)
+        stale = len(source.segment_ids - _stored_ids(chosen))
+    except _FAULTS as error:
+        raise failed(error, "the estimate of an index build") from None
     return {
         "segments": found.segments,
         "newSegments": found.new_segments,
+        "staleSegments": stale,
         "tokens": found.tokens,
         "estimatedCost": found.usd,
         "upperBound": bool(found.upper_bound),
     }
 
 
-def payload(archive: Archive, **more: Any) -> dict[str, Any]:
+def small_enough(found: Mapping[str, Any]) -> bool:
+    """True when the server can bring the index up to date by itself: a build embeds little.
+
+    `found` is an estimate. Above the limit the reader starts the build, and
+    sees the cost first.
+    """
+    return int(found["newSegments"]) <= max(REFRESH_SEGMENTS, REFRESH_SHARE * int(found["segments"]))
+
+
+def payload(archive: Archive, names: Names, **more: Any) -> dict[str, Any]:
     """The answer of `GET /api/meaning`: `status`, `estimate`, `error` and `code`.
 
+    The state is `behind` also when a build would embed or write a segment.
     When the status or the estimate fails, `estimate` is None, and `error` and
     `code` say why. `more` goes to `estimate`; `store` goes to both.
     """
-    store = more.get("store") or index_store()
+    store = more.get("store") or index_store(archive.path)
     try:
-        return {
-            "status": status(archive, store=store),
-            "estimate": estimate(archive, **{**more, "store": store}),
-            "error": None,
-            "code": None,
-        }
+        shown = status(archive, names, store=store)
+        cost = estimate(archive, names, **{**more, "store": store})
     except MeaningFailure as failure:
         held = _held(store)
         return {"status": _shown(held, held.state), "estimate": None, "error": str(failure), "code": failure.code}
+    changes = bool(cost["newSegments"] or cost["staleSegments"])
+    state = "behind" if shown["state"] == "ready" and changes else shown["state"]
+    return {"status": {**shown, "state": state}, "estimate": cost, "error": None, "code": None}
 
 
 class _Teller:
@@ -333,6 +336,7 @@ def _started(event: BuildProgress) -> str:
 
 def build(
     archive: Archive,
+    names: Names,
     cancel: Any = None,
     on_progress: Listener | None = None,
     *,
@@ -356,17 +360,17 @@ def build(
     try:
         chosen = facts or default_facts()
         found = build_index(
-            ArchiveSource(archive),
+            _Masked(archive, names),
             _OnDemand(embedder_factory or embedder_for, chosen),
-            store or index_store(),
+            store or index_store(archive.path),
             progress=teller.step,
             cancel=cancel,
             count_tokens=count_tokens or default_count_tokens,
             sleep=sleep,
             limits=limits or BatchLimits(),
         )
-    except (MeaningIndexError, ArchiveFault) as error:
-        raise _failed(error, "an index build") from None
+    except _FAULTS as error:
+        raise failed(error, "an index build") from None
     teller.tell(
         {
             "log": f"The index holds {_count(found.segments, 'exchange')}: {found.embedded:,} new, "

@@ -6,6 +6,7 @@ import json
 import logging
 import sqlite3
 from collections.abc import Iterator, Sequence
+from pathlib import Path
 from contextlib import closing
 from dataclasses import replace
 from typing import Any
@@ -89,11 +90,23 @@ def test_with_no_index_only_the_digest_port_is_given_and_no_file_is_made(lake: L
     assert set(found) == {"meaning", "digests"} and not lake.store.folder.exists()
 
 
-def test_the_index_of_the_app_is_the_one_in_the_saves_folder(lake: Lake, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(recall_paths, "SAVES_DIR", lake.store.folder.parent)
-    assert memory.ports(lake.archive, lake.names)["meaning"] is None
-    build(lake)
-    assert isinstance(memory.ports(lake.archive, lake.names)["meaning"], memory.MeaningPort)
+def test_the_index_of_a_question_is_the_one_of_its_archive(
+    lake: Lake, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An index of another archive gives this archive no port, and no hit of the other archive."""
+    monkeypatch.setattr(recall_paths, "SAVES_DIR", tmp_path / "app-saves")
+    other = kit.build_lake(tmp_path / "other")
+    try:
+        same = {"facts": FAKE_FACTS, "embedder_factory": lambda *_: FakeEmbedder(), "count_tokens": kit.words}
+        meaning.build(other.archive, other.names, **same)
+        assert memory.ports(lake.archive, lake.names)["meaning"] is None
+        meaning.build(lake.archive, lake.names, **same)
+        found = memory.ports(lake.archive, lake.names, embedder_factory=Asked())["meaning"]
+        assert isinstance(found, memory.MeaningPort)
+        hits = found.search(kit.BOAT_QUERY, **EVERYWHERE)
+        assert hits and all(lake.archive.message(hit["first_message_id"]) is not None for hit in hits)
+    finally:
+        other.close()
 
 
 @pytest.mark.parametrize("damage", ["newer", "segments", "vectors", "times"])
@@ -148,13 +161,23 @@ def test_the_conversations_the_days_and_the_limit_bind_the_search(lake: Lake) ->
     assert found.search(kit.BOAT_QUERY, conversations=[], since=None, until=None, limit=10) == []
 
 
-def test_the_same_words_said_again_are_one_hit(lake: Lake) -> None:
-    """Two segments with the same content hash: the better one stays."""
+def test_the_same_words_in_two_conversations_are_two_hits(lake: Lake) -> None:
+    """The content hash holds no conversation: the same wish to two people is two exchanges."""
     build(lake)
     hits = port(lake).search("happy birthday", **EVERYWHERE)
     birthdays = [hit for hit in hits if texts_of(lake, hit)[0] == kit.SAME_WORDS]
-    assert len(birthdays) == 1 and hits[0] == birthdays[0]
-    assert len(hits) == kit.SEGMENTS - 1
+    assert {hit["conversation"] for hit in birthdays} == {MINA, THEO} and hits[:2] == birthdays
+    assert len(hits) == kit.SEGMENTS
+
+
+def test_the_same_words_said_again_in_one_conversation_are_one_hit(lake: Lake) -> None:
+    """Two segments of one conversation with the same content hash: the better one stays."""
+    lake.add([(MINA, "2023-04-02 16:00:00", kit.SAME_WORDS, False)])
+    build(lake)
+    hits = port(lake).search("happy birthday", **EVERYWHERE)
+    birthdays = [hit for hit in hits if texts_of(lake, hit)[0] == kit.SAME_WORDS]
+    assert sorted(hit["conversation"] for hit in birthdays) == sorted([MINA, THEO])
+    assert len(hits) == kit.SEGMENTS
 
 
 def test_only_the_description_goes_to_the_embedder_with_the_model_of_the_index(lake: Lake) -> None:
@@ -221,7 +244,7 @@ def test_the_index_is_loaded_one_time_while_the_build_on_disk_is_the_same(
 def test_after_a_new_build_the_same_port_answers_from_the_new_index(lake: Lake) -> None:
     build(lake)
     found = port(lake)
-    assert len(found.search("the lake is warm", **EVERYWHERE)) == kit.SEGMENTS - 1
+    assert len(found.search("the lake is warm", **EVERYWHERE)) == kit.SEGMENTS
     lake.add([(MINA, "2024-07-01 08:00:00", "The lake is warm now", False)])
     build(lake)
     hits = found.search("the lake is warm", **EVERYWHERE)
