@@ -317,6 +317,7 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 
 ## Mac shell
 
+- The page sends the command `tick` to the shell when a control with steps goes to another step (`recallBridge.tick` in `app/src/lib/bridge.ts`). The shell gives one tick of the trackpad (`NSHapticFeedbackManager`, `.levelChange`). The command has no answer. In a browser it does nothing.
 - What the page keeps in `localStorage` belongs to the origin `http://127.0.0.1:<port>`. `portForThisLaunch` in `macos/Recall/RecallApp.swift` remembers one port in the defaults of `local.recall.app` and asks for it at each launch: `RecallServerPort` for the packaged app, `RecallServerPortDev` for the development build. On another port the page starts with an empty store.
 - The shell waits about 3 s for a remembered port that is in use (`rememberedPortChecks`, `rememberedPortPause`). `main` in `ui_server.py` must let go of the port in less time: it calls `server_close()` when it stops serving. Change the two sides together.
 - A remembered port that is still in use is not replaced. That launch gets a drawn port and an empty store.
@@ -324,6 +325,12 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 
 ## Interface
 
+- The app has palettes: Graphite (the first, in `tokens.css`) and the ones in `app/src/styles/palettes.css`. These three hold the same names and change together: `paletteOptions` in `app/src/lib/palette.ts`, the blocks of `palettes.css`, and the list in the script of `app/index.html`. `palette.test.ts` reads the two files and fails when they differ.
+  - A palette sets only the grounds, the text steps, `--gray`, `--edge`, `--ink` and the hue (`--you`, `--you-hover`, `--you-ink`, `--them`). Fills, lines, rings and heat steps are shares of `--gray`, `--edge` and `--text` in `tokens.css`. Do not write a fill or a line as a colour of its own.
+  - Each text step of each palette holds 4.5:1 on each ground, light and dark, a selected row also. `palette.test.ts` measures this from the style sheets. A new palette is not done until that test passes.
+  - No colour is written outside `tokens.css` and `palettes.css`, other than white on a hue and the ramp of the reasoning slider.
+  - Paper is Graphite: the blocks of `palettes.css` do not apply to `[data-paper]`.
+  - `[data-palette]` on an element gives that element the colours of the palette. `PalettePicker` uses this for its rounds. Light or dark is the page's alone: no palette block sets `color-scheme`.
 - The interface needs `light-dark()` colors and the `popover` attribute (Safari 17.5). `app/src/main.tsx` checks for both and shows a message if one is missing.
 - A view asks for the width of the block that holds it, not for the width of the window (container queries). The blocks of a view are `workspace`, `detail`, `half`, `report-pane` and `chat`. A part that fits itself to its own width has its own block: `ranked`, `activity`, `days`, `hours`.
 - One left edge: the title in the strip is 16px in. A page or a pane that fills its width starts on the same 16px. A column that sits in the middle has gutters of 32px or more.
@@ -350,7 +357,15 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
   - The row of the two heat maps is cut so that a day and an hour have the same size. The cut in `overview.css` and the cell sizes in `charts.css` use the same numbers: 53 weeks, 24 hours, gaps of 2px, 2rem of weekday names for each map, 2.5rem between the maps.
 - A chart of the two voices that has a `heading` puts the heading, the day or month that is picked out, and the two totals in one band (`VoicesOverTime`, `VoicesSkeleton`). The day or month is `.readout-when` between the heading and `.readout`. It takes only the space that is left, so a pick does not move the totals to a second line. The rules for `.section-head > .readout` and `.section-head > .readout-when` in `charts.css` need this structure.
 - A row of Settings with no value has an empty `.setting-value`. In a narrow workspace `settings.css` reads `:empty` to keep the label and the control on one line. Do not put a space or a comment in that element.
-- The Quality menu of the chat (`QualityControl` with `reasoning`) has a slider below its levels: `LevelSlider` in `.choice-extra` of `ChoiceMenu`. The slider sets the reasoning level of the model in use. Its look is a thick track that is filled up to a round knob, with a mark at each step. The track is 30px high in `slider.css` (`--track`), and `INSET` in `LevelSlider.tsx` is half of it. Change the two together. The knob follows the pointer while it is held (`data-held`) and settles on the nearest step when it is let go.
+- The Quality menu of the chat (`QualityControl` with `reasoning`) has a slider below its levels: `LevelSlider` in `.choice-extra` of `ChoiceMenu`. The slider sets the reasoning level of the model in use. Its look is a track that is filled up to a round knob, with a mark at each step. The track is 22px high in `slider.css` (`--track`), and `INSET` in `LevelSlider.tsx` is half of it. Change the two together.
+  - While a pointer holds the knob, `LevelSlider` writes `--at` on the track itself. React does not draw the slider again for each move. Do not put `--at` in the `style` of the JSX: a new drawing would take the knob from the pointer.
+  - The fill is cut with `clip-path` and the knob is moved with `translate`. Neither changes layout. Do not move them with `width`, `left` or `right`.
+  - WARNING: Do not move the knob with `transform`. The knob swells with `scale`, and `scale` also scales a `transform`: the knob then jumps to the side at each step.
+  - A knob that is taken stays under the pointer where it was taken (`offset` in `LevelSlider.tsx`). It is not pulled toward a step while it is held.
+  - A press away from the knob brings the knob to the pointer frame by frame (`chase` in `LevelSlider.tsx`). The knob has no CSS transition while a pointer holds it (`[data-held]`): a transition that is started again at each move makes the knob trail and then jump.
+  - A held knob changes its step only when it is well past half way to the next step (`heldStep` in `app/src/lib/levelSlider.ts`). Without this, a hand that rests between two steps makes the step change back and forth, and each change ticks the trackpad.
+  - On a new step the knob and the mark of the step swell one time, a ring goes out from the knob, and the page sends `tick` to the shell. The last step also sends a light along the fill.
+  - The colours of the track are one ramp: `RAMP` in `LevelSlider.tsx`. The fill, the glow of the track and the ring read it (`--ramp`, `--tone`; `toneAt` and `rampCss` in `app/src/lib/tone.ts`). No other control uses these colours.
 - A placeholder has the structure and the classes of the content that replaces it. Thus no block moves when the content arrives.
   - `MomentsSkeleton` has the number of cards and the height that the list of moments had last. `app/src/lib/keptShape.ts` keeps these two numbers in the browser under `recall.shape.<name>`.
   - WARNING: `keptShape.ts` keeps numbers only. Do not keep a name or the text of a message there.
