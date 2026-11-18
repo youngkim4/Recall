@@ -11,23 +11,26 @@
     color: var(--text);
   }
 
-  /* ---- tiles: the archive in four figures, each over a small picture of
-     itself. Every figure has the same four rows, so the figures, the pictures
-     and the lines under them each share a line across the row.
-     A figure and its neighbour part with a hairline. The first has no room
-     before it and the last none after it, so the row keeps the page's two
-     edges. The room on each side of a line is half the gap between the two
-     columns under the row: beside the middle line a figure ends, and the next
-     one starts, where those columns do. ---- */
+  /* ---- tiles: the archive in four figures, each a name, the figure and
+     one line of words, set apart by a hairline. The first leads: it takes
+     the left half, over the moments, with a larger figure; the other three
+     share the right half, over the ranked list, so the hairline after the
+     lead stands over the middle of the gap between the two columns below. The four figures stand on one baseline: each
+     tile takes its three rows from the row of tiles (subgrid). There is no
+     small chart in a tile; the chart of the months is further down. ---- */
   .tiles {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 3fr) repeat(3, minmax(0, 1fr));
+    grid-template-rows: auto auto auto;
   }
 
   .tile {
     display: grid;
-    /* a name, a figure, a picture, and one line about it */
-    grid-template-rows: auto auto auto auto;
+    grid-row: span 3;
+    grid-template-rows: subgrid;
+    /* the rows of a tile keep together when the row of tiles has a gap */
+    row-gap: 0;
+    align-items: baseline;
     min-width: 0;
     /* the line takes 1px of the room before a figure */
     padding-inline: calc(var(--s-5) - 1px) var(--s-5);
@@ -43,11 +46,22 @@
     padding-right: 0;
   }
 
-  /* too narrow for four: two rows of two, and the pattern starts again in each row */
-  @container workspace (max-width: 46rem) {
+  /* too narrow for three figures in half the row: two rows of two, the
+     lead first, and the pattern starts again in each row. The chart has no
+     room beside the figure there and is left out. */
+  @container workspace (max-width: 60rem) {
     .tiles {
       grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-rows: none;
       row-gap: var(--s-6);
+    }
+
+    .tile-lead {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .lead-chart {
+      display: none;
     }
 
     .tile:nth-child(odd) {
@@ -85,20 +99,91 @@
     letter-spacing: -0.01em;
   }
 
-  /* the picture stands on the floor of its row, whatever its height */
-  .tile-picture {
-    display: flex;
-    align-items: flex-end;
-    height: 1.5rem;
-    margin-top: var(--s-3);
+  /* The lead takes two columns of its own: its name and figure, in the
+     middle of the row's height, and beside them the chart of how the
+     messages came, which takes the room the figure leaves. */
+  .tile-lead {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-content: center;
+    column-gap: var(--s-8);
   }
 
-  .tile-picture > .voice-bar > :first-child {
-    border-radius: 2px 0 0 2px;
+  .tile-lead > .tile-label,
+  .tile-lead > .tile-value {
+    grid-column: 1;
+  }
+
+  .lead-chart {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-row: 1 / -1;
+    grid-column: 2;
+    align-self: stretch;
+    gap: var(--s-1);
+    min-width: 0;
+    height: 4.5rem;
+    margin: 0;
+  }
+
+  /* a bar for each year, standing on one floor; the busiest is darker */
+  .lead-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    min-height: 0;
+  }
+
+  .lead-bars > span {
+    flex: 1 1 0;
+    min-width: 1px;
+    height: calc(var(--share) * 100%);
+    min-height: 1px;
+    background: var(--heat-3);
+    border-radius: 1px 1px 0 0;
+  }
+
+  .lead-bars > [data-peak] {
+    background: var(--text-2);
+  }
+
+  /* the first year, the busiest and the last, each under its own bar */
+  .lead-chart > figcaption {
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--t-caption);
+    line-height: var(--lh-caption);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-3);
+  }
+
+  .lead-chart > .lead-years {
+    gap: 3px;
+  }
+
+  .lead-years > span {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow: visible;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  .lead-waiting {
+    grid-row: 1 / -1;
+    grid-column: 2;
+  }
+
+  /* the lead figure is set large, and tighter, as large type is: it is the
+     one number the page is about */
+  .tile-lead > .tile-value {
+    font-size: var(--t-display-lg);
+    line-height: var(--lh-display-lg);
+    letter-spacing: -0.025em;
   }
 
   .tile-note {
-    margin-top: var(--s-2);
+    margin-top: var(--s-1);
   }
 
   /* a line that ends in something to press: the words give way, the control does not */
@@ -117,11 +202,6 @@
 
   .tile-action > .link {
     flex: none;
-  }
-
-  .tile-waiting {
-    width: 100%;
-    height: 0.375rem;
   }
 
   /* A window as narrow as a phone: one figure a row, in the band of a ruled
@@ -166,80 +246,18 @@
       margin-left: auto;
     }
 
-    .tile-picture,
     .tile-note {
       flex-basis: 100%;
     }
-
-    .tile-picture {
-      height: 1rem;
-      margin-top: var(--s-2);
-    }
-  }
-
-  /* how the messages built up, month by month */
-  .spark {
-    width: 100%;
-    height: 100%;
-    overflow: visible;
-  }
-
-  .spark-area {
-    fill: var(--heat-1);
-  }
-
-  .spark-line {
-    fill: none;
-    stroke: var(--text-2);
-    stroke-width: 1.5;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    vector-effect: non-scaling-stroke;
-  }
-
-  /* one length cut into parts, the largest first, in steps of the text color */
-  .tile-parts {
-    display: flex;
-    gap: 1px;
-    width: 100%;
-    height: 0.375rem;
-  }
-
-  .tile-parts > i {
-    flex-basis: 0;
-    min-width: 2px;
-    background: var(--heat-4);
-  }
-
-  .tile-parts > [data-part='1'] {
-    background: var(--heat-3);
-  }
-
-  .tile-parts > [data-part='2'],
-  .tile-parts > [data-part='3'],
-  .tile-parts > [data-part='4'] {
-    background: var(--heat-2);
-  }
-
-  .tile-parts > [data-part='rest'] {
-    background: var(--heat-0);
-  }
-
-  .tile-parts > :first-child {
-    border-radius: 2px 0 0 2px;
-  }
-
-  .tile-parts > :last-child {
-    border-radius: 0 2px 2px 0;
   }
 
   /* ---- the blocks of the page: the figures, then rows of sections. One
-     block is 32px from the next, and the figures are 32px under the strip:
-     the same room above them as below. In a narrow workspace the parts of a
-     row follow each other. With room they stand side by side, 40px apart,
-     and are each as tall as the row. The row under the figures splits in the
-     middle, on the hairline between the second figure and the third. A part
-     that holds more than one section is a column of them (.overview-col). ---- */
+     block is 32px from the next, and the figures are 16px from the top of
+     the window, as the first words of every view are. In a narrow workspace
+     the parts of a row follow each other. With room they stand side by
+     side, 40px apart, and are each as tall as the row. The row under the
+     figures splits in the middle, under the hairline after the lead figure.
+     A part that holds sections is a column of them (.overview-col). ---- */
   .overview > * + .overview-row,
   .overview-row > * + *,
   .overview-col > * + .section {

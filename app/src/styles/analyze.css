@@ -225,28 +225,26 @@
 
     /* The facts are figures set apart by hairlines and not by a card: a
        label over what it comes to, a line over the block and a line under
-       it. The lines between the figures are the ground of the block seen
-       through 1px gaps, so where two of them cross they are drawn once.
-       Each figure keeps 20px on both sides, as figures do on every page. The
-       block is 20px wider than its column on each side and is cut back to the
-       column: the first figure of
-       a row starts on the column's edge, the last one ends on it, and the
-       lines between rows end where the words do. */
+       each row. Each figure draws the line on its right and the line under
+       it and has no ground of its own, so the block lies on any ground.
+       Each figure keeps 20px on both sides, as figures
+       do on every page. The block is 20px wider than its column on each
+       side and is cut back to the column: the first figure of a row starts
+       on the column's edge, the last one ends on it and its line on the
+       right is cut away, and the lines between rows end where the words do. */
     .detail-facts > .facts {
       display: grid;
       grid-template-columns: repeat(6, minmax(0, 1fr));
-      gap: 1px;
       margin-inline: calc(var(--s-5) * -1);
-      border-block: 1px solid var(--line);
-      background: var(--line) padding-box;
+      border-top: 1px solid var(--line);
       clip-path: inset(0 var(--s-5));
     }
 
     .detail-facts > .facts > div {
       display: block;
       padding: var(--s-3) var(--s-5);
-      border-top: 0;
-      background: var(--bg);
+      border: solid var(--line);
+      border-width: 0 1px 1px 0;
     }
 
     .detail-facts > .facts dt {
@@ -326,21 +324,22 @@
     }
   }
 
-  /* Three across from there on, and no line of the block left part empty: two
-     cells left over share the last line, one left over takes it whole, and
-     four facts make two lines of two. */
+  /* Three across from there on, and no line of the block left part empty.
+     The lines between figures stand under each other from row to row: a
+     figure left over on the last line starts where the one above it does,
+     and the last of them takes the rest of the line. Four facts make two
+     lines of two. */
   @container detail (width >= 60rem) {
     .detail-facts > .facts > div {
       grid-column: span 2;
     }
 
-    .detail-facts > .facts > div:nth-child(3n + 1):nth-last-child(2),
     .detail-facts > .facts > div:nth-child(3n + 2):last-child {
-      grid-column: span 3;
+      grid-column: 3 / -1;
     }
 
     .detail-facts > .facts > div:nth-child(3n + 1):last-child {
-      grid-column: span 6;
+      grid-column: 1 / -1;
     }
 
     .detail-facts > .facts > div:first-child:nth-last-child(4),

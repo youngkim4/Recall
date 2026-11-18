@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react'
 import type { ActivityPoint } from '../../lib/activity'
 import { messageCount } from '../../lib/conversations'
-import { daysSpanned } from '../../lib/days'
 import { formatDate, formatNumber, formatPercent, parseDate } from '../../lib/format'
-import { aDay, sparkArea, sparkLine, topShares } from '../../lib/spark'
+import { topShares } from '../../lib/spark'
 import type { ArchiveSummary, Contact } from '../../types'
-import { VoiceBar } from '../ui/VoiceBar'
+import { LeadChart } from './LeadChart'
 
 type ArchiveTilesProps = {
   archive: ArchiveSummary
@@ -18,9 +17,7 @@ type ArchiveTilesProps = {
   onOpenSetup: () => void
 }
 
-// the box the line of months is drawn in; it is stretched to the tile
-const SPARK = { width: 120, height: 24 }
-// how many conversations the third tile sets against the rest
+// how many conversations the third figure sets against the rest
 const TOP = 5
 const DAY_MS = 86_400_000
 
@@ -33,44 +30,36 @@ function ago(days: number) {
   return `${Math.round(months / 12)} years ago`
 }
 
-// The archive in four figures, each over a small picture of itself: how much
-// it holds and how that built up, how much of it is yours, how much of it sits
-// in a few conversations, and how far it reaches.
+// The archive in four figures. The first, how many messages there are,
+// leads: it is set large over half the row, its name and figure in the
+// middle of the row's height, with a chart beside it of how those messages
+// came, a bar for each year. The other three each have one line of words under them and no
+// chart: a small chart under every figure is the row of identical stat
+// tiles that reads as generated.
 export function ArchiveTiles({ archive, months, waiting, ranked, onOpenSetup }: ArchiveTilesProps) {
   // the day the page was opened on
   const [now] = useState(() => Date.now())
-  const totals = useMemo(() => (months ?? []).map((month) => month.total), [months])
   const sent = useMemo(() => (months ?? []).reduce((sum, month) => sum + month.sent, 0), [months])
   const received = useMemo(() => (months ?? []).reduce((sum, month) => sum + month.received, 0), [months])
   const shares = useMemo(
     () => topShares(ranked.slice(0, TOP).map(messageCount), archive.messages, TOP),
     [ranked, archive.messages],
   )
-  const days = daysSpanned(archive.firstMessage, archive.lastMessage)
-  const first = parseDate(archive.firstMessage)
   const last = parseDate(archive.lastMessage)
-  // how much of the time from the first message to today the archive holds,
-  // and how many days lie between its newest message and today
-  const reach = first && last ? (last.valueOf() - first.valueOf()) / Math.max(DAY_MS, now - first.valueOf()) : 0
+  // how many days lie between the newest message and today
   const behind = last ? Math.max(0, Math.floor((now - last.valueOf()) / DAY_MS)) : 0
   const held = shares.reduce((sum, share) => sum + share, 0)
 
   return (
     <section className="tiles" aria-label="The archive in figures">
-      <div className="tile">
+      <div className="tile tile-lead">
         <p className="tile-label">Messages</p>
         <p className="tile-value">{formatNumber(archive.messages)}</p>
-        <div className="tile-picture" aria-hidden="true">
-          {totals.length ? (
-            <svg className="spark" viewBox={`0 0 ${SPARK.width} ${SPARK.height}`} preserveAspectRatio="none">
-              <path className="spark-area" d={sparkArea(totals, SPARK.width, SPARK.height)} />
-              <path className="spark-line" d={sparkLine(totals, SPARK.width, SPARK.height)} />
-            </svg>
-          ) : waiting ? (
-            <span className="skeleton tile-waiting" />
-          ) : null}
-        </div>
-        <p className="tile-note">{aDay(archive.messages, days)}</p>
+        {months && months.length > 1 ? (
+          <LeadChart months={months} />
+        ) : waiting ? (
+          <span className="skeleton lead-chart lead-waiting" />
+        ) : null}
       </div>
 
       <div className="tile">
@@ -84,27 +73,12 @@ export function ArchiveTiles({ archive, months, waiting, ranked, onOpenSetup }: 
             ''
           )}
         </p>
-        <div className="tile-picture" aria-hidden="true">
-          {sent + received > 0 ? (
-            <VoiceBar sent={sent} received={received} />
-          ) : waiting ? (
-            <span className="skeleton tile-waiting" />
-          ) : null}
-        </div>
         <p className="tile-note">{sent + received > 0 ? `${formatNumber(sent)} messages` : ''}</p>
       </div>
 
       <div className="tile">
         <p className="tile-label">Conversations</p>
         <p className="tile-value">{formatNumber(archive.conversations)}</p>
-        <div className="tile-picture" aria-hidden="true">
-          <span className="tile-parts">
-            {shares.map((share, index) => (
-              <i key={index} data-part={index} style={{ flexGrow: share }} />
-            ))}
-            {held < 1 ? <i data-part="rest" style={{ flexGrow: 1 - held }} /> : null}
-          </span>
-        </div>
         <p className="tile-note">
           {shares.length > 1 ? `Top ${shares.length} hold ${formatPercent(held)}` : ''}
         </p>
@@ -113,13 +87,6 @@ export function ArchiveTiles({ archive, months, waiting, ranked, onOpenSetup }: 
       <div className="tile">
         <p className="tile-label">Imported through</p>
         <p className="tile-value">{last ? formatDate(last) : ''}</p>
-        <div className="tile-picture" aria-hidden="true">
-          <span className="tile-parts">
-            <i data-part="0" style={{ flexGrow: Math.max(0, Math.min(1, reach)) }} />
-            {reach < 1 ? <i data-part="rest" style={{ flexGrow: 1 - Math.max(0, Math.min(1, reach)) }} /> : null}
-          </span>
-        </div>
-        {/* the empty end of the bar is the time since; the way to close it is beside it */}
         <p className="tile-note tile-action">
           <span>{last ? ago(behind) : ''}</span>
           <button type="button" className="link" onClick={onOpenSetup}>
@@ -136,17 +103,16 @@ export function ArchiveTilesSkeleton() {
   return (
     <div className="tiles" aria-hidden="true">
       {['Messages', 'You wrote', 'Conversations', 'Imported through'].map((label) => (
-        <div key={label} className="tile">
+        <div key={label} className={label === 'Messages' ? 'tile tile-lead' : 'tile'}>
           <p className="tile-label">{label}</p>
           <p className="tile-value">
             <span className="skeleton">000,000</span>
           </p>
-          <div className="tile-picture">
-            <span className="skeleton tile-waiting" />
-          </div>
-          <p className="tile-note">
-            <span className="skeleton">000 a day</span>
-          </p>
+          {label === 'Messages' ? null : (
+            <p className="tile-note">
+              <span className="skeleton">000 a day</span>
+            </p>
+          )}
         </div>
       ))}
     </div>

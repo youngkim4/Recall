@@ -2,13 +2,12 @@ import { useMemo, useState } from 'react'
 import { recallApi } from '../../lib/api'
 import { messageCount } from '../../lib/conversations'
 import { useLoad } from '../../lib/useLoad'
-import type { ArchiveSummary, Contact, Defaults, ReportFile, ViewKey } from '../../types'
+import type { ArchiveSummary, Contact, Defaults, ViewKey } from '../../types'
 import { CardStudio } from '../cards/CardStudio'
 import { DaySheet } from '../ui/DaySheet'
 import { VoicesOverTime, VoicesSkeleton } from '../ui/VoicesOverTime'
 import { ArchiveTiles, ArchiveTilesSkeleton } from './ArchiveTiles'
 import { Moments, MomentsSkeleton, type MomentOfDay } from './Moments'
-import { RecentReports } from './RecentReports'
 import { Rhythm } from './Rhythm'
 import { TopConversations, TopConversationsSkeleton } from './TopConversations'
 import { YearOfDays } from './YearOfDays'
@@ -18,12 +17,10 @@ type OverviewViewProps = {
   // null until the archive has been read, or when there is none
   archive: ArchiveSummary | null
   contacts: Contact[]
-  reports: ReportFile[]
   loading: boolean
   model: string
   onViewChange: (view: ViewKey) => void
   onSelectContact: (contact: Contact) => void
-  onOpenReport: (report: ReportFile) => void
   onReplayFirstWords: () => void
   // opens the guide that builds the archive, or updates one that exists
   onOpenSetup: () => void
@@ -42,9 +39,11 @@ function MonthsWaiting() {
 }
 
 // The archive at a glance, in rows. How much it holds. Then what is worth
-// opening: today's moments, with the busiest conversations and the recent
-// reports beside them. Then when the messages happen: by month, and under
-// that by day and by hour. The page is open: space between the sections,
+// opening: today's moments, with the busiest conversations beside them, as
+// tall as the moments are. (Recent reports once stood under the busiest
+// conversations and took their rows: the table showed one conversation less
+// for each report written. Reports are one click away in the rail.) Then
+// when the messages happen: by month, and under that by day and by hour. The page is open: space between the sections,
 // hairlines between the rows of a list, and no card but the moments. In a
 // wide window the things of a row stand side by side and end on one line; in
 // a narrow one they follow each other.
@@ -52,12 +51,10 @@ export function OverviewView({
   defaults,
   archive,
   contacts,
-  reports,
   loading,
   model,
   onViewChange,
   onSelectContact,
-  onOpenReport,
   onReplayFirstWords,
   onOpenSetup,
 }: OverviewViewProps) {
@@ -141,12 +138,6 @@ export function OverviewView({
               archive={archive}
               onSelectContact={onSelectContact}
               onViewAll={() => onViewChange('analyze')}
-            />
-            <RecentReports
-              reports={reports}
-              onOpenReport={onOpenReport}
-              onViewAll={() => onViewChange('reports')}
-              onChooseConversation={() => onViewChange('analyze')}
             />
           </div>
         </div>
