@@ -162,5 +162,5 @@ def test_the_cost_of_a_digest_that_was_paid_for_and_failed_is_in_the_usage_too(
     assert len(paid.calls) == 2 and line.startswith("a digest inside a question gave nothing (model_error): 2 model calls, ")
     spent = float(line.split(", ")[-1].removesuffix(" USD"))
     assert spent > 0
-    # the engine adds the `usd` of the failure. An engine that does not do so yet says 0.0.
-    assert usage["digest_usd"] in (pytest.approx(spent, abs=1e-4), 0.0)
+    # the engine adds the `usd` of the failure
+    assert usage["digest_usd"] == pytest.approx(spent, abs=1e-4)
