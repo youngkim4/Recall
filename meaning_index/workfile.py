@@ -16,6 +16,7 @@ import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import quote
 
 import numpy as np
 
@@ -36,6 +37,12 @@ CREATE TABLE IF NOT EXISTS vectors (
 """
 
 
+def _has_table(conn: sqlite3.Connection) -> bool:
+    """False for a file that a build made and did not write to yet."""
+    found = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vectors'").fetchone()
+    return found is not None
+
+
 class WorkFile:
     """Opens the file for each operation. A read of a file that is not there makes no file."""
 
@@ -45,8 +52,12 @@ class WorkFile:
         self._bytes = dimensions * VECTOR_TYPE.itemsize
 
     @contextmanager
-    def _open(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_S)
+    def _open(self, *, to_write: bool = False) -> Iterator[sqlite3.Connection]:
+        """One connection for one operation. A read opens the file to read only: it changes nothing."""
+        if to_write:
+            conn = sqlite3.connect(self._path, timeout=BUSY_TIMEOUT_S)
+        else:
+            conn = sqlite3.connect(f"file:{quote(str(self._path))}?mode=ro", uri=True, timeout=BUSY_TIMEOUT_S)
         try:
             with conn:
                 yield conn
@@ -57,7 +68,8 @@ class WorkFile:
         if not self._path.exists():
             return frozenset()
         with self._open() as conn:
-            conn.execute(_CREATE)
+            if not _has_table(conn):
+                return frozenset()
             found = conn.execute(
                 "SELECT content_hash FROM vectors WHERE dimensions = ? AND length(vector) = ?",
                 (self._dimensions, self._bytes),
@@ -87,7 +99,7 @@ class WorkFile:
         try:
             if not self._path.exists():
                 os.close(os.open(self._path, os.O_WRONLY | os.O_CREAT, PRIVATE_FILE_MODE))
-            with self._open() as conn:
+            with self._open(to_write=True) as conn:
                 conn.execute(_CREATE)
                 conn.executemany(
                     "INSERT OR REPLACE INTO vectors VALUES (?, ?, ?)",
@@ -104,7 +116,7 @@ class WorkFile:
         found: dict[str, np.ndarray] = {}
         try:
             with self._open() as conn:
-                for start in range(0, len(hashes), QUERY_CHUNK):
+                for start in range(0, len(hashes) if _has_table(conn) else 0, QUERY_CHUNK):
                     chunk = list(hashes[start : start + QUERY_CHUNK])
                     marks = ",".join("?" * len(chunk))
                     rows = conn.execute(

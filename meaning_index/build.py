@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from meaning_index.batching import DEFAULT_LIMITS, VECTOR_TYPE, BatchLimits, embed_in_batches
-from meaning_index.errors import BuildCancelled, MeaningIndexError, SourceError, StoreError
+from meaning_index.errors import BuildCancelled, IndexFormatError, MeaningIndexError, SourceError, StoreError
 from meaning_index.model_facts import EmbedderFacts
 from meaning_index.ports import CountTokens, Embedder, MessageSource, Sleep
 from meaning_index.segments import cut_segments, stored
@@ -47,7 +47,7 @@ class _Reading:
 def _checker(cancel: object) -> _Check:
     """A function that raises BuildCancelled when the caller asked to stop."""
     if cancel is None:
-        asked: Callable[[], object] = bool
+        asked: Callable[[], object] = bool  # bool() is False: nobody asks
     elif callable(cancel):
         asked = cancel
     elif callable(getattr(cancel, "is_set", None)):
@@ -108,6 +108,17 @@ def _read(
                 texts.setdefault(segment.content_hash, cut.text)
         _tell(progress, "read", number, len(conversations))
     return _Reading(segments=tuple(segments), texts=texts)
+
+
+def _old_index(store: IndexStore) -> StoredIndex | None:
+    """The index that is there. One that can not be read is no index: the build makes it new."""
+    try:
+        return store.read()
+    except IndexFormatError:
+        raise
+    except StoreError as exc:
+        logger.warning("the index that is there can not be read (%s); every segment is new", type(exc).__name__)
+        return None
 
 
 def _old_rows(old: StoredIndex | None, dimensions: int) -> dict[str, int]:
@@ -190,7 +201,7 @@ def build_index(
     check = _checker(cancel)
     model, dimensions = embedder.model, embedder.dimensions
     with store.building():
-        old = store.read()
+        old = _old_index(store)
         work = store.work_file(dimensions)
         work.repair()
         old_rows = _old_rows(old, dimensions)
@@ -225,7 +236,7 @@ def estimate_build(
 ) -> BuildEstimate:
     """What a build with this model would embed now, and what that costs. It writes nothing."""
     dimensions = embedder_facts.dimensions
-    known = _old_rows(store.read(), dimensions).keys() | store.work_file(dimensions).hashes()
+    known = _old_rows(_old_index(store), dimensions).keys() | store.work_file(dimensions).hashes()
     reading = _read(source, embedder_facts.model, dimensions, known, _checker(None), None)
     tokens = sum(count_tokens(text) for text in reading.texts.values())
     return BuildEstimate(

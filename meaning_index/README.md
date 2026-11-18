@@ -244,6 +244,7 @@ index.search(vector, *, conversations=None, since=None, until=None, limit=20) ->
 - New messages at the end of a conversation can join its last segment. That segment then has a new id and a new vector.
 - A build keeps the text of each new segment in memory until it is embedded.
 - While a build swaps the files, `status()` can say `none` for a moment.
+- The swap keeps the old files as hard links. The folder must be on a file system that has hard links. APFS has them.
 - float16 keeps about three decimal places. A score is exact to about 0.001.
 - The default token counter needs the vocabulary file of tiktoken. tiktoken fetches it the first time. When it can not load, the count is one token for three bytes, and the log says so one time. Give a counter of the app to control this.
 - `meaning_index/models.json` is read from beside the code. The packaged server must ship it, as it ships `recall_services/models.json`.
@@ -255,7 +256,9 @@ index.search(vector, *, conversations=None, since=None, until=None, limit=20) ->
 - White space inside a message becomes one space, so that one message is one line.
 - A time that goes back is no gap.
 - `search` makes the query unit length. The score is then a cosine, from -1 to 1.
-- `MeaningIndex.load` gives `None` for files that are not one whole build. An index of a newer format is a `StoreError`.
+- `MeaningIndex.load` gives `None` for files that are not one whole build.
+- An index of a newer format is an `IndexFormatError`. `status()`, `read()`, a build and an estimate raise it. No build replaces such an index.
+- A build over an index that can not be read embeds every segment again. The log says so. An estimate counts every segment as new.
 - An index with no segment is `ready`, and its search gives no hit.
 - A failure of the source or of the embedder that is not typed becomes `SourceError` or `EmbeddingServiceError`. The error names the type of what was raised and nothing else.
 - Only a rate limit is tried again. A network failure ends the build. The work file keeps what was paid, so a second build goes on from there.

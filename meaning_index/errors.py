@@ -26,6 +26,10 @@ class IndexBusyError(StoreError):
     """Another build holds the folder of the index."""
 
 
+class IndexFormatError(StoreError):
+    """A newer build of the app wrote the index. This build does not read it and does not replace it."""
+
+
 class BuildCancelled(MeaningIndexError):
     """The caller stopped the build. The index is as it was.
 

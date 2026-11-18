@@ -27,6 +27,7 @@ PUBLIC = {
     "EmbeddingTooLarge",
     "FakeEmbedder",
     "IndexBusyError",
+    "IndexFormatError",
     "IndexMeta",
     "IndexStatus",
     "IndexStore",
@@ -55,7 +56,7 @@ def test_the_package_gives_the_names_of_the_contract() -> None:
 def test_every_error_is_a_meaning_index_error() -> None:
     endings = ("Error", "Cancelled", "Limited", "Large")
     errors = [getattr(meaning_index, name) for name in PUBLIC if name.endswith(endings)]
-    assert len(errors) == 13
+    assert len(errors) == 14
     assert all(issubclass(error, meaning_index.MeaningIndexError) for error in errors)
 
 

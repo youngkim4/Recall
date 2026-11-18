@@ -23,7 +23,7 @@ from urllib.parse import quote
 
 import numpy as np
 
-from meaning_index.errors import StoreError
+from meaning_index.errors import IndexFormatError, StoreError
 from meaning_index.shapes import IndexMeta, Segment
 
 logger = logging.getLogger(__name__)
@@ -141,7 +141,7 @@ def _connect_to_read(path: Path) -> sqlite3.Connection:
 
 
 def read_meta(path: Path) -> IndexMeta | None:
-    """The meta file, or None when there is none or it can not be read. A newer format is a StoreError."""
+    """The meta file, or None when there is none or it can not be read. A newer format is an IndexFormatError."""
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -151,7 +151,7 @@ def read_meta(path: Path) -> IndexMeta | None:
         return None
     version = raw.get("format_version") if isinstance(raw, dict) else None
     if isinstance(version, int) and version > FORMAT_VERSION:
-        raise StoreError(f"the index has format version {version}; this build reads up to {FORMAT_VERSION}")
+        raise IndexFormatError(f"the index has format version {version}; this build reads up to {FORMAT_VERSION}")
     fits = isinstance(raw, dict) and all(
         isinstance(raw.get(key), kinds) and not isinstance(raw.get(key), bool) for key, kinds in _META_TYPES.items()
     )
@@ -279,7 +279,7 @@ def recover(folder: Path) -> None:
     if backups:
         try:
             whole = usable_meta(folder) is not None
-        except StoreError:
+        except IndexFormatError:
             whole = True  # a newer build wrote these files: they are left alone
         if not whole:
             for name in backups:
