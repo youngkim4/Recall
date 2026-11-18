@@ -144,6 +144,39 @@ def test_the_server_starts_a_reading_after_an_import_only_when_it_is_small(
     assert memory_prep.worth_starting(found) is start
 
 
+def test_after_an_import_that_changed_every_part_read_before_the_reading_still_starts() -> None:
+    """The parts that were read have new keys now: nothing is read, but the reader chose the memory before."""
+    found = {"state": "none", "estimatedCost": 0.05, "partsNotRead": 2, "error": None}
+    assert memory_prep.worth_starting(found) is False
+    assert memory_prep.worth_starting(found, read_before=True) is True
+    assert memory_prep.worth_starting({**found, "estimatedCost": 0.3}, read_before=True) is False
+
+
+def test_read_before_looks_for_notes_of_the_digest_model_on_a_conversation_of_the_memory(desk: Desk) -> None:
+    where = desk.places.cache_path
+    assert memory_prep.read_before(desk.archive, places=desk.places) is False
+    assert not where.exists()  # a look makes no file
+    digests.build(MINA, model="gpt-6.1-sol", **desk.more())
+    assert memory_prep.read_before(desk.archive, places=desk.places) is False
+    digests.build(THEO, model=memory.DIGEST_MODEL, **desk.more())
+    assert memory_prep.read_before(desk.archive, places=desk.places) is False  # Theo has too few messages
+    assert memory_prep.read_before(desk.archive, places=desk.places, min_messages=10) is True
+    digests.build(MINA, "2023-01-01", "2023-01-31", model=memory.DIGEST_MODEL, **desk.more())
+    assert memory_prep.read_before(desk.archive, places=desk.places) is True
+
+
+def test_notes_that_can_not_be_read_say_nothing_was_read(desk: Desk) -> None:
+    desk.places.cache_path.parent.mkdir(parents=True, exist_ok=True)
+    desk.places.cache_path.write_text("not a database", encoding="utf-8")
+    assert memory_prep.read_before(desk.archive, places=desk.places) is False
+
+
+def test_the_least_number_of_messages_is_read_at_each_call(desk: Desk, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(memory_prep, "PREPARE_MIN_MESSAGES", 10)
+    assert memory_prep.candidates(desk.archive) == (MINA, THEO)
+    assert memory_prep.payload(desk.archive, desk.names, **estimate_more(desk))["minMessages"] == 10
+
+
 def test_an_answer_with_an_error_starts_nothing() -> None:
     found = {"state": "partial", "estimatedCost": 0.0, "partsNotRead": 1, "error": "x"}
     assert memory_prep.worth_starting(found) is False

@@ -96,9 +96,9 @@ def test_the_job_has_n_parts_in_flight_at_once(many: Many) -> None:
 
 
 def test_the_wall_time_of_the_job_goes_down_by_about_n(many: Many) -> None:
-    """24 parts of 0.1 s: about 2.4 s one at a time. Four at a time, the parts take 0.6 s at best.
+    """24 parts of 0.15 s: about 3.6 s one at a time. Four at a time, the parts take 0.9 s at best.
     The plan of each conversation is the same work in both runs, so the gain is a little under four."""
-    pause = 0.1
+    pause = 0.15
     started = time.monotonic()
     alone = memory_prep.run(parallel=1, **many.more(Inside(pause).llm, "alone.sqlite"))
     one_by_one = time.monotonic() - started

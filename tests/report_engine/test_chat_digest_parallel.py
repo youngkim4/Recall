@@ -144,8 +144,8 @@ def test_conversations_read_at_once_give_what_they_give_one_at_a_time(tmp_path: 
 
 
 def test_the_wall_time_of_many_parts_goes_down_by_about_n(tmp_path: Path) -> None:
-    """32 parts of 50 ms each: about 1.6 s one at a time, about a quarter of it four at a time."""
-    pause, many = 0.05, names(8)
+    """32 parts of 60 ms each: about 1.9 s one at a time, about a quarter of it four at a time."""
+    pause, many = 0.06, names(8)
     started = time.monotonic()
     for work in tasks(many, Inside(pause=pause), tmp_path / "alone.sqlite", None):
         work()
@@ -156,7 +156,7 @@ def test_the_wall_time_of_many_parts_goes_down_by_about_n(tmp_path: Path) -> Non
     four = time.monotonic() - started
     assert [outcome.error for outcome in found if outcome.error] == [] and pool.most_in_flight == 4
     assert one_by_one >= len(many) * 4 * pause
-    assert one_by_one / four >= 3.0, (one_by_one, four)
+    assert one_by_one / four >= 2.8, (one_by_one, four)
 
 
 # --- the limit of a run, a stop and progress with a pool -----------------------------

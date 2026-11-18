@@ -220,6 +220,12 @@ class PeriodCache:
         with self._open() as conn:
             return conn.execute("DELETE FROM period_results").rowcount
 
+    def conversations_read(self, model: str) -> frozenset[str]:
+        """The conversations that have at least one entry of this model."""
+        with self._open() as conn:
+            rows = conn.execute("SELECT DISTINCT conversation FROM period_results WHERE model = ?", (model,))
+            return frozenset(str(row[0]) for row in rows)
+
     def count(self) -> int:
         with self._open() as conn:
             return int(conn.execute("SELECT COUNT(*) FROM period_results").fetchone()[0])

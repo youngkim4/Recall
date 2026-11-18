@@ -31,14 +31,14 @@ from typing import Any
 
 from archive import Archive
 from archive import ArchiveError as ArchiveFault
-from recall_services import digests, memory, models
+from recall_services import digests, memory, models, reports
 from recall_services import memory_prep_words as words
 from recall_services.memory_prep_read import Planned, Read, Reading, tally
 from recall_services.memory_prep_words import MemoryFailure as MemoryFailure
 from recall_services.models import ModelChoiceError
 from recall_services.names import Names
 from recall_services.report_failures import ReportFailure
-from report_engine import run_in_parallel
+from report_engine import PeriodCache, StoreError, run_in_parallel
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +62,35 @@ def _archive_faults() -> Iterator[None]:
         raise MemoryFailure("archive_error", words.ARCHIVE_UNREADABLE) from error
 
 
-def candidates(archive: Archive, min_messages: int = PREPARE_MIN_MESSAGES) -> tuple[str, ...]:
+def least(min_messages: int | None) -> int:
+    """The least number of messages of a conversation of the memory. None is `PREPARE_MIN_MESSAGES`, read at each call."""
+    return PREPARE_MIN_MESSAGES if min_messages is None else min_messages
+
+
+def candidates(archive: Archive, min_messages: int | None = None) -> tuple[str, ...]:
     """The ids of the conversations of the memory, busiest first. Raises MemoryFailure (`archive_error`)."""
     with _archive_faults():
         rows = archive.conversations(order="count")
-    return tuple(str(row["id"]) for row in rows if int(row["message_count"] or 0) >= min_messages)
+    return tuple(str(row["id"]) for row in rows if int(row["message_count"] or 0) >= least(min_messages))
+
+
+def read_before(
+    archive: Archive, *, places: reports.ReportPlaces | None = None, min_messages: int | None = None
+) -> bool:
+    """True when the notes hold a part that the model of the memory read, of a conversation of the memory.
+
+    This holds after an import that gave each part that was read a new key.
+    Notes that are not there or can not be read say False, and no file is made.
+    """
+    where = (places or reports.default_places()).cache_path
+    if not where.exists():
+        return False
+    try:
+        read = PeriodCache(where).conversations_read(model())
+    except StoreError as error:
+        logger.warning("the notes of earlier runs can not be read (%s)", type(error).__name__)
+        return False
+    return bool(read & set(candidates(archive, min_messages)))
 
 
 def _planned(archive: Archive, names: Names, chosen: Sequence[str], more: Mapping[str, Any]) -> tuple[list[Planned], int]:
@@ -105,31 +129,34 @@ def _shown(planned: Sequence[Planned], skipped: int, min_messages: int) -> dict[
     }
 
 
-def payload(archive: Archive, names: Names, *, min_messages: int = PREPARE_MIN_MESSAGES, **more: Any) -> dict[str, Any]:
+def payload(archive: Archive, names: Names, *, min_messages: int | None = None, **more: Any) -> dict[str, Any]:
     """The answer of `GET /api/memory`. No model call, no key, no file.
 
     When the archive can not be read or the model can not be run, the counts
     are zeros, the state is `none`, and `error` and `code` say why. `more`
     gives the places, the options and the counter of the reports (tests).
     """
+    fewest = least(min_messages)
     try:
-        planned, skipped = _planned(archive, names, candidates(archive, min_messages), more)
+        planned, skipped = _planned(archive, names, candidates(archive, fewest), more)
     except ModelChoiceError as error:
-        return {**_shown((), 0, min_messages), "error": words.MODEL_NOT_RUN, "code": error.code}
+        return {**_shown((), 0, fewest), "error": words.MODEL_NOT_RUN, "code": error.code}
     except MemoryFailure as failure:
-        return {**_shown((), 0, min_messages), "error": str(failure), "code": failure.code}
-    return _shown(planned, skipped, min_messages)
+        return {**_shown((), 0, fewest), "error": str(failure), "code": failure.code}
+    return _shown(planned, skipped, fewest)
 
 
-def worth_starting(found: Mapping[str, Any]) -> bool:
+def worth_starting(found: Mapping[str, Any], *, read_before: bool = False) -> bool:
     """True when the server starts a `memory` job by itself after an import.
 
-    `found` is a `payload`. Something was read before (`partial` or `ready`),
-    something is not read now, and it costs at most `PREPARE_AUTO_USD`. The
-    first reading is the choice of the reader.
+    `found` is a `payload` after the import. Something was read before: the
+    state is `partial` or `ready`, or `read_before` says that the notes hold
+    parts of the memory under keys that the import changed. Something is not
+    read now, and it costs at most `PREPARE_AUTO_USD`. The first reading is
+    the choice of the reader.
     """
     cost = found.get("estimatedCost")
-    if found.get("error") or found.get("state") not in ("partial", "ready"):
+    if found.get("error") or not (read_before or found.get("state") in ("partial", "ready")):
         return False
     if not isinstance(cost, (int, float)) or isinstance(cost, bool):
         return False
@@ -146,8 +173,8 @@ def run(
     *,
     archive: Archive,
     names: Names,
-    parallel: int = PREPARE_PARALLEL,
-    min_messages: int = PREPARE_MIN_MESSAGES,
+    parallel: int | None = None,
+    min_messages: int | None = None,
     **more: Any,
 ) -> dict[str, Any]:
     """Read the memory. Gives `conversations`, `conversationsRead`, `conversationsFailed`,
@@ -160,21 +187,22 @@ def run(
     model that can not be run.
     """
     teller = words.Teller(on_progress)
+    slots = PREPARE_PARALLEL if parallel is None else parallel
     chosen = candidates(archive, min_messages)
-    teller.tell(step="look", total=len(chosen), log=words.looking(len(chosen), min_messages))
+    teller.tell(step="look", total=len(chosen), log=words.looking(len(chosen), least(min_messages)))
     planned, skipped = _planned(archive, names, chosen, more)
     waiting = [one for one in planned if one.not_read > 0]
     parts = sum(one.not_read for one in waiting)
     teller.tell(step="read", total=parts, log=words.to_read(parts, len(waiting), sum(one.periods_cached for one in planned)))
     settings = {"model": model(), **more}
     runtime = settings.get("runtime")
-    pool = digests.call_pool(str(settings["model"]), parallel, **({"clock": runtime.clock} if runtime else {}))
+    pool = digests.call_pool(str(settings["model"]), slots, **({"clock": runtime.clock} if runtime else {}))
 
     def build(conversation: str, heard: Callable[[Any], None]) -> Any:
         return digests.build(conversation, None, None, cancel, heard, archive=archive, names=names, pool=pool, **settings)
 
     reading = Reading(teller, parts, len(waiting), cancel, pool, build)
-    outcomes = run_in_parallel([reading.task(one) for one in waiting], max_parallel=parallel, stop=reading.stopped)
+    outcomes = run_in_parallel([reading.task(one) for one in waiting], max_parallel=slots, stop=reading.stopped)
     return _ended(outcomes, (planned, skipped), reading, teller, str(settings["model"]))
 
 

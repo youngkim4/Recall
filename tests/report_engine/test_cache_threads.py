@@ -36,3 +36,19 @@ def opened_at_once(path: Path) -> list[Exception]:
 def test_threads_that_open_a_new_cache_at_once_all_open_it(tmp_path: Path) -> None:
     failed = [error for round_ in range(ROUNDS) for error in opened_at_once(tmp_path / f"{round_}.sqlite")]
     assert failed == []
+
+
+# --- which conversations a model read ------------------------------------------------
+
+
+def test_the_cache_says_which_conversations_a_model_read(tmp_path: Path) -> None:
+    from report_engine.cache import CacheEntry
+    from report_engine.ports import LLMUsage
+
+    cache = PeriodCache(tmp_path / "read.sqlite")
+    assert cache.conversations_read("model-a") == frozenset()
+    for conversation, model in (("one", "model-a"), ("two", "model-b"), ("one", "model-a"), ("three", "model-a")):
+        entry = CacheEntry(key=f"{conversation}-{model}-{len(conversation)}", payload={}, usage=LLMUsage(), cost_usd=0.0)
+        cache.put(entry, conversation=conversation, label="Jan 2023", model=model, prompt_version="v")
+    assert cache.conversations_read("model-a") == frozenset({"one", "three"})
+    assert cache.conversations_read("model-b") == frozenset({"two"})
