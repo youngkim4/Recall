@@ -86,7 +86,7 @@ class Memory:
     digest_tokens: int = 24_000
     digest_usd_limit: float = 0.5
     cancel: CancelToken = field(default_factory=CancelToken)
-    digest_parts_limit: int = 12  # the most periods not yet read that one digest reads inside a question
+    digest_parts_limit: int = 4  # the most periods not yet read that one digest reads inside a question
 
 
 def month_year(timestamp: str) -> str:
