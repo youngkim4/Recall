@@ -149,3 +149,66 @@ def test_facts_with_a_part_missing_are_refused(tmp_path: Path) -> None:
         load_facts(write("no-default.json", default=None))
     with pytest.raises(ModelFactsError):
         embedder_facts("text-embedding-3-large", path=write("list.json", models=["text-embedding-3-large"]))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"segments": "five"}, {"dimensions": True}, {"build_id": None}, {"covered_until": 20240605}],
+)
+def test_a_meta_file_with_a_field_of_the_wrong_kind_is_no_index(folder: Path, change: dict) -> None:
+    store = make(folder)
+    fill(store)
+    meta = json.loads((folder / "meta.json").read_text(encoding="utf-8"))
+    (folder / "meta.json").write_text(json.dumps({**meta, **change}), encoding="utf-8")
+    assert store.status().state == "none"
+    (folder / "meta.json").write_text(json.dumps([meta]), encoding="utf-8")
+    assert store.read() is None
+    without = {key: value for key, value in meta.items() if key != "model"}
+    (folder / "meta.json").write_text(json.dumps(without), encoding="utf-8")
+    assert store.read() is None
+
+
+def test_a_segments_file_with_no_table_of_segments_is_a_typed_error(folder: Path) -> None:
+    import sqlite3
+
+    store = make(folder)
+    fill(store)
+    conn = sqlite3.connect(folder / "segments.sqlite3")
+    conn.execute("DROP TABLE segments")
+    conn.commit()
+    conn.close()
+    with pytest.raises(StoreError):
+        store.read()
+
+
+def test_a_vectors_file_of_another_file_version_is_no_index(folder: Path) -> None:
+    import numpy as np
+
+    store = make(folder)
+    _, rows = fill(store)
+    with open(folder / "vectors.npy", "wb") as handle:
+        np.lib.format.write_array(handle, rows, version=(2, 0))
+    assert store.status().state == "none"
+
+
+def test_a_wait_given_as_a_date_with_no_zone_is_read_as_utc() -> None:
+    import email.utils
+    from datetime import UTC, datetime, timedelta
+
+    import httpx
+
+    later = (datetime.now(UTC) + timedelta(seconds=90)).replace(tzinfo=None)
+    request = httpx.Request("POST", "https://api.invalid/v1/embeddings")
+    response = httpx.Response(429, headers={"retry-after": email.utils.format_datetime(later)}, request=request)
+    error = openai.RateLimitError("limited", response=response, body={"code": "rate_limit_exceeded"})
+
+    class Embeddings:
+        def create(self, **request: object) -> object:
+            raise error
+
+    class Client:
+        embeddings = Embeddings()
+
+    with pytest.raises(EmbeddingRateLimited) as caught:
+        OpenAIEmbedder(Client(), "text-embedding-3-large", 8).embed(["a text"])
+    assert caught.value.retry_after_s == pytest.approx(90.0, abs=3.0)

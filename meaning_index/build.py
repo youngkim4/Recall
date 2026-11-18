@@ -14,6 +14,7 @@ import logging
 import time
 from collections.abc import Callable, Iterator, Mapping, Sequence, Set
 from dataclasses import dataclass
+from functools import partial
 
 import numpy as np
 
@@ -53,7 +54,7 @@ def _checker(cancel: object) -> _Check:
     elif callable(getattr(cancel, "is_set", None)):
         asked = cancel.is_set  # type: ignore[attr-defined]
     elif hasattr(cancel, "cancelled"):
-        asked = lambda: cancel.cancelled  # type: ignore[attr-defined]  # noqa: E731
+        asked = partial(getattr, cancel, "cancelled")
     else:
         raise TypeError("cancel is a callable, or it has is_set() or cancelled")
 
