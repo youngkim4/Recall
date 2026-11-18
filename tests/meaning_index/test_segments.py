@@ -165,7 +165,10 @@ def test_the_messages_given_are_not_changed() -> None:
     assert messages == before
 
 
-@pytest.mark.parametrize("bad", ["2024-06-03", "03/06/2024 09:00:00", "", "2024-06-03T09:00:00Z", "2024-13-40 09:00:00"])
+BAD_TIMES = ["2024-06-03", "03/06/2024 09:00:00", "", "2024-06-03T09:00:00Z", "2024-13-40 09:00:00", None, 1717405200]
+
+
+@pytest.mark.parametrize("bad", BAD_TIMES)
 def test_a_time_that_can_not_be_read_is_a_typed_error_with_no_text(bad: str) -> None:
     with pytest.raises(SourceError) as caught:
         cut([msg("a", stamp(0), "one"), msg("b", bad, "MARKED-TEXT")])

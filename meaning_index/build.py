@@ -197,7 +197,8 @@ def build_index(
         known = old_rows.keys() | work.hashes()
         reading = _read(source, model, dimensions, known, check, progress)
         tokens = _embed(embedder, reading.texts, work, count_tokens, limits, sleep, check, progress)
-        store.replace(model, dimensions, reading.segments, _rows(reading.segments, old, old_rows, work, dimensions, progress))
+        rows = _rows(reading.segments, old, old_rows, work, dimensions, progress)
+        store.replace(model, dimensions, reading.segments, rows)
         work.clear()
     reused = sum(1 for segment in reading.segments if segment.content_hash in known)
     now = {segment.segment_id for segment in reading.segments}

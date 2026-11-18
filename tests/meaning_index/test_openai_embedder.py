@@ -122,7 +122,10 @@ FAILURES = [
 ]
 
 
-@pytest.mark.parametrize(("raised", "expected"), FAILURES, ids=[f"{type(r).__name__}-{e.__name__}" for r, e in FAILURES])
+FAILURE_IDS = [f"{type(raised).__name__}-{expected.__name__}" for raised, expected in FAILURES]
+
+
+@pytest.mark.parametrize(("raised", "expected"), FAILURES, ids=FAILURE_IDS)
 def test_each_failure_of_the_service_is_one_typed_failure(raised: Exception, expected: type) -> None:
     embedder = OpenAIEmbedder(Client(raised), MODEL, 2)
     with pytest.raises(EmbeddingError) as caught:

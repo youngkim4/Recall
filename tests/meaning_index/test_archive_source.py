@@ -49,21 +49,22 @@ def write_world(builder: ChatDbBuilder) -> dict[str, str]:
     group = builder.chat(GROUP, display_name="Lake Weekend", members=[rowan, mira])
     silent = builder.chat(QUIET, members=[quiet])
 
-    add("ferry", builder.message(person, when=utc(2024, 1, 15, 18, 0), text="Are we still on for the ferry?", handle=rowan))
-    add("tickets", builder.message(person, when=utc(2024, 1, 15, 18, 1), text="Yes, I bought two tickets", from_me=True))
+    said = builder.message
+    add("ferry", said(person, when=utc(2024, 1, 15, 18, 0), text="Are we still on for the ferry?", handle=rowan))
+    add("tickets", said(person, when=utc(2024, 1, 15, 18, 1), text="Yes, I bought two tickets", from_me=True))
     photo = builder.message(person, when=utc(2024, 1, 15, 18, 2), handle=rowan)
     builder.attachment(photo, mime_type="image/heic")
     add("photo", photo)
     builder.tapback(person, guids["ferry"], 2000, when=utc(2024, 1, 15, 18, 3), from_me=True)
-    add("unsent", builder.message(person, when=utc(2024, 1, 15, 18, 5), handle=rowan, retracted=utc(2024, 1, 15, 18, 6)))
-    add("spaces", builder.message(person, when=utc(2024, 1, 15, 18, 7), text="  \n ", handle=rowan))
+    add("unsent", said(person, when=utc(2024, 1, 15, 18, 5), handle=rowan, retracted=utc(2024, 1, 15, 18, 6)))
+    add("spaces", said(person, when=utc(2024, 1, 15, 18, 7), text="  \n ", handle=rowan))
     # 23:30 and 00:10 local: one exchange over midnight
-    add("late", builder.message(person, when=utc(2024, 1, 16, 7, 30), text="A late thought about the canoe", handle=rowan))
-    add("tomorrow", builder.message(person, when=utc(2024, 1, 16, 8, 10), text="Tell me tomorrow", from_me=True))
+    add("late", said(person, when=utc(2024, 1, 16, 7, 30), text="A late thought about the canoe", handle=rowan))
+    add("tomorrow", said(person, when=utc(2024, 1, 16, 8, 10), text="Tell me tomorrow", from_me=True))
 
-    add("renamed", builder.message(group, when=utc(2024, 3, 1, 17, 0), handle=rowan, item_type=2, group_title="Lake Weekend"))
-    add("canoe", builder.message(group, when=utc(2024, 3, 1, 17, 1), text="Who brings the canoe?", handle=mira))
-    add("dinner", builder.message(group, when=utc(2024, 3, 1, 17, 2), text="I will cook dinner", from_me=True))
+    add("renamed", said(group, when=utc(2024, 3, 1, 17, 0), handle=rowan, item_type=2, group_title="Lake Weekend"))
+    add("canoe", said(group, when=utc(2024, 3, 1, 17, 1), text="Who brings the canoe?", handle=mira))
+    add("dinner", said(group, when=utc(2024, 3, 1, 17, 2), text="I will cook dinner", from_me=True))
 
     builder.message(silent, when=utc(2024, 4, 1, 12, 0), handle=quiet, item_type=1, group_title="left")
     builder.message(None, when=utc(2024, 5, 1, 12, 0), text="A text in no conversation", handle=quiet)
@@ -86,8 +87,9 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[World]:
 
 
 def test_it_lists_the_conversations_that_hold_a_message(world: World) -> None:
-    assert sorted(ArchiveSource(world.archive).conversation_ids()) == sorted([PERSON, GROUP])
-    assert sorted(ArchiveSource(world.archive).conversation_ids()) == sorted(c["id"] for c in world.archive.conversations())
+    listed = list(ArchiveSource(world.archive).conversation_ids())
+    assert sorted(listed) == sorted([PERSON, GROUP])
+    assert listed == [conversation["id"] for conversation in world.archive.conversations()]
 
 
 def test_a_message_has_the_four_fields_of_the_port(world: World) -> None:

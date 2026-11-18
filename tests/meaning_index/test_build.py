@@ -41,6 +41,11 @@ def build(source: ListSource, folder: Path, embedder: object = None, **named: ob
     return build_index(source, embedder or FakeEmbedder(), IndexStore(folder), **named)  # type: ignore[arg-type]
 
 
+def failing_at(call: int) -> ScriptedEmbedder:
+    """The fixed embedder of the other builds, with one request that the service refuses."""
+    return ScriptedEmbedder({call: EmbeddingKeyError("no key")}, dimensions=64, model="fake-embedding-1")
+
+
 def content(folder: Path) -> dict[str, bytes]:
     return {name: (folder / name).read_bytes() for name in FILES}
 
@@ -219,7 +224,7 @@ def test_a_build_that_fails_leaves_the_old_index_as_it_was(folder: Path) -> None
     before = content(folder)
     data["chat-d"] = notes(5, prefix="d")
     with pytest.raises(EmbeddingKeyError):
-        build(ListSource(data), folder, ScriptedEmbedder({1: EmbeddingKeyError("no key")}, dimensions=64, model="fake-embedding-1"))
+        build(ListSource(data), folder, failing_at(1))
     assert content(folder) == before
     assert IndexStore(folder).status().segments == 6
     assert not list(folder.glob("*.new"))
@@ -284,7 +289,7 @@ def test_a_cancel_that_is_no_known_kind_is_refused(folder: Path) -> None:
 def test_a_build_that_stopped_does_not_pay_two_times(folder: Path) -> None:
     source = ListSource({"chat-a": notes(250)})
     texts = cut_texts(source)
-    first = ScriptedEmbedder({3: EmbeddingKeyError("no key")}, dimensions=64, model="fake-embedding-1")
+    first = failing_at(3)
     with pytest.raises(EmbeddingKeyError):
         build(source, folder, first)
     assert first.texts == texts[:192]
@@ -383,7 +388,8 @@ def test_a_source_that_can_not_list_its_conversations_is_a_typed_error(folder: P
 
 def test_progress_tells_the_three_phases_in_order(folder: Path) -> None:
     events: list[BuildProgress] = []
-    build(ListSource({"chat-a": notes(120), "chat-b": notes(3, prefix="b", word="memo")}), folder, progress=events.append)
+    source = ListSource({"chat-a": notes(120), "chat-b": notes(3, prefix="b", word="memo")})
+    build(source, folder, progress=events.append)
     phases = [event.phase for event in events]
     assert phases == sorted(phases, key=["read", "embed", "write"].index)
     by_phase = {phase: [(e.done, e.total) for e in events if e.phase == phase] for phase in ("read", "embed", "write")}

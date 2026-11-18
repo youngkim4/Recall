@@ -175,7 +175,8 @@ def test_a_reply_that_breaks_the_port_is_a_typed_failure(reply: object) -> None:
 def test_rows_are_made_unit_length_whatever_length_the_embedder_gave() -> None:
     rows = unit_rows([[3.0, 4.0, 0.0, 0.0], [0.0, 0.0, 0.5, 0.0]], 2, 4)
     assert rows.dtype == np.float16
-    assert rows.tolist() == [[pytest.approx(0.6, abs=1e-3), pytest.approx(0.8, abs=1e-3), 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
+    assert rows[0].tolist() == pytest.approx([0.6, 0.8, 0.0, 0.0], abs=1e-3)
+    assert rows[1].tolist() == [0.0, 0.0, 1.0, 0.0]
 
 
 def test_counts_that_do_not_match_the_texts_are_refused() -> None:

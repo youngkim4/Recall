@@ -83,7 +83,7 @@ class IndexStore:
             return None
         segments = files.read_segments(self._folder / SEGMENTS_FILE)
         if len(segments) != meta.segments:
-            logger.warning("the segments file does not hold the number of segments of its build; the index is read as none")
+            logger.warning("the segments file does not hold the segments of its build; the index is read as none")
             return None
         vectors = files.open_vectors(self._folder / VECTORS_FILE, meta.segments, meta.dimensions)
         return StoredIndex(meta=meta, segments=segments, vectors=vectors)

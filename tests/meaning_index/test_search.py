@@ -235,14 +235,15 @@ def test_equal_scores_come_in_the_order_of_the_rows() -> None:
 def test_the_hits_are_the_ones_of_a_plain_dot_product_over_every_row(limit: int) -> None:
     count, dimensions = 9000, 24  # more rows than one chunk of the search
     rows = unit(count, dimensions, seed=11)
-    segments = [kept(n, conversation=f"chat-{n % 3}", day=f"2024-{1 + n % 12:02d}-{1 + n % 28:02d}") for n in range(count)]
+    days = [f"2024-{1 + n % 12:02d}-{1 + n % 28:02d}" for n in range(count)]
+    segments = [kept(n, conversation=f"chat-{n % 3}", day=days[n]) for n in range(count)]
     index = MeaningIndex(meta_for(count, dimensions), segments, rows)
     probe = unit(1, dimensions, seed=5)[0].astype(np.float64)
     probe /= np.linalg.norm(probe)
     scores = rows.astype(np.float64) @ probe
 
     def check(found: list[SearchHit], mask: np.ndarray) -> None:
-        """The hits are the best rows of the mask. Two scores that differ by less than the rounding can change places."""
+        """The hits are the best rows of the mask. Two scores nearer than the rounding can change places."""
         places = np.flatnonzero(mask)
         best = np.sort(scores[places])[::-1][:limit]
         rows_found = [int(hit.segment.segment_id, 16) for hit in found]
@@ -257,7 +258,8 @@ def test_the_hits_are_the_ones_of_a_plain_dot_product_over_every_row(limit: int)
     in_march = np.array([n % 12 == 2 for n in range(count)])
     check(index.search(probe.tolist(), since="2024-03-01", until="2024-03-31", limit=limit), in_march)
     both = in_chat & in_march
-    check(index.search(probe.tolist(), conversations=["chat-1"], since="2024-03-01", until="2024-03-31", limit=limit), both)
+    march = {"since": "2024-03-01", "until": "2024-03-31"}
+    check(index.search(probe.tolist(), conversations=["chat-1"], limit=limit, **march), both)
 
 
 def test_parts_that_do_not_fit_are_refused() -> None:

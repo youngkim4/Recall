@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import datetime, timedelta
 
+import numpy as np
+
+from meaning_index.fake_embedder import FakeEmbedder
 from meaning_index.ports import SourceMessage
+from meaning_index.segments import cut_segments
+from meaning_index.shapes import Segment
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 START = datetime(2024, 6, 3, 9, 0, 0)
@@ -20,7 +25,9 @@ def msg(message_id: str, timestamp: str, text: str, is_from_me: bool = False) ->
     return {"id": message_id, "timestamp": timestamp, "text": text, "is_from_me": is_from_me}
 
 
-def run(count: int, *, prefix: str = "m", text: str = "a line", step: float = 1.0, start: float = 0.0) -> list[SourceMessage]:
+def run(
+    count: int, *, prefix: str = "m", text: str = "a line", step: float = 1.0, start: float = 0.0
+) -> list[SourceMessage]:
     """`count` messages, `step` minutes apart. Each second one is an own message."""
     return [msg(f"{prefix}{n}", stamp(start + n * step), f"{text} {n}", n % 2 == 1) for n in range(count)]
 
@@ -54,8 +61,6 @@ class ScriptedEmbedder:
     """
 
     def __init__(self, script: object = None, *, dimensions: int = 16, model: str = "scripted-1") -> None:
-        from meaning_index.fake_embedder import FakeEmbedder
-
         self._inner = FakeEmbedder(dimensions=dimensions, model=model)
         self._script = script or {}
         self.model = model
@@ -66,7 +71,8 @@ class ScriptedEmbedder:
     def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         self.sizes.append(len(texts))
         number = len(self.sizes)
-        error = self._script(number, texts) if callable(self._script) else self._script.get(number)  # type: ignore[union-attr]
+        script = self._script
+        error = script(number, texts) if callable(script) else script.get(number)  # type: ignore[attr-defined]
         if error is not None:
             raise error
         self.answered.append(tuple(texts))
@@ -78,10 +84,10 @@ class ScriptedEmbedder:
         return [text for call in self.answered for text in call]
 
 
-def kept(number: int, *, conversation: str = "chat-a", day: str = "2024-06-03", content: str | None = None) -> "Segment":
+def kept(
+    number: int, *, conversation: str = "chat-a", day: str = "2024-06-03", content: str | None = None
+) -> Segment:
     """An invented stored segment. Its ids follow `number`."""
-    from meaning_index.shapes import Segment
-
     return Segment(
         segment_id=f"{number:064x}",
         conversation_id=conversation,
@@ -94,10 +100,8 @@ def kept(number: int, *, conversation: str = "chat-a", day: str = "2024-06-03", 
     )
 
 
-def unit(count: int, dimensions: int, seed: int = 7) -> "np.ndarray":
+def unit(count: int, dimensions: int, seed: int = 7) -> np.ndarray:
     """`count` invented rows of length 1, as the store keeps them."""
-    import numpy as np
-
     rows = np.random.default_rng(seed).standard_normal((count, dimensions))
     return (rows / np.linalg.norm(rows, axis=1, keepdims=True)).astype("<f2")
 
@@ -109,8 +113,6 @@ def notes(count: int, *, prefix: str = "n", word: str = "note") -> list[SourceMe
 
 def cut_texts(source: ListSource) -> list[str]:
     """The text of every segment of a source, in the order of a build."""
-    from meaning_index.segments import cut_segments
-
     return [
         segment.text
         for conversation in source.conversation_ids()

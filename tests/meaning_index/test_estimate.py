@@ -14,18 +14,24 @@ from meaning_index.shapes import BuildEstimate
 from meaning_index.store import IndexStore
 from tests.meaning_index.support import ListSource, ScriptedEmbedder, cut_texts, msg, notes, run, stamp, words
 
-FACTS = EmbedderFacts(model="fake-embedding-1", dimensions=64, usd_per_mtok=0.13, max_input_tokens=8192, tokenizer_family="")
+def facts(model: str = "fake-embedding-1", dimensions: int = 64, price: float = 0.13) -> EmbedderFacts:
+    return EmbedderFacts(model, dimensions, usd_per_mtok=price, max_input_tokens=8192, tokenizer_family="")
+
+
+FACTS = facts()
 
 
 def small() -> dict:
-    return {"chat-a": run(3, prefix="a") + run(3, prefix="a-late", start=600, text="a later line"), "chat-b": run(40, prefix="b")}
+    late = run(3, prefix="a-late", start=600, text="a later line")
+    return {"chat-a": run(3, prefix="a") + late, "chat-b": run(40, prefix="b")}
 
 
 def test_before_a_build_every_segment_is_new(folder: Path) -> None:
     source = ListSource(small())
     tokens = sum(words(text) for text in cut_texts(source))
     estimate = estimate_build(source, IndexStore(folder), FACTS, words)
-    assert estimate == BuildEstimate(segments=5, new_segments=5, tokens=tokens, usd=pytest.approx(tokens * 0.13 / 1_000_000))
+    usd = pytest.approx(tokens * 0.13 / 1_000_000)
+    assert estimate == BuildEstimate(segments=5, new_segments=5, tokens=tokens, usd=usd)
     assert estimate.usd > 0
 
 
@@ -53,10 +59,8 @@ def test_only_what_the_next_build_embeds_is_counted(folder: Path) -> None:
 def test_another_model_makes_every_segment_new(folder: Path) -> None:
     store = IndexStore(folder)
     build_index(ListSource(small()), FakeEmbedder(), store, count_tokens=words)
-    other = EmbedderFacts(model="another", dimensions=64, usd_per_mtok=0.02, max_input_tokens=8192, tokenizer_family="")
-    assert estimate_build(ListSource(small()), store, other, words).new_segments == 5
-    wider = EmbedderFacts(model="fake-embedding-1", dimensions=128, usd_per_mtok=0.02, max_input_tokens=8192, tokenizer_family="")
-    assert estimate_build(ListSource(small()), store, wider, words).new_segments == 5
+    assert estimate_build(ListSource(small()), store, facts(model="another"), words).new_segments == 5
+    assert estimate_build(ListSource(small()), store, facts(dimensions=128), words).new_segments == 5
 
 
 def test_what_a_stopped_build_paid_for_is_not_counted_again(folder: Path) -> None:
@@ -77,6 +81,7 @@ def test_one_text_of_two_segments_is_paid_one_time(folder: Path) -> None:
 def test_the_price_is_the_one_of_the_facts_file(folder: Path) -> None:
     source = ListSource({"chat-a": notes(10)})
     large = estimate_build(source, IndexStore(folder), embedder_facts(), lambda text: 100_000)
-    small_model = estimate_build(source, IndexStore(folder), embedder_facts("text-embedding-3-small"), lambda text: 100_000)
+    small_facts = embedder_facts("text-embedding-3-small")
+    small_model = estimate_build(source, IndexStore(folder), small_facts, lambda text: 100_000)
     assert large.usd == pytest.approx(0.13)
     assert small_model.usd == pytest.approx(0.02)

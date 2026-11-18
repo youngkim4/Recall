@@ -48,10 +48,8 @@ MARKS = (TEXT_MARK, NAME_MARK, HANDLE, MAIL, "marked.person", ID_MARK)
 def marked() -> dict:
     """Every text, every conversation id and every message id carries a mark."""
     def talk(prefix: str, count: int) -> list:
-        return [
-            msg(f"{ID_MARK}-{prefix}-{n}", stamp(n * 180), f"{TEXT_MARK} from {NAME_MARK} line {n} of {prefix}", n % 2 == 0)
-            for n in range(count)
-        ]
+        text = f"{TEXT_MARK} from {NAME_MARK} line {{n}} of {prefix}"
+        return [msg(f"{ID_MARK}-{prefix}-{n}", stamp(n * 180), text.format(n=n), n % 2 == 0) for n in range(count)]
 
     return {HANDLE: talk("phone", 120), MAIL: talk("mail", 5)}
 
@@ -98,22 +96,30 @@ def sdk_error(code: int) -> Exception:
     return kind(f"Error code: {code} - {{'error': {body}}}", response=response, body=body)
 
 
-FAILING: list[tuple[str, Callable[[], Any], type]] = [
-    ("an embedder that repeats its input", lambda: ScriptedEmbedder(echoing), EmbeddingError),
-    ("a typed failure after two requests", lambda: ScriptedEmbedder({2: EmbeddingKeyError("no key")}), EmbeddingKeyError),
-    ("always too large", lambda: ScriptedEmbedder(lambda n, texts: EmbeddingTooLarge("too large")), EmbeddingTooLarge),
-    ("always rate limited", lambda: ScriptedEmbedder(lambda n, texts: EmbeddingRateLimited("wait")), EmbeddingRateLimited),
-    ("a reply of the wrong size", lambda: FakeReply(), EmbeddingError),
-    ("the SDK refuses the request", lambda: OpenAIEmbedder(sdk_client(sdk_error(400)), "text-embedding-3-large", 16), EmbeddingError),
-    ("the SDK says wait", lambda: OpenAIEmbedder(sdk_client(sdk_error(429)), "text-embedding-3-large", 16), EmbeddingRateLimited),
-]
-
-
-class FakeReply:
+class WrongSize:
     model, dimensions = "wrong-size", 16
 
     def embed(self, texts: Sequence[str]) -> Sequence[Sequence[float]]:
         return [[1.0, 2.0] for _ in texts]
+
+
+def always(error: Exception) -> ScriptedEmbedder:
+    return ScriptedEmbedder(lambda number, texts: error)
+
+
+def through_the_sdk(code: int) -> OpenAIEmbedder:
+    return OpenAIEmbedder(sdk_client(sdk_error(code)), "text-embedding-3-large", 16)
+
+
+FAILING: list[tuple[str, Callable[[], Any], type]] = [
+    ("an embedder that repeats its input", lambda: ScriptedEmbedder(echoing), EmbeddingError),
+    ("a typed failure in request two", lambda: ScriptedEmbedder({2: EmbeddingKeyError("no key")}), EmbeddingKeyError),
+    ("always too large", lambda: always(EmbeddingTooLarge("too large")), EmbeddingTooLarge),
+    ("always rate limited", lambda: always(EmbeddingRateLimited("wait")), EmbeddingRateLimited),
+    ("a reply of the wrong size", WrongSize, EmbeddingError),
+    ("the SDK refuses the request", lambda: through_the_sdk(400), EmbeddingError),
+    ("the SDK says wait", lambda: through_the_sdk(429), EmbeddingRateLimited),
+]
 
 
 @pytest.mark.parametrize(("case", "make", "expected"), FAILING, ids=[case for case, _, _ in FAILING])
@@ -150,7 +156,9 @@ def test_a_source_that_fails_says_nothing_of_the_messages(folder: Path, caplog: 
     assert_clean(caught.value, caplog)
 
 
-def test_a_time_that_can_not_be_read_says_nothing_of_the_messages(folder: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_a_time_that_can_not_be_read_says_nothing_of_the_messages(
+    folder: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     data = marked()
     data[MAIL] = [*data[MAIL], msg(f"{ID_MARK}-bad", f"not a time {TEXT_MARK}", TEXT_MARK)]
     caplog.set_level(logging.DEBUG)
@@ -164,7 +172,11 @@ def test_a_cancelled_build_says_nothing_of_the_messages(folder: Path, caplog: py
     caplog.set_level(logging.DEBUG)
     with pytest.raises(BuildCancelled) as caught:
         build_index(
-            ListSource(marked()), embedder, IndexStore(folder), count_tokens=words, cancel=lambda: len(embedder.sizes) >= 1
+            ListSource(marked()),
+            embedder,
+            IndexStore(folder),
+            count_tokens=words,
+            cancel=lambda: len(embedder.sizes) >= 1,
         )
     assert caught.value.texts_embedded == 96
     assert_clean(caught.value, caplog)
