@@ -63,7 +63,8 @@ def _archive_faults() -> Iterator[None]:
 
 
 def least(min_messages: int | None) -> int:
-    """The least number of messages of a conversation of the memory. None is `PREPARE_MIN_MESSAGES`, read at each call."""
+    """The least number of messages of a conversation of the memory.
+    None is `PREPARE_MIN_MESSAGES`, read at each call."""
     return PREPARE_MIN_MESSAGES if min_messages is None else min_messages
 
 
@@ -93,7 +94,9 @@ def read_before(
     return bool(read & set(candidates(archive, min_messages)))
 
 
-def _planned(archive: Archive, names: Names, chosen: Sequence[str], more: Mapping[str, Any]) -> tuple[list[Planned], int]:
+def _planned(
+    archive: Archive, names: Names, chosen: Sequence[str], more: Mapping[str, Any]
+) -> tuple[list[Planned], int]:
     """What reading each conversation needs. One that can not be planned is skipped and counted."""
     kept = {name: more[name] for name in ESTIMATE_KEYS if name in more}
     planned: list[Planned] = []
@@ -102,7 +105,8 @@ def _planned(archive: Archive, names: Names, chosen: Sequence[str], more: Mappin
         try:
             found = digests.estimate(conversation, model=model(), archive=archive, names=names, **kept)
         except (ReportFailure, ValueError) as error:
-            logger.info("a conversation of the memory can not be planned (%s)", getattr(error, "code", type(error).__name__))
+            why = getattr(error, "code", type(error).__name__)
+            logger.info("a conversation of the memory can not be planned (%s)", why)
             skipped += 1
             continue
         planned.append(Planned(conversation, found.periods, found.periods_cached, float(found.usd)))
@@ -193,21 +197,29 @@ def run(
     planned, skipped = _planned(archive, names, chosen, more)
     waiting = [one for one in planned if one.not_read > 0]
     parts = sum(one.not_read for one in waiting)
-    teller.tell(step="read", total=parts, log=words.to_read(parts, len(waiting), sum(one.periods_cached for one in planned)))
+    read = sum(one.periods_cached for one in planned)
+    teller.tell(step="read", total=parts, log=words.to_read(parts, len(waiting), read))
     settings = {"model": model(), **more}
+    model_id = str(settings["model"] or "") or models.default_id()
     runtime = settings.get("runtime")
-    pool = digests.call_pool(str(settings["model"]), slots, **({"clock": runtime.clock} if runtime else {}))
+    pool = digests.call_pool(model_id, slots, **({"clock": runtime.clock} if runtime else {}))
 
     def build(conversation: str, heard: Callable[[Any], None]) -> Any:
-        return digests.build(conversation, None, None, cancel, heard, archive=archive, names=names, pool=pool, **settings)
+        return digests.build(
+            conversation, None, None, cancel, heard, archive=archive, names=names, pool=pool, **settings
+        )
 
     reading = Reading(teller, parts, len(waiting), cancel, pool, build)
     outcomes = run_in_parallel([reading.task(one) for one in waiting], max_parallel=slots, stop=reading.stopped)
-    return _ended(outcomes, (planned, skipped), reading, teller, str(settings["model"]))
+    return _ended(outcomes, (planned, skipped), reading, teller, model_id)
 
 
 def _ended(
-    outcomes: Sequence[Any], looked: tuple[Sequence[Planned], int], reading: Reading, teller: words.Teller, model_id: str
+    outcomes: Sequence[Any],
+    looked: tuple[Sequence[Planned], int],
+    reading: Reading,
+    teller: words.Teller,
+    model_id: str,
 ) -> dict[str, Any]:
     """The result of the job, or the failure that stopped it. `looked` is what was planned, and the count of skipped."""
     unplanned = [outcome.error for outcome in outcomes if outcome.error is not None]

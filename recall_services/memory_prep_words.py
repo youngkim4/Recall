@@ -40,7 +40,9 @@ def sentence_of(code: str, provider: str, model: str) -> str:
         "no_key": f"No API key is set. Add {keys.KEY_NAME} to {keys.KEY_PLACE}, {AGAIN}",
         "key_rejected": f"{provider} rejected the API key. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {AGAIN} {KEPT}",
         "unknown_model": f"{provider} does not know the model {model}. {KEPT}",
-        "rate_limit": f"{provider} is limiting requests, or the account has no credit left. Wait a moment, {AGAIN} {KEPT}",
+        "rate_limit": (
+            f"{provider} is limiting requests, or the account has no credit left. Wait a moment, {AGAIN} {KEPT}"
+        ),
         "offline": f"{provider} could not be reached. Check the internet connection, {AGAIN} {KEPT}",
         "cache_unreadable": f"What earlier runs read could not be read or kept. {KEPT}",
         "archive_error": ARCHIVE_UNREADABLE,
