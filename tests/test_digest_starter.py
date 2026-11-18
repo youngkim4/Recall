@@ -1,8 +1,9 @@
-"""A long conversation from the question to the job and back, and a reading that is not started again and again.
+"""A question reads a conversation itself and starts no job; the starter of a `digest` job keeps how the last one ended.
 
-The chain of the app: a chat route, the digest tool, `prepare`, `digest_starter`,
-the `digest` job, the notes, the next question. Mina's conversation has four
-parts here, two more than a question reads. Each model is a fake.
+Part F4 took the chain from a question to the job away: a question reads at
+most `memory.DIGEST_PARTS_LIMIT` parts itself, and a longer story is named in
+the payload. `digest_starter` stays in the server, and no question calls it.
+Mina's conversation has four parts here. Each model is a fake.
 """
 import pytest
 
@@ -23,8 +24,7 @@ from tests.test_digest_job import desk, held_jobs, run  # noqa: F401
 pytestmark = pytest.mark.usefixtures("no_jobs")
 
 QUESTION = "What is it like with Mina?"
-STARTED = "Recall reads them now in the background"
-NOT_STARTED = "one question reads at most 2"
+NOT_READY = "too long to read inside one question"
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def world(desk, monkeypatch):  # noqa: F811
 
 def question(world, *calls):
     """Ask through the route of the app. Gives the payload and what the digest tool told the model."""
-    llm = ChatLLM([list(calls or [digest_of()]), say("Later.")])
+    llm = ChatLLM([list(calls or [digest_of()]), say("From what was read.")])
     world.monkeypatch.setattr(chat_service, "default_llm", lambda _config: llm)
     status, body = ui_server.answer_question({"messagesPath": world.file, "question": QUESTION})
     assert status == 200, body
@@ -58,64 +58,35 @@ def wait():
     return [ended(job["id"]) for job in digest_jobs()]
 
 
-def refuses_from_february(call):
-    if call.first_day >= "2023-02-01":
-        return completed(call, None, text="", status="refused")  # paid, and no result
-    return None
-
-
 def refuses_all(call):
     return completed(call, None, text="", status="refused")
 
 
-# --- the whole chain ---------------------------------------------------------------
+# --- a question reads what it can, and starts nothing ----------------------------
 
 
-def test_a_long_conversation_is_read_by_the_job_and_the_next_question_shows_its_story(world):
-    first, (told,) = question(world)
-    assert STARTED in told and world.in_question.calls == []
-    (job,) = wait()
-    assert (job["status"], job["contact"], job["since"], job["until"]) == ("completed", MINA, None, None)
-    result = job["result"]
-    assert (result["periods"], result["periodsBuilt"], result["periodsFailed"]) == (4, 4, 0)
-    assert len(world.llm.map_calls) == 4 and world.models == [memory.DIGEST_MODEL]
-    second, (story,) = question(world)
-    assert all(f"== {label}" in story for label in PERIOD_LABELS) and STARTED not in story
-    # the question read the story from the notes: no call, no cost, no second job
-    assert world.in_question.calls == [] and len(world.llm.calls) == 4 and len(digest_jobs()) == 1
-    assert second["usage"]["digest_usd"] == 0.0 and first["cancelled"] is False
+def test_a_question_reads_four_parts_itself_and_the_next_question_reads_them_from_the_notes(world):
+    first, (story,) = question(world)
+    assert all(f"== {label}" in story for label in PERIOD_LABELS) and NOT_READY not in story
+    assert len(world.in_question.map_calls) == 4 and digest_jobs() == []
+    assert first["usage"]["digest_usd"] > 0 and first["memory"] == {"notReady": []}
+    second, (again,) = question(world)
+    assert again == story and len(world.in_question.calls) == 4 and digest_jobs() == []
+    assert second["usage"]["digest_usd"] == 0.0
 
 
-# --- a reading that fails is not started again and again ---------------------------
-
-
-def test_parts_that_fail_each_time_are_not_paid_for_at_each_question(world):
-    """The first job reads one part and three fail. The second reads nothing new: no third job is started."""
-    world.llm = FakeLLM(refuses_from_february)
-    seen = []
-    for _number in range(4):
-        _payload, (told,) = question(world)
-        wait()
-        seen.append((STARTED in told, NOT_STARTED in told, len(digest_jobs()), len(world.llm.calls)))
-    assert seen == [(True, False, 1, 4), (True, False, 2, 7), (False, True, 2, 7), (False, True, 2, 7)]
-    first, second = wait()
-    assert (first["result"]["periodsBuilt"], first["result"]["periodsFailed"]) == (1, 3)
-    assert (second["result"]["periodsBuilt"], second["result"]["periodsFailed"]) == (0, 3)
-    # narrower days show the part that is in the notes, with no call
-    _payload, (january,) = question(world, digest_of(until="2023-01-31"))
-    assert "== Jan 2023" in january and world.in_question.calls == [] and len(digest_jobs()) == 2
-
-
-def test_a_job_that_failed_is_not_started_again(world):
-    world.llm = FakeLLM(refuses_all)
-    seen = []
+def test_a_story_too_long_for_a_question_is_named_and_no_question_pays_or_starts_a_job(world):
+    world.monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 2)
     for _number in range(3):
-        _payload, (told,) = question(world)
-        wait()
-        seen.append((STARTED in told, NOT_STARTED in told, len(digest_jobs()), len(world.llm.calls)))
-    assert seen == [(True, False, 1, 4), (False, True, 1, 4), (False, True, 1, 4)]
-    (job,) = wait()
-    assert (job["status"], job["code"], job["error"]) == ("failed", "model_error", "The model could not read the conversation. Ask again.")
+        payload, (told,) = question(world)
+        assert NOT_READY in told and payload["memory"] == {"notReady": [MINA]}
+    assert world.in_question.calls == [] and digest_jobs() == [] and world.llm.calls == []
+    # narrower days fit inside the question
+    _payload, (january,) = question(world, digest_of(until="2023-01-31"))
+    assert "== Jan 2023" in january and len(world.in_question.calls) == 1 and digest_jobs() == []
+
+
+# --- the starter of a `digest` job, which no question calls -------------------------
 
 
 def test_the_starter_keeps_how_the_last_job_of_the_same_archive_conversation_and_days_ended(world):

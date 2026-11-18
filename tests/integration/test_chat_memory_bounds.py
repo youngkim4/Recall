@@ -1,7 +1,8 @@
 """Whole questions with a digest that is bounded: a long conversation, two questions at once, a provider that fails.
 
 The pieces are those of `test_chat_memory.py`. The long conversation is the
-one of the report tests: four parts, two more than a question reads.
+one of the report tests: four parts. A test that needs a story too long for a
+question sets `memory.DIGEST_PARTS_LIMIT` to 2.
 """
 
 from __future__ import annotations
@@ -66,22 +67,35 @@ def desk(tmp_path: Path) -> Iterator[report_world.Desk]:
 def test_a_long_conversation_is_not_read_inside_the_question(
     desk: report_world.Desk, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Four parts are not read yet, and a question reads two: no part is read, and the question still ends."""
+    """Four parts are not read yet, and a question reads two: no part is read, nothing starts, the payload names it."""
     digest_llm = ReportLLM()
-    started: list[tuple[Any, ...]] = []
     monkeypatch.setattr(memory, "ports", partial(PORTS, digest=settings_of(desk, digest_llm)))
-
-    def start(conversation: str, since: Any, until: Any) -> bool:
-        started.append((conversation, since, until))
-        return True
-
-    llm = FakeLLM([[digest_of()], say("A fuller answer is possible in a few minutes.")])
-    payload = ask_desk(desk, llm, start_digest=start)
+    monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 2)
+    llm = FakeLLM([[digest_of()], say("From the figures.")])
+    payload = ask_desk(desk, llm)
     assert digest_llm.calls == [] and payload["cancelled"] is False
     (told,) = tool_results(llm.requests[1])
-    assert "Jan 2023" not in told
-    # the engine asks the server to read the conversation outside the question
-    assert started == [(MINA, None, None)] and "in the background" in told
+    assert "Jan 2023" not in told and "too long to read inside one question" in told
+    assert payload["memory"] == {"notReady": [MINA]}
+
+
+def test_a_conversation_of_four_parts_is_read_inside_the_question_with_its_progress(
+    desk: report_world.Desk, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    digest_llm = ReportLLM()
+    monkeypatch.setattr(memory, "ports", partial(PORTS, digest=settings_of(desk, digest_llm)))
+    llm = FakeLLM([[digest_of()], say("A steady friendship.")])
+    events = list(
+        chat.stream(
+            QUESTION, archive=desk.archive, names=desk.names, model=MODEL, llm_factory=lambda _config: llm,
+            clock=lambda: NOW,
+        )  # fmt: skip
+    )
+    told = [(event["part"], event["label"], event["state"]) for event in events if event["type"] == "progress"]
+    labels = report_world.PERIOD_LABELS
+    assert told == [(n, label, state) for n, label in enumerate(labels, start=1) for state in ("start", "done")]
+    assert len(digest_llm.map_calls) == 4 and done(events)["memory"] == {"notReady": []}
+    assert events.index(next(event for event in events if event["type"] == "progress")) < len(events) - 1
 
 
 def slow(seconds: float) -> ReportLLM:
@@ -125,6 +139,7 @@ def test_a_provider_that_fails_each_call_is_asked_for_two_parts_at_most(
     failing = ReportLLM(offline)
     monkeypatch.setattr(memory, "ports", partial(PORTS, digest=settings_of(desk, failing)))
     llm = FakeLLM([[digest_of()], say("Two parts are missing.")])
+    monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 2)
     payload = ask_desk(desk, llm)
     (told,) = tool_results(llm.requests[1])
     # each part that is not read was tried one time, and no more than a question reads

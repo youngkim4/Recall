@@ -281,9 +281,10 @@ def test_a_digest_that_is_cancelled_after_a_part_says_what_that_part_cost(
 
 
 def test_a_digest_that_failed_before_any_call_cost_nothing_and_leaves_no_line(
-    desk: Desk, caplog: pytest.LogCaptureFixture
+    desk: Desk, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     caplog.set_level(logging.INFO, logger=memory.SPEND_LOG)
+    monkeypatch.setattr(memory, "DIGEST_PARTS_LIMIT", 2)  # Mina has four parts
     with pytest.raises(digests.ReportFailure) as told:
         bounded(desk, FakeLLM()).digest(MINA, cancel=CancelToken(), **ALL)
     assert (told.value.code, told.value.usd) == ("too_many_parts", 0.0) and spend_lines(caplog) == []
