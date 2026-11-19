@@ -11,6 +11,7 @@ from collections.abc import Callable
 from typing import Any
 
 from recall_services import keys
+from recall_services.models import SOME_PROVIDER
 from report_engine import LLMError
 
 logger = logging.getLogger(__name__)
@@ -42,12 +43,12 @@ class PeopleFailure(Exception):
         self.usage = usage
 
 
-def sentence_of(code: str, provider: str = "OpenAI", model: str = "") -> str:
+def sentence_of(code: str, provider: str = SOME_PROVIDER, model: str = "") -> str:
     """One plain sentence for a failure."""
     sentences = {
-        "no_key": f"No API key is set. Add {keys.KEY_NAME} to {keys.KEY_PLACE}, {AGAIN}",
-        "key_rejected": f"{provider} rejected the API key. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {AGAIN} {KEPT}",
-        "unknown_model": f"{provider} does not know the model {model}. {KEPT}",
+        "no_key": f"{keys.NO_KEY}, {AGAIN}",
+        "key_rejected": f"{provider} refused the API key. {keys.CHECK_KEY}, {AGAIN} {KEPT}",
+        "unknown_model": f"{provider} does not know the model that writes the profiles. {KEPT}",
         "rate_limit": (
             f"{provider} is limiting requests, or the account has no credit left. Wait a moment, {AGAIN} {KEPT}"
         ),
@@ -63,7 +64,9 @@ def sentence_of(code: str, provider: str = "OpenAI", model: str = "") -> str:
     return sentences.get(code, f"The people index could not be built. {KEPT}")
 
 
-def failure(code: str, usage: dict[str, Any] | None = None, *, provider: str = "OpenAI", model: str = "") -> PeopleFailure:
+def failure(
+    code: str, usage: dict[str, Any] | None = None, *, provider: str = SOME_PROVIDER, model: str = ""
+) -> PeopleFailure:
     return PeopleFailure(code, sentence_of(code, provider, model), usage)
 
 

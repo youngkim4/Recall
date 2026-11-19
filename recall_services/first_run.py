@@ -44,7 +44,7 @@ from report_engine.pricing import call_cost_usd
 STEP_NAMES = ("meaning", "memory", "people")
 MEMORY_MIN_MESSAGES = 1
 
-NO_KEY = f"No API key is set. Add {keys.KEY_NAME} to {keys.KEY_PLACE}, then get chat ready again."
+NO_KEY = f"{keys.NO_KEY}, then get chat ready again."
 NO_MESSAGES = "The archive holds no message yet. Read your messages first, then get chat ready."
 SKIPPED = {
     "meaning": "The index for the search by meaning is ready: nothing to build.",

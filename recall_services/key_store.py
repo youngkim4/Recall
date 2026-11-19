@@ -41,11 +41,9 @@ _ENCODING, _ERRORS = "utf-8", "surrogateescape"
 
 NOT_TEXT = "The key must be text."
 NOT_A_KEY = f"This is not an API key. A key starts with {PREFIX} and has {MIN_CHARS} to {MAX_CHARS} letters, digits, - or _."
-ENVIRONMENT_WINS = (
-    f"{keys.KEY_NAME} is set where the server starts, and that key is used. A key saved here would not be used."
-)
-NOT_WRITTEN = f"The key could not be saved in {keys.KEY_PLACE}. Check the free space on the disk, then try again."
-NOT_REMOVED = f"The key could not be removed from {keys.KEY_PLACE}. Check the free space on the disk, then try again."
+ENVIRONMENT_WINS = "An API key is set where the server starts, and that key is used. A key saved here would not be used."
+NOT_WRITTEN = "The API key could not be saved. Check the free space on the disk, then try again."
+NOT_REMOVED = "The API key could not be removed. Check the free space on the disk, then try again."
 
 # one write of the file at a time
 _LOCK = threading.Lock()

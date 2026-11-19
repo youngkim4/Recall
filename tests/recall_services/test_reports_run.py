@@ -265,11 +265,11 @@ def test_days_with_no_message_write_no_report(desk: Desk) -> None:
 @pytest.mark.parametrize(
     ("error", "code", "sentence"),
     [
-        (LLMError("x (HTTP 401)", status_code=401), "key_rejected", "OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, then run the report again."),
-        (LLMError("x (HTTP 403)", status_code=403), "key_rejected", "OpenAI does not allow this API key to use the model. Check OPENAI_API_KEY in the file .env in Recall's data folder, then run the report again."),
-        (LLMError("x (HTTP 404)", status_code=404), "unknown_model", "OpenAI does not know the model gpt-6.1-sol. Choose another level in Settings."),
-        (LLMError("x (HTTP 429)", status_code=429), "rate_limit", "OpenAI is limiting requests, or the account has no credit left. Wait a moment, then run the report again."),
-        (LLMError("the model service failed (APIConnectionError)"), "offline", "OpenAI could not be reached. Check the internet connection, then run the report again."),
+        (LLMError("x (HTTP 401)", status_code=401), "key_rejected", "The AI service refused the API key. Check the API key in Settings > Archive > API key, then run the report again."),
+        (LLMError("x (HTTP 403)", status_code=403), "key_rejected", "The AI service does not allow this API key to use the model of this level. Check the API key in Settings > Archive > API key, then run the report again."),
+        (LLMError("x (HTTP 404)", status_code=404), "unknown_model", "The AI service does not know the model of this level. Choose another level in Settings."),
+        (LLMError("x (HTTP 429)", status_code=429), "rate_limit", "The AI service is limiting requests, or the account has no credit left. Wait a moment, then run the report again."),
+        (LLMError("the model service failed (APIConnectionError)"), "offline", "The AI service could not be reached. Check the internet connection, then run the report again."),
         (LLMError("the model service failed (APITimeoutError)"), "timeout", "The model took too long to answer. Run the report again."),
         (LLMError("x (HTTP 500)", status_code=500), "model_error", "The model could not read the conversation. No report was written. Run the report again."),
     ],
@@ -303,7 +303,7 @@ def test_with_no_key_no_request_is_made_and_no_file_is_written(desk: Desk, monke
     with pytest.raises(reports.ReportFailure) as caught:
         reports.run(MINA, MODEL, **more)
     assert caught.value.code == "no_key"
-    assert str(caught.value) == "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then run the report again."
+    assert str(caught.value) == "No API key is set. Add one in Settings > Archive > API key, then run the report again."
     assert not desk.places.out_dir.exists()
 
 

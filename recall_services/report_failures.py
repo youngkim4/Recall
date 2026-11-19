@@ -25,7 +25,7 @@ from report_engine import (
 )
 
 AGAIN = "then run the report again."
-NO_KEY = f"No API key is set. Add {keys.KEY_NAME} to {keys.KEY_PLACE}, {AGAIN}"
+NO_KEY = f"{keys.NO_KEY}, {AGAIN}"
 _UNAUTHORIZED, _FORBIDDEN, _NOT_FOUND, _TOO_MANY = 401, 403, 404, 429
 
 
@@ -48,14 +48,14 @@ def _of_the_model(last: LLMError | None, provider: str, model: str) -> tuple[str
         return None
     status, said = last.status_code, str(last)
     if status == _UNAUTHORIZED:
-        return "key_rejected", f"{provider} rejected the API key. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {AGAIN}"
+        return "key_rejected", f"{provider} refused the API key. {keys.CHECK_KEY}, {AGAIN}"
     if status == _FORBIDDEN:
         return (
             "key_rejected",
-            f"{provider} does not allow this API key to use the model. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {AGAIN}",
+            f"{provider} does not allow this API key to use the model of this level. {keys.CHECK_KEY}, {AGAIN}",
         )
     if status == _NOT_FOUND:
-        return "unknown_model", f"{provider} does not know the model {model}. Choose another level in Settings."
+        return "unknown_model", f"{provider} does not know the model of this level. Choose another level in Settings."
     if status == _TOO_MANY:
         return (
             "rate_limit",

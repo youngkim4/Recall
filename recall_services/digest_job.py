@@ -40,9 +40,9 @@ class DigestFailure(ReportFailure):
 def sentence_of(code: str, provider: str, model: str) -> str:
     """One plain sentence for a failure code of a digest. A code with no sentence of its own gets a general one."""
     sentences = {
-        "no_key": f"No API key is set. Add {keys.KEY_NAME} to {keys.KEY_PLACE}, {AGAIN}",
-        "key_rejected": f"{provider} rejected the API key. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {AGAIN}",
-        "unknown_model": f"{provider} does not know the model {model}. {NOT_READ}",
+        "no_key": f"{keys.NO_KEY}, {AGAIN}",
+        "key_rejected": f"{provider} refused the API key. {keys.CHECK_KEY}, {AGAIN}",
+        "unknown_model": f"{provider} does not know the model that reads conversations. {NOT_READ}",
         "rate_limit": f"{provider} is limiting requests, or the account has no credit left. Wait a moment, {AGAIN}",
         "offline": f"{provider} could not be reached. Check the internet connection, {AGAIN}",
         "timeout": "The model took too long to answer. Ask again.",

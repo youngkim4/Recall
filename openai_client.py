@@ -93,12 +93,12 @@ def _call_openai(
                 if attempt < max_retries:
                     wait = 2 ** attempt * 2
                     logger.warning(
-                        "OpenAI returned %s response (status=%s); retrying in %ss",
+                        "The AI service returned %s response (status=%s); retrying in %ss",
                         "empty" if not content else "incomplete", status, wait,
                     )
                     time.sleep(wait)
                     continue
-                logger.warning("OpenAI returned empty/incomplete content after retries (status=%s)", status)
+                logger.warning("The AI service returned empty/incomplete content after retries (status=%s)", status)
                 return content or ""
             return content
         except RateLimitError:
@@ -118,7 +118,7 @@ def _call_openai(
                 logger.error("Connection failed after %s retries: %s", max_retries, e)
                 raise
         except APIError as e:
-            logger.error("OpenAI API error: %s", e)
+            logger.error("The AI service failed: %s", e)
             raise
     return ""
 

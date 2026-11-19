@@ -180,7 +180,7 @@ def test_with_no_key_the_job_fails_in_one_plain_sentence(archive_file, model, mo
     job = build_people(archive_file)
     assert (job["status"], job["code"], job["result"]) == ("failed", "no_key", None)
     assert job["error"] == (
-        "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then build the people index again."
+        "No API key is set. Add one in Settings > Archive > API key, then build the people index again."
     )
     assert job["spent"] == {"usd": 0.0, "usage": None}
 
@@ -262,7 +262,7 @@ def test_after_a_memory_job_that_failed_the_server_starts_nothing(archive_file, 
     monkeypatch.setattr(people, "payload", lambda *args, **more: asked.append(1) or pytest.fail("an estimate"))
 
     def refused(*_args, **_more):
-        raise memory_prep.MemoryFailure("offline", "OpenAI could not be reached.")
+        raise memory_prep.MemoryFailure("offline", "The AI service could not be reached.")
 
     monkeypatch.setattr(memory_prep, "run", refused)
     assert read_memory(archive_file)["status"] == "failed"
@@ -324,11 +324,11 @@ def test_a_failed_job_keeps_what_it_spent(archive_file, model, monkeypatch):
     usage = {"input_tokens": 900, "cached_input_tokens": 0, "output_tokens": 100, "cost_usd": 0.0123, "calls": 3}
 
     def paid_then_refused(*_args, **_more):
-        raise people.PeopleFailure("key_rejected", "OpenAI rejected the API key.", usage)
+        raise people.PeopleFailure("key_rejected", "The AI service refused the API key.", usage)
 
     monkeypatch.setattr(people, "build", paid_then_refused)
     job = build_people(archive_file)
-    assert (job["status"], job["code"], job["error"]) == ("failed", "key_rejected", "OpenAI rejected the API key.")
+    assert (job["status"], job["code"], job["error"]) == ("failed", "key_rejected", "The AI service refused the API key.")
     assert job["spent"] == {"usd": 0.0123, "usage": usage}
 
 

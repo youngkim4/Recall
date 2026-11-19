@@ -316,11 +316,11 @@ def test_a_failure_in_the_memory_step_keeps_the_index_and_tells_its_sentence(arc
     real = memory_prep.run
 
     def paid_then_offline(*_args, **_more):
-        raise memory_prep.MemoryFailure("offline", "OpenAI could not be reached.", usage)
+        raise memory_prep.MemoryFailure("offline", "The AI service could not be reached.", usage)
 
     monkeypatch.setattr(memory_prep, "run", paid_then_offline)
     job = get_ready(archive_file)
-    assert (job["status"], job["code"], job["error"]) == ("failed", "offline", "OpenAI could not be reached.")
+    assert (job["status"], job["code"], job["error"]) == ("failed", "offline", "The AI service could not be reached.")
     assert meaning.built(archive_path(archive_file)) and not memory_prep.completed_before(archive_path(archive_file))
     assert job["spent"]["usd"] > 0.0123 and job["spent"]["usage"]["calls"] == 3
     monkeypatch.setattr(memory_prep, "run", real)
@@ -349,7 +349,7 @@ def test_with_no_key_the_job_is_refused_before_it_is_made(server, archive_file, 
     answer = post(server, "/api/jobs", {"action": "first_run", "messagesPath": archive_file})
     assert answer == (409, {"error": first_run.NO_KEY}) and listed() == []
     assert first_run.NO_KEY == (
-        "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then get chat ready again."
+        "No API key is set. Add one in Settings > Archive > API key, then get chat ready again."
     )
 
 

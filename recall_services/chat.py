@@ -138,11 +138,10 @@ def _sentence(code: str, said: str, config: ChatModelConfig | None, retry_after:
     if said and said != _ENGINE_WORDS.get(code):
         return said
     provider = models.provider_name(config.provider) if config else models.SOME_PROVIDER
-    model = config.model if config else "that was asked for"
     sentences = {
-        "no_key": f"No API key is set. Add {keys.KEY_NAME} to {keys.KEY_PLACE}, {ASK_AGAIN}",
-        "key_rejected": f"{provider} rejected the API key. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {ASK_AGAIN}",
-        "unknown_model": f"{provider} does not know the model {model}. Choose another level in Settings.",
+        "no_key": f"{keys.NO_KEY}, {ASK_AGAIN}",
+        "key_rejected": f"{provider} refused the API key. {keys.CHECK_KEY}, {ASK_AGAIN}",
+        "unknown_model": f"{provider} does not know the model of this level. Choose another level in Settings.",
         "rate_limit": f"{provider} is limiting requests. {_wait(retry_after)}, {ASK_AGAIN}",
         "offline": f"{provider} could not be reached. Check the internet connection, {ASK_AGAIN}",
         "timeout": "The model took too long to answer. Ask again.",

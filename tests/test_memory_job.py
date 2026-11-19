@@ -159,7 +159,7 @@ def test_with_no_key_the_job_fails_in_one_plain_sentence(archive_file, monkeypat
     monkeypatch.setattr(recall_paths, "DOTENV_PATH", tmp_path / "no-key-file")
     job = read_memory(archive_file)
     assert (job["status"], job["code"], job["result"]) == ("failed", "no_key", None)
-    assert job["error"] == "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then read the memory again."
+    assert job["error"] == "No API key is set. Add one in Settings > Archive > API key, then read the memory again."
 
 
 def test_a_job_on_a_place_with_no_archive_fails_in_plain_words(tmp_path, model):
@@ -324,7 +324,7 @@ def test_a_job_that_fails_after_paid_parts_keeps_what_it_spent(archive_file, mod
     usage = {"input_tokens": 900, "cached_input_tokens": 0, "output_tokens": 100, "cost_usd": 0.0123, "calls": 3}
 
     def paid_then_refused(*_args, **_more):
-        raise memory_prep.MemoryFailure("key_rejected", "OpenAI rejected the API key.", usage)
+        raise memory_prep.MemoryFailure("key_rejected", "The AI service refused the API key.", usage)
 
     monkeypatch.setattr(memory_prep, "run", paid_then_refused)
     job = read_memory(archive_file)
@@ -343,7 +343,7 @@ def test_a_job_that_fails_before_any_call_spent_nothing(archive_file, model, mon
 
 def test_a_job_that_failed_writes_no_marker(archive_file, model, monkeypatch):
     def refused(*_args, **_more):
-        raise memory_prep.MemoryFailure("offline", "OpenAI could not be reached.")
+        raise memory_prep.MemoryFailure("offline", "The AI service could not be reached.")
 
     monkeypatch.setattr(memory_prep, "run", refused)
     assert read_memory(archive_file)["status"] == "failed"

@@ -37,9 +37,9 @@ class MemoryFailure(ReportFailure):
 def sentence_of(code: str, provider: str, model: str) -> str:
     """One plain sentence for a failure that stops the job."""
     sentences = {
-        "no_key": f"No API key is set. Add {keys.KEY_NAME} to {keys.KEY_PLACE}, {AGAIN}",
-        "key_rejected": f"{provider} rejected the API key. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {AGAIN} {KEPT}",
-        "unknown_model": f"{provider} does not know the model {model}. {KEPT}",
+        "no_key": f"{keys.NO_KEY}, {AGAIN}",
+        "key_rejected": f"{provider} refused the API key. {keys.CHECK_KEY}, {AGAIN} {KEPT}",
+        "unknown_model": f"{provider} does not know the model that reads conversations. {KEPT}",
         "rate_limit": (
             f"{provider} is limiting requests, or the account has no credit left. Wait a moment, {AGAIN} {KEPT}"
         ),

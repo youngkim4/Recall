@@ -252,8 +252,8 @@ def test_a_family_that_is_confirmed_goes_to_the_engine_as_it_is(tmp_path: Path, 
     path.write_text(json.dumps({**raw, "models": sure}), encoding="utf-8")
     monkeypatch.setattr(models, "_registry", lambda: models.load_registry(path))
     assert models.model_info("gpt-6.1-sol").tokenizer_family == "o200k_base"
-    assert models.provider_name("openai") == "OpenAI"
-    assert models.provider_name("another") == "The model provider"
+    assert models.provider_name("openai") == "The AI service"
+    assert models.provider_name("another") == "The AI service"
 
 
 # --- reports ------------------------------------------------------------------

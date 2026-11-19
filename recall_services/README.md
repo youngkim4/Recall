@@ -406,11 +406,11 @@ The sentences of a `digest` job that failed:
 
 | Code | Sentence |
 |---|---|
-| `no_key` | No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then ask again. |
-| `key_rejected` | OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, then ask again. |
-| `unknown_model` | OpenAI does not know the model gpt-6-luna. The conversation was not read. |
-| `rate_limit` | OpenAI is limiting requests, or the account has no credit left. Wait a moment, then ask again. |
-| `offline` | OpenAI could not be reached. Check the internet connection, then ask again. |
+| `no_key` | No API key is set. Add one in Settings > Archive > API key, then ask again. |
+| `key_rejected` | The AI service refused the API key. Check the API key in Settings > Archive > API key, then ask again. |
+| `unknown_model` | The AI service does not know the model that reads conversations. The conversation was not read. |
+| `rate_limit` | The AI service is limiting requests, or the account has no credit left. Wait a moment, then ask again. |
+| `offline` | The AI service could not be reached. Check the internet connection, then ask again. |
 | `timeout` | The model took too long to answer. Ask again. |
 | `model_error` | The model could not read the conversation. Ask again. |
 | `empty` | This conversation has no messages with text in these dates. |
@@ -556,11 +556,11 @@ The sentences of a `memory` job that failed:
 
 | Code | Sentence |
 |---|---|
-| `no_key` | No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then read the memory again. |
-| `key_rejected` | OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, then read the memory again. What was read is kept. |
-| `unknown_model` | OpenAI does not know the model gpt-6-luna. What was read is kept. |
-| `rate_limit` | OpenAI is limiting requests, or the account has no credit left. Wait a moment, then read the memory again. What was read is kept. |
-| `offline` | OpenAI could not be reached. Check the internet connection, then read the memory again. What was read is kept. |
+| `no_key` | No API key is set. Add one in Settings > Archive > API key, then read the memory again. |
+| `key_rejected` | The AI service refused the API key. Check the API key in Settings > Archive > API key, then read the memory again. What was read is kept. |
+| `unknown_model` | The AI service does not know the model that reads conversations. What was read is kept. |
+| `rate_limit` | The AI service is limiting requests, or the account has no credit left. Wait a moment, then read the memory again. What was read is kept. |
+| `offline` | The AI service could not be reached. Check the internet connection, then read the memory again. What was read is kept. |
 | `cache_unreadable` | What earlier runs read could not be read or kept. What was read is kept. |
 | `archive_error` | The message archive could not be read. Update the archive, then read the memory again. |
 | `cancelled` | The reading was stopped. What was read is kept. |
@@ -757,11 +757,11 @@ The sentences of a `people` job that failed (`code` is the first column):
 
 | Code | Sentence |
 |---|---|
-| `no_key` | No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then build the people index again. |
-| `key_rejected` | OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, then build the people index again. The profiles that were written are kept. |
-| `unknown_model` | OpenAI does not know the model gpt-6-luna. The profiles that were written are kept. |
-| `rate_limit` | OpenAI is limiting requests, or the account has no credit left. Wait a moment, then build the people index again. The profiles that were written are kept. |
-| `offline` | OpenAI could not be reached. Check the internet connection, then build the people index again. The profiles that were written are kept. |
+| `no_key` | No API key is set. Add one in Settings > Archive > API key, then build the people index again. |
+| `key_rejected` | The AI service refused the API key. Check the API key in Settings > Archive > API key, then build the people index again. The profiles that were written are kept. |
+| `unknown_model` | The AI service does not know the model that writes the profiles. The profiles that were written are kept. |
+| `rate_limit` | The AI service is limiting requests, or the account has no credit left. Wait a moment, then build the people index again. The profiles that were written are kept. |
+| `offline` | The AI service could not be reached. Check the internet connection, then build the people index again. The profiles that were written are kept. |
 | `embed_failed` | The profiles could not be made searchable. The profiles that were written are kept. Build the people index again. |
 | `archive_error` | The message archive could not be read. Update the archive, then build the people index again. |
 | `cache_unreadable` | What earlier runs read could not be read. Nothing was written. |
@@ -790,7 +790,7 @@ A new person has no key and no index. The app asks for the key, shows what getti
 `GET /api/key` answers where the key is. It never gives the key or a part of it:
 
 ```json
-{"present": true, "source": "file", "place": "the file .env in Recall's data folder"}
+{"present": true, "source": "file", "place": "Settings > Archive > API key"}
 ```
 
 - `source` is `environment` (the key is set where the server starts), `file` (the file `.env` of the data folder) or `null` (no key).
@@ -811,8 +811,8 @@ The answers:
 | 400 | the key is not text | The key must be text. |
 | 400 | the key does not have the shape of a key | This is not an API key. A key starts with sk- and has 20 to 300 letters, digits, - or _. |
 | 403 | the request comes from another origin | Forbidden: only the page of this server may ask |
-| 409 | `OPENAI_API_KEY` is set in the environment | OPENAI_API_KEY is set where the server starts, and that key is used. A key saved here would not be used. |
-| 500 | the file can not be written | The key could not be saved in the file .env in Recall's data folder. Check the free space on the disk, then try again. |
+| 409 | `OPENAI_API_KEY` is set in the environment | An API key is set where the server starts, and that key is used. A key saved here would not be used. |
+| 500 | the file can not be written | The API key could not be saved. Check the free space on the disk, then try again. |
 
 WARNING: These three routes, and every `POST` and `DELETE` under `/api/`, have a stricter check than a `GET`. A request that sends an `Origin` header must come from the exact origin of this server: `http://` and the `Host` of the request, with its port (`is_own_write` in `ui_server.py`, `key_store.same_origin`). A request with no `Origin` passes (the Mac app, curl). A page of another local port is refused with 403: it could send a simple `text/plain` POST with no preflight and start a paid job (`first_run`, `memory`, `people`, `meaning`, `digest`) or ask a question. A `GET` other than `/api/key` keeps the check of `is_local_api_request`.
 
@@ -909,7 +909,7 @@ A refusal is 409 with `{"error": sentence}`, and no job is made:
 
 | Asked for | Held up by | Sentence |
 |---|---|---|
-| `first_run` | no key | No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then get chat ready again. |
+| `first_run` | no key | No API key is set. Add one in Settings > Archive > API key, then get chat ready again. |
 | `first_run` | an import | An import is running. Wait until it ends, then get chat ready. |
 | `first_run` | `meaning` | The index for the search by meaning is being built. Wait until it ends. |
 | `first_run` | `memory` | Recall is reading the memory of chat. Wait until it ends. |

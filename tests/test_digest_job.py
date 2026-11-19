@@ -27,7 +27,7 @@ RESULT_KEYS = {"conversation", "periods", "periodsBuilt", "periodsCached", "peri
 IMPORTS = ["setup_import", "export", "bridge"]
 DIGEST_IS_READ = "Recall is reading a conversation for chat. Wait until it ends."
 IMPORT_FIRST = "An import is running. Wait until it ends, then ask again."
-NO_KEY = "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then ask again."
+NO_KEY = "No API key is set. Add one in Settings > Archive > API key, then ask again."
 
 
 @pytest.fixture

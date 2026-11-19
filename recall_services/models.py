@@ -42,9 +42,9 @@ from report_engine.model_info import LongContextRule, ModelInfo
 
 FACTS_PATH = Path(__file__).with_name("models.json")
 UNCONFIRMED_FAMILY = "unconfirmed:"
-# a provider as a sentence names it
-PROVIDER_NAMES = {"openai": "OpenAI"}
-SOME_PROVIDER = "The model provider"
+# a provider as a sentence names it: the app names no provider (the owner: "dont even mention openai")
+SOME_PROVIDER = "The AI service"
+PROVIDER_NAMES = {"openai": SOME_PROVIDER}
 
 Level = Literal["low", "medium", "high", "top"]
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]

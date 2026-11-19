@@ -231,7 +231,7 @@ def test_a_refused_key_stops_the_build_and_keeps_what_was_paid(town) -> None:
     llm = replies(theo=LLMError("HTTP 401", status_code=401))
     with pytest.raises(people.PeopleFailure) as stopped:
         build(town, llm, parallel=1)
-    assert stopped.value.code == "key_rejected" and "rejected the API key" in str(stopped.value)
+    assert stopped.value.code == "key_rejected" and "refused the API key" in str(stopped.value)
     assert stopped.value.usage["calls"] == 1
     assert [who(call) for call in llm.calls] == ["mina", "theo"]
     assert set(stored(town)) == {key_of(town, MINA)}

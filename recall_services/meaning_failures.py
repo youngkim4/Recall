@@ -20,16 +20,16 @@ from meaning_index import (
     SourceError,
     StoreError,
 )
-from recall_services import keys
+from recall_services import keys, models
 from report_engine import SourceError as ReportSourceError
 
 logger = logging.getLogger(__name__)
 
-# the embedder of the app is the adapter of this provider
-PROVIDER = "OpenAI"
+# the embedder of the app is the adapter of this provider, named as every sentence names it
+PROVIDER = models.provider_name("openai")
 AGAIN = "then build the index again."
-NO_KEY = f"No API key is set. Add {keys.KEY_NAME} to {keys.KEY_PLACE}, {AGAIN}"
-KEY_REJECTED = f"{PROVIDER} rejected the API key. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {AGAIN}"
+NO_KEY = f"{keys.NO_KEY}, {AGAIN}"
+KEY_REJECTED = f"{PROVIDER} refused the API key. {keys.CHECK_KEY}, {AGAIN}"
 RATE_LIMIT = f"{PROVIDER} is limiting requests, or the account has no credit left. Wait a moment, {AGAIN}"
 OFFLINE = f"{PROVIDER} could not be reached. Check the internet connection, {AGAIN}"
 MODEL_ERROR = "The embedding model did not answer. What was read is kept: build the index again."

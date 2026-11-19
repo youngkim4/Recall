@@ -18,8 +18,11 @@ import os
 from pathlib import Path
 
 KEY_NAME = "OPENAI_API_KEY"
-# where a person puts the key, as a sentence names it
-KEY_PLACE = "the file .env in Recall's data folder"
+# where a person puts the key, as a sentence names it: the screen of the app, never the file or the provider
+KEY_PLACE = "Settings > Archive > API key"
+# the starts of the sentences about the key; each caller ends the sentence with what to do next
+NO_KEY = f"No API key is set. Add one in {KEY_PLACE}"
+CHECK_KEY = f"Check the API key in {KEY_PLACE}"
 
 
 def _key_file() -> Path:
