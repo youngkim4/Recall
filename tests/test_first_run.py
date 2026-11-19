@@ -272,7 +272,7 @@ def test_a_second_run_skips_the_steps_that_are_ready(archive_file, model):
     job = get_ready(archive_file)
     assert job["status"] == "completed" and job["result"]["skipped"] == ["meaning", "memory", "people"]
     assert (len(model.calls), len(model.embedded)) == (calls, embedded)
-    assert [line for line in lines(job) if "is ready" in line] == [
+    assert [line for line in lines(job) if line in first_run.SKIPPED.values()] == [
         first_run.SKIPPED["meaning"], first_run.SKIPPED["memory"], first_run.SKIPPED["people"]
     ]
     assert job["spent"] == {"usd": 0.0, "usage": None}

@@ -121,6 +121,24 @@ def _shown(planned: Sequence[Planned], skipped: int, min_messages: int) -> dict[
     }
 
 
+def plan(
+    archive: Archive, names: Names, *, min_messages: int | None = None, **more: Any
+) -> tuple[dict[str, Any], tuple[Planned, ...]]:
+    """`payload`, and what reading each conversation of the memory needs. No model call, no key, no file.
+
+    With an `error` in the payload no conversation is planned. The first run
+    bounds the cost of the people index with the parts of each conversation.
+    """
+    fewest = least(min_messages)
+    try:
+        planned, skipped = _planned(archive, names, candidates(archive, fewest), more)
+    except ModelChoiceError as error:
+        return {**_shown((), 0, fewest), "error": words.MODEL_NOT_RUN, "code": error.code}, ()
+    except MemoryFailure as failure:
+        return {**_shown((), 0, fewest), "error": str(failure), "code": failure.code}, ()
+    return _shown(planned, skipped, fewest), tuple(planned)
+
+
 def payload(archive: Archive, names: Names, *, min_messages: int | None = None, **more: Any) -> dict[str, Any]:
     """The answer of `GET /api/memory`. No model call, no key, no file.
 
@@ -128,14 +146,7 @@ def payload(archive: Archive, names: Names, *, min_messages: int | None = None, 
     are zeros, the state is `none`, and `error` and `code` say why. `more`
     gives the places, the options and the counter of the reports (tests).
     """
-    fewest = least(min_messages)
-    try:
-        planned, skipped = _planned(archive, names, candidates(archive, fewest), more)
-    except ModelChoiceError as error:
-        return {**_shown((), 0, fewest), "error": words.MODEL_NOT_RUN, "code": error.code}
-    except MemoryFailure as failure:
-        return {**_shown((), 0, fewest), "error": str(failure), "code": failure.code}
-    return _shown(planned, skipped, fewest)
+    return plan(archive, names, min_messages=min_messages, **more)[0]
 
 
 def worth_starting(found: Mapping[str, Any], *, completed_before: bool = False) -> bool:

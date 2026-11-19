@@ -79,8 +79,10 @@ from recall_services import chat as chat_service
 from recall_services import conversations as conversation_service
 from recall_services import day as day_service
 from recall_services import digest_job as digest_service
+from recall_services import first_run as first_run_service
+from recall_services import first_run_job
 from recall_services import frame as frame_service
-from recall_services import inputs, key_store, models, places
+from recall_services import inputs, key_store, keys, models, places
 from recall_services import meaning as meaning_service
 from recall_services import memory as memory_service
 from recall_services import memory_prep as memory_prep_service
@@ -616,7 +618,7 @@ def pull_into_archive(action: str, payload: dict) -> PullDone:
     raise ImportStopped(outcome.reason)
 
 
-JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge", "meaning", "digest", "memory", "people"})
+JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge", "meaning", "digest", "memory", "people", "first_run"})
 # each of these writes the archive
 IMPORT_ACTIONS = frozenset({"setup_import", "export", "bridge"})
 # this one reads the whole archive into the index for the search by meaning
@@ -640,6 +642,10 @@ PEOPLE_ACTIONS = frozenset({"people"})
 PEOPLE_IS_BUILT = "The people index is being built. Wait until it ends."
 IMPORT_BEFORE_PEOPLE = "An import is running. Wait until it ends, then build the people index."
 MEMORY_BEFORE_PEOPLE = "Recall is reading the memory of chat. Wait until it ends, then build the people index."
+# this one gets chat ready for a new person: the index, the memory of every conversation, the people index
+FIRST_RUN_ACTIONS = frozenset({"first_run"})
+FIRST_RUN_RUNS = "Recall is getting chat ready. Wait until it ends."
+IMPORT_BEFORE_FIRST_RUN = "An import is running. Wait until it ends, then get chat ready."
 UNFINISHED = frozenset({"queued", "running"})
 # Jobs that do not run together: the job that is asked for, the jobs that
 # hold it up, and what the reader is told.
@@ -660,6 +666,18 @@ ONE_AT_A_TIME = (
     (IMPORT_ACTIONS | PEOPLE_ACTIONS, PEOPLE_ACTIONS, PEOPLE_IS_BUILT),
     (PEOPLE_ACTIONS, IMPORT_ACTIONS, IMPORT_BEFORE_PEOPLE),
     (PEOPLE_ACTIONS, MEMORY_ACTIONS, MEMORY_BEFORE_PEOPLE),
+    # the first run does the work of the three jobs above: it waits for each of them, an import and a digest,
+    # and each of them waits for it
+    (FIRST_RUN_ACTIONS, IMPORT_ACTIONS, IMPORT_BEFORE_FIRST_RUN),
+    (FIRST_RUN_ACTIONS, INDEX_ACTIONS, INDEX_IS_BUILT),
+    (FIRST_RUN_ACTIONS, MEMORY_ACTIONS, MEMORY_IS_READ),
+    (FIRST_RUN_ACTIONS, DIGEST_ACTIONS, DIGEST_IS_READ),
+    (FIRST_RUN_ACTIONS, PEOPLE_ACTIONS, PEOPLE_IS_BUILT),
+    (
+        IMPORT_ACTIONS | INDEX_ACTIONS | MEMORY_ACTIONS | DIGEST_ACTIONS | PEOPLE_ACTIONS | FIRST_RUN_ACTIONS,
+        FIRST_RUN_ACTIONS,
+        FIRST_RUN_RUNS,
+    ),
 )
 
 
@@ -694,6 +712,9 @@ def check_request(action, payload: dict) -> None:
     for name in ("contact", "conversation", "model", "since", "until"):
         if payload.get(name) is not None and not isinstance(payload.get(name), str):
             raise JobRefused(f"{name} must be text.", 400)
+    if action in FIRST_RUN_ACTIONS and not keys.api_key():
+        # every step but the index of an archive with nothing new pays a provider: no job is made with no key
+        raise JobRefused(first_run_service.NO_KEY, 409)
     if action == "setup_import":
         usable_path(payload.get("dbPath"), "the copy")
         if not isinstance(payload.get("includeContacts", True), bool):
@@ -1094,18 +1115,28 @@ def read_conversation(job_id: str, payload: dict) -> dict:
         raise JobStopped(str(exc), "bad_request") from exc
 
 
-def build_meaning_index(job_id: str, payload: dict) -> dict:
-    """The `meaning` job: build the index for the search by meaning, or bring it up to date. Its lines hold counts only."""
-    _state, archive = archive_for(named_archive(payload))
+def job_teller(job_id: str):
+    """The listener of the work of a job: `progress` and `spent` go to its record, `log` to its lines."""
 
     def told(update: dict) -> None:
         if update.get("progress"):
             update_job(job_id, progress=update["progress"])
         if update.get("log"):
             append_log(job_id, update["log"])
+        if "spent" in update:
+            update_job(job_id, spent=update["spent"])
 
+    return told
+
+
+def build_meaning_index(job_id: str, payload: dict, told=None) -> dict:
+    """The `meaning` job: build the index for the search by meaning, or bring it up to date. Its lines hold counts only.
+
+    `told` gets the updates; with none they go to the job (`job_teller`).
+    """
+    _state, archive = archive_for(named_archive(payload))
     try:
-        return meaning_service.build(archive, saved_names(), None, told)
+        return meaning_service.build(archive, saved_names(), None, told or job_teller(job_id))
     except meaning_service.MeaningFailure as failure:
         raise JobStopped(str(failure), failure.code) from failure
 
@@ -1140,27 +1171,23 @@ def refresh_meaning_index(job_id: str, action: str, payload: dict) -> None:
             print(f"[meaning] the index was not brought up to date: {type(exc).__name__}", file=sys.__stderr__)
 
 
-def prepare_memory(job_id: str, payload: dict) -> dict:
+def prepare_memory(job_id: str, payload: dict, told=None, min_messages: int | None = None) -> dict:
     """The `memory` job: read the memory of chat ahead of time, four conversations at once. Its lines hold counts only.
 
     The job keeps what it spent under `spent` (`{"usd", "usage"}`), also when
-    it failed. One that completed writes the marker of its archive.
+    it failed. One that completed writes the marker of its archive. `told`
+    gets the updates; with none they go to the job. `min_messages` None is
+    `PREPARE_MIN_MESSAGES`; the first run reads every conversation.
     """
     _state, archive = archive_for(named_archive(payload))
-
-    def told(update: dict) -> None:
-        if update.get("progress"):
-            update_job(job_id, progress=update["progress"])
-        if update.get("log"):
-            append_log(job_id, update["log"])
-
+    told = told or job_teller(job_id)
     try:
-        result = memory_prep_service.run(told, archive=archive, names=saved_names())
+        result = memory_prep_service.run(told, archive=archive, names=saved_names(), min_messages=min_messages)
     except memory_prep_service.MemoryFailure as failure:
         usage = failure.usage or None
-        update_job(job_id, spent={"usd": float((usage or {}).get("cost_usd") or 0.0), "usage": usage})
+        told({"spent": {"usd": float((usage or {}).get("cost_usd") or 0.0), "usage": usage}})
         raise
-    update_job(job_id, spent={"usd": result["usd"], "usage": result["usage"]})
+    told({"spent": {"usd": result["usd"], "usage": result["usage"]}})
     memory_prep_service.mark_completed(archive.path)
     return result
 
@@ -1230,26 +1257,21 @@ def refresh_memory(job_id: str, action: str, payload: dict) -> None:
             print(f"[memory] the memory was not brought up to date: {type(exc).__name__}", file=sys.__stderr__)
 
 
-def build_people_index(job_id: str, payload: dict) -> dict:
+def build_people_index(job_id: str, payload: dict, told=None) -> dict:
     """The `people` job: write the profiles whose inputs changed, and make them searchable. Its lines hold counts only.
 
-    The job keeps what it spent under `spent` (`{"usd", "usage"}`), also when it failed.
+    The job keeps what it spent under `spent` (`{"usd", "usage"}`), also when it failed. `told` gets the
+    updates; with none they go to the job.
     """
     _state, archive = archive_for(named_archive(payload))
-
-    def told(update: dict) -> None:
-        if update.get("progress"):
-            update_job(job_id, progress=update["progress"])
-        if update.get("log"):
-            append_log(job_id, update["log"])
-
+    told = told or job_teller(job_id)
     try:
         result = people_service.build(archive, saved_names(), None, told)
     except people_service.PeopleFailure as failure:
         usage = failure.usage or None
-        update_job(job_id, spent={"usd": float((usage or {}).get("cost_usd") or 0.0), "usage": usage})
+        told({"spent": {"usd": float((usage or {}).get("cost_usd") or 0.0), "usage": usage}})
         raise JobStopped(str(failure), failure.code) from failure
-    update_job(job_id, spent={"usd": result["usd"], "usage": result["usage"]})
+    told({"spent": {"usd": result["usd"], "usage": result["usage"]}})
     return result
 
 
@@ -1327,6 +1349,69 @@ def refresh_people(job_id: str, action: str, payload: dict) -> None:
             print(f"[people] the people index was not brought up to date: {type(exc).__name__}", file=sys.__stderr__)
 
 
+def get_chat_ready(job_id: str, payload: dict) -> dict:
+    """The `first_run` job: the index of meanings, the memory of every conversation and the people index, in this order.
+
+    Only the steps that are not ready are built (`first_run_counts`), each
+    with the work of its own job. A step that fails ends the job with its
+    sentence and code, and `spent` holds what all steps spent. The result
+    holds counts and money only (`recall_services/first_run_job.py`).
+    """
+    state, archive = archive_for(named_archive(payload))
+    found = first_run_counts(state, archive)
+    if not found["archive"]["holdsMessages"]:
+        raise JobStopped(first_run_service.NO_MESSAGES, "no_messages")
+    work = {
+        "meaning": lambda told: build_meaning_index(job_id, payload, told),
+        "memory": lambda told: prepare_memory(job_id, payload, told, first_run_service.MEMORY_MIN_MESSAGES),
+        "people": lambda told: build_people_index(job_id, payload, told),
+    }
+    return first_run_job.run(found["steps"], work, job_teller(job_id), archive_file=archive.path)
+
+
+# The answer of `GET /api/first-run` for one archive, its names, the notes and the stores as they are.
+_FIRST_RUN_CACHE: dict = {"key": None, "value": None}
+_FIRST_RUN_LOCK = threading.Lock()
+
+
+def first_run_counts(state: ArchiveState, archive: Archive) -> dict:
+    """The steps of `GET /api/first-run`, kept for one key: the archive, the names, the notes,
+    the people store, the build of the index of meanings and the model of the memory."""
+    notes = report_service.default_places().cache_path
+    key = (
+        archive_signature(state),
+        file_cache_signature(CONTACTS_CACHE_PATH),
+        file_cache_signature(notes),
+        file_cache_signature(notes.with_name(notes.name + "-wal")),
+        people_service.store_for(archive).signature(),
+        first_run_service.index_mark(archive.path),
+        memory_prep_service.model(),
+    )
+    with _FIRST_RUN_LOCK:
+        if _FIRST_RUN_CACHE["key"] != key:
+            _FIRST_RUN_CACHE.update({"key": key, "value": first_run_service.estimate(archive, saved_names())})
+        return _FIRST_RUN_CACHE["value"]
+
+
+def first_run_answer(messages_path: Path | None) -> dict:
+    """The answer of `GET /api/first-run`: where the key is, the steps, and the `first_run` job that runs now.
+
+    With no archive yet it says that there is nothing to get ready. It never
+    gives the key or a part of it.
+    """
+    try:
+        state, archive = archive_for(messages_path)
+        found = first_run_counts(state, archive)
+    except ArchiveNotReady as waiting:
+        if waiting.code != "no_archive":
+            raise
+        found = first_run_service.nothing()
+    key = key_store.state()
+    with JOBS_LOCK:
+        running = [job["id"] for job in JOBS.values() if job["action"] in FIRST_RUN_ACTIONS and job["status"] in UNFINISHED]
+    return {"key": {"present": key["present"], "source": key["source"]}, **found, "jobId": running[0] if running else None}
+
+
 def do_job(job_id: str, action: str, payload: dict) -> dict:
     """The work of one job. What it returns is the result of the job."""
     if action == "export":
@@ -1351,6 +1436,8 @@ def do_job(job_id: str, action: str, payload: dict) -> dict:
         return prepare_memory(job_id, payload)
     if action == "people":
         return build_people_index(job_id, payload)
+    if action == "first_run":
+        return get_chat_ready(job_id, payload)
     raise ValueError(f"Unknown job action: {action}")
 
 
@@ -2978,6 +3065,9 @@ class RecallHandler(BaseHTTPRequestHandler):
             # the people index: what is built, and what writing the rest would cost now
             state, archive = archive_for(named_archive(query))
             send_json(self, 200, people_answer(state, archive))
+        elif parsed.path == "/api/first-run":
+            # what getting chat ready costs a new person, and what is ready
+            send_json(self, 200, first_run_answer(named_archive(query)))
         elif parsed.path == "/api/day":
             _state, archive = archive_for(named_archive(query))
             try:
