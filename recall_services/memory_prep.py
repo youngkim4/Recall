@@ -40,6 +40,7 @@ from recall_services.memory_prep_read import Planned, Read, Reading, tally
 from recall_services.memory_prep_marker import completed_before as completed_before
 from recall_services.memory_prep_marker import mark_completed as mark_completed
 from recall_services.memory_prep_marker import marker_path as marker_path
+from recall_services.memory_prep_marker import threshold as marker_threshold
 from recall_services.memory_prep_words import MemoryFailure as MemoryFailure
 from recall_services.models import ModelChoiceError
 from recall_services.names import Names

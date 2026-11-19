@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -86,10 +87,14 @@ def checked(value: object) -> str:
 
 
 def _lines(path: Path) -> list[str]:
+    """The lines of the file, each with its newline. Only a newline ends a line: the other breaks of
+    `str.splitlines` (\\x0b, \\x0c, \\x85, \\u2028 and more) stay inside their line, so no text is lost."""
     try:
-        return path.read_bytes().decode(_ENCODING, _ERRORS).splitlines(keepends=True)
+        text = path.read_bytes().decode(_ENCODING, _ERRORS)
     except FileNotFoundError:
         return []
+    parts = text.split("\n")
+    return [f"{part}\n" for part in parts[:-1]] + ([parts[-1]] if parts[-1] else [])
 
 
 def _is_key_line(line: str) -> bool:
@@ -101,17 +106,21 @@ def _with_key(lines: list[str], key: str) -> list[str]:
     line = f"{keys.KEY_NAME}={key}\n"
     if not any(_is_key_line(one) for one in lines):
         last = lines[-1] if lines else "\n"
-        return [*lines, *([] if last.endswith(("\n", "\r")) else ["\n"]), line]
+        return [*lines, *([] if last.endswith("\n") else ["\n"]), line]
     first = next(place for place, one in enumerate(lines) if _is_key_line(one))
     return [line if place == first else one for place, one in enumerate(lines) if place == first or not _is_key_line(one)]
 
 
 def _write(path: Path, lines: list[str]) -> None:
-    """Write the file whole: a temporary file in the same folder, mode 0600, then one rename."""
+    """Write the file whole: a new temporary file in the same folder, then one rename.
+
+    `mkstemp` makes the file with a random name, mode 0600 from its start, and
+    never opens a file or a link that is there already.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    work = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    handle, name = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+    work = Path(name)
     try:
-        handle = os.open(work, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, PRIVATE_FILE_MODE)
         with os.fdopen(handle, "wb") as out:
             out.write("".join(lines).encode(_ENCODING, _ERRORS))
             out.flush()
