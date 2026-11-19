@@ -255,6 +255,20 @@ def test_after_a_memory_job_the_server_writes_the_profiles_that_changed(archive_
     assert len(profile_calls(model)) == 2
 
 
+def test_after_a_memory_job_that_failed_the_server_starts_nothing(archive_file, model, monkeypatch):
+    read_memory(archive_file)
+    build_people(archive_file)
+    asked = []
+    monkeypatch.setattr(people, "payload", lambda *args, **more: asked.append(1) or pytest.fail("an estimate"))
+
+    def refused(*_args, **_more):
+        raise memory_prep.MemoryFailure("offline", "OpenAI could not be reached.")
+
+    monkeypatch.setattr(memory_prep, "run", refused)
+    assert read_memory(archive_file)["status"] == "failed"
+    assert jobs_of("people") == [] and asked == []
+
+
 def test_after_a_memory_job_with_no_people_job_before_the_server_starts_nothing(archive_file, model, monkeypatch):
     asked = []
     monkeypatch.setattr(people, "payload", lambda *args, **more: asked.append(1) or pytest.fail("an estimate"))

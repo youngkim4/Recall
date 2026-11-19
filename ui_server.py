@@ -1279,8 +1279,20 @@ def people_answer(state: ArchiveState, archive: Archive) -> dict:
     return {**found, "jobId": running[0] if running else None}
 
 
+def brings_new_memory(job_id: str, action: str) -> bool:
+    """True after a `memory` job that completed, or an import that changed the archive and left no `memory` job to run."""
+    if action in MEMORY_ACTIONS:
+        with JOBS_LOCK:
+            return (JOBS.get(job_id) or {}).get("status") == "completed"
+    if not changed_the_archive(job_id, action):
+        return False
+    with JOBS_LOCK:
+        # the memory job that the import started brings the profiles when it ends
+        return not any(job["action"] in MEMORY_ACTIONS and job["status"] in UNFINISHED for job in JOBS.values())
+
+
 def refresh_people(job_id: str, action: str, payload: dict) -> None:
-    """After a `memory` job, or an import that changed the archive: one `people` job writes the profiles that changed.
+    """After a `memory` job that completed, or an import that changed the archive: one `people` job writes the profiles that changed.
 
     Only when a `people` job of this archive completed before, and the
     profiles to write cost at most `PEOPLE_AUTO_USD` (`people.worth_starting`).
@@ -1288,13 +1300,8 @@ def refresh_people(job_id: str, action: str, payload: dict) -> None:
     it. A fault here does not change how the job ended.
     """
     try:
-        if action not in MEMORY_ACTIONS and not changed_the_archive(job_id, action):
+        if not brings_new_memory(job_id, action):
             return
-        with JOBS_LOCK:
-            if action not in MEMORY_ACTIONS and any(
-                job["action"] in MEMORY_ACTIONS and job["status"] in UNFINISHED for job in JOBS.values()
-            ):
-                return  # the memory job that the import started brings the profiles when it ends
         place = named_archive(payload)
         if not people_service.completed_before(places.archive_path_for(place)):
             return  # the first build is the choice of the reader

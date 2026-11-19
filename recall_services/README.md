@@ -754,7 +754,7 @@ The sentences of a `people` job that failed (`code` is the first column):
 
 `no_key`, `key_rejected`, `unknown_model`, `rate_limit` and `offline` stop the build: no new call starts, the calls in flight end, and what they paid for is saved. A failure of the embedder has the same codes.
 
-After a `memory` job, or an import that changed the archive, `refresh_people` in `ui_server.py` starts one `people` job when a build of this archive completed before (`people.completed_before`: `completed_at` in the store) and `people.worth_starting` says yes: a profile is to write, and they cost at most `PEOPLE_AUTO_USD` (0.10 USD). After an import that started a `memory` job, it waits: the end of that job starts it. With no completed build it starts nothing and takes no estimate. Above the cost it writes one line with the count of profiles to the log of the server.
+After a `memory` job that completed, or an import that changed the archive, `refresh_people` in `ui_server.py` starts one `people` job when a build of this archive completed before (`people.completed_before`: `completed_at` in the store) and `people.worth_starting` says yes: a profile is to write, and they cost at most `PEOPLE_AUTO_USD` (0.10 USD). After an import that started a `memory` job, it waits: the end of that job starts it. With no completed build it starts nothing and takes no estimate. Above the cost it writes one line with the count of profiles to the log of the server.
 
 Known limits:
 
