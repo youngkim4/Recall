@@ -1,10 +1,12 @@
 """A build of the people index: look, write the profiles that changed, embed, save.
 
-1. Look (`look`): plan every profile of the archive, and read the store.
-   A profile is written when its notes are read and the store holds no row
-   with the same hash of its inputs. A profile whose notes are not all read
-   is left out; its row from an earlier build stays as it was.
-2. Write: one call of the model for each profile to write (`people_calls.py`).
+1. Look (`look`): the state and the fingerprint of every profile, with no
+   message read (`people_look.py`), and the store. A profile is written when
+   its notes are read and the store holds no row with its fingerprint. A
+   profile whose notes are not all read is left out; its row from an earlier
+   build stays as it was.
+2. Write: for each profile to write, read its notes and its figures, then
+   one call of the model (`people_calls.py`).
 3. Embed the text of each row that has no vector for the embedding model and
    its dimensions, `EMBED_BATCH` texts in one request.
 4. Save the whole store at once (`people_store.py`). A row of a profile that
@@ -30,7 +32,9 @@ from meaning_index import EmbedderFacts
 from recall_services.meaning_failures import failure_of as embedding_failure
 from recall_services.names import Names
 from recall_services.people_calls import Written
-from recall_services.people_inputs import EMPTY, READ, Planned, Planner
+from recall_services.people_inputs import EMPTY, NOT_READ, READ, Planned, Planner
+from recall_services.people_look import Seen, look_cheaply
+from recall_services.people_plans import PlanStore
 from recall_services.people_store import (
     Held,
     PeopleFormatError,
@@ -53,7 +57,7 @@ class Look:
     """What a build finds before any call."""
 
     planner: Planner
-    planned: tuple[Planned, ...]
+    seen: tuple[Seen, ...]
     held: Held | None
 
     @property
@@ -61,21 +65,26 @@ class Look:
         return {} if self.held is None else {profile.key: profile for profile in self.held.profiles}
 
     @property
-    def to_write(self) -> tuple[Planned, ...]:
+    def to_write(self) -> tuple[Seen, ...]:
         rows = self.rows
-        return tuple(one for one in self.planned if one.notes.state == READ and not _current(one, rows.get(one.subject.key)))
+        return tuple(one for one in self.seen if one.state == READ and not _current(one, rows.get(one.subject.key)))
 
     @property
     def people(self) -> int:
-        return sum(one.notes.state != EMPTY for one in self.planned)
+        return sum(one.state != EMPTY for one in self.seen)
 
     @property
     def not_read(self) -> int:
-        return sum(one.notes.state not in (READ, EMPTY) for one in self.planned)
+        return sum(one.state == NOT_READ for one in self.seen)
+
+    def to_embed(self, facts: EmbedderFacts) -> tuple[Profile, ...]:
+        """The rows that are kept and need a vector for these facts. The rows written now are embedded too."""
+        writing = {one.subject.key for one in self.to_write}
+        return tuple(row for key, row in self.rows.items() if key not in writing and needs_vector(row, facts))
 
 
-def _current(planned: Planned, row: Profile | None) -> bool:
-    return row is not None and row.input_hash == planned.input_hash
+def _current(seen: Seen, row: Profile | None) -> bool:
+    return row is not None and row.input_hash == seen.fingerprint
 
 
 def read_store(store: PeopleStore) -> Held | None:
@@ -91,16 +100,16 @@ def read_store(store: PeopleStore) -> Held | None:
 def look(
     archive: Archive, names: Names, store: PeopleStore, teller: Teller | None = None, *, model: str, **settings: Any
 ) -> Look:
-    """Plan each profile and read the store. Makes no model call and writes nothing."""
+    """The state of each profile and the store. Makes no model call and reads no message of a
+    conversation whose plan is kept. It writes the plans that it made (`plans.sqlite3`)."""
     held = read_store(store)
     planner = Planner(archive, names, model=model, **settings)
-    subjects = planner.subjects()
-    planned: list[Planned] = []
-    for place, subject in enumerate(subjects, start=1):
-        planned.append(planner.plan(subject))
-        if teller is not None:
-            teller.tell(step="look", done=place, total=len(subjects))
-    return Look(planner, tuple(planned), held)
+    return Look(planner, look_cheaply(planner, PlanStore(store.folder), teller), held)
+
+
+def prepare(seen: Look, item: Seen) -> Planned:
+    """The request of one profile to write, with the fingerprint of the look as the hash of its inputs."""
+    return replace(seen.planner.plan(item.subject), input_hash=item.fingerprint)
 
 
 def _written(one: Written) -> Profile:
@@ -126,13 +135,13 @@ def assemble(seen: Look, written: Sequence[Written]) -> tuple[Profile, ...]:
     rows = seen.rows
     new = {one.planned.subject.key: _written(one) for one in written if one.text is not None}
     kept: list[Profile] = []
-    for planned in seen.planned:
-        subject, old = planned.subject, rows.get(planned.subject.key)
+    for one in seen.seen:
+        subject, old = one.subject, rows.get(one.subject.key)
         if subject.key in new:
             kept.append(new[subject.key])
-        elif planned.notes.state == READ and old is not None and _current(planned, old):
+        elif one.state == READ and old is not None and _current(one, old):
             kept.append(replace(old, conversations=subject.conversations, label=subject.label))
-        elif planned.notes.state != EMPTY and old is not None:
+        elif one.state != EMPTY and old is not None:
             kept.append(old)  # not read, failed, or not reached: as it was
     return tuple(kept)
 

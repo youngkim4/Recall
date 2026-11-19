@@ -20,14 +20,14 @@ mark what it reads. The digests are wired as `digests.build` wires them
 - `empty`: no conversation has a message with text. The profile has no notes,
   and it is left out and not counted.
 
-The hash of the inputs is a hash of the prompt version, the model and the
-request itself, which holds the label, the figures and the notes.
+Every handle of the label and the notes is masked before the request is
+made (`mask`: `handle_mask.mask_every_handle` with the labeler of chat), as
+the chat digest masks a summary. The fingerprint of the inputs is made with
+no message read (`people_look.py`).
 """
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,11 +39,13 @@ from archive import ArchiveError as ArchiveFault
 from recall_services import digests, models, people_prompt, reports
 from recall_services.names import Names
 from recall_services.people_figures import Figures, read_figures
+from recall_services.people_plans import reading_fingerprint
 from recall_services.people_words import failure
 from report_engine import ConfigError, EmptyConversationError, PeriodCache, ReportEngineError, ReportOptions, StoreError
 from report_engine.cache import CacheEntry
 from report_engine.chat_digest import DigestTooLarge, PeriodNote, conversation_digest
 from report_engine.ports import ChatMessage, LLMResult
+from report_engine.prompts import MAP_PROMPT_VERSION
 from report_engine.tokens import TokenCounter
 
 READ, NOT_READ, EMPTY = "read", "not_read", "empty"
@@ -65,7 +67,8 @@ class Notes:
 
 @dataclass(frozen=True)
 class Planned:
-    """One profile as a build finds it. `figures`, `messages` and `input_hash` are set only when it is read."""
+    """One profile as a build reads it. `figures` and `messages` are set only when it is read.
+    `input_hash` is the fingerprint of the look (`people_look.py`), which the build sets."""
 
     subject: Subject
     notes: Notes
@@ -165,17 +168,39 @@ class Planner:
     def subjects(self) -> tuple[Subject, ...]:
         return subjects_of(_Listed(self._listed), self._names)
 
+    @property
+    def records(self) -> Mapping[str, Mapping[str, Any]]:
+        """The conversations of the archive as they were listed, by id."""
+        return self._records
+
+    @property
+    def notes(self) -> _Unmarked | None:
+        """The notes, read only, or None when there is no notes file."""
+        return self._notes
+
+    def reading(self, conversation: str) -> dict[str, Any]:
+        """What the report engine gets to lay out the parts of a conversation, as `digests.build` gives it."""
+        record = self._records.get(conversation) or {"id": conversation, "is_group": False}
+        asked = reports._Asked(conversation, None, None, self.info, self._names.report_labeler(record), self.redact)
+        return digests._reading(self._archive, asked, self._options, self._counter)
+
+    def reading_fingerprint(self) -> str:
+        """What decides the parts of every conversation, apart from the conversation itself."""
+        handles = {
+            str(handle)
+            for record in self._listed
+            for handle in (record.get("id"), *(record.get("members") or []))
+            if isinstance(handle, str)
+        }
+        counter = self._counter or reports.shared_counter(self.info.tokenizer_family)
+        family = f"{getattr(counter, 'family', '')}/{getattr(counter, 'approximates', '')}"
+        saved = ((handle, self._names.saved(handle)) for handle in handles)
+        return reading_fingerprint(MAP_PROMPT_VERSION, self.info.id, self._options or ReportOptions(), family, saved)
+
     def _conversation(self, conversation: str) -> Notes:
         # with no notes file each part is not read, and a conversation with no text is still empty
-        record =self._records.get(conversation) or {"id": conversation, "is_group": False}
-        asked = reports._Asked(conversation, None, None, self.info, self._names.report_labeler(record), self.redact)
         try:
-            found = conversation_digest(
-                llm=_NoModel(),
-                cache=self._notes,
-                max_new_periods=0,
-                **digests._reading(self._archive, asked, self._options, self._counter),
-            )
+            found = conversation_digest(llm=_NoModel(), cache=self.notes, max_new_periods=0, **self.reading(conversation))
         except (DigestTooLarge, ConfigError):
             return Notes(NOT_READ)
         except EmptyConversationError:
@@ -195,7 +220,7 @@ class Planner:
             raise failure("archive_error") from error
         person = people_prompt.PromptInput(subject.label, subject.is_group, figures, notes.periods)
         messages = tuple(people_prompt.profile_messages(person, self.mask))
-        return Planned(subject, notes, figures, messages, input_hash(self.info.id, messages))
+        return Planned(subject, notes, figures, messages)
 
 
 class _Listed:
@@ -207,7 +232,3 @@ class _Listed:
     def conversations(self, **_more: Any) -> Sequence[Mapping[str, Any]]:
         return self._listed
 
-
-def input_hash(model: str, messages: Sequence[ChatMessage]) -> str:
-    material = json.dumps([people_prompt.PROMPT_VERSION, model, list(messages)], ensure_ascii=False, sort_keys=True)
-    return hashlib.sha256(material.encode("utf-8", "surrogatepass")).hexdigest()

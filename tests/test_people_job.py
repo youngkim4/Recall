@@ -42,7 +42,7 @@ MORE = [f"a later {MARK} dive {number}" for number in range(3)]
 IMPORTS = ["setup_import", "export", "bridge"]
 RESULT_KEYS = {"people", "built", "kept", "failed", "notRead", "removed", "embedded", "embedTokens", "usd", "usage"}
 ANSWER_KEYS = {
-    "state", "model", "people", "profiles", "current", "toWrite", "notRead",
+    "state", "model", "people", "profiles", "current", "toWrite", "toEmbed", "notRead",
     "estimatedCost", "builtAt", "error", "code", "jobId",
 }  # fmt: skip
 PEOPLE_IS_BUILT = "The people index is being built. Wait until it ends."
@@ -269,11 +269,17 @@ def test_after_a_memory_job_that_failed_the_server_starts_nothing(archive_file, 
     assert jobs_of("people") == [] and asked == []
 
 
-def test_after_a_memory_job_with_no_people_job_before_the_server_starts_nothing(archive_file, model, monkeypatch):
+def test_after_a_memory_job_with_no_people_job_before_the_server_only_works_the_answer_out(
+    archive_file, model, monkeypatch, server
+):
+    """The first build is the choice of the reader. The answer of the route is made ready for that choice."""
     asked = []
-    monkeypatch.setattr(people, "payload", lambda *args, **more: asked.append(1) or pytest.fail("an estimate"))
+    real = people.payload
+    monkeypatch.setattr(people, "payload", lambda *args, **more: asked.append(1) or real(*args, **more))
     assert read_memory(archive_file)["status"] == "completed"
-    assert jobs_of("people") == [] and asked == []
+    assert jobs_of("people") == [] and asked == [1]
+    _status, answer = people_of(server, archive_file)
+    assert answer["toWrite"] == 1 and asked == [1]
 
 
 def test_after_a_memory_job_the_server_waits_for_the_reader_when_it_costs_more(archive_file, model, monkeypatch, capfd):
@@ -324,3 +330,39 @@ def test_a_failed_job_keeps_what_it_spent(archive_file, model, monkeypatch):
     job = build_people(archive_file)
     assert (job["status"], job["code"], job["error"]) == ("failed", "key_rejected", "OpenAI rejected the API key.")
     assert job["spent"] == {"usd": 0.0123, "usage": usage}
+
+
+# --- the answer of the route is kept while the notes only mark what they read ------------
+
+
+def _notes_file():
+    return report_service.default_places().cache_path
+
+
+def test_a_mark_of_use_in_the_notes_keeps_the_answer_and_a_new_part_moves_it(server, archive_file, model, monkeypatch):
+    from tests.recall_services.people_kit import opened
+
+    calls = []
+    real = people.payload
+    monkeypatch.setattr(people, "payload", lambda *args, **more: calls.append(1) or real(*args, **more))
+    read_memory(archive_file)  # the server works the answer out after the memory job
+    people_of(server, archive_file)
+    with opened(_notes_file()) as conn:
+        conn.execute("UPDATE period_results SET last_used_at = '2099-01-01T00:00:00+00:00'")
+    people_of(server, archive_file)
+    assert len(calls) == 1
+    with opened(_notes_file()) as conn:
+        conn.execute(
+            "INSERT INTO period_results SELECT 'another' || key, conversation, label, model, prompt_version, payload,"
+            " input_tokens, cached_input_tokens, output_tokens, cost_usd, created_at, last_used_at"
+            " FROM period_results LIMIT 1"
+        )
+    people_of(server, archive_file)
+    assert len(calls) == 2
+
+
+def test_the_mark_of_the_notes_is_their_count_of_parts(tmp_path):
+    from recall_services import reports
+
+    places = reports.ReportPlaces(out_dir=tmp_path / "o", store_dir=tmp_path / "s", cache_path=tmp_path / "c.sqlite3")
+    assert people.notes_mark(places) is None and not places.cache_path.exists()

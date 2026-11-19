@@ -104,9 +104,10 @@ def test_each_call_asks_for_the_shape_with_no_reasoning_and_a_bounded_reply(town
 def test_with_no_memory_read_nobody_is_written_and_the_build_says_so(town) -> None:
     llm = replies()
     found, updates = build(town, llm)
-    assert (found["people"], found["built"], found["notRead"], found["usd"]) == (3, 0, 3, 0.0)
+    # with no notes file nothing is laid out: the one with no text is counted too, as not read
+    assert (found["people"], found["built"], found["notRead"], found["usd"]) == (4, 0, 4, 0.0)
     assert llm.calls == [] and stored(town) == {}
-    assert "0 profiles to write, 0 kept as they are, 3 left out because their memory is not read" in said(updates)
+    assert "0 profiles to write, 0 kept as they are, 4 left out because their memory is not read" in said(updates)
 
 
 def test_the_lines_and_the_progress_hold_counts_only(town) -> None:
