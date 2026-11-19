@@ -6,14 +6,9 @@ from typing import Any
 
 import pytest
 
-from recall_services import memory_prep, models, people, people_prompt
-from recall_services.people_inputs import Planner
+from recall_services import memory_prep, people
 from recall_services.people_store import PeopleStore
-from report_engine import LLMUsage
-from report_engine.pricing import call_cost_usd
-from report_engine.tokens import meter_for
 from tests.recall_services.people_kit import opened, FAKE_FACTS, THEO, settings, town  # noqa: F401
-from tests.report_engine.synth import WordCounter
 
 PAYLOAD_KEYS = {
     "state", "model", "people", "profiles", "current", "toWrite", "toEmbed", "notRead",

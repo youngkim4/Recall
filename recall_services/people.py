@@ -42,7 +42,6 @@ from recall_services.people_words import PeopleFailure, Teller, all_written, fai
 from recall_services.report_failures import ReportFailure
 from report_engine import LLMUsage, Usage
 from report_engine.pricing import call_cost_usd
-from report_engine.tokens import meter_for
 
 __all__ = [
     "KINDS", "MAX_OUTPUT_TOKENS", "STATUSES", "TRIES", "Found", "PeopleFailure", "build", "completed_before",
