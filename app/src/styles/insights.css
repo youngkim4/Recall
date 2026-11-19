@@ -1,69 +1,287 @@
-/* Insights: counts over the whole archive under one row of filters, after
-   Plausible. The page is open, as the Overview is: its parts stand on the
-   page's own ground, 32px apart, with hairlines between figures and rows. */
+/* Insights: one question of the whole archive at a time, after Amplitude's
+   chart builder. The question stands on the left as a column of labelled
+   rows; the answer fills the right: the question read back as a sentence,
+   its total, the answer as columns, and a table of its busiest rows. In a
+   narrow workspace the question stands over the answer. */
 
 @layer views {
-  .insights > * + * {
-    margin-top: var(--s-8);
+  .insights {
+    display: grid;
+    gap: var(--s-8);
+    align-items: start;
   }
 
-  /* the words to count, and under them the filters of search */
-  .insights-bar > .search {
-    max-width: 40rem;
-  }
+  @container workspace (min-width: 56rem) {
+    .insights {
+      grid-template-columns: 16rem minmax(0, 1fr);
+      gap: var(--s-10);
+    }
 
-  /* four figures of one width, where the Overview's lead takes more room; in
-     a narrow workspace they go two by two, as the Overview's do */
-  @container workspace (min-width: 60.0625rem) {
-    .insights-figures {
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+    /* the question stays in view while a long table scrolls past */
+    .insights-query {
+      position: sticky;
+      top: var(--s-4);
     }
   }
 
-  /* the chart's name, and beside it how its points are grouped: "By Month" */
-  .insights-chart-head {
-    display: inline-flex;
-    align-items: baseline;
-    gap: var(--s-2);
-    min-width: 0;
+  /* ---- the question: one row a part, 44px each, parted by hairlines, the
+     name of the part in a quiet column on the left ---- */
+  .insights-query {
+    display: grid;
+    align-content: start;
   }
 
-  .insights-chart-head > .picker {
-    align-self: center;
+  .query-row {
+    display: grid;
+    grid-template-columns: 3.5rem minmax(0, 1fr);
+    align-items: center;
+    min-height: 2.75rem;
+    border-top: 1px solid var(--line);
   }
 
-  /* The heading of a list is a pair of tabs, after Plausible's: the one
-     shown in the colour of text, the other quieter, both in the heading's
-     face and size. */
-  .section-tabs {
-    display: flex;
-    gap: var(--s-4);
-    min-width: 0;
+  .query-row:first-child {
+    border-top: 0;
   }
 
-  /* the size of a section's heading (shell.css), so the tabs read as its heading */
-  .section-tab {
-    font: inherit;
-    font-size: var(--t-reading);
-    line-height: var(--lh-body);
-    font-weight: var(--w-medium);
+  .query-label {
     color: var(--text-3);
-    transition: color var(--dur-micro) ease;
   }
 
-  .section-tab[aria-selected='true'] {
+  /* each control starts on the line of the labels' column, and can take the whole row */
+  .query-row > .picker {
+    justify-self: start;
+    max-width: 100%;
+    margin-left: calc(var(--s-3) * -1);
+  }
+
+  .query-row > .search {
+    min-width: 0;
+  }
+
+  /* a part that is set is filled in the hue of the theme, as a filter of search is */
+  .query-row[data-set] > .picker {
+    color: var(--you-ink);
+    background: color-mix(in oklab, var(--you) 12%, transparent);
+  }
+
+  .query-row[data-set] > .picker > .icon,
+  .query-row[data-set] .picker-label {
+    color: inherit;
+  }
+
+  /* how the answer is grouped is a part of its own, a step apart from the filters */
+  .query-group {
+    margin-top: var(--s-3);
+    border-top: 1px solid var(--line-strong);
+  }
+
+  .query-reset {
+    justify-self: start;
+    margin-top: var(--s-3);
+  }
+
+  /* ---- the answer ---- */
+  .insights-answer {
+    min-width: 0;
+  }
+
+  /* the question read back, set large in the face of the theme */
+  .insights-question {
+    font-family: var(--font-display);
+    font-size: var(--t-display);
+    line-height: var(--lh-display);
+    font-weight: var(--w-regular);
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  .insights-total {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-1) var(--s-5);
+    margin-top: var(--s-2);
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .insights-count b {
+    color: var(--text);
+    font-size: var(--t-heading);
+    font-weight: var(--w-medium);
+  }
+
+  .insights-none {
+    margin-top: var(--s-8);
+    color: var(--text-3);
+  }
+
+  /* ---- the columns ---- */
+  .columns {
+    margin-top: var(--s-8);
+  }
+
+  .columns-readout {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-1) var(--s-4);
+    min-height: var(--lh-body);
+    margin-bottom: var(--s-3);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .columns-when {
+    color: var(--text-2);
+  }
+
+  /* a hairline at the top of the scale and a firmer one at its foot; the
+     number of the top stands at the end of its line, over it */
+  .columns-plot {
+    position: relative;
+    height: 15rem;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line-strong);
+    cursor: crosshair;
+  }
+
+  .columns-top {
+    position: absolute;
+    right: 0;
+    bottom: 100%;
+    margin-bottom: var(--s-1);
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .columns-plot:focus-visible {
+    outline: 2px solid var(--you-ink);
+    outline-offset: 4px;
+  }
+
+  .columns-plot > svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .columns-plot .you {
+    fill: var(--you);
+  }
+
+  .columns-plot .them {
+    fill: var(--them-mark);
+  }
+
+  /* while a column is read, the others step back */
+  .columns-plot g {
+    transition: opacity var(--dur-micro) ease;
+  }
+
+  .columns-plot[data-reading] g:not([data-active]) {
+    opacity: 0.35;
+  }
+
+  .columns-axis {
+    position: relative;
+    height: var(--lh-small);
+    margin-top: var(--s-2);
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .columns-axis > span {
+    position: absolute;
+    top: 0;
+    translate: -50% 0;
+    white-space: nowrap;
+  }
+
+  .columns-axis > span[data-edge] {
+    translate: 0 0;
+  }
+
+  /* ---- the table under the answer ---- */
+  .insights-table {
+    margin-top: var(--s-8);
+  }
+
+  .data-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .data-table th {
+    padding-bottom: var(--s-2);
+    border-bottom: 1px solid var(--line-strong);
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    font-weight: var(--w-regular);
+    color: var(--text-3);
+    text-align: left;
+  }
+
+  /* a row is 12px above and below a 20px line, over a hairline */
+  .data-table td {
+    padding-block: var(--s-3);
+    border-bottom: 1px solid var(--line);
+    line-height: var(--lh-body);
+    vertical-align: middle;
+  }
+
+  .data-table .num {
+    width: 6rem;
+    padding-left: var(--s-4);
+    text-align: right;
+  }
+
+  .data-table .num.place {
+    width: 2rem;
+    padding-left: 0;
+    text-align: left;
+    color: var(--text-3);
+  }
+
+  .data-table .name {
+    overflow: hidden;
+  }
+
+  .data-table .bar {
+    width: 28%;
+    padding-left: var(--s-4);
+  }
+
+  .data-table .name > .link {
+    max-width: 100%;
     color: var(--text);
   }
 
-  .section-tab:focus-visible {
-    outline: 2px solid var(--you-ink);
-    outline-offset: 2px;
-    border-radius: var(--r-sm);
-  }
+  /* in a narrow workspace the table keeps the name, the count and the share */
+  @container workspace (max-width: 40rem) {
+    .data-table .bar,
+    .data-table th:nth-last-child(2),
+    .data-table th:nth-last-child(3),
+    .data-table td:nth-last-child(2),
+    .data-table td:nth-last-child(3) {
+      display: none;
+    }
 
-  @media (hover: hover) and (pointer: fine) {
-    .section-tab:hover {
-      color: var(--text);
+    /* the numbers take less room, so the names keep theirs */
+    .data-table .num {
+      width: 4.5rem;
+      padding-left: var(--s-2);
+    }
+
+    .data-table .num.place {
+      width: 1.5rem;
+      padding-left: 0;
     }
   }
 }

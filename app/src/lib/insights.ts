@@ -59,22 +59,6 @@ export function readAsk(key: string): StatsAsk | null {
   }
 }
 
-// The rows by weekday and hour ("0-09" is Monday, nine in the morning) as the
-// heat map draws them: seven rows from Monday, twenty-four hours from midnight.
-// A key that names no hour of the week is left out.
-export function rhythmOf(rows: StatsRow[]): number[][] {
-  const empty = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0))
-  return rows.reduce((grid, row) => {
-    const match = /^(\d)-(\d{2})$/.exec(row.key)
-    const day = match ? Number(match[1]) : -1
-    const hour = match ? Number(match[2]) : -1
-    if (day < 0 || day > 6 || hour < 0 || hour > 23) return grid
-    return grid.map((counts, at) =>
-      at === day ? counts.map((count, h) => (h === hour ? count + row.total : count)) : counts,
-    )
-  }, empty)
-}
-
 // The key of one count for useLoad: the archive's path, a line break, and the
 // ask as JSON. No path, no key: there is nothing to count.
 export function statsKey(messagesPath: string, ask: StatsAsk) {
@@ -87,4 +71,59 @@ export function readStatsKey(key: string): { messagesPath: string; ask: StatsAsk
   if (at < 1) return null
   const ask = readAsk(key.slice(at + 1))
   return ask ? { messagesPath: key.slice(0, at), ask } : null
+}
+
+// What a grouping counts across: time (day, week, month), the turn of a week
+// (weekday, hour), or who the messages are with (person, conversation).
+export function groupKind(by: StatsBy): 'time' | 'cycle' | 'who' {
+  if (by === 'person' || by === 'conversation') return 'who'
+  if (by === 'weekday' || by === 'hour' || by === 'weekday_hour') return 'cycle'
+  return 'time'
+}
+
+const FROM_WORDS: Record<string, string> = { me: 'from you', them: 'from others' }
+const KIND_WORDS: Record<string, string> = { direct: 'in one-to-one chats', group: 'in group chats' }
+const HAS_WORDS: Record<string, string> = {
+  any: 'with an attachment',
+  image: 'with a photo',
+  video: 'with a video',
+  audio: 'with audio',
+  other: 'with a file',
+  none: 'with no attachment',
+}
+
+type Question = {
+  words: string
+  filters: SearchFilters
+  by: StatsBy
+  // the name of the conversation the filters pick, where they pick one
+  where?: string
+  // the dates the filters pick, written out, where they pick any
+  range?: string
+}
+
+// The question read back as one sentence, after the title Amplitude gives a
+// chart: what is counted, then each filter that is set, then the grouping.
+// "Messages with “love” from you in group chats, by month"
+export function querySentence({ words, filters, by, where, range }: Question) {
+  const word = words.trim()
+  const parts = [
+    word ? `Messages with “${word}”` : 'All messages',
+    FROM_WORDS[filters.from],
+    filters.contact && where ? `with ${where}` : KIND_WORDS[filters.kind],
+    HAS_WORDS[filters.attachments],
+  ].filter(Boolean)
+  const grouped = `by ${by === 'weekday_hour' ? 'hour of the week' : by}`
+  return [parts.join(' '), range, grouped].filter(Boolean).join(', ')
+}
+
+// The rows that hold the most, the most first; a tie keeps the order of the
+// rows (time, for a time grouping). An empty row is never among them.
+export function busiest(rows: StatsRow[], count: number): StatsRow[] {
+  return rows
+    .map((row, place) => ({ row, place }))
+    .filter(({ row }) => row.total > 0)
+    .sort((a, b) => b.row.total - a.row.total || a.place - b.place)
+    .slice(0, count)
+    .map(({ row }) => row)
 }

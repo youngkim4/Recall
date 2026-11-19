@@ -331,11 +331,13 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 ### Insights
 
 - The rail is Overview, Chat, Analyze, Insights, Search, Reports, Jobs: the order the user agreed. Insights is `insights` in `ViewKey`.
-- Insights follows Plausible: one row of filters on top, and every figure and chart under it follows them. The filters are the words to count (`query`) and the filter row of Search (`SearchFilterBar`), with no sort: a count has no order. Words are counted whole (the route's default) once typing pauses 400ms.
-- It asks `/api/stats` three times for each set of filters: by the grain of the chart (day, week or month; the totals and the span come with it), by person or conversation (`PEOPLE_ASKED` rows), and by `weekday_hour` for the heat map (`rhythmOf`). Each ask is a key of `useLoad` (`statsKey`), so a set of filters asked for again shows at once.
-- A chart that follows a filter changes in place: `useLastReady` keeps the last answer on the page while the next one loads. Do not show a placeholder for each change.
-- A year a bar is not offered: the user's archive is a few years, and a chart of a few bars says nothing (the rule of the Overview). A week is named by its Monday (`ChartUnit` in `lib/activity.ts`); the server's `ActivityUnit` stays day or month.
-- In a wide window the ranked list stands beside the heat map and shows the rows that fit there (`useRowsThatFit`, in an `.overview-col`), so the two end on one line.
+- Insights must not look like the Overview: the user said so before seeing it. The Overview shows the archive as it is; Insights answers one question at a time, after Amplitude's chart builder. Do not bring tiles, the line chart, the heat map of hours or the ranked list of the Overview into it.
+  - On the left, the question as a column of labelled rows, 44px each, parted by hairlines (`InsightsQuery`): Count (words), In, From, Has, When, and a step apart, By (day, week, month, weekday, hour, person, conversation). A part that is set is filled in the theme's hue.
+  - On the right, the question read back as one sentence in the display face (`querySentence`), its total with what you and they sent, the answer as stacked columns (`ColumnChart`, yours at the foot), and a table with column headings (`InsightsTable`): the ten busiest rows of a time, or the people or conversations ranked, with a bar in each row. By person or conversation the table is the chart.
+- It asks `/api/stats` once a question, grouped by the choice of By (`statsAsk`, `statsKey`). Words are counted whole (the route's default) once typing pauses 400ms. A count has no order: the sort of search is never sent.
+- An answer changes in place: `useLastReady` keeps the last answer on the page while the next one loads, and the names on the page follow the answer that is shown (`answer.by`), not the choice that is still loading.
+- A year a bar is not offered: the archive is a few years. A week is named by its Monday (`ChartUnit` in `lib/activity.ts`); the server's `ActivityUnit` stays day or month.
+- The server counts weekdays from Monday ("0"), the app names them from Sunday: `(key + 1) % 7`.
 
 ### The work before an answer
 
