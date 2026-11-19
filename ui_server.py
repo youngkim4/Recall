@@ -182,6 +182,7 @@ def send_json(handler, status: int, payload: dict):
 
 
 LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
+OTHER_ORIGIN = "Forbidden: only the page of this server may ask"
 
 
 def _header_hostname(value: str) -> str:
@@ -205,6 +206,17 @@ def is_local_api_request(handler) -> bool:
         return parsed.scheme == "http" and (parsed.hostname or "") in LOCAL_HOSTNAMES
     except ValueError:
         return False
+
+
+def is_own_write(handler) -> bool:
+    """A POST or a DELETE: a local request that names no origin, or the exact origin of this server.
+
+    A page of another local port can send a simple POST with no preflight. It
+    must not start a paid job or ask a question, so the port counts here.
+    """
+    return is_local_api_request(handler) and key_store.same_origin(
+        handler.headers.get("Host"), handler.headers.get("Origin")
+    )
 
 
 class BadRequest(ValueError):
@@ -2847,8 +2859,8 @@ class RecallHandler(BaseHTTPRequestHandler):
     def answer_post(self):
         parsed = urlparse(self.path)
         try:
-            if not is_local_api_request(self):
-                send_json(self, 403, {"error": "Forbidden: non-local origin"})
+            if not is_own_write(self):
+                send_json(self, 403, {"error": OTHER_ORIGIN})
                 return
             if parsed.path == "/api/key":
                 self.answer_key("POST")
@@ -2897,8 +2909,8 @@ class RecallHandler(BaseHTTPRequestHandler):
     def answer_delete(self):
         parsed = urlparse(self.path)
         try:
-            if not is_local_api_request(self):
-                send_json(self, 403, {"error": "Forbidden: non-local origin"})
+            if not is_own_write(self):
+                send_json(self, 403, {"error": OTHER_ORIGIN})
             elif parsed.path == "/api/key":
                 self.answer_key("DELETE")
             else:
@@ -2912,8 +2924,8 @@ class RecallHandler(BaseHTTPRequestHandler):
         Only the page of this server, or a request with no origin (the Mac app,
         curl), may ask: not a page of another local port. No answer holds the key.
         """
-        if not is_local_api_request(self) or not key_store.same_origin(self.headers.get("Host"), self.headers.get("Origin")):
-            send_json(self, 403, {"error": "Forbidden: only the page of this server may ask"})
+        if not is_own_write(self):
+            send_json(self, 403, {"error": OTHER_ORIGIN})
             return
         try:
             if method == "POST":
