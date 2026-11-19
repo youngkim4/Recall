@@ -7,8 +7,14 @@ first reading stays the choice of the reader.
 
 The marker is `memory/<name>.json` in the saves folder, read at each call.
 The name is the first 16 hex digits of the SHA-256 of the resolved path of the
-archive file, as for the index of meanings. The file holds the time only,
-and only its owner reads it.
+archive file, as for the index of meanings. The file holds the time and the
+least number of messages of a conversation that the reading read
+(`minMessages`), and only its owner reads it. A first run reads every
+conversation (1): the reading after an import keeps that threshold. A marker
+of an earlier build has no threshold (`threshold` gives None).
+
+The threshold saved is the lower of the one there and the new one: a reading
+with the threshold of the app does not take back what a first run read.
 """
 
 from __future__ import annotations
@@ -45,10 +51,28 @@ def completed_before(archive_file: str | os.PathLike[str]) -> bool:
         return False
 
 
-def mark_completed(archive_file: str | os.PathLike[str]) -> None:
-    """Write the marker of this archive. A marker that can not be written is a warning, never a failure."""
+def threshold(archive_file: str | os.PathLike[str]) -> int | None:
+    """The least number of messages that the readings of this archive read, or None: no marker, a marker
+    of an earlier build, or one that can not be read."""
+    try:
+        saved = json.loads(marker_path(archive_file).read_text(encoding="utf-8")).get("minMessages")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if isinstance(saved, bool) or not isinstance(saved, int) or saved < 1:
+        return None
+    return saved
+
+
+def mark_completed(archive_file: str | os.PathLike[str], min_messages: int | None = None) -> None:
+    """Write the marker of this archive, with the threshold of the reading that completed (`min_messages`).
+
+    The lower of that and the threshold already saved is kept. A marker that
+    can not be written is a warning, never a failure.
+    """
     path = marker_path(archive_file)
-    text = json.dumps({"completedAt": datetime.now(UTC).isoformat(timespec="seconds")})
+    before = threshold(archive_file) if path.is_file() else None
+    kept = min((one for one in (before, min_messages) if one is not None), default=None)
+    text = json.dumps({"completedAt": datetime.now(UTC).isoformat(timespec="seconds"), "minMessages": kept})
     work = path.with_name(f"{path.name}.tmp")
     try:
         path.parent.mkdir(mode=PRIVATE_FOLDER_MODE, parents=True, exist_ok=True)

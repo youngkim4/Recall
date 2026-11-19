@@ -28,7 +28,7 @@ from typing import Any
 from meaning_index import EmbedderFacts
 from recall_services import meaning, memory_prep, people_words
 from recall_services import memory_prep_words as memory_words
-from recall_services.first_run import SKIPPED, STEP_NAMES
+from recall_services.first_run import MEMORY_MIN_MESSAGES, SKIPPED, STEP_NAMES
 
 Listener = Callable[[dict[str, Any]], None]
 Work = Callable[[Listener], dict[str, Any]]
@@ -113,7 +113,7 @@ def run(
         if states.get(name) == "ready":
             told({"log": SKIPPED[name]})
             if name == "memory":
-                memory_prep.mark_completed(archive_file)
+                memory_prep.mark_completed(archive_file, MEMORY_MIN_MESSAGES)
             results[name], skipped = None, [*skipped, name]
             continue
         teller = StepTeller(place, len(STEP_NAMES), told, spent)

@@ -724,6 +724,10 @@ def check_request(action, payload: dict) -> None:
     for name in ("contact", "conversation", "model", "since", "until"):
         if payload.get(name) is not None and not isinstance(payload.get(name), str):
             raise JobRefused(f"{name} must be text.", 400)
+    if action in MEMORY_ACTIONS and "minMessages" in payload:
+        fewest = payload["minMessages"]
+        if isinstance(fewest, bool) or not isinstance(fewest, int) or fewest < 1:
+            raise JobRefused("minMessages must be a whole number, 1 or more.", 400)
     if action in FIRST_RUN_ACTIONS and not keys.api_key():
         # every step but the index of an archive with nothing new pays a provider: no job is made with no key
         raise JobRefused(first_run_service.NO_KEY, 409)
@@ -1187,20 +1191,22 @@ def prepare_memory(job_id: str, payload: dict, told=None, min_messages: int | No
     """The `memory` job: read the memory of chat ahead of time, four conversations at once. Its lines hold counts only.
 
     The job keeps what it spent under `spent` (`{"usd", "usage"}`), also when
-    it failed. One that completed writes the marker of its archive. `told`
-    gets the updates; with none they go to the job. `min_messages` None is
-    `PREPARE_MIN_MESSAGES`; the first run reads every conversation.
+    it failed. One that completed writes the marker of its archive, with the
+    threshold it read with. `told` gets the updates; with none they go to the
+    job. The threshold is `min_messages`, else `minMessages` of the request,
+    else `PREPARE_MIN_MESSAGES`; the first run reads every conversation (1).
     """
     _state, archive = archive_for(named_archive(payload))
     told = told or job_teller(job_id)
+    fewest = memory_prep_service.least(min_messages if min_messages is not None else payload.get("minMessages"))
     try:
-        result = memory_prep_service.run(told, archive=archive, names=saved_names(), min_messages=min_messages)
+        result = memory_prep_service.run(told, archive=archive, names=saved_names(), min_messages=fewest)
     except memory_prep_service.MemoryFailure as failure:
         usage = failure.usage or None
         told({"spent": {"usd": float((usage or {}).get("cost_usd") or 0.0), "usage": usage}})
         raise
     told({"spent": {"usd": result["usd"], "usage": result["usage"]}})
-    memory_prep_service.mark_completed(archive.path)
+    memory_prep_service.mark_completed(archive.path, fewest)
     return result
 
 
@@ -1246,7 +1252,9 @@ def refresh_memory(job_id: str, action: str, payload: dict) -> None:
     `memory_prep.completed_before`): parts that a question or a report read do
     not count. And only when the parts that are not read cost at most
     `PREPARE_AUTO_USD` (`memory_prep.worth_starting`). The first reading is
-    the choice of the reader. A fault here does not change how the import ended.
+    the choice of the reader. The job reads with the threshold of the marker
+    (1 after a first run), or `PREPARE_MIN_MESSAGES` for a marker with none.
+    A fault here does not change how the import ended.
     """
     try:
         if not changed_the_archive(job_id, action):
@@ -1254,14 +1262,15 @@ def refresh_memory(job_id: str, action: str, payload: dict) -> None:
         place = named_archive(payload)
         if not memory_prep_service.completed_before(places.archive_path_for(place)):
             return  # the reader never read the memory of this archive: the first reading is theirs
+        fewest = memory_prep_service.least(memory_prep_service.marker_threshold(places.archive_path_for(place)))
         _state, archive = archive_for(place, wait_for_import=False)
-        found = memory_prep_service.payload(archive, saved_names())
+        found = memory_prep_service.payload(archive, saved_names(), min_messages=fewest)
         if not memory_prep_service.worth_starting(found, completed_before=True):
             parts = found["partsNotRead"]
             print(f"[memory] the memory waits for the reader: {parts:,} part{'' if parts == 1 else 's'} not read", file=sys.__stderr__)
             return
         named = payload.get("messagesPath")
-        create_job("memory", {"messagesPath": named} if named else {})
+        create_job("memory", {**({"messagesPath": named} if named else {}), "minMessages": fewest})
     except JobRefused:
         pass  # an import that started meanwhile, or a reading that runs
     except Exception as exc:  # noqa: BLE001 - the import ended: nothing here is a reason to say otherwise

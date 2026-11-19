@@ -7,6 +7,7 @@ the app (200): the first run reads every conversation all the same.
 """
 import json
 import threading
+import time
 from datetime import timedelta
 from urllib.parse import quote
 
@@ -21,6 +22,7 @@ from tests.archive.builders import ChatDbBuilder
 from tests.archive_kit import (
     data_folder,  # noqa: F401
     emptied,
+    ended,
     jobs_end,  # noqa: F401
     listed,
     no_names,  # noqa: F401
@@ -93,18 +95,26 @@ def archive_file(data_folder):  # noqa: F811
     return str(pulled(data_folder / "saves" / "archive.sqlite3", FIRST))
 
 
-@pytest.fixture
-def two_people(data_folder):  # noqa: F811
-    """An archive of two conversations: 20 messages with one person, 2 with another."""
-    source = data_folder / "two-from" / "chat.db"
-    source.parent.mkdir(parents=True)
+def write_two(source, other=2):
+    """A Messages database of two conversations: 20 messages with one person, `other` with another.
+    The guid follows the text, so a later database with more messages keeps the earlier ones."""
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.unlink(missing_ok=True)
     builder = ChatDbBuilder(source)
-    for chat, count in ((PERSON, 20), (OTHER, 2)):
+    for chat, count in ((PERSON, 20), (OTHER, other)):
         handle = builder.handle(chat)
         thread = builder.chat(chat, members=[handle])
         for place in range(count):
-            builder.message(thread, when=START + timedelta(minutes=place), text=f"{MARK} {chat} {place}", handle=handle)
+            text = f"{MARK} {chat} {place}"
+            builder.message(thread, when=START + timedelta(minutes=place), text=text, handle=handle, guid=f"guid-{text}")
     builder.close()
+    return source
+
+
+@pytest.fixture
+def two_people(data_folder):  # noqa: F811
+    """An archive of two conversations: 20 messages with one person, 2 with another."""
+    source = write_two(data_folder / "two-from" / "chat.db")
     archive_file = data_folder / "saves" / "archive.sqlite3"
     assert places.state_for(archive_file).pull_from_messages(source, None).status == "done"
     return str(places.archive_path_for(archive_file))
@@ -369,3 +379,68 @@ def test_a_report_runs_beside_the_first_run(held_jobs):
     ui_server.create_job("first_run", {})
     ui_server.create_job("analyze", {"contact": PERSON})
     assert listed() == [("first_run", "queued"), ("analyze", "queued")]
+
+
+# --- after a first run, the builds after an import keep chat ready ------------------------------
+
+
+def jobs_of(action):
+    with ui_server.JOBS_LOCK:
+        return [ui_server.job_copy(job) for job in ui_server.JOBS.values() if job["action"] == action]
+
+
+def one_ended(action, wait=10.0):
+    """The one job of `action` that the server started by itself, once it has ended."""
+    until = time.monotonic() + wait
+    while not jobs_of(action) and time.monotonic() < until:
+        time.sleep(0.01)
+    (job,) = jobs_of(action)
+    return ended(job["id"], wait)
+
+
+def test_an_import_that_adds_to_a_small_conversation_is_read_and_chat_stays_ready(
+    server, two_people, model, messages_home
+):
+    """The memory of a first run holds every conversation: the reading after an import keeps its threshold."""
+    assert get_ready(two_people)["status"] == "completed"
+    assert memory_prep.marker_threshold(archive_path(two_people)) == first_run.MEMORY_MIN_MESSAGES
+    write_two(messages_home / "chat.db", other=6)
+    assert run("export", {"messagesPath": two_people})["status"] == "completed"
+    memory_job = one_ended("memory")
+    assert memory_job["status"] == "completed" and memory_job["result"]["periodsBuilt"] >= 1
+    assert one_ended("meaning")["status"] == "completed"
+    people_job = one_ended("people")
+    assert (people_job["status"], people_job["result"]["built"]) == ("completed", 1)
+    _status, answer = first_run_of(server, two_people)
+    assert [step["state"] for step in answer["steps"]] == ["ready"] * 3 and answer["ready"] is True
+    assert memory_prep.marker_threshold(archive_path(two_people)) == first_run.MEMORY_MIN_MESSAGES
+
+
+def test_a_memory_job_writes_the_threshold_it_ran_with(archive_file, model, monkeypatch):
+    monkeypatch.setattr(memory_prep, "PREPARE_MIN_MESSAGES", 7)
+    assert run("memory", {"messagesPath": archive_file})["status"] == "completed"
+    assert memory_prep.marker_threshold(archive_path(archive_file)) == 7
+    assert run("memory", {"messagesPath": archive_file, "minMessages": 1})["status"] == "completed"
+    assert memory_prep.marker_threshold(archive_path(archive_file)) == 1
+
+
+def test_a_memory_job_after_a_first_run_keeps_the_lower_threshold(archive_file, model):
+    """A reading of the memory with the threshold of the app does not take back what a first run read."""
+    get_ready(archive_file)
+    assert run("memory", {"messagesPath": archive_file})["status"] == "completed"
+    assert memory_prep.marker_threshold(archive_path(archive_file)) == first_run.MEMORY_MIN_MESSAGES
+
+
+def test_an_old_marker_with_no_threshold_reads_with_the_threshold_of_the_app(archive_file):
+    marker = memory_prep.marker_path(archive_path(archive_file))
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps({"completedAt": "2026-01-01T00:00:00+00:00"}), encoding="utf-8")
+    assert memory_prep.completed_before(archive_path(archive_file))
+    assert memory_prep.marker_threshold(archive_path(archive_file)) is None
+
+
+@pytest.mark.parametrize("value", ["1", 0, -3, 1.5, True])
+def test_a_memory_job_refuses_a_threshold_that_is_no_count(server, archive_file, value):
+    status, answer = post(server, "/api/jobs", {"action": "memory", "messagesPath": archive_file, "minMessages": value})
+    assert status == 400 and answer["error"] == "minMessages must be a whole number, 1 or more."
+    assert listed() == []
