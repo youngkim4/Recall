@@ -65,10 +65,24 @@ def test_the_tool_and_the_rules_are_there_only_with_the_port() -> None:
 
 def test_the_rules_say_where_to_start_how_to_check_and_what_to_keep_to() -> None:
     joined = " ".join(PEOPLE_RULES)
-    assert "start with find_people" in joined
+    # who by a kind of relationship or a story: find_people; who by an amount: the figures
+    assert "asks who by a kind of relationship or by a story" in joined and "starts with find_people" in joined
+    assert "asks who by an amount (closest, most, who did I talk to) starts with the figures" in joined
+    assert "Check at most 3 candidates, the best first." in joined
     assert "Never name a person only from what was said about them in another conversation." in joined
-    assert "do not name a relationship that did" in joined
-    assert "take the correction" in joined
+    assert "do not name a relationship that did" in joined and "take the correction" in joined
+    assert "A story from find_people is not a quote and not a citation" in joined
+
+
+def test_the_people_rules_sit_in_their_places() -> None:
+    engine, fake = engine_with([say("Nobody.")], people=FakePeople([MAYA]))
+    engine.ask(QUESTION)
+    system = system_text(fake.requests[0])
+    work, answer = system.split("How to answer")
+    assert "starts with find_people" in work and "Check at most 3 candidates" in work
+    assert "A story from find_people is not a quote" in answer and "take the correction" in answer
+    assert work.index("People seldom write the words") < work.index("starts with find_people")
+    assert work.index("1. Figures") < work.index("starts with find_people")
 
 
 def test_the_rules_sit_with_the_other_tools_of_the_ports() -> None:
@@ -78,7 +92,9 @@ def test_the_rules_sit_with_the_other_tools_of_the_ports() -> None:
     engine.ask(QUESTION)
     request = fake.requests[0]
     assert [spec.name for spec in request.tools][-2:] == ["conversation_digest", "find_people"]
-    assert system_text(request).count("start with find_people") == 1
+    assert system_text(request).count("starts with find_people") == 1
+    answer = system_text(request).split("How to answer")[1]
+    assert answer.index("A summary from conversation_digest") < answer.index("A story from find_people")
 
 
 def test_every_question_gets_the_seeded_lookup_with_the_question_as_the_description() -> None:

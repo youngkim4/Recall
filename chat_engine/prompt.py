@@ -80,10 +80,15 @@ _IN_PLACE = {
 }
 PEOPLE = "find_people"
 _PEOPLE_START = (
-    "For a question about people (who, which friend, someone I…), start with find_people: describe the "
-    "relationship in a few words, and set kinds when the question names one. Then check each candidate in "
-    "their own conversation before you name them: the figures (conversation_stats), then the story or the "
-    "messages."
+    "A question that asks who by a kind of relationship or by a story (a talking stage, a friend I lost touch "
+    "with, someone I…) starts with find_people: describe the relationship in a few words, and set kinds when the "
+    "question names one. A question that asks who by an amount (closest, most, who did I talk to) starts with "
+    "the figures, as above."
+)
+_PEOPLE_CHECK = (
+    "Before you name a candidate of find_people, check them in their own conversation: the figures "
+    f"(conversation_stats), then the story or the messages. Check at most {DIGESTS_PER_QUESTION} candidates, "
+    "the best first."
 )
 _PEOPLE_AGAIN = (
     "For a follow-up such as \"anyone else?\", call find_people again with the description of the earlier "
@@ -98,7 +103,11 @@ _PEOPLE_KEEP = (
     "out, do not name a relationship that did. When the user says an answer was wrong, take the correction, "
     "leave out that person, and look again."
 )
-PEOPLE_RULES = (_PEOPLE_START, _PEOPLE_AGAIN, _PEOPLE_PROOF, _PEOPLE_KEEP)
+_PEOPLE_STORY = (
+    "A story from find_people is not a quote and not a citation: never put its words in quotation marks. "
+    "Cite the messages of the person's own conversation."
+)
+PEOPLE_RULES = (_PEOPLE_START, _PEOPLE_CHECK, _PEOPLE_AGAIN, _PEOPLE_PROOF, _PEOPLE_KEEP, _PEOPLE_STORY)
 # Each added rule goes after the base rule that ends with its anchor.
 _AFTER_WORK: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
     MEANING: (
@@ -112,7 +121,7 @@ _AFTER_WORK: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
         ),
     ),
     PEOPLE: (
-        ("People seldom write the words of such a question in their messages.", (_PEOPLE_START, _PEOPLE_AGAIN)),
+        ("messages show.", (_PEOPLE_START, _PEOPLE_CHECK, _PEOPLE_AGAIN)),  # after the steps of a pattern question
         ("When the question is about the person, look in all of them.", (_PEOPLE_PROOF,)),
     ),
 }
@@ -128,7 +137,10 @@ _AFTER_ANSWER: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
             ),
         ),
     ),
-    PEOPLE: (("Say separately what you infer from them.", (_PEOPLE_KEEP,)),),
+    PEOPLE: (
+        ("Say separately what you infer from them.", (_PEOPLE_KEEP,)),
+        ("Inside quotation marks, copy the message text exactly. Never reword a quote.", (_PEOPLE_STORY,)),
+    ),
 }
 
 _HOW_TO_ANSWER = (
