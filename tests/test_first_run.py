@@ -179,6 +179,20 @@ def test_the_people_bound_is_not_below_the_estimate_or_the_cost_of_the_build(ser
     assert built["status"] == "completed" and 0 < built["spent"]["usd"] <= bound
 
 
+def test_the_notes_of_a_part_are_bounded_by_the_limits_of_a_part_not_by_its_reply():
+    from recall_services import first_run
+    from recall_services.people_plans import INPUT_CHARS_PER_TOKEN, MOMENT_HEAD_CHARS
+    from report_engine import ReportOptions, digest
+
+    info = first_run.models.model_info(people.model())
+    most_chars = digest.MAX_SUMMARY_CHARS + digest.MAX_MOMENTS_PER_PERIOD * (
+        MOMENT_HEAD_CHARS + digest.MAX_TITLE_CHARS + digest.MAX_DETAIL_CHARS
+    )
+    roomy = ReportOptions(map_max_output_tokens=10**6)
+    assert first_run.notes_tokens_per_part(info, roomy) == -(-most_chars // INPUT_CHARS_PER_TOKEN)
+    assert first_run.notes_tokens_per_part(info, ReportOptions(map_max_output_tokens=100)) == 100
+
+
 def test_after_the_memory_is_read_its_step_is_ready_and_not_counted(server, archive_file, model, monkeypatch):
     monkeypatch.setattr(memory_prep, "PREPARE_MIN_MESSAGES", 1)
     run("memory", {"messagesPath": archive_file})

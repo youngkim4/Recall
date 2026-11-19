@@ -35,9 +35,9 @@ from recall_services.memory_prep_read import Planned
 from recall_services.models import ModelChoiceError
 from recall_services.names import Names
 from recall_services.people_inputs import subjects_of
-from recall_services.people_plans import AROUND_NOTES_CHARS, INPUT_CHARS_PER_TOKEN, PART_HEAD_CHARS
+from recall_services.people_plans import AROUND_NOTES_CHARS, INPUT_CHARS_PER_TOKEN, MOMENT_HEAD_CHARS, PART_HEAD_CHARS
 from recall_services.people_prompt import NOTES_INTRO, OUTPUT_TOKENS, PROFILE_SYSTEM, PROFILE_TASK
-from report_engine import ReportOptions
+from report_engine import ReportOptions, digest
 from report_engine.ports import LLMUsage
 from report_engine.pricing import call_cost_usd
 
@@ -97,6 +97,22 @@ def _memory_step(archive: Archive, names: Names) -> tuple[dict[str, Any], tuple[
     return _step("memory", found["state"], found["estimatedCost"], found["error"], found["code"]), planned
 
 
+def notes_tokens_per_part(info: Any, options: ReportOptions | None = None) -> int:
+    """The most input tokens that the notes of one part can add to a profile request.
+
+    `input_bound` counts a part as its summary and, for each moment, a head,
+    a title and a detail. The digest cuts each of those (`report_engine.digest`
+    limits), so that sum is a bound. The reply of a part is a bound too: its
+    output limit (`map_max_output_tokens`, at most the model's own). The
+    smaller one is taken.
+    """
+    most_chars = digest.MAX_SUMMARY_CHARS + digest.MAX_MOMENTS_PER_PERIOD * (
+        MOMENT_HEAD_CHARS + digest.MAX_TITLE_CHARS + digest.MAX_DETAIL_CHARS
+    )
+    reply_tokens = min((options or ReportOptions()).map_max_output_tokens, info.max_output_tokens)
+    return min(reply_tokens, math.ceil(most_chars / INPUT_CHARS_PER_TOKEN))
+
+
 def people_bound(
     archive: Archive,
     names: Names,
@@ -108,16 +124,15 @@ def people_bound(
     """An upper bound of the first build of the people index, with every try, before the memory is read.
 
     For each profile, its parts are the parts that the plan of the memory
-    gives its conversations. The notes of a part are at most the reply of
-    the part, so at most the output limit of a part (`map_max_output_tokens`,
-    at most the model's own limit) in tokens of the same model; the frame of
-    the request and the head of each part are counted as `input_bound`
-    counts them. The reply is the fullest one that the limits of a profile
-    allow (`OUTPUT_TOKENS`), and its embedding counts as many tokens. A
-    profile with no part has no text and is not written.
+    gives its conversations. The notes of a part are at most
+    `notes_tokens_per_part`; the frame of the request and the head of each
+    part are counted as `input_bound` counts them. The reply is the fullest
+    one that the limits of a profile allow (`OUTPUT_TOKENS`), and its
+    embedding counts as many tokens. A profile with no part has no text and
+    is not written.
     """
     info = models.model_info(people.model())
-    part_tokens = min((options or ReportOptions()).map_max_output_tokens, info.max_output_tokens)
+    part_tokens = notes_tokens_per_part(info, options)
     embed_usd = OUTPUT_TOKENS * (facts or meaning.default_facts()).usd_per_mtok / 1_000_000
     parts = {one.conversation: one.periods for one in planned}
     frame = len(PROFILE_SYSTEM) + len(PROFILE_TASK) + len(NOTES_INTRO) + AROUND_NOTES_CHARS

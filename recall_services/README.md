@@ -840,7 +840,7 @@ No sentence, no log line, no job record and no traceback holds the key. A fault 
 - `meaning`: the state and the cost of `GET /api/meaning`. `state` is `none`, `behind` or `ready`.
 - `memory`: the state and the cost of `GET /api/memory` for every conversation (`MEMORY_MIN_MESSAGES` is 1). `state` is `none`, `partial` or `ready`.
 - `people`: `none`, `partial` or `ready`.
-  - Before the memory is read, the people index has nothing to measure. The cost is an upper bound from the plan of the memory (`first_run.people_bound`): for each profile, the parts of its conversations, each at most the output limit of a part (`map_max_output_tokens`, at most the model's own limit), the frame of the request, the fullest reply of a profile (`OUTPUT_TOKENS`) and its embedding, times `TRIES`.
+  - Before the memory is read, the people index has nothing to measure. The cost is an upper bound from the plan of the memory (`first_run.people_bound`): for each profile, the parts of its conversations, each at most `first_run.notes_tokens_per_part` (the summary and the moments that the limits of `report_engine.digest` allow, or the output limit of a part when that is smaller), the frame of the request, the fullest reply of a profile (`OUTPUT_TOKENS`) and its embedding, times `TRIES`.
   - After the memory is read, the cost is `TRIES` times `estimatedCost` of `GET /api/people`.
   - The step is `ready` only when a build of this archive completed before and nothing is left to write or to embed. A profile whose memory can not be read does not hold it back.
 - `error` and `code` of a step say why its cost could not be worked out. Its cost is then 0.
