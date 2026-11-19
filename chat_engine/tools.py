@@ -12,7 +12,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from .errors import ArchiveError, ChatEngineError
 from .ports import ChatArchive, Labeler
-from .prompt import DIGEST, MEANING
+from .prompt import DIGEST, MEANING, PEOPLE
 from .registry import ConversationAliases, EvidenceRegistry
 from .render import Limits, squeeze
 from .scope import Scope
@@ -21,6 +21,7 @@ from .tool_context import Fetch, Memory, Prepared, Report, ToolContext, ToolOutc
 from .tool_digest import prepare_digest
 from .tool_figures import prepare_count, prepare_list, prepare_stats
 from .tool_meaning import prepare_search_or_meaning
+from .tool_people import prepare_find_people
 from .tool_search import prepare_read, prepare_search
 from .tool_specs import TOOL_SPECS, tool_specs
 
@@ -69,10 +70,14 @@ class ToolBox:
             self._builders["search_messages"] = prepare_search_or_meaning
         if ports.digests is not None:
             self._builders[DIGEST] = prepare_digest
-        names = {MEANING: ports.meaning, DIGEST: ports.digests}
+        if ports.people is not None:
+            self._builders[PEOPLE] = prepare_find_people
+        names = {MEANING: ports.meaning, DIGEST: ports.digests, PEOPLE: ports.people}
         self.offered = frozenset(name for name, port in names.items() if port is not None)
         if self.offered:
-            self.specs = tool_specs(meaning=MEANING in self.offered, digest=DIGEST in self.offered)
+            self.specs = tool_specs(
+                meaning=MEANING in self.offered, digest=DIGEST in self.offered, people=PEOPLE in self.offered
+            )
 
     def prepare(self, name: str, raw_arguments: str) -> Prepared:
         """Check a call. A refused call still runs: it tells the model why."""

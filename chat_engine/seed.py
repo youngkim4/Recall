@@ -26,6 +26,7 @@ from .tool_args import ToolInputError
 from .tool_context import Prepared, ToolContext
 from .tool_figures import list_entries, run_count
 from .tool_meaning import MeaningRequest, meaning_lookup
+from .tool_people import SEED_PEOPLE, seeded_people
 from .tool_search import run_search_tool
 from .tools import ToolBox
 
@@ -166,6 +167,9 @@ def plan_seed(box: ToolBox, question: str, summary: ArchiveSummary) -> list[Seed
         calls.append(_names_call(box, ctx, names, entries))
     elif ctx.scope.conversations:
         calls.append(_scope_call(box, ctx, directory))
+    if ctx.memory.people is not None:
+        label = f"find_people(description=the question, limit={SEED_PEOPLE})"
+        calls.append(SeedCall("find_people", label, box.wrap("find_people", seeded_people(ctx, question))))
     figures = _figures_call(box, ctx, *question_period(question, held, ctx.labeler.redact))
     if figures is not None:
         calls.append(figures)

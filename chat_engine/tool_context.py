@@ -11,7 +11,7 @@ from typing import Any, Callable, Optional, Sequence
 
 from .cancel import CancelToken
 from .directory import Directory
-from .ports import ChatArchive, Conversation, DigestSource, Labeler, MeaningSearch, Message
+from .ports import ChatArchive, Conversation, DigestSource, Labeler, MeaningSearch, Message, PeopleSearch
 from .registry import ConversationAliases, EvidenceRegistry
 from .render import ConversationBook, Limits
 from .scope import Scope
@@ -87,6 +87,7 @@ class Memory:
     digest_usd_limit: float = 0.5
     cancel: CancelToken = field(default_factory=CancelToken)
     digest_parts_limit: int = 4  # the most periods not yet read that one digest reads inside a question
+    people: Optional[PeopleSearch] = None
 
 
 def month_year(timestamp: str) -> str:

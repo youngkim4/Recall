@@ -32,12 +32,15 @@ class MemoryBench:
         digest_usd_limit: float = 2.0,
         digest_tokens: int = 24_000,
         digest_parts_limit: int = 1000,  # no limit, so that a test of another rule reads a story of any length
+        people: Any = None,
     ) -> None:
         self.archive = archive or tiny_archive()
         self.registry = EvidenceRegistry()
         self.aliases = ConversationAliases()
         self.cancel = CancelToken()
-        memory = Memory(meaning, digests, digest_tokens, digest_usd_limit, self.cancel, digest_parts_limit)
+        memory = Memory(
+            meaning, digests, digest_tokens, digest_usd_limit, self.cancel, digest_parts_limit, people=people
+        )
         self.box = ToolBox(
             self.archive, labeler or tiny_labeler(), self.registry, self.aliases, scope or Scope(),
             limits or Limits(), memory,
