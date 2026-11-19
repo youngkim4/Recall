@@ -1,9 +1,11 @@
 """Conversation loading, normalization, statistics, formatting, and chunking."""
 
+import logging
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -12,6 +14,8 @@ import tiktoken
 from pandas.tseries.api import guess_datetime_format
 
 from ai_config import SECONDS_PER_DAY, TOKEN_BUDGET
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -613,30 +617,52 @@ def format_all_messages(conv: pd.DataFrame, sender_names: Optional[Dict[str, str
     return "\n".join(_formatted_lines(conv, sender_names).tolist())
 
 
-def _load_tokenizer():
-    try:
-        # gpt-5.x / gpt-4o tokenizer; cl100k overcounts these models ~10-20%
-        return tiktoken.get_encoding("o200k_base")
-    except Exception:
-        return tiktoken.get_encoding("cl100k_base")
+# gpt-5.x / gpt-4o tokenizer first; cl100k overcounts these models ~10-20%
+TOKENIZER_NAMES = ("o200k_base", "cl100k_base")
+# with no vocabulary: one token for three bytes, as meaning_index.tokens counts
+ROUGH_BYTES_PER_TOKEN = 3
 
 
-_tokenizer = _load_tokenizer()
+@lru_cache(maxsize=1)
+def _tokenizer():
+    """The vocabulary, or None when none can load. Loaded at the first count, never at import:
+    tiktoken fetches it from the network the first time, and a server with no network must still start."""
+    for name in TOKENIZER_NAMES:
+        try:
+            return tiktoken.get_encoding(name)
+        except Exception as exc:  # noqa: BLE001 - any load failure means the same thing here
+            logger.warning("tokenizer %s could not load (%s)", name, type(exc).__name__)
+    logger.warning("no tokenizer loaded; counting tokens by bytes")
+    return None
+
+
+def _encode(encoding, text: str) -> list:
+    # a message can hold "<|endoftext|>": it is text here, not a special token
+    return encoding.encode(text, disallowed_special=())
 
 
 def estimate_tokens(text: str) -> int:
-    """Count tokens using tiktoken."""
-    return len(_tokenizer.encode(text))
+    """Count tokens using tiktoken, or roughly by bytes when no vocabulary loads."""
+    encoding = _tokenizer()
+    if encoding is None:
+        return -(-len(text.encode("utf-8", "surrogatepass")) // ROUGH_BYTES_PER_TOKEN)
+    return len(_encode(encoding, text))
 
 
 def truncate_to_tokens(text: str, max_tokens: int) -> str:
     """Truncate text to last max_tokens tokens to preserve recent context."""
     if not text or max_tokens <= 0:
         return ""
-    tokens = _tokenizer.encode(text)
+    encoding = _tokenizer()
+    if encoding is None:
+        data = text.encode("utf-8", "surrogatepass")
+        keep = max_tokens * ROUGH_BYTES_PER_TOKEN
+        # a cut inside a letter drops that letter
+        return text if len(data) <= keep else data[-keep:].decode("utf-8", "ignore")
+    tokens = _encode(encoding, text)
     if len(tokens) <= max_tokens:
         return text
-    return _tokenizer.decode(tokens[-max_tokens:])
+    return encoding.decode(tokens[-max_tokens:])
 
 
 def chunk_by_year(
