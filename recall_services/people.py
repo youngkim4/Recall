@@ -219,7 +219,7 @@ def build(
     writing = seen.to_write
     teller.tell(step="write", total=len(writing), log=to_write(len(writing), seen.people - seen.not_read - len(writing), seen.not_read))
     info = seen.planner.info
-    calls = Calls(_port(more.get("llm_factory"), info) if writing else None, info, seen.planner.redact, cancel,
+    calls = Calls(_port(more.get("llm_factory"), info) if writing else None, info, seen.planner.mask, cancel,
                   Progress(teller, len(writing)).heard)  # fmt: skip
     written, unplanned = calls.run(
         writing, int(more.get("parallel") or PEOPLE_PARALLEL), lambda item: prepare(seen, item)

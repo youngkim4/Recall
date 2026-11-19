@@ -50,7 +50,7 @@ def _usage(info: ModelInfo, result: LLMResult) -> Usage:
     )
 
 
-def ask(llm: LLM, info: ModelInfo, planned: Planned, redact: Callable[[str], str]) -> Written:
+def ask(llm: LLM, info: ModelInfo, planned: Planned, mask: Callable[[str], str]) -> Written:
     """Ask for one profile. A reply in the wrong shape is asked once more, then the profile fails."""
     figures = planned.figures
     assert figures is not None and figures.first_day and figures.last_day
@@ -68,7 +68,7 @@ def ask(llm: LLM, info: ModelInfo, planned: Planned, redact: Callable[[str], str
         usage = usage.plus(_usage(info, result))
         shaped = result.parsed if result.status == "completed" else None
         text = parse_reply(
-            shaped, span=(figures.first_day, figures.last_day), is_group=planned.subject.is_group, redact=redact
+            shaped, span=(figures.first_day, figures.last_day), is_group=planned.subject.is_group, mask=mask
         )
         if text is not None:
             return Written(planned, text, usage)
@@ -79,11 +79,11 @@ class Calls:
     """The calls of one build. `stop_code` is the failure that stopped them, or "cancelled", or None."""
 
     def __init__(
-        self, llm: LLM | None, info: ModelInfo, redact: Callable[[str], str], cancel: Any, heard: Callable[[], None]
+        self, llm: LLM | None, info: ModelInfo, mask: Callable[[str], str], cancel: Any, heard: Callable[[], None]
     ) -> None:
         self._llm = llm
         self._info = info
-        self._redact = redact
+        self._mask = mask
         self._cancel = cancel
         self._heard = heard
         self._lock = threading.Lock()
@@ -113,7 +113,7 @@ class Calls:
             try:
                 planned = prepare(item)
                 written = (
-                    ask(llm, self._info, planned, self._redact)
+                    ask(llm, self._info, planned, self._mask)
                     if planned.notes.state == READ
                     else Written(planned, None, Usage(), NOT_READ_NOW)
                 )
