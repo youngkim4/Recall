@@ -85,6 +85,7 @@ from recall_services import meaning as meaning_service
 from recall_services import memory as memory_service
 from recall_services import memory_prep as memory_prep_service
 from recall_services import names as names_service
+from recall_services import people as people_service
 from recall_services import reports as report_service
 from recall_services import search as search_service
 from recall_services.archive_state import DEFAULT_MAX_REMOVED_SHARE, ArchiveState
@@ -615,7 +616,7 @@ def pull_into_archive(action: str, payload: dict) -> PullDone:
     raise ImportStopped(outcome.reason)
 
 
-JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge", "meaning", "digest", "memory"})
+JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge", "meaning", "digest", "memory", "people"})
 # each of these writes the archive
 IMPORT_ACTIONS = frozenset({"setup_import", "export", "bridge"})
 # this one reads the whole archive into the index for the search by meaning
@@ -634,6 +635,11 @@ IMPORT_BEFORE_MEMORY = "An import is running. Wait until it ends, then read the 
 # the memory job and a digest job read with one model and no limit of parts: side by side they pay twice
 MEMORY_BEFORE_DIGEST = "Recall is reading the memory of chat, and this conversation with it. Wait until it ends."
 DIGEST_BEFORE_MEMORY = "Recall is reading a conversation for chat. Wait until it ends, then read the memory."
+# this one writes the profiles of the people index from the memory: it reads the memory, so it waits for it
+PEOPLE_ACTIONS = frozenset({"people"})
+PEOPLE_IS_BUILT = "The people index is being built. Wait until it ends."
+IMPORT_BEFORE_PEOPLE = "An import is running. Wait until it ends, then build the people index."
+MEMORY_BEFORE_PEOPLE = "Recall is reading the memory of chat. Wait until it ends, then build the people index."
 UNFINISHED = frozenset({"queued", "running"})
 # Jobs that do not run together: the job that is asked for, the jobs that
 # hold it up, and what the reader is told.
@@ -650,6 +656,10 @@ ONE_AT_A_TIME = (
     (MEMORY_ACTIONS, IMPORT_ACTIONS, IMPORT_BEFORE_MEMORY),
     (DIGEST_ACTIONS, MEMORY_ACTIONS, MEMORY_BEFORE_DIGEST),
     (MEMORY_ACTIONS, DIGEST_ACTIONS, DIGEST_BEFORE_MEMORY),
+    # one build of the people index at a time, no import meanwhile, and the memory is read first
+    (IMPORT_ACTIONS | PEOPLE_ACTIONS, PEOPLE_ACTIONS, PEOPLE_IS_BUILT),
+    (PEOPLE_ACTIONS, IMPORT_ACTIONS, IMPORT_BEFORE_PEOPLE),
+    (PEOPLE_ACTIONS, MEMORY_ACTIONS, MEMORY_BEFORE_PEOPLE),
 )
 
 
@@ -946,6 +956,7 @@ def after_job(job_id: str, action: str, payload: dict) -> None:
     """What the server does by itself when a job has ended in the list. A fault here does not change how the job ended."""
     refresh_meaning_index(job_id, action, payload)
     refresh_memory(job_id, action, payload)
+    refresh_people(job_id, action, payload)
 
 
 WRITTEN_NOT_COUNTED = "The archive is written. Recall could not read it back to count it."
@@ -1219,6 +1230,97 @@ def refresh_memory(job_id: str, action: str, payload: dict) -> None:
             print(f"[memory] the memory was not brought up to date: {type(exc).__name__}", file=sys.__stderr__)
 
 
+def build_people_index(job_id: str, payload: dict) -> dict:
+    """The `people` job: write the profiles whose inputs changed, and make them searchable. Its lines hold counts only.
+
+    The job keeps what it spent under `spent` (`{"usd", "usage"}`), also when it failed.
+    """
+    _state, archive = archive_for(named_archive(payload))
+
+    def told(update: dict) -> None:
+        if update.get("progress"):
+            update_job(job_id, progress=update["progress"])
+        if update.get("log"):
+            append_log(job_id, update["log"])
+
+    try:
+        result = people_service.build(archive, saved_names(), None, told)
+    except people_service.PeopleFailure as failure:
+        usage = failure.usage or None
+        update_job(job_id, spent={"usd": float((usage or {}).get("cost_usd") or 0.0), "usage": usage})
+        raise JobStopped(str(failure), failure.code) from failure
+    update_job(job_id, spent={"usd": result["usd"], "usage": result["usage"]})
+    return result
+
+
+# The answer of `GET /api/people` for one archive, its names, the notes and the store as they are.
+_PEOPLE_CACHE: dict = {"key": None, "value": None}
+_PEOPLE_LOCK = threading.Lock()
+
+
+def people_answer(state: ArchiveState, archive: Archive) -> dict:
+    """The answer of `GET /api/people`: the counts, kept for one key, and the `people` job that runs now, read fresh."""
+    notes = report_service.default_places().cache_path
+    store = people_service.store_for(archive)
+    key = (
+        archive_signature(state),
+        file_cache_signature(CONTACTS_CACHE_PATH),
+        file_cache_signature(notes),
+        file_cache_signature(notes.with_name(notes.name + "-wal")),
+        store.signature(),
+        people_service.model(),
+    )
+    with _PEOPLE_LOCK:
+        if _PEOPLE_CACHE["key"] != key:
+            _PEOPLE_CACHE.update({"key": key, "value": people_service.payload(archive, saved_names(), store=store)})
+        found = _PEOPLE_CACHE["value"]
+    with JOBS_LOCK:
+        running = [job["id"] for job in JOBS.values() if job["action"] in PEOPLE_ACTIONS and job["status"] in UNFINISHED]
+    return {**found, "jobId": running[0] if running else None}
+
+
+def brings_new_memory(job_id: str, action: str) -> bool:
+    """True after a `memory` job that completed, or an import that changed the archive and left no `memory` job to run."""
+    if action in MEMORY_ACTIONS:
+        with JOBS_LOCK:
+            return (JOBS.get(job_id) or {}).get("status") == "completed"
+    if not changed_the_archive(job_id, action):
+        return False
+    with JOBS_LOCK:
+        # the memory job that the import started brings the profiles when it ends
+        return not any(job["action"] in MEMORY_ACTIONS and job["status"] in UNFINISHED for job in JOBS.values())
+
+
+def refresh_people(job_id: str, action: str, payload: dict) -> None:
+    """After a `memory` job that completed, or an import that changed the archive: one `people` job writes the profiles that changed.
+
+    Only when a `people` job of this archive completed before, and the
+    profiles to write cost at most `PEOPLE_AUTO_USD` (`people.worth_starting`).
+    After an import that started a `memory` job, the end of that job starts
+    it. A fault here does not change how the job ended.
+    """
+    try:
+        if not brings_new_memory(job_id, action):
+            return
+        place = named_archive(payload)
+        if not people_service.completed_before(places.archive_path_for(place)):
+            return  # the first build is the choice of the reader
+        _state, archive = archive_for(place, wait_for_import=False)
+        found = people_service.payload(archive, saved_names())
+        if not people_service.worth_starting(found):
+            waiting = found["toWrite"]
+            if waiting:
+                print(f"[people] the people index waits for the reader: {waiting:,} profile{'' if waiting == 1 else 's'} to write", file=sys.__stderr__)
+            return
+        named = payload.get("messagesPath")
+        create_job("people", {"messagesPath": named} if named else {})
+    except JobRefused:
+        pass  # an import or a build that started meanwhile
+    except Exception as exc:  # noqa: BLE001 - the job ended: nothing here is a reason to say otherwise
+        with contextlib.suppress(Exception):
+            print(f"[people] the people index was not brought up to date: {type(exc).__name__}", file=sys.__stderr__)
+
+
 def do_job(job_id: str, action: str, payload: dict) -> dict:
     """The work of one job. What it returns is the result of the job."""
     if action == "export":
@@ -1241,6 +1343,8 @@ def do_job(job_id: str, action: str, payload: dict) -> dict:
         return read_conversation(job_id, payload)
     if action == "memory":
         return prepare_memory(job_id, payload)
+    if action == "people":
+        return build_people_index(job_id, payload)
     raise ValueError(f"Unknown job action: {action}")
 
 
@@ -2823,6 +2927,10 @@ class RecallHandler(BaseHTTPRequestHandler):
             # the memory of chat: what is read, and what reading the rest would cost now
             state, archive = archive_for(named_archive(query))
             send_json(self, 200, memory_answer(state, archive))
+        elif parsed.path == "/api/people":
+            # the people index: what is built, and what writing the rest would cost now
+            state, archive = archive_for(named_archive(query))
+            send_json(self, 200, people_answer(state, archive))
         elif parsed.path == "/api/day":
             _state, archive = archive_for(named_archive(query))
             try:
