@@ -19,19 +19,22 @@ No message is read again by a model. See "People" in `README.md`.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import os
+import sqlite3
 from collections.abc import Callable, Mapping
 from typing import Any
+from urllib.parse import quote
 
 from archive import Archive
 from meaning_index import EmbedderFacts
 from recall_services import meaning, memory, memory_prep, models, reports
 from recall_services.models import ModelChoiceError
 from recall_services.names import Names
-from recall_services.people_build import Look, Progress, assemble, embed, look, needs_vector, now, read_store, save, usage_of
-from recall_services.people_calls import Calls
+from recall_services.people_build import Look, Progress, assemble, embed, look, now, prepare, read_store, save, usage_of
+from recall_services.people_calls import TRIES, Calls
 from recall_services.people_prompt import CHARS_PER_TOKEN, KINDS, MAX_OUTPUT_TOKENS, OUTPUT_TOKENS, STATUSES
 from recall_services.people_search import Found, search
 from recall_services.people_store import Held, PeopleStore, StoreMeta, people_folder, profile_text
@@ -39,10 +42,9 @@ from recall_services.people_words import PeopleFailure, Teller, all_written, fai
 from recall_services.report_failures import ReportFailure
 from report_engine import LLMUsage, Usage
 from report_engine.pricing import call_cost_usd
-from report_engine.tokens import meter_for
 
 __all__ = [
-    "KINDS", "MAX_OUTPUT_TOKENS", "STATUSES", "Found", "PeopleFailure", "build", "completed_before",
+    "KINDS", "MAX_OUTPUT_TOKENS", "STATUSES", "TRIES", "Found", "PeopleFailure", "build", "completed_before",
     "estimate", "payload", "people_folder", "search", "status", "worth_starting",
 ]  # fmt: skip
 
@@ -85,26 +87,27 @@ def status(archive: Archive, names: Names, *, store: PeopleStore | None = None) 
     }
 
 
-def _cost(seen: Look, facts: EmbedderFacts, counter: Any) -> float:
-    """What a build would pay now. The input is the request as it is counted; the output is the fullest
-    reply that the limits allow (`OUTPUT_TOKENS`); an embedding counts that many tokens too."""
+def _cost(seen: Look, facts: EmbedderFacts) -> float:
+    """What a build would pay now, for one try of each profile. The input of a profile is an upper bound
+    from the lengths of its notes (`input_bound`); the output is the fullest reply that the limits allow
+    (`OUTPUT_TOKENS`); the embedding of a new profile counts that many tokens too, and a row that is
+    only embedded again counts its text."""
     info = seen.planner.info
-    meter = meter_for(info, counter or reports.shared_counter(info.tokenizer_family))
     writing = seen.to_write
-    inputs = meter.count_many(["\n".join(part["content"] for part in one.messages) for one in writing])
-    model_usd = sum(call_cost_usd(info, LLMUsage(input_tokens=size, output_tokens=OUTPUT_TOKENS)) for size in inputs)
-    rows = seen.rows
-    again = [row for key, row in rows.items() if key not in {one.subject.key for one in writing}]
+    model_usd = sum(
+        call_cost_usd(info, LLMUsage(input_tokens=one.input_tokens, output_tokens=OUTPUT_TOKENS)) for one in writing
+    )
     embed_tokens = OUTPUT_TOKENS * len(writing) + sum(
-        math.ceil(len(profile_text(row)) / CHARS_PER_TOKEN) for row in again if needs_vector(row, facts)
+        math.ceil(len(profile_text(row)) / CHARS_PER_TOKEN) for row in seen.to_embed(facts)
     )
     return float(model_usd + embed_tokens * facts.usd_per_mtok / 1_000_000)
 
 
-def _counts(seen: Look, cost: float) -> dict[str, Any]:
+def _counts(seen: Look, cost: float, facts: EmbedderFacts) -> dict[str, Any]:
     profiles = len(seen.held.profiles) if seen.held else 0
-    writing = len(seen.to_write)
-    state = "none" if profiles == 0 else "ready" if writing == 0 and seen.not_read == 0 else "partial"
+    writing, embedding = len(seen.to_write), len(seen.to_embed(facts))
+    waiting = writing + embedding + seen.not_read
+    state = "none" if profiles == 0 else "ready" if waiting == 0 else "partial"
     return {
         "state": state,
         "model": seen.planner.info.id,
@@ -112,6 +115,7 @@ def _counts(seen: Look, cost: float) -> dict[str, Any]:
         "profiles": profiles,
         "current": seen.people - seen.not_read - writing,
         "toWrite": writing,
+        "toEmbed": embedding,
         "notRead": seen.not_read,
         "estimatedCost": cost,
         "builtAt": seen.held.meta.built_at if seen.held else None,
@@ -121,19 +125,22 @@ def _counts(seen: Look, cost: float) -> dict[str, Any]:
 
 
 def estimate(archive: Archive, names: Names, **more: Any) -> dict[str, Any]:
-    """What a build that starts now would write and cost. No model call, no key, no file.
+    """What a build that starts now would write, embed and cost. No model call and no key. It reads no
+    message of a conversation whose plan is kept, and writes only the plans it made.
 
     Raises PeopleFailure and ModelChoiceError. `more` gives the store, the
     embedding facts and the settings of the notes (tests).
     """
     kept = {name: more[name] for name in LOOK_KEYS if name in more}
+    facts = more.get("facts") or meaning.default_facts()
     seen = look(archive, names, store_for(archive, more.get("store")), model=model(), **kept)
-    return _counts(seen, _cost(seen, more.get("facts") or meaning.default_facts(), more.get("counter")))
+    return _counts(seen, _cost(seen, facts), facts)
 
 
 def _nothing(error: str, code: str) -> dict[str, Any]:
     return {
-        "state": "none", "model": model(), "people": 0, "profiles": 0, "current": 0, "toWrite": 0, "notRead": 0,
+        "state": "none", "model": model(), "people": 0, "profiles": 0, "current": 0, "toWrite": 0, "toEmbed": 0,
+        "notRead": 0,
         "estimatedCost": 0.0, "builtAt": None, "error": error, "code": code,
     }  # fmt: skip
 
@@ -148,6 +155,20 @@ def payload(archive: Archive, names: Names, **more: Any) -> dict[str, Any]:
         return _nothing(str(told), told.code)
 
 
+def notes_mark(places: reports.ReportPlaces | None = None) -> int | None:
+    """The count of parts in the notes, or None with no notes file. A mark of use does not change it,
+    a new part does: the key of the answer of the route. It writes nothing."""
+    path = (places or reports.default_places()).cache_path
+    if not path.is_file():
+        return None
+    try:
+        with contextlib.closing(sqlite3.connect(f"file:{quote(str(path))}?mode=ro", uri=True)) as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM period_results").fetchone()[0])
+    except sqlite3.Error as error:
+        logger.warning("the notes could not be counted (%s)", type(error).__name__)
+        return None
+
+
 def completed_before(archive_file: str | os.PathLike[str], *, store: PeopleStore | None = None) -> bool:
     """True when a build of this archive completed before. It reads no archive."""
     try:
@@ -158,11 +179,13 @@ def completed_before(archive_file: str | os.PathLike[str], *, store: PeopleStore
 
 
 def worth_starting(found: Mapping[str, Any]) -> bool:
-    """True when the server builds by itself: `found` is a `payload`, a profile is to write, and it is cheap."""
+    """True when the server builds by itself: `found` is a `payload`, a profile is to write or to embed,
+    and it is cheap. A profile can take `TRIES` calls, so `TRIES` times the estimate is compared."""
     cost = found.get("estimatedCost")
     if found.get("error") or not isinstance(cost, (int, float)) or isinstance(cost, bool):
         return False
-    return int(found.get("toWrite") or 0) > 0 and cost <= PEOPLE_AUTO_USD
+    waiting = int(found.get("toWrite") or 0) + int(found.get("toEmbed") or 0)
+    return waiting > 0 and TRIES * cost <= PEOPLE_AUTO_USD
 
 
 def _port(llm_factory: Callable[[Any], Any] | None, info: Any) -> Any:
@@ -195,9 +218,11 @@ def build(
     writing = seen.to_write
     teller.tell(step="write", total=len(writing), log=to_write(len(writing), seen.people - seen.not_read - len(writing), seen.not_read))
     info = seen.planner.info
-    calls = Calls(_port(more.get("llm_factory"), info) if writing else None, info, seen.planner.redact, cancel,
+    calls = Calls(_port(more.get("llm_factory"), info) if writing else None, info, seen.planner.mask, cancel,
                   Progress(teller, len(writing)).heard)  # fmt: skip
-    written, unplanned = calls.run(writing, int(more.get("parallel") or PEOPLE_PARALLEL))
+    written, unplanned = calls.run(
+        writing, int(more.get("parallel") or PEOPLE_PARALLEL), lambda item: prepare(seen, item)
+    )
     usage = usage_of(written)
     stop = "run_failed" if unplanned is not None else calls.stop_code
     profiles = assemble(seen, written)

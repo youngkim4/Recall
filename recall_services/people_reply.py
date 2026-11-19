@@ -8,10 +8,12 @@
 - A turning point whose date is no day, or a day outside the span of the
   figures, or whose text is empty, is dropped. The first `TURNING_POINTS`
   that are left are kept, in the order of their days.
-- Text loses the line references of the engine (`chat_digest_refs`), each
-  handle that is not saved is masked as chat masks it (`redact`), and any
-  other phone number or email address is masked too. Text longer than its
-  limit is cut at a word, with a mark at its end.
+- Text loses the line references of the engine (`chat_digest_refs`), and
+  every handle is masked by `mask`: the build gives `Planner.mask`
+  (`handle_mask.mask_every_handle` with the labeler of chat), so a handle of
+  the archive becomes its saved name or its mask, and any other phone number
+  or email address a fixed phrase. Text longer than its limit is cut at a
+  word, with a mark at its end.
 """
 
 from __future__ import annotations
@@ -21,7 +23,6 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from chat_engine.handles import handle_spans, is_dates, mask_handle
 from recall_services.people_prompt import (
     GROUP_KIND,
     KINDS,
@@ -37,7 +38,7 @@ from report_engine.transcript import squash
 CUT_MARK = "…"
 DAY_CHARS = 10
 
-Redact = Callable[[str], str]
+Mask = Callable[[str], str]
 
 
 @dataclass(frozen=True)
@@ -56,21 +57,9 @@ class ProfileText:
     turning_points: tuple[TurningPoint, ...]
 
 
-def _masked_handles(text: str) -> str:
-    """Every phone number or email address left in the text, masked. A date or a span of years stays."""
-    pieces: list[str] = []
-    cursor = 0
-    for start, end in handle_spans(text):
-        if start < cursor or is_dates(text[start:end]):
-            continue
-        pieces.extend([text[cursor:start], mask_handle(text[start:end])])
-        cursor = end
-    return "".join([*pieces, text[cursor:]])
-
-
-def clean_text(text: str, redact: Redact) -> str:
+def clean_text(text: str, mask: Mask) -> str:
     """Text of a reply as a profile keeps it: one line, no reference of the engine, no handle."""
-    return squash(_masked_handles(redact(without_refs(text))))
+    return squash(mask(without_refs(text)))
 
 
 def _cut(text: str, limit: int) -> str:
@@ -105,12 +94,12 @@ def _shaped(reply: object) -> bool:
     return all(isinstance(point, Mapping) and _is_text(point.get("date")) and _is_text(point.get("what")) for point in points)
 
 
-def _points(raw: Sequence[Mapping[str, Any]], span: tuple[str, str], redact: Redact) -> tuple[TurningPoint, ...]:
+def _points(raw: Sequence[Mapping[str, Any]], span: tuple[str, str], mask: Mask) -> tuple[TurningPoint, ...]:
     first, last = span
     kept: list[TurningPoint] = []
     for point in raw:
         day = _day(str(point["date"]).strip())
-        what = _cut(clean_text(str(point["what"]), redact), WHAT_CHARS)
+        what = _cut(clean_text(str(point["what"]), mask), WHAT_CHARS)
         if day is not None and first <= day <= last and what:
             kept.append(TurningPoint(day, what))
     # the first ones that the model gave, in the order of their days
@@ -123,12 +112,12 @@ def _kind(said: str, is_group: bool) -> str:
     return said if said in KINDS and said != GROUP_KIND else UNCLEAR
 
 
-def parse_reply(reply: object, *, span: tuple[str, str], is_group: bool, redact: Redact) -> ProfileText | None:
+def parse_reply(reply: object, *, span: tuple[str, str], is_group: bool, mask: Mask) -> ProfileText | None:
     """The profile that a reply gives, or None when the reply is in the wrong shape."""
     if not _shaped(reply):
         return None
     assert isinstance(reply, Mapping)
-    summary = _cut(clean_text(str(reply["summary"]), redact), SUMMARY_CHARS)
+    summary = _cut(clean_text(str(reply["summary"]), mask), SUMMARY_CHARS)
     if not summary:
         return None
     status = str(reply["status"])
@@ -136,5 +125,5 @@ def parse_reply(reply: object, *, span: tuple[str, str], is_group: bool, redact:
         kind=_kind(str(reply["kind"]), is_group),
         status=status if status in STATUSES else UNCLEAR,
         summary=summary,
-        turning_points=_points(reply["turning_points"], span, redact),
+        turning_points=_points(reply["turning_points"], span, mask),
     )

@@ -1258,22 +1258,26 @@ _PEOPLE_CACHE: dict = {"key": None, "value": None}
 _PEOPLE_LOCK = threading.Lock()
 
 
-def people_answer(state: ArchiveState, archive: Archive) -> dict:
-    """The answer of `GET /api/people`: the counts, kept for one key, and the `people` job that runs now, read fresh."""
-    notes = report_service.default_places().cache_path
+def people_counts(state: ArchiveState, archive: Archive) -> dict:
+    """The counts of `GET /api/people`, kept for one key: the archive, the names, the count of parts in
+    the notes (a mark of use does not change it), the store and the model."""
     store = people_service.store_for(archive)
     key = (
         archive_signature(state),
         file_cache_signature(CONTACTS_CACHE_PATH),
-        file_cache_signature(notes),
-        file_cache_signature(notes.with_name(notes.name + "-wal")),
+        people_service.notes_mark(),
         store.signature(),
         people_service.model(),
     )
     with _PEOPLE_LOCK:
         if _PEOPLE_CACHE["key"] != key:
             _PEOPLE_CACHE.update({"key": key, "value": people_service.payload(archive, saved_names(), store=store)})
-        found = _PEOPLE_CACHE["value"]
+        return _PEOPLE_CACHE["value"]
+
+
+def people_answer(state: ArchiveState, archive: Archive) -> dict:
+    """The answer of `GET /api/people`: the counts (`people_counts`) and the `people` job that runs now, read fresh."""
+    found = people_counts(state, archive)
     with JOBS_LOCK:
         running = [job["id"] for job in JOBS.values() if job["action"] in PEOPLE_ACTIONS and job["status"] in UNFINISHED]
     return {**found, "jobId": running[0] if running else None}
@@ -1294,19 +1298,21 @@ def brings_new_memory(job_id: str, action: str) -> bool:
 def refresh_people(job_id: str, action: str, payload: dict) -> None:
     """After a `memory` job that completed, or an import that changed the archive: one `people` job writes the profiles that changed.
 
-    Only when a `people` job of this archive completed before, and the
-    profiles to write cost at most `PEOPLE_AUTO_USD` (`people.worth_starting`).
-    After an import that started a `memory` job, the end of that job starts
-    it. A fault here does not change how the job ended.
+    The counts are worked out first (`people_counts`), so the route answers
+    at once. A job starts only when a `people` job of this archive completed
+    before, and the profiles to write or to embed cost at most
+    `PEOPLE_AUTO_USD` with every try (`people.worth_starting`). After an
+    import that started a `memory` job, the end of that job does this. A
+    fault here does not change how the job ended.
     """
     try:
         if not brings_new_memory(job_id, action):
             return
         place = named_archive(payload)
+        state, archive = archive_for(place, wait_for_import=False)
+        found = people_counts(state, archive)
         if not people_service.completed_before(places.archive_path_for(place)):
             return  # the first build is the choice of the reader
-        _state, archive = archive_for(place, wait_for_import=False)
-        found = people_service.payload(archive, saved_names())
         if not people_service.worth_starting(found):
             waiting = found["toWrite"]
             if waiting:

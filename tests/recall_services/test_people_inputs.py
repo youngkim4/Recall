@@ -80,7 +80,7 @@ def test_the_notes_of_both_threads_are_read_in_the_order_of_their_days(town) -> 
     assert planned.notes.state == READ
     assert [period.first_day for period in planned.notes.periods] == ["2023-01-02", "2023-01-05"]
     assert planned.figures.as_dict() == MINA_FIGURES
-    assert planned.input_hash and planned.messages
+    assert planned.messages and planned.input_hash is None
 
 
 def test_reading_the_notes_calls_no_model_and_marks_no_entry(town) -> None:
@@ -94,33 +94,32 @@ def test_reading_the_notes_calls_no_model_and_marks_no_entry(town) -> None:
         assert sorted(conn.execute("SELECT key, last_used_at FROM period_results")) == before
 
 
-def test_the_hash_of_the_inputs_follows_each_input(town, monkeypatch: pytest.MonkeyPatch) -> None:
+def _fingerprint(town: Any, conversation: str, names: Names | None = None) -> str | None:
+    from recall_services.people_look import look_cheaply
+    from recall_services.people_plans import PlanStore
+
+    reader = planner(town, names)
+    seen = look_cheaply(reader, PlanStore(town.folder / "plans"))
+    (found,) = [one for one in seen if conversation in one.subject.conversations]
+    return found.fingerprint
+
+
+def test_the_fingerprint_of_the_inputs_follows_each_input(town, monkeypatch: pytest.MonkeyPatch) -> None:
     town.read_memory()
-
-    def mina_hash(names: Names | None = None) -> str:
-        reader = planner(town, names)
-        (mina,) = [subject for subject in reader.subjects() if MINA in subject.conversations]
-        return str(reader.plan(mina).input_hash)
-
-    first = mina_hash()
-    assert mina_hash() == first
-    assert mina_hash(Names.from_records([{**MINA_RECORD, "name": "Mina Lund"}])) != first
+    first = _fingerprint(town, MINA)
+    assert first is not None and _fingerprint(town, MINA) == first
+    assert _fingerprint(town, MINA, Names.from_records([{**MINA_RECORD, "name": "Mina Lund"}])) != first
     monkeypatch.setattr(people_prompt, "PROMPT_VERSION", "another")
-    assert mina_hash() != first
+    assert _fingerprint(town, MINA) != first
 
 
-def test_a_new_message_changes_the_hash(town) -> None:
+def test_a_new_message_changes_the_fingerprint_once_its_part_is_read(town) -> None:
     town.read_memory()
-
-    def theo_hash() -> str | None:
-        reader = planner(town)
-        (theo,) = [subject for subject in reader.subjects() if subject.conversations == (THEO,)]
-        return reader.plan(theo).input_hash
-
-    first = theo_hash()
+    first = _fingerprint(town, THEO)
     town.add([(THEO, "2024-03-04 09:00:00", "Ok", False, "")])
+    assert _fingerprint(town, THEO) is None  # its new part is not read
     town.read_memory([THEO])
-    assert theo_hash() not in (None, first)
+    assert _fingerprint(town, THEO) not in (None, first)
 
 
 def test_a_group_member_who_is_saved_is_named_in_the_notes(town) -> None:
@@ -130,3 +129,20 @@ def test_a_group_member_who_is_saved_is_named_in_the_notes(town) -> None:
     user = reader.plan(group).messages[-1]["content"]
     assert "This is a group conversation: Harbor Walkers." in user
     assert THEO not in user and MINA not in user
+
+
+def test_every_handle_in_the_notes_is_masked_before_it_leaves(town) -> None:
+    """A summary of a digest can hold any handle: the notes are masked as the chat digest masks them."""
+    from report_engine.fake_llm import FakeCall, FakeLLM, default_map_reply
+
+    def map_reply(call: FakeCall) -> Any:
+        reply = default_map_reply(call)
+        return {**reply, "summary": "Mina gave 415-555-0199, someone@else.org and theo@example.com on 2023-01-05."}
+
+    town.read_memory(llm=FakeLLM(map_reply))
+    reader = planner(town)
+    (mina,) = [subject for subject in reader.subjects() if MINA in subject.conversations]
+    user = reader.plan(mina).messages[-1]["content"]
+    assert "415-555-0199" not in user and "someone@else.org" not in user and THEO not in user
+    assert "a phone number" in user and "an email address" in user and "an unsaved email contact" in user
+    assert "2023-01-05" in user

@@ -36,7 +36,7 @@ KIND_MEANINGS: Mapping[str, str] = {
     "romantic": "A dating or romantic relationship that both people were in, for any length of time.",
     "talking_stage": (
         "A one-to-one exchange with romantic interest on at least one side that did not become a relationship, "
-        "usually weeks to a few months, then faded or stopped."
+        "usually lasting weeks to a few months."
     ),
     "close_friend": "A friend the owner confides in, with personal talk over a long time.",
     "friend": "A friendly relationship with regular social talk and plans, but little that is personal.",
@@ -163,6 +163,7 @@ class PromptInput:
     periods: tuple[PeriodNote, ...]
 
 
+# masks every handle of a text: `handle_mask.mask_every_handle` with the labeler of chat
 Redact = Callable[[str], str]
 
 
@@ -200,7 +201,8 @@ def _period(period: PeriodNote, redact: Redact) -> str:
 
 
 def profile_messages(person: PromptInput, redact: Redact) -> list[ChatMessage]:
-    """The request for one profile. `redact` masks each handle that is not saved, as for chat."""
+    """The request for one profile. `redact` masks every handle of the label and the notes
+    (`Planner.mask`: the handles that chat masks, and any other phone number or email address)."""
     notes = "\n".join(_period(period, redact) for period in person.periods)
     user = (
         f"{_who(person, redact)}\n\n"

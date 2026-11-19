@@ -104,9 +104,10 @@ def test_each_call_asks_for_the_shape_with_no_reasoning_and_a_bounded_reply(town
 def test_with_no_memory_read_nobody_is_written_and_the_build_says_so(town) -> None:
     llm = replies()
     found, updates = build(town, llm)
-    assert (found["people"], found["built"], found["notRead"], found["usd"]) == (3, 0, 3, 0.0)
+    # with no notes file nothing is laid out: the one with no text is counted too, as not read
+    assert (found["people"], found["built"], found["notRead"], found["usd"]) == (4, 0, 4, 0.0)
     assert llm.calls == [] and stored(town) == {}
-    assert "0 profiles to write, 0 kept as they are, 3 left out because their memory is not read" in said(updates)
+    assert "0 profiles to write, 0 kept as they are, 4 left out because their memory is not read" in said(updates)
 
 
 def test_the_lines_and_the_progress_hold_counts_only(town) -> None:
@@ -329,3 +330,10 @@ def test_two_builds_at_once_are_not_needed_but_a_build_is_thread_safe(town) -> N
     found, _updates = build(town, FakeLLM(responder), parallel=3)
     assert sorted(seen) == ["group", "mina", "theo"] and found["built"] == 3
     assert by_key([{"key": key} for key in stored(town)]).keys() == stored(town).keys()
+
+
+def test_a_saved_address_in_a_reply_is_the_saved_name(town) -> None:
+    town.read_memory()
+    reply = profile_reply(summary="Mina wrote from mina@example.com and (202) 555-0143, Theo from theo@example.com.")
+    build(town, replies(mina=reply))
+    assert stored(town)[key_of(town, MINA)].summary == "Mina wrote from Mina and Mina, Theo from an unsaved email contact."

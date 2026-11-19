@@ -6,17 +6,30 @@ from typing import Any
 
 import pytest
 
+from chat_engine.handle_mask import mask_every_handle
 from recall_services import people_prompt
 from recall_services.people_reply import ProfileText, TurningPoint, clean_text, parse_reply
 from recall_services.names import Names
 from tests.recall_services.people_kit import MINA_RECORD, THEO, profile_reply
 
 SPAN = ("2023-01-02", "2023-02-20")
-REDACT = Names.from_records([MINA_RECORD]).chat_labeler([{"id": THEO, "members": [THEO]}]).redact
+LABELER = Names.from_records([MINA_RECORD]).chat_labeler(
+    [
+        {"id": THEO, "members": [THEO]},
+        {"id": "+12025550143", "members": ["+12025550143"]},
+        {"id": "mina@example.com", "members": ["mina@example.com"]},
+    ]
+)
+
+
+def mask(text: str) -> str:
+    """The mask of the build: every handle, as the chat digest masks it."""
+    return mask_every_handle(text, LABELER)
+
 
 
 def parse(reply: Any, *, is_group: bool = False) -> ProfileText | None:
-    return parse_reply(reply, span=SPAN, is_group=is_group, redact=REDACT)
+    return parse_reply(reply, span=SPAN, is_group=is_group, mask=mask)
 
 
 def test_a_reply_in_the_right_shape() -> None:
@@ -100,11 +113,15 @@ def test_engine_references_and_handles_are_taken_out_of_the_text() -> None:
             turning_points=[{"date": "2023-01-05", "what": "See m3–m7: Mina called +1 202 555 0171."}],
         )
     )
-    assert found.summary == (
-        "You met Mina and wrote to an unsaved email contact and to a number ending in 0143 in 2023-2024."
-    )
-    assert found.turning_points[0].what == "Mina called a number ending in 0171."
+    # the saved number is the saved name; the number that the archive does not hold is a phrase
+    assert found.summary == "You met Mina and wrote to an unsaved email contact and to Mina in 2023-2024."
+    assert found.turning_points[0].what == "Mina called a phone number."
+
+
+def test_a_saved_address_is_the_saved_name_and_an_unsaved_one_its_mask() -> None:
+    found = parse(profile_reply(summary="Mina wrote from mina@example.com, Theo from theo@example.com, a stranger from x@y.org."))
+    assert found.summary == "Mina wrote from Mina, Theo from an unsaved email contact, a stranger from an email address."
 
 
 def test_clean_text_puts_the_text_on_one_line() -> None:
-    assert clean_text("  two\n lines  ", REDACT) == "two lines"
+    assert clean_text("  two\n lines  ", mask) == "two lines"

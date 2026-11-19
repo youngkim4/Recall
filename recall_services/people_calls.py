@@ -1,7 +1,8 @@
 """The calls of the profile model in a build: one profile, one reply, asked once more when its shape is wrong.
 
-The calls run `PEOPLE_PARALLEL` at a time (`report_engine.run_in_parallel`).
-A failure that each profile would have (`FATAL` of `people_words.py`) stops
+Each task first reads the notes and the figures of its profile and makes
+its request (`Planner.plan`), then asks. The tasks run `PEOPLE_PARALLEL` at
+a time (`report_engine.run_in_parallel`). A failure that each profile would have (`FATAL` of `people_words.py`) stops
 the calls: no new one starts, and the calls in flight end and are kept. Any
 other failure counts for its profile only. A cancel stops the calls too.
 """
@@ -14,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from recall_services import people_prompt
-from recall_services.people_inputs import Planned
+from recall_services.people_inputs import READ, Planned
 from recall_services.people_reply import ProfileText, parse_reply
 from recall_services.people_words import FATAL, code_of
 from report_engine import LLMError, Usage, run_in_parallel
@@ -25,6 +26,7 @@ from report_engine.pricing import call_cost_usd
 TRIES = 2
 BAD_REPLY = "bad_reply"
 RUN_FAILED = "run_failed"
+NOT_READ_NOW = "not_read_now"
 
 
 @dataclass(frozen=True)
@@ -48,7 +50,7 @@ def _usage(info: ModelInfo, result: LLMResult) -> Usage:
     )
 
 
-def ask(llm: LLM, info: ModelInfo, planned: Planned, redact: Callable[[str], str]) -> Written:
+def ask(llm: LLM, info: ModelInfo, planned: Planned, mask: Callable[[str], str]) -> Written:
     """Ask for one profile. A reply in the wrong shape is asked once more, then the profile fails."""
     figures = planned.figures
     assert figures is not None and figures.first_day and figures.last_day
@@ -66,7 +68,7 @@ def ask(llm: LLM, info: ModelInfo, planned: Planned, redact: Callable[[str], str
         usage = usage.plus(_usage(info, result))
         shaped = result.parsed if result.status == "completed" else None
         text = parse_reply(
-            shaped, span=(figures.first_day, figures.last_day), is_group=planned.subject.is_group, redact=redact
+            shaped, span=(figures.first_day, figures.last_day), is_group=planned.subject.is_group, mask=mask
         )
         if text is not None:
             return Written(planned, text, usage)
@@ -77,11 +79,11 @@ class Calls:
     """The calls of one build. `stop_code` is the failure that stopped them, or "cancelled", or None."""
 
     def __init__(
-        self, llm: LLM | None, info: ModelInfo, redact: Callable[[str], str], cancel: Any, heard: Callable[[], None]
+        self, llm: LLM | None, info: ModelInfo, mask: Callable[[str], str], cancel: Any, heard: Callable[[], None]
     ) -> None:
         self._llm = llm
         self._info = info
-        self._redact = redact
+        self._mask = mask
         self._cancel = cancel
         self._heard = heard
         self._lock = threading.Lock()
@@ -103,13 +105,18 @@ class Calls:
                 return self._fatal
         return "cancelled" if self.cancelled() else None
 
-    def _task(self, planned: Planned) -> Callable[[], Written]:
+    def _task(self, item: Any, prepare: Callable[[Any], Planned]) -> Callable[[], Written]:
         llm = self._llm
         assert llm is not None, "a build with a profile to write has a model port"
 
         def work() -> Written:
             try:
-                written = ask(llm, self._info, planned, self._redact)
+                planned = prepare(item)
+                written = (
+                    ask(llm, self._info, planned, self._mask)
+                    if planned.notes.state == READ
+                    else Written(planned, None, Usage(), NOT_READ_NOW)
+                )
             except Exception:
                 with self._lock:
                     self._fatal = self._fatal or RUN_FAILED
@@ -122,13 +129,16 @@ class Calls:
 
         return work
 
-    def run(self, planned: Sequence[Planned], parallel: int) -> tuple[tuple[Written, ...], Exception | None]:
-        """Ask for each profile. Gives what came back, and the first error of no known kind, or None.
-
-        A profile that a stop kept from starting is not in the result.
+    def run(
+        self, items: Sequence[Any], parallel: int, prepare: Callable[[Any], Planned]
+    ) -> tuple[tuple[Written, ...], Exception | None]:
+        """Read each profile (`prepare`, in the task) and ask for it. Gives what came back, and the first
+        error of no known kind, or None. A profile that a stop kept from starting is not in the result.
+        A profile whose notes are not all read any more is not asked for (`NOT_READ_NOW`).
         """
-        if not planned or self.cancelled():
+        if not items or self.cancelled():
             return (), None
-        outcomes = run_in_parallel([self._task(one) for one in planned], max_parallel=parallel, stop=self.stopped)
+        tasks = [self._task(item, prepare) for item in items]
+        outcomes = run_in_parallel(tasks, max_parallel=parallel, stop=self.stopped)
         unplanned = next((outcome.error for outcome in outcomes if outcome.error is not None), None)
         return tuple(outcome.value for outcome in outcomes if outcome.value is not None), unplanned
