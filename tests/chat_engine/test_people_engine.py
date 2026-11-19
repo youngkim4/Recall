@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
+from chat_engine.cancel import CancelToken
 from chat_engine.engine import ChatEngine, EngineConfig
 from chat_engine.fake_digests import FakeDigests
 from chat_engine.fake_llm import FakeLLM, call, say
@@ -84,7 +86,9 @@ def test_every_question_gets_the_seeded_lookup_with_the_question_as_the_descript
     engine, fake = engine_with([say("Maya, maybe.")], people=port)
     events: list[dict] = []
     result = engine.ask(QUESTION, on_event=events.append)
-    assert port.calls == [{"description": QUESTION, "kinds": None, "since": None, "until": None, "limit": 5}]
+    assert port.calls == [
+        {"description": QUESTION, "kinds": None, "since": None, "until": None, "limit": 5, "conversations": None}
+    ]
     block = last_user(fake.requests[0])
     assert SEED_LABEL in block
     assert "1. Maya Okafor · talking stage · faded · conversations c" in block
@@ -104,7 +108,8 @@ def test_the_seeded_lookup_keeps_the_scope() -> None:
     port = FakePeople([MAYA])
     engine, fake = engine_with([say("Nobody here.")], people=port)
     engine.ask(QUESTION, scope=Scope(conversations=(JONAS_PHONE,), since="2024-01-01"))
-    assert port.calls[0]["since"] == "2024-01-01" and port.calls[0]["limit"] == 15
+    assert port.calls[0]["since"] == "2024-01-01" and port.calls[0]["limit"] == 5
+    assert port.calls[0]["conversations"] == [JONAS_PHONE]
     block = last_user(fake.requests[0])
     assert "People who fit the question in the scope the user chose, from 2024-01-01: nobody found." in block
     assert "Maya" not in block.split("find_people(")[1]
@@ -117,7 +122,51 @@ def test_a_call_of_the_model_reaches_the_port_and_its_result_the_model() -> None
     engine.ask("Anyone else?")
     assert port.calls[-1] == {
         "description": "a fling that faded", "kinds": ["talking_stage"], "since": None, "until": None, "limit": 5,
+        "conversations": None,
     }
     assert tool_results(fake.requests[1])[0].startswith(
         "People like “a fling that faded” (kinds: talking stage): 1 found"
     )
+
+
+class SlowPeople:
+    """A port that waits as a provider that hangs would, then fails or answers. Each call is counted."""
+
+    def __init__(self, seconds: float, *, fail: bool = True, during: Any = None) -> None:
+        self.seconds = seconds
+        self.fail = fail
+        self.during = during
+        self.calls = 0
+
+    def search(self, description: str, **_: Any) -> list:
+        self.calls += 1
+        if self.during is not None:
+            self.during()
+        time.sleep(self.seconds)
+        if self.fail:
+            raise TimeoutError("the embedding provider did not answer")
+        return [MAYA]
+
+
+def test_a_port_that_fails_in_the_seed_is_not_asked_again_in_the_question() -> None:
+    port = SlowPeople(0.3)
+    script = [
+        [call("find_people", "p1", description="a fling"), call("find_people", "p2", description="an old friend")],
+        say("I could not look."),
+    ]
+    engine, fake = engine_with(script, people=port)
+    started = time.monotonic()
+    result = engine.ask(QUESTION)
+    assert time.monotonic() - started < 0.55  # one wait of the port, not three
+    assert port.calls == 1 and result["answer"] == "I could not look."
+    results = tool_results(fake.requests[1])
+    assert results == ["The people index was not available: nobody was looked up. Use the other tools."] * 2
+
+
+def test_a_cancel_while_the_seeded_port_waits_ends_the_question_when_the_port_returns() -> None:
+    token = CancelToken()
+    port = SlowPeople(0.2, fail=False, during=token.cancel)
+    engine, fake = engine_with([say("never")], people=port)
+    result = engine.ask(QUESTION, cancel=token)
+    assert result["cancelled"] is True and fake.requests == []
+    assert port.calls == 1

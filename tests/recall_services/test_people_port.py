@@ -45,13 +45,17 @@ class Found(list):
 def stand_in(*, state: Any = None, rows: list | None = None, reason: str | None = None) -> types.ModuleType:
     module = types.ModuleType("recall_services.people")
     module.calls = []  # type: ignore[attr-defined]
+    module.more = []  # type: ignore[attr-defined]
 
     def status(archive: Any, names: Any) -> Any:
         module.calls.append(("status", archive, names))  # type: ignore[attr-defined]
         return {"state": "ready", "profiles": 3} if state is None else state
 
-    def search(archive: Any, names: Any, description: str, *, kinds=None, since=None, until=None, limit=10) -> Found:
+    def search(
+        archive: Any, names: Any, description: str, *, kinds=None, since=None, until=None, limit=10, **more: Any
+    ) -> Found:
         module.calls.append(("search", description, kinds, since, until, limit))  # type: ignore[attr-defined]
+        module.more.append(more)  # type: ignore[attr-defined]
         given = rows if rows is not None else [ROW]
         return Found([dict(row) if isinstance(row, dict) else row for row in given], reason)
 
@@ -105,6 +109,10 @@ def test_search_passes_the_arguments_and_gives_the_rows_in_the_form_of_the_port(
     assert rows == [{key: value for key, value in ROW.items() if key != "extra"}]
     port.search("a fling", kinds=None, since=None, until=None, limit=5)
     assert module.calls[-1][2] is None
+    # the conversations of a scope go to the service; with none, the keyword is not sent at all
+    assert module.more == [{}, {}]
+    port.search("a fling", kinds=None, since=None, until=None, limit=5, conversations=("+15550000001",))
+    assert module.more[-1] == {"conversations": ["+15550000001"]}
 
 
 def test_rows_of_another_form_are_left_out_and_missing_fields_get_empty_values() -> None:

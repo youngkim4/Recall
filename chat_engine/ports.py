@@ -380,8 +380,10 @@ class PersonHit(TypedDict):
 class PeopleSearch(Protocol):
     """Finds people by the kind of relationship and its story. Best first.
 
-    `since` and `until` keep a person whose messages overlap the days. The
-    engine checks the scope again. A failure here does not fail the question.
+    `since` and `until` keep a person whose messages overlap the days.
+    `conversations` (ids; None means all) keeps a person with at least one of
+    them, before the ranking. The engine checks the scope again. A failure
+    here does not fail the question.
     """
 
     def search(
@@ -392,4 +394,5 @@ class PeopleSearch(Protocol):
         since: Optional[str],
         until: Optional[str],
         limit: int,
+        conversations: Optional[Sequence[str]] = None,
     ) -> list[PersonHit]: ...

@@ -1,8 +1,8 @@
 """A scripted search of people for tests. It reads no index and uses no network.
 
-It returns the people of the script as they are. It does not apply the kinds
-or the days of the call, so a test can script a person that the engine must
-drop.
+It returns the people of the script as they are. It does not apply the kinds,
+the days or the conversations of the call, so a test can script a person that
+the engine must drop.
 """
 
 from __future__ import annotations
@@ -75,6 +75,7 @@ class FakePeople:
         since: Optional[str],
         until: Optional[str],
         limit: int,
+        conversations: Optional[Sequence[str]] = None,
     ) -> list[PersonHit]:
         self.calls.append(
             {
@@ -83,6 +84,7 @@ class FakePeople:
                 "since": since,
                 "until": until,
                 "limit": limit,
+                "conversations": None if conversations is None else list(conversations),
             }
         )
         if self._error is not None:

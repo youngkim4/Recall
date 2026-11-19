@@ -6,7 +6,9 @@ model can check a person with conversation_stats, conversation_digest or
 read_around before it names them.
 
 Rules:
-- Scope: a person none of whose conversations is in the scope is left out.
+- Scope: the conversations of the scope go to the port, which ranks only
+  the people who have one of them. A person none of whose conversations is
+  in the scope is left out again here.
   Only the conversations inside the scope are named. A person whose figures
   lie outside the days is left out, and so is a turning point outside them.
   In a limited scope the figures are not shown: they count every
@@ -15,7 +17,11 @@ Rules:
   can hold any phone number or address. Every one goes, as in a digest
   (`handle_mask.mask_every_handle`). The description is masked the same way
   before it leaves.
-- A failure of the port gives one line, and the question goes on.
+- A failure of the port gives one line, and the question goes on. The port
+  is not asked again in that question: a provider that hangs costs the
+  question one wait, not one for each call.
+- A cancel that comes while the port searches is looked at as soon as the
+  port returns: nothing more is read.
 """
 
 from __future__ import annotations
@@ -36,8 +42,6 @@ logger = logging.getLogger(__name__)
 PEOPLE_LIMIT_DEFAULT = 5
 PEOPLE_LIMIT_MAX = 10
 SEED_PEOPLE = 5  # the people the seeded lookup asks for
-SCOPED_FETCH = 3  # in a scope of conversations, people asked for each person shown: some fall outside it
-PORT_LIMIT_MAX = 50
 SUMMARY_CHARS = 700
 TURNING_POINTS = 5
 _NOT_AVAILABLE = "The people index was not available: nobody was looked up. Use the other tools."
@@ -118,7 +122,7 @@ def people_lookup(ctx: ToolContext, request: PeopleRequest) -> Callable[[int], T
         if not asked:
             if ctx.memory.cancel.cancelled:
                 return _STOPPED
-            asked.append(_ask_port(ctx, request))
+            asked.append(None if ctx.people_failed else _ask_port(ctx, request))
         if ctx.memory.cancel.cancelled:
             return _STOPPED
         rows = asked[0]
@@ -131,22 +135,24 @@ def people_lookup(ctx: ToolContext, request: PeopleRequest) -> Callable[[int], T
 
 
 def _ask_port(ctx: ToolContext, request: PeopleRequest) -> Optional[list[Any]]:
-    """The rows of the port. None when it fails."""
-    wanted = min(PORT_LIMIT_MAX, request.limit * SCOPED_FETCH) if ctx.scope.conversations else request.limit
+    """The rows of the port. None when it fails: then the question does not ask it again."""
+    scoped = ctx.conversations(None)
     try:
         found = ctx.memory.people.search(  # type: ignore[union-attr]
             request.description,
             kinds=None if request.kinds is None else list(request.kinds),
             since=request.since,
             until=request.until,
-            limit=wanted,
+            limit=request.limit,
+            conversations=None if scoped is None else list(scoped),
         )
         if not isinstance(found, (list, tuple)):
             raise TypeError("the port gave no list")
     except Exception as error:  # the question goes on with the other tools
         logger.warning("the search of people failed: %s", type(error).__name__)
+        ctx.people_failed = True
         return None
-    return list(found[:wanted])
+    return list(found[:request.limit])
 
 
 def _day(value: object) -> str:
@@ -246,7 +252,7 @@ def _figures(one: Person, group: bool) -> str:
     if active is not None:
         parts.append(f"active on {plural(int(active), 'day')}")
     if gap is not None:
-        parts.append(f"longest gap {plural(int(gap), 'day')}")
+        parts.append(f"longest gap {plural(round(gap), 'day')}")
     if share is not None and share <= 1:
         parts.append(f"you wrote first on {round(share * 100)}% of the active days")
     return "   " + " · ".join(parts) if parts else _NO_FIGURES
