@@ -19,12 +19,14 @@ from .directory import Directory, Entry
 from .handles import DIGITS_RE, MIN_PHONE_DIGITS, YEAR_RE, is_dates
 from .labeler import handle_spans
 from .ports import ArchiveSummary
+from .question_names import names_in_question
 from .search import SearchRequest
 from .textnorm import fold, surface_words
 from .tool_args import ToolInputError
 from .tool_context import Prepared, ToolContext
 from .tool_figures import list_entries, run_count
 from .tool_meaning import MeaningRequest, meaning_lookup
+from .tool_people import SEED_PEOPLE, seeded_people
 from .tool_search import run_search_tool
 from .tools import ToolBox
 
@@ -149,11 +151,13 @@ def named_entries(directory: Directory, names: Sequence[str]) -> list[Entry]:
     return [entry for _, (_, entry) in ranked]
 
 
-def plan_seed(box: ToolBox, question: str, held: tuple[int, int] = ALL_YEARS) -> list[SeedCall]:
-    """The lookups to run before the first model call. `held` is the years the archive holds."""
+def plan_seed(box: ToolBox, question: str, summary: ArchiveSummary) -> list[SeedCall]:
+    """The lookups to run before the first model call. `summary` is the summary of the archive."""
     ctx = box.context
+    held = archive_years(summary)
     directory: Directory = box.guard(ctx.directory)
-    names = directory.named_in(question)
+    total = int(summary.get("messages") or 0)
+    names: list[str] = box.guard(lambda: names_in_question(directory, ctx.archive, question, total))
     entries = named_entries(directory, names)
     calls: list[SeedCall] = []
     units = question_units(question, ctx.labeler.redact)
@@ -163,6 +167,9 @@ def plan_seed(box: ToolBox, question: str, held: tuple[int, int] = ALL_YEARS) ->
         calls.append(_names_call(box, ctx, names, entries))
     elif ctx.scope.conversations:
         calls.append(_scope_call(box, ctx, directory))
+    if ctx.memory.people is not None:
+        label = f"find_people(description=the question, limit={SEED_PEOPLE})"
+        calls.append(SeedCall("find_people", label, box.wrap("find_people", seeded_people(ctx, question))))
     figures = _figures_call(box, ctx, *question_period(question, held, ctx.labeler.redact))
     if figures is not None:
         calls.append(figures)
