@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import stat
+import threading
 from pathlib import Path
 
 import pytest
@@ -180,3 +182,50 @@ def test_a_file_that_can_not_be_written_is_told_in_a_sentence_with_no_key(key_fi
 )
 def test_only_the_exact_origin_of_this_server_may_touch_the_key(host: str, origin: str | None, allowed: bool) -> None:
     assert key_store.same_origin(host, origin) is allowed
+
+
+# --- the temporary file and the lines ------------------------------------------------------
+
+
+def test_the_temporary_file_has_a_random_name_and_is_private_from_its_start(
+    key_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import tempfile
+
+    made = []
+    real = tempfile.mkstemp
+
+    def noted(*args: object, **more: object) -> tuple[int, str]:
+        handle, name = real(*args, **more)  # type: ignore[call-overload]
+        made.append((more, stat.S_IMODE(os.stat(name).st_mode)))
+        return handle, name
+
+    monkeypatch.setattr(key_store.tempfile, "mkstemp", noted)
+    key_store.save(INVENTED)
+    key_store.remove()
+    assert [settings for settings, _mode in made] == [{"dir": key_file.parent, "prefix": ".env.", "suffix": ".tmp"}] * 2
+    assert all(mode == 0o600 for _settings, mode in made)
+    assert [path.name for path in key_file.parent.iterdir()] == [".env"]
+
+
+def test_a_link_at_the_name_of_an_earlier_temporary_file_is_not_followed(key_file: Path, tmp_path: Path) -> None:
+    key_file.parent.mkdir(parents=True)
+    target = tmp_path / "elsewhere.txt"
+    target.write_text("untouched", encoding="utf-8")
+    assert os.listdir(key_file.parent) == []
+    (key_file.parent / f".env.{os.getpid()}.{threading.get_ident()}.tmp").symlink_to(target)
+    key_store.save(INVENTED)
+    assert target.read_text(encoding="utf-8") == "untouched"
+    assert key_file.read_text(encoding="utf-8") == f"OPENAI_API_KEY={INVENTED}\n"
+
+
+@pytest.mark.parametrize("breaker", ["\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"])
+def test_only_a_newline_ends_a_line_so_no_text_is_lost(key_file: Path, breaker: str) -> None:
+    key_file.parent.mkdir(parents=True)
+    before = f"NOTE=one{breaker}OPENAI_API_KEY=part of the note\nOPENAI_API_KEY={OTHER}\nLAST=2\n"
+    key_file.write_text(before, encoding="utf-8", newline="")
+    key_store.remove()
+    assert key_file.read_text(encoding="utf-8", newline="") == f"NOTE=one{breaker}OPENAI_API_KEY=part of the note\nLAST=2\n"
+    key_store.save(INVENTED)
+    after = key_file.read_text(encoding="utf-8", newline="")
+    assert after == f"NOTE=one{breaker}OPENAI_API_KEY=part of the note\nLAST=2\nOPENAI_API_KEY={INVENTED}\n"
