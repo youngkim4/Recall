@@ -80,7 +80,7 @@ from recall_services import conversations as conversation_service
 from recall_services import day as day_service
 from recall_services import digest_job as digest_service
 from recall_services import frame as frame_service
-from recall_services import inputs, models, places
+from recall_services import inputs, key_store, models, places
 from recall_services import meaning as meaning_service
 from recall_services import memory as memory_service
 from recall_services import memory_prep as memory_prep_service
@@ -2724,10 +2724,16 @@ class RecallHandler(BaseHTTPRequestHandler):
         with self.answering():
             self.answer_post()
 
+    def do_DELETE(self):
+        with self.answering():
+            self.answer_delete()
+
     def answer_get(self):
         parsed = urlparse(self.path)
         try:
-            if parsed.path.startswith("/api/"):
+            if parsed.path == "/api/key":
+                self.answer_key("GET")
+            elif parsed.path.startswith("/api/"):
                 if not is_local_api_request(self):
                     send_json(self, 403, {"error": "Forbidden: non-local origin"})
                     return
@@ -2757,7 +2763,9 @@ class RecallHandler(BaseHTTPRequestHandler):
             if not is_local_api_request(self):
                 send_json(self, 403, {"error": "Forbidden: non-local origin"})
                 return
-            if parsed.path == "/api/jobs":
+            if parsed.path == "/api/key":
+                self.answer_key("POST")
+            elif parsed.path == "/api/jobs":
                 payload = parse_body(self)
                 if not isinstance(payload, dict):
                     send_json(self, 400, {"error": "The request must be a JSON object."})
@@ -2798,6 +2806,39 @@ class RecallHandler(BaseHTTPRequestHandler):
             send_json(self, waiting.status, waiting.body())
         except Exception:
             send_json(self, 500, server_fault(f"POST {parsed.path}"))
+
+    def answer_delete(self):
+        parsed = urlparse(self.path)
+        try:
+            if not is_local_api_request(self):
+                send_json(self, 403, {"error": "Forbidden: non-local origin"})
+            elif parsed.path == "/api/key":
+                self.answer_key("DELETE")
+            else:
+                send_json(self, 404, {"error": "Not found"})
+        except Exception:
+            send_json(self, 500, server_fault(f"DELETE {parsed.path}"))
+
+    def answer_key(self, method: str) -> None:
+        """`/api/key`: whether a key is set and where, save one, remove it (`recall_services/key_store.py`).
+
+        Only the page of this server, or a request with no origin (the Mac app,
+        curl), may ask: not a page of another local port. No answer holds the key.
+        """
+        if not is_local_api_request(self) or not key_store.same_origin(self.headers.get("Host"), self.headers.get("Origin")):
+            send_json(self, 403, {"error": "Forbidden: only the page of this server may ask"})
+            return
+        try:
+            if method == "POST":
+                answer = key_store.save(self.body_object().get("key"))
+            elif method == "DELETE":
+                answer = key_store.remove()
+            else:
+                answer = key_store.state()
+        except key_store.KeyRefused as refused:
+            send_json(self, refused.status, {"error": str(refused)})
+            return
+        send_json(self, 200, answer)
 
     def body_object(self) -> dict:
         """The body of a request as a record. Any other JSON value is refused."""

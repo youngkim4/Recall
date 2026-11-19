@@ -56,12 +56,15 @@ def build_client(
     base_url: str = OFFICIAL_BASE_URL,
 ) -> openai.OpenAI:
     """An SDK client with its own retries off, so the adapter's are the only ones.
-    With no key given the SDK reads OPENAI_API_KEY. The address is always given
+    With no key given it reads the key of the app (`recall_services.keys`): the
+    environment, else the file .env of the data folder, at each call. The address is always given
     here: an OPENAI_BASE_URL in the environment can not send transcripts elsewhere.
     No proxy is taken from the environment either: a proxy would see where every
     report goes."""
+    from recall_services import keys  # read at call time: a key saved in the app is used with no new start
+
     return openai.OpenAI(
-        api_key=api_key,
+        api_key=api_key or keys.api_key() or None,
         base_url=base_url,
         max_retries=0,
         timeout=timeout_s,
