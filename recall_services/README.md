@@ -25,7 +25,7 @@ Ask for `state.archive()` and for `names.cached(...)` at the start of each reque
 
 `places.py` says which archive stands for a `messagesPath`: nothing named, the default export or the default archive is the archive at the default place (`archive_state.shared()`); a name that ends in `.sqlite3` is the archive itself; any other name is an export of an earlier build, and its archive stands beside it with the ending `.sqlite3`.
 
-`keys.py` gives the key of the model provider: `OPENAI_API_KEY` in the environment, or in the file `.env` in the data folder, read at each call.
+`keys.py` gives the key of the model provider: `OPENAI_API_KEY` in the environment, or in the file `.env` in the data folder, read at each call. `key_store.py` writes the key that a person gives in the app to that file. See "First run".
 
 ## Functions
 
@@ -52,6 +52,9 @@ Ask for `state.archive()` and for `names.cached(...)` at the start of each reque
 | job `people` | `people.build(archive, names, cancel, on_progress)` |
 | the build of the people index after a `memory` job or an import | `people.completed_before(archive_file)`, `people.payload(archive, names)`, `people.worth_starting(found)` |
 | find people by description (chat) | `people.search(archive, names, description, kinds=..., since=..., until=..., limit=..., conversations=...)`, `people.status(archive, names)` |
+| `GET`, `POST`, `DELETE /api/key` | `key_store.state()`, `key_store.save(key)`, `key_store.remove()`, and `key_store.same_origin(host, origin)` before each |
+| `/api/first-run` | `first_run.estimate(archive, names)`, or `first_run.nothing()` with no archive |
+| job `first_run` | `first_run_job.run(steps, work, on_progress, archive_file=...)` with the work of the jobs `meaning`, `memory` and `people` |
 | several digests at once | `digests.call_pool(model, max_parallel)`, then `digests.build(..., pool=pool)` in each thread |
 | the two optional ports of the chat engine | `memory.ports(archive, names)` |
 | the saved report of a report file | `reports.saved_report(contact, report_text)` |
@@ -776,6 +779,140 @@ Known limits:
 - `ongoing` and `faded` are judged from the notes, not from the date of the end of the archive: that date would change the hash of every profile at each import.
 - A `memory` job that ends while a `people` job runs does not start another one (the second is refused). The next `memory` job or import does.
 - The first look after the notes were read, and the first look after a change of the Contacts, lay out every conversation (23 s on the archive above).
+
+## First run
+
+A new person has no key and no index. The app asks for the key, shows what getting chat ready costs, and starts one job that builds the three things that chat needs. After that job, the builds that the server starts by itself after an import work for the person as they work for the owner.
+
+### The key: `/api/key`
+
+`GET /api/key` answers where the key is. It never gives the key or a part of it:
+
+```json
+{"present": true, "source": "file", "place": "the file .env in Recall's data folder"}
+```
+
+- `source` is `environment` (the key is set where the server starts), `file` (the file `.env` of the data folder) or `null` (no key).
+- `POST /api/key` with `{"key": "sk-..."}` saves the key in the file. The answer is the same shape. A key is text, trimmed, 20 to 300 characters, starts with `sk-`, and holds only `A-Z`, `a-z`, `0-9`, `-` and `_`.
+- `DELETE /api/key` removes only the line of the key from the file. The answer is the same shape.
+- The next question, report or job uses the new key. The server does not start again: each model client reads `keys.api_key()` at the call.
+
+The file:
+
+- It is written whole to a temporary file in the same folder, then put in place with one rename. Its mode is 0600. The data folder is made when it is missing.
+- Every other line stays as it is, byte for byte. The first line of the key is replaced in its place, and any later line of the key is dropped. With no line of the key, the line is added at the end.
+
+The answers:
+
+| Status | When | `error` |
+|---|---|---|
+| 200 | the key is saved or removed, or the state is asked for | none: the shape above |
+| 400 | the key is not text | The key must be text. |
+| 400 | the key does not have the shape of a key | This is not an API key. A key starts with sk- and has 20 to 300 letters, digits, - or _. |
+| 403 | the request comes from another origin | Forbidden: only the page of this server may ask |
+| 409 | `OPENAI_API_KEY` is set in the environment | OPENAI_API_KEY is set where the server starts, and that key is used. A key saved here would not be used. |
+| 500 | the file can not be written | The key could not be saved in the file .env in Recall's data folder. Check the free space on the disk, then try again. |
+
+WARNING: These three routes have a stricter check than the other routes. A request that sends an `Origin` header must come from the exact origin of this server: `http://` and the `Host` of the request, with its port. A page of another local port (the Vite dev server too) is refused. A request with no `Origin` passes (the Mac app, curl).
+
+No sentence, no log line, no job record and no traceback holds the key. A fault of the disk is told in one sentence, and its cause is dropped.
+
+### `GET /api/first-run`
+
+`GET /api/first-run?messagesPath=...` answers what getting chat ready costs and what is ready (`first_run_answer` in `ui_server.py`, `first_run.estimate`). It makes no model call and no request, and needs no key:
+
+```json
+{
+  "key": {"present": true, "source": "file"},
+  "archive": {"holdsMessages": true, "conversations": 1404, "messages": 550000},
+  "steps": [
+    {"name": "meaning", "state": "none", "estimatedCost": 0.85, "error": null, "code": null},
+    {"name": "memory", "state": "none", "estimatedCost": 4.60, "error": null, "code": null},
+    {"name": "people", "state": "none", "estimatedCost": 1.26, "error": null, "code": null}
+  ],
+  "estimatedCost": 6.71,
+  "ready": false,
+  "jobId": null
+}
+```
+
+- The steps are always in this order: `meaning`, `memory`, `people`.
+- `meaning`: the state and the cost of `GET /api/meaning`. `state` is `none`, `behind` or `ready`.
+- `memory`: the state and the cost of `GET /api/memory` for every conversation (`MEMORY_MIN_MESSAGES` is 1). `state` is `none`, `partial` or `ready`.
+- `people`: `none`, `partial` or `ready`.
+  - Before the memory is read, the people index has nothing to measure. The cost is an upper bound from the plan of the memory (`first_run.people_bound`): for each profile, the parts of its conversations, each at most the output limit of a part (`map_max_output_tokens`, at most the model's own limit), the frame of the request, the fullest reply of a profile (`OUTPUT_TOKENS`) and its embedding, times `TRIES`.
+  - After the memory is read, the cost is `TRIES` times `estimatedCost` of `GET /api/people`.
+  - The step is `ready` only when a build of this archive completed before and nothing is left to write or to embed. A profile whose memory can not be read does not hold it back.
+- `error` and `code` of a step say why its cost could not be worked out. Its cost is then 0.
+- `estimatedCost` is the sum of the steps that are not `ready`. `ready` is true when all three steps are `ready`.
+- With no message in the archive, or no archive, `holdsMessages` is false, each step is `none` with cost 0, and `ready` is false.
+- `key` has `present` and `source`, as `GET /api/key` gives them.
+- `jobId` is the `first_run` job that runs now, read fresh.
+- The answer is kept in the server process for one key (`first_run_counts`): the signature of the archive, the Contacts cache file, the notes file and its `-wal` file, the people store file, the id of the build of the index of meanings (`first_run.index_mark`) and the model of the memory. Each step that a job builds changes one of them, so a request after a job finds a fresh answer.
+
+### The `first_run` job
+
+`POST /api/jobs` with `{"action": "first_run", "messagesPath": "..."}` (`messagesPath` is optional). The answer is 202 with `{"job": {...}}`, and the record has `contact` "".
+
+The job builds, in order, only the steps that are not `ready` (`get_chat_ready` in `ui_server.py`, `first_run_job.run`):
+
+1. the index of meanings, with the work of the `meaning` job (`build_meaning_index`);
+2. the memory of every conversation, with the work of the `memory` job (`prepare_memory` with `min_messages=1`). It writes the marker of the memory;
+3. the people index, with the work of the `people` job (`build_people_index`).
+
+- A step that is `ready` is skipped with one line. A memory that is read already gets its marker.
+- After a `first_run` job that completed, `meaning.built`, `memory_prep.completed_before` and `people.completed_before` are true for its archive. So the builds after a later import start as they start for the owner.
+- A step that fails ends the job failed, with the sentence and the code of that step's own job. The steps that ended before stay saved: a new `first_run` job starts at the first step that is not ready.
+- `spent` (`{"usd", "usage"}`) holds what all steps spent, also when a step failed. The index of meanings tells no money: its tokens are priced at the price of the embedding model.
+- With an archive that holds no message the job fails with `no_messages`: The archive holds no message yet. Read your messages first, then get chat ready.
+
+Its `progress`, with the label of each step's own job:
+
+```json
+{"step": 1, "of": 3, "label": "Reading the meaning of your messages", "done": 120, "total": 900}
+{"step": 2, "of": 3, "label": "Reading your conversations", "done": 40, "total": 2300}
+{"step": 3, "of": 3, "label": "Writing a profile of each person", "done": 5, "total": 1400}
+```
+
+Its lines are the lines of each step's job, and one line for each step that is skipped:
+
+```text
+The index for the search by meaning is ready: nothing to build.
+The memory of chat is read: nothing to read.
+The people index is ready: nothing to write.
+```
+
+Its `result` holds counts and money only. A step that was skipped is `null`:
+
+```json
+{
+  "meaning": {"segments": 52000, "embedded": 52000, "reused": 0, "removed": 0, "tokens": 9100000},
+  "memory": {"conversations": 1404, "conversationsRead": 1404, "conversationsFailed": 0, "periodsBuilt": 2300, "periodsCached": 0, "periodsFailed": 0, "usd": 4.4, "usage": {}},
+  "people": {"people": 1200, "built": 1200, "kept": 0, "failed": 0, "notRead": 0, "removed": 0, "embedded": 1200, "embedTokens": 160000, "usd": 1.1, "usage": {}},
+  "skipped": [],
+  "usd": 6.2
+}
+```
+
+A refusal is 409 with `{"error": sentence}`, and no job is made:
+
+| Asked for | Held up by | Sentence |
+|---|---|---|
+| `first_run` | no key | No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then get chat ready again. |
+| `first_run` | an import | An import is running. Wait until it ends, then get chat ready. |
+| `first_run` | `meaning` | The index for the search by meaning is being built. Wait until it ends. |
+| `first_run` | `memory` | Recall is reading the memory of chat. Wait until it ends. |
+| `first_run` | `digest` | Recall is reading a conversation for chat. Wait until it ends. |
+| `first_run` | `people` | The people index is being built. Wait until it ends. |
+| an import, `meaning`, `memory`, `digest`, `people`, `first_run` | `first_run` | Recall is getting chat ready. Wait until it ends. |
+
+A report and chat run beside a `first_run` job.
+
+Known limits:
+
+- A `first_run` job can not be stopped from the app. On a large archive it takes as long as its three jobs together: the people step alone is about 25 minutes for 1,400 profiles.
+- A job works the estimate out when it starts, if no request did it before (about as long as the three routes together).
+- The upper bound of the people index is far above what a build pays: each part counts its whole output limit. The app shows it as "at most".
 
 ## Reports
 

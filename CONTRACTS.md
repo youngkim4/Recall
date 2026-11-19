@@ -168,7 +168,7 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 ### Jobs
 
 - One import writes the archive at a time. `create_job` in `ui_server.py` decides this once, with `JOBS_LOCK` held, when the job is made. `IMPORT_ACTIONS` holds the jobs that write the archive: `setup_import`, `export` and `bridge`.
-- `ONE_AT_A_TIME` lists the jobs that do not run together. An import, the `meaning` job, the `digest` job, the `memory` job and the `people` job are in it. See "Chat memory".
+- `ONE_AT_A_TIME` lists the jobs that do not run together. An import, the `meaning` job, the `digest` job, the `memory` job, the `people` job and the `first_run` job are in it. See "Chat memory".
 - The first job runs. The second is refused: `/api/jobs` answers 409 with a plain sentence, and no job is made.
 - `check_request` refuses a request that cannot be a job. `/api/jobs` answers 400, and no job is made.
   - The action is text, and it is one of `JOB_ACTIONS`.
@@ -285,6 +285,11 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 - `recall_services/keys.py` gives the key: `OPENAI_API_KEY` in the environment of the server, or in the file `.env` in the data folder. The file is read at each call, as it is written (nothing of the environment is filled in). No file above the data folder is looked for.
 - Each model client is given the address of the provider, and takes no proxy from the environment (`build_client` in `report_engine/openai_llm.py`, `_ready_client` in `chat_engine/openai_llm.py`).
 - WARNING: A run with a dummy key still sends its request. Tests and trial runs block the network.
+- A person gives the key in the app: `POST /api/key` writes the line `OPENAI_API_KEY=...` to the file `.env` of the data folder (`recall_services/key_store.py`). The environment still wins: with a key there, a save is refused with 409. `DELETE /api/key` removes only that line. Every other line of the file stays as it is, byte for byte.
+- The file is written whole to a temporary file in the same folder, mode 0600, then put in place with one rename.
+- WARNING: `GET`, `POST` and `DELETE /api/key` take a request with no `Origin`, or with the exact origin of this server (`http://` and the `Host` of the request, with its port). A page of another local port is refused with 403. The other routes keep the check of `is_local_api_request`.
+- No answer, sentence, log line, job record or traceback holds the key or any part of it. `GET /api/key` says only `present`, `source` and `place`. `tests/test_key_routes.py` posts a key and searches every answer and every log for it.
+- Each model client reads the key at the call: the services give `keys.api_key()`, and with no key given `build_client` in `report_engine/openai_llm.py` and `_secret` in `chat_engine/openai_llm.py` read `keys.api_key()` too. A key saved in the app is used by the next request, with no new start of the server.
 
 ### Chat
 
@@ -469,6 +474,20 @@ Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `rec
 - Names of the question (`chat_engine/question_names.py`, also with no port): a word of the name of a person is a name. A word that only a group title holds is a name only when at most `max(20, 0.5 percent of the messages)` hold it. Every candidate is looked at, at most 8 title words are counted, one time each, and the first 4 names are kept.
 - The scope's conversations go to `PeopleSearch.search` (`conversations`), so the port ranks only the people of the scope. `PeoplePort` sends the keyword only when there is a scope.
 - A search of people that failed is not asked again in the same question.
+
+### The first run
+
+- Chat is ready when three things are built, in this order: the index of meanings, the memory of every conversation (`min_messages=1`) and the people index. `GET /api/first-run` says the state and the cost of each, and `ready` (`recall_services/first_run.py`). The shapes are in `recall_services/README.md`.
+- `GET /api/first-run` makes no model call and no request, and needs no key. Its `estimatedCost` is the sum of the steps that are not `ready`. `ready` is true only when all three steps are `ready`. With no message, every step is `none` at cost 0.
+- The people step before the memory is read is an upper bound, never below what the build costs (`first_run.people_bound`): each part counts its whole output limit, the reply of a profile its fullest size, and each profile `TRIES` tries. After the memory is read it is `TRIES` times the estimate of `GET /api/people`.
+- The people step is `ready` only when `people.completed_before` is true and nothing is left to write or to embed.
+- The answer is kept for one key (`first_run_counts`): the archive, the Contacts cache, the notes and their `-wal` file, the people store, the id of the build of the index of meanings, and the model of the memory. Each step changes one of them.
+- The `first_run` job builds only the steps that are not `ready`, with the work functions of the `meaning`, `memory` and `people` jobs (`build_meaning_index`, `prepare_memory`, `build_people_index`). No body of those is copied. A skipped step writes one line.
+- Postconditions of a `first_run` job that completed: `meaning.built`, `memory_prep.completed_before` and `people.completed_before` are true for its archive. A memory that was read already gets its marker. So `refresh_meaning_index`, `refresh_memory` and `refresh_people` work after a later import. `tests/test_first_run.py` checks each one.
+- A step that fails ends the job with that step's sentence and code. `spent` holds what all steps spent. The steps that ended before stay saved, and a new `first_run` job starts at the first step that is not ready.
+- A `first_run` job is refused with 409 before it is made when no key is set. It is held up by an unfinished import, `meaning`, `memory`, `digest`, `people` or `first_run` job, each with its own sentence. Each of those is held up by a `first_run` job: "Recall is getting chat ready. Wait until it ends." (`ONE_AT_A_TIME`).
+- The result of the job and its lines hold counts and money only: no name, handle or text.
+- After a `first_run` job the server starts no other job by itself.
 
 ## Mac shell
 
