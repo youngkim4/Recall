@@ -31,7 +31,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from archive import Archive
 from archive import ArchiveError as ArchiveFault
@@ -87,7 +87,7 @@ def subjects_of(archive: Any, names: Names) -> tuple[Subject, ...]:
             key=key,
             conversations=tuple(str(record["id"]) for record in records),
             is_group=bool(records[0].get("is_group")),
-            label=labeler.conversation(records[0]),
+            label=labeler.conversation(cast(Any, records[0])),
         )
         for key, records in grouped.items()
     )

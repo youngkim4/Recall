@@ -89,8 +89,10 @@ def test_a_write_that_fails_leaves_the_file_as_it_was(tmp_path: Path, monkeypatc
 def test_a_file_of_a_newer_format_is_not_read(tmp_path: Path) -> None:
     store = PeopleStore(tmp_path / "people")
     store.write(Held(META, (profile(),)))
-    with sqlite3.connect(store.path) as conn:
+    conn = sqlite3.connect(store.path)
+    with conn:
         conn.execute("UPDATE meta SET format_version = 99")
+    conn.close()
     with pytest.raises(people_store.PeopleFormatError):
         store.read()
 

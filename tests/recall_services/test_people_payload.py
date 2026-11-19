@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
 import pytest
@@ -13,7 +12,7 @@ from recall_services.people_store import PeopleStore
 from report_engine import LLMUsage
 from report_engine.pricing import call_cost_usd
 from report_engine.tokens import meter_for
-from tests.recall_services.people_kit import FAKE_FACTS, THEO, settings, town  # noqa: F401
+from tests.recall_services.people_kit import opened, FAKE_FACTS, THEO, settings, town  # noqa: F401
 from tests.report_engine.synth import WordCounter
 
 PAYLOAD_KEYS = {
@@ -110,10 +109,10 @@ def test_a_changed_person_makes_the_state_partial(town) -> None:
 
 def test_the_payload_makes_no_call_and_changes_no_file(town) -> None:
     town.read_memory()
-    with sqlite3.connect(town.places.cache_path) as conn:
+    with opened(town.places.cache_path) as conn:
         before = sorted(conn.execute("SELECT key, last_used_at FROM period_results"))
     payload(town)
-    with sqlite3.connect(town.places.cache_path) as conn:
+    with opened(town.places.cache_path) as conn:
         assert sorted(conn.execute("SELECT key, last_used_at FROM period_results")) == before
 
 
@@ -121,7 +120,7 @@ def test_a_store_of_a_newer_format_gives_zeros_and_a_sentence(town) -> None:
     town.read_memory()
     build(town)
     store: PeopleStore = settings(town)["store"]
-    with sqlite3.connect(store.path) as conn:
+    with opened(store.path) as conn:
         conn.execute("UPDATE meta SET format_version = 99")
     found = payload(town)
     assert (found["state"], found["people"], found["code"]) == ("none", 0, "store_newer")

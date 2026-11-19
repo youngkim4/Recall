@@ -11,7 +11,9 @@ change of the clock.
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -207,3 +209,14 @@ def profile_reply(**fields: Any) -> dict[str, Any]:
 
 def by_key(rows: Sequence[Mapping[str, Any]]) -> dict[str, Mapping[str, Any]]:
     return {str(row["key"]): row for row in rows}
+
+
+@contextmanager
+def opened(path: Path) -> Iterator[sqlite3.Connection]:
+    """A connection to a file of a test, committed and closed at the end of the block."""
+    conn = sqlite3.connect(path)
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()

@@ -76,7 +76,9 @@ def ask(llm: LLM, info: ModelInfo, planned: Planned, redact: Callable[[str], str
 class Calls:
     """The calls of one build. `stop_code` is the failure that stopped them, or "cancelled", or None."""
 
-    def __init__(self, llm: LLM, info: ModelInfo, redact: Callable[[str], str], cancel: Any, heard: Callable[[], None]) -> None:
+    def __init__(
+        self, llm: LLM | None, info: ModelInfo, redact: Callable[[str], str], cancel: Any, heard: Callable[[], None]
+    ) -> None:
         self._llm = llm
         self._info = info
         self._redact = redact
@@ -102,9 +104,12 @@ class Calls:
         return "cancelled" if self.cancelled() else None
 
     def _task(self, planned: Planned) -> Callable[[], Written]:
+        llm = self._llm
+        assert llm is not None, "a build with a profile to write has a model port"
+
         def work() -> Written:
             try:
-                written = ask(self._llm, self._info, planned, self._redact)
+                written = ask(llm, self._info, planned, self._redact)
             except Exception:
                 with self._lock:
                     self._fatal = self._fatal or RUN_FAILED

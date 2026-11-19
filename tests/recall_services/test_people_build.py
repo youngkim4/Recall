@@ -12,11 +12,12 @@ import pytest
 
 from meaning_index import EmbeddingKeyError, FakeEmbedder
 from recall_services import people
-from recall_services.people_store import Held, PeopleStore, StoreMeta
+from recall_services.people_store import Held, PeopleStore
 from recall_services.report_failures import ReportFailure
 from report_engine import CancelToken, LLMError
 from report_engine.fake_llm import FakeCall, FakeLLM
 from tests.recall_services.people_kit import (
+    opened,
     FAKE_FACTS,
     GROUP,
     MARK,
@@ -286,12 +287,10 @@ def test_a_cancelled_build_sends_nothing_more(town) -> None:
 
 
 def test_a_store_of_a_newer_format_is_not_replaced(town) -> None:
-    import sqlite3
-
     town.read_memory()
     build(town)
     store: PeopleStore = settings(town)["store"]
-    with sqlite3.connect(store.path) as conn:
+    with opened(store.path) as conn:
         conn.execute("UPDATE meta SET format_version = 99")
     with pytest.raises(people.PeopleFailure) as stopped:
         build(town)

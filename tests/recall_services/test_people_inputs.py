@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
 import pytest
@@ -11,6 +10,7 @@ from recall_services import memory_prep, people_inputs, people_prompt
 from recall_services.names import Names
 from recall_services.people_inputs import EMPTY, NOT_READ, READ, Planner, Subject
 from tests.recall_services.people_kit import (
+    opened,
     GROUP,
     GROUP_TITLE,
     MINA,
@@ -85,12 +85,12 @@ def test_the_notes_of_both_threads_are_read_in_the_order_of_their_days(town) -> 
 
 def test_reading_the_notes_calls_no_model_and_marks_no_entry(town) -> None:
     town.read_memory()
-    with sqlite3.connect(town.places.cache_path) as conn:
+    with opened(town.places.cache_path) as conn:
         before = sorted(conn.execute("SELECT key, last_used_at FROM period_results"))
     reader = planner(town)
     for subject in reader.subjects():
         reader.plan(subject)
-    with sqlite3.connect(town.places.cache_path) as conn:
+    with opened(town.places.cache_path) as conn:
         assert sorted(conn.execute("SELECT key, last_used_at FROM period_results")) == before
 
 
