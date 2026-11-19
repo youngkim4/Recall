@@ -56,7 +56,9 @@ class FakePeople:
         error: Optional[Exception] = None,
     ) -> None:
         self._people = copy.deepcopy(list(people))
-        self._by_query = None if by_query is None else {key: copy.deepcopy(list(rows)) for key, rows in by_query.items()}
+        self._by_query = (
+            None if by_query is None else {key: copy.deepcopy(list(rows)) for key, rows in by_query.items()}
+        )
         self._error = error
         self.calls: list[dict[str, Any]] = []
 
