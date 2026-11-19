@@ -331,11 +331,14 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
 ### Insights
 
 - The rail is Overview, Chat, Analyze, Insights, Search, Reports, Jobs: the order the user agreed. Insights is `insights` in `ViewKey`.
-- Insights must not look like the Overview: the user said so before seeing it. The Overview shows the archive as it is; Insights answers one question at a time, after Amplitude's chart builder. Do not bring tiles, the line chart, the heat map of hours or the ranked list of the Overview into it.
-  - On the left, the question as a column of labelled rows, 44px each, parted by hairlines (`InsightsQuery`): Count (words), In, From, Has, When, and a step apart, By (day, week, month, weekday, hour, person, conversation). A part that is set is filled in the theme's hue.
-  - On the right, the question read back as one sentence in the display face (`querySentence`), its total with what you and they sent, the answer as stacked columns (`ColumnChart`, yours at the foot), and a table with column headings (`InsightsTable`): the ten busiest rows of a time, or the people or conversations ranked, with a bar in each row. By person or conversation the table is the chart.
-- It asks `/api/stats` once a question, grouped by the choice of By (`statsAsk`, `statsKey`). Words are counted whole (the route's default) once typing pauses 400ms. A count has no order: the sort of search is never sent.
-- An answer changes in place: `useLastReady` keeps the last answer on the page while the next one loads, and the names on the page follow the answer that is shown (`answer.by`), not the choice that is still loading.
+- The user picked this design (direction A) from three full-size mockups, after refusing two others: one that looked like the Overview, and one with the question in a side panel ("those lines going into random whitespace"). It follows ElevenLabs' usage page and Mixpanel's breakdown. Do not bring back a side panel, the Overview's tiles or its heat map.
+  - One row of controls (`insights-toolbar`): the words to count, the filter row of Search (`SearchFilterBar`), and at its end By (day, week, month, weekday, hour).
+  - One card: the figures as tabs (`InsightsTabs`: Messages, You sent, They sent) over the chart, and a fourth figure, how many people or conversations, that is no tab. The chosen tab says which lines the chart draws.
+  - The chart: lines over time (`LineChart`, 2px, three gridlines, the top of the scale named at the end of the line over it, a legend there at rest); columns by weekday or hour (`ColumnChart`).
+  - A table of the people or conversations the answer is with (`InsightsTable`), ten rows, with People or Conversations chosen at the end of its heading.
+- A click on a chart reads a point and never takes the focus (`onMouseDown` prevents it). The user saw the keyboard's focus ring drawn round the whole chart after a click and called it terrible. The keyboard's focus is still ringed.
+- It asks `/api/stats` twice a question: by the grain of the chart (`statsAsk`), and by person or conversation with ten rows. Words are counted whole (the route's default) once typing pauses 400ms. A count has no order: the sort of search is never sent.
+- An answer changes in place: `useLastReady` keeps the last answer on the page while the next one loads, and the names on the page follow the answer that is shown (`answer.by`).
 - A year a bar is not offered: the archive is a few years. A week is named by its Monday (`ChartUnit` in `lib/activity.ts`); the server's `ActivityUnit` stays day or month.
 - The server counts weekdays from Monday ("0"), the app names them from Sunday: `(key + 1) % 7`.
 

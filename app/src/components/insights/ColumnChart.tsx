@@ -66,6 +66,8 @@ export function ColumnChart({ rows, labels, nameOf, summary }: ColumnChartProps)
         role="img"
         aria-label={`${summary} Use the arrow keys to read each column.`}
         tabIndex={0}
+        // a click reads a column; it does not take the focus, so no ring is drawn
+        onMouseDown={(event) => event.preventDefault()}
         data-reading={active === null ? undefined : ''}
         onPointerMove={(event) => setActive(columnAt(event))}
         onPointerLeave={() => setActive(null)}

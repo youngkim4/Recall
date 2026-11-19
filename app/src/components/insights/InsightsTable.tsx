@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { formatNumber, formatPercent } from '../../lib/format'
 import { busiest, type StatsRow } from '../../lib/insights'
 import { Truncate } from '../ui/Truncate'
@@ -15,16 +16,18 @@ type InsightsTableProps = {
   nameOf: (row: StatsRow) => string
   total: number
   onOpen?: (row: StatsRow) => void
+  // a control at the end of the heading, such as what the rows are of
+  action?: ReactNode
 }
 
 // how many periods the table lists, the busiest first
 const BUSIEST = 10
 
-// The rows of the answer as a table, after Amplitude's breakdown under its
-// chart: a heading row, then one row a period or a person with the count,
-// what you and they sent, and its share of the answer. By who, the table is
-// the chart: a bar in each row against the busiest.
-export function InsightsTable({ rows, who, heading, column, nameOf, total, onOpen }: InsightsTableProps) {
+// The rows of the answer as a table, after Mixpanel's breakdown under its
+// chart: a heading row, then one row a person or a period with the count,
+// what you and they sent, and its share of the answer. Rows of people carry
+// a bar against the busiest; rows of periods are the busiest of them.
+export function InsightsTable({ rows, who, heading, column, nameOf, total, onOpen, action }: InsightsTableProps) {
   const shown = who ? rows : busiest(rows, BUSIEST)
   if (!shown.length) return null
   const largest = Math.max(1, ...shown.map((row) => row.total))
@@ -32,6 +35,7 @@ export function InsightsTable({ rows, who, heading, column, nameOf, total, onOpe
     <section className="section insights-table" aria-labelledby="insights-table-title">
       <div className="section-head">
         <h2 id="insights-table-title">{heading}</h2>
+        {action ? <span className="section-links">{action}</span> : null}
       </div>
       <table className="data-table">
         <thead>

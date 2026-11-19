@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { axisLabels, pointName, type AxisLabel } from '../../lib/activity'
-import { formatDateRange, formatNumber } from '../../lib/format'
+import type { Choice } from '../../lib/choice'
+import { formatNumber } from '../../lib/format'
 import { groupKind, querySentence, statsAsk, statsKey, type StatsBy, type StatsRow } from '../../lib/insights'
 import { loadStats } from '../../lib/insightsLoad'
 import { hourName, weekdayName } from '../../lib/locale'
@@ -10,9 +11,13 @@ import { NO_FILTERS, type SearchFilters } from '../../lib/searchFilters'
 import { useLoad } from '../../lib/useLoad'
 import { useLastReady, useSettled } from '../../lib/useSettled'
 import type { Contact, Defaults } from '../../types'
+import { SearchFilterBar } from '../search/SearchFilterBar'
+import { ChoiceMenu } from '../ui/ChoiceMenu'
+import { SearchField } from '../ui/SearchField'
 import { ColumnChart } from './ColumnChart'
-import { InsightsQuery } from './InsightsQuery'
 import { InsightsTable } from './InsightsTable'
+import { InsightsTabs } from './InsightsTabs'
+import { LineChart, type LineSeries } from './LineChart'
 
 type InsightsViewProps = {
   defaults: Defaults | null
@@ -20,10 +25,25 @@ type InsightsViewProps = {
   onSelectContact: (contact: Contact) => void
 }
 
+type Grain = Extract<StatsBy, 'day' | 'week' | 'month' | 'weekday' | 'hour'>
+type Who = Extract<StatsBy, 'person' | 'conversation'>
+
+const GRAINS: Choice[] = [
+  { value: 'day', label: 'Day' },
+  { value: 'week', label: 'Week' },
+  { value: 'month', label: 'Month' },
+  { value: 'weekday', label: 'Weekday' },
+  { value: 'hour', label: 'Hour' },
+]
+const WHO: Choice[] = [
+  { value: 'person', label: 'People' },
+  { value: 'conversation', label: 'Conversations' },
+]
+
 // words are counted once typing has paused this long
 const WORDS_WAIT_MS = 400
-// people and conversations listed by who
-const WHO_ROWS = 25
+// the people or conversations the table lists
+const WHO_ROWS = 10
 
 // The server counts weekdays from Monday ("0") and hours from midnight ("00");
 // the names follow the reader's locale, which counts weekdays from Sunday.
@@ -43,41 +63,30 @@ function labelsOf(by: StatsBy, rows: StatsRow[]): AxisLabel[] {
   return rows.flatMap((row, index) => (index % 3 === 0 ? [{ index, text: hourName(Number(row.key)) }] : []))
 }
 
-const TABLE: Record<string, { heading: string; column: string }> = {
-  day: { heading: 'Busiest days', column: 'Day' },
-  week: { heading: 'Busiest weeks', column: 'Week' },
-  month: { heading: 'Busiest months', column: 'Month' },
-  weekday: { heading: 'Busiest weekdays', column: 'Weekday' },
-  hour: { heading: 'Busiest hours', column: 'Hour' },
-  person: { heading: 'People', column: 'Person' },
-  conversation: { heading: 'Conversations', column: 'Conversation' },
-}
-
-// Insights asks one question of the whole archive at a time, after
-// Amplitude's chart builder: the question on the left, part by part; on the
-// right the question read back as a sentence with its total, the answer as
-// columns, and a table of its busiest rows. Nothing here repeats the
-// Overview, which shows the archive as it is; this answers what is asked.
+// Insights counts the whole archive under one question, after ElevenLabs'
+// usage page and Mixpanel's breakdown: one row of controls (the words to
+// count, where, from whom, with what, when, and at its end how the chart
+// groups them); under it one card, its figures as tabs over the chart; under
+// that a table of the people the answer is with. Each part follows the row.
 export function InsightsView({ defaults, contacts, onSelectContact }: InsightsViewProps) {
   const messagesPath = defaults?.messagesPath ?? ''
   const [typed, setTyped] = useState('')
   const words = useSettled(typed, WORDS_WAIT_MS)
   const [filters, setFilters] = useState<SearchFilters>(NO_FILTERS)
-  const [by, setBy] = useState<StatsBy>('month')
+  const [grain, setGrain] = useState<Grain>('month')
+  const [who, setWho] = useState<Who>('person')
+  const [series, setSeries] = useState<LineSeries>('both')
   const scopes = useMemo(() => scopeChoices(contacts), [contacts])
   const { load: patterns } = useLoad(messagesPath, loadPatterns)
-  const asked = statsAsk(filters, words, by, groupKind(by) === 'who' ? WHO_ROWS : undefined)
-  const answer = useLastReady(useLoad(statsKey(messagesPath, asked), loadStats).load)
-  // the answer on the page may be of the question before this one, while this one loads
-  const answeredBy = (answer?.by as StatsBy | undefined) ?? by
-  const who = groupKind(answeredBy) === 'who'
-  const nameOf = namer(answeredBy)
-  const rows = answer?.rows ?? []
 
-  const where = scopes.find((scope) => scope.value === filters.contact)?.label
-  const range =
-    filters.since || filters.until ? formatDateRange(filters.since || answer?.first, filters.until || answer?.last) : ''
-  const sentence = querySentence({ words, filters, by, where, range })
+  const answer = useLastReady(useLoad(statsKey(messagesPath, statsAsk(filters, words, grain)), loadStats).load)
+  const people = useLastReady(useLoad(statsKey(messagesPath, statsAsk(filters, words, who, WHO_ROWS)), loadStats).load)
+  // the answer on the page may be of the question before this one, while this one loads
+  const shownGrain = (answer?.by as Grain | undefined) ?? grain
+  const shownWho = (people?.by as Who | undefined) ?? who
+  const nameOf = namer(shownGrain)
+  const rows = answer?.rows ?? []
+  const summary = `${querySentence({ words, filters, by: shownGrain })}: ${formatNumber(answer?.totals.total ?? 0)} messages.`
 
   function open(row: StatsRow) {
     const id = row.conversations?.[0] ?? row.key
@@ -87,67 +96,67 @@ export function InsightsView({ defaults, contacts, onSelectContact }: InsightsVi
   return (
     <div className="view">
       <div className="page wide insights arrive-each">
-        <InsightsQuery
-          words={typed}
-          onWordsChange={setTyped}
-          filters={filters}
-          onFiltersChange={setFilters}
-          by={by}
-          onByChange={setBy}
-          scopes={scopes}
-          daily={patterns.state === 'ready' ? patterns.value.daily : null}
-          disabled={!messagesPath}
-        />
-
-        <div className="insights-answer">
-          <header className="insights-head">
-            <h1 key={sentence} className="insights-question swap">
-              {sentence}
-            </h1>
-            <p className="insights-total" aria-busy={!answer || undefined}>
-              {answer ? (
-                <>
-                  <span className="insights-count">
-                    <b>{formatNumber(answer.totals.total)}</b> {answer.totals.total === 1 ? 'message' : 'messages'}
-                  </span>
-                  <span className="readout-voice">
-                    <i className="you" />
-                    You <b>{formatNumber(answer.totals.sent)}</b>
-                  </span>
-                  <span className="readout-voice">
-                    <i className="them" />
-                    Them <b>{formatNumber(answer.totals.received)}</b>
-                  </span>
-                </>
-              ) : (
-                <span className="skeleton">000,000 messages</span>
-              )}
-            </p>
-          </header>
-
-          {answer && !answer.totals.total ? (
-            <p className="insights-none">No messages answer this question</p>
-          ) : !who && rows.length ? (
-            <ColumnChart
-              rows={rows}
-              labels={labelsOf(answeredBy, rows)}
-              nameOf={nameOf}
-              summary={`${sentence}: ${formatNumber(answer?.totals.total ?? 0)} messages.`}
-            />
-          ) : null}
-
-          {answer && answer.totals.total ? (
-            <InsightsTable
-              rows={rows}
-              who={who}
-              heading={TABLE[answeredBy]?.heading ?? 'Rows'}
-              column={TABLE[answeredBy]?.column ?? 'Row'}
-              nameOf={nameOf}
-              total={answer.totals.total}
-              onOpen={open}
-            />
-          ) : null}
+        <div className="insights-toolbar">
+          <SearchField
+            value={typed}
+            onChange={setTyped}
+            label="Words to count"
+            placeholder="Count messages with these words"
+            disabled={!messagesPath}
+          />
+          <SearchFilterBar
+            filters={filters}
+            onChange={setFilters}
+            scopes={scopes}
+            daily={patterns.state === 'ready' ? patterns.value.daily : null}
+          />
+          <span className="insights-toolbar-end">
+            <ChoiceMenu label="By" value={grain} choices={GRAINS} onChange={(value) => setGrain(value as Grain)} align="end" />
+          </span>
         </div>
+
+        <section className="card insights-card" aria-label="The answer">
+          <InsightsTabs
+            stats={answer}
+            among={people ? people.rowsTotal : null}
+            amongLabel={shownWho === 'person' ? 'People' : 'Conversations'}
+            series={series}
+            onSeriesChange={setSeries}
+          />
+          <div className="insights-plot">
+            {answer && !answer.totals.total ? (
+              <p className="insights-none">No messages match</p>
+            ) : !rows.length ? (
+              <div className="insights-plot-waiting" aria-hidden="true" />
+            ) : groupKind(shownGrain) === 'time' ? (
+              <LineChart rows={rows} series={series} labels={labelsOf(shownGrain, rows)} nameOf={nameOf} summary={summary} />
+            ) : (
+              <ColumnChart rows={rows} labels={labelsOf(shownGrain, rows)} nameOf={nameOf} summary={summary} />
+            )}
+          </div>
+        </section>
+
+        {people && people.totals.total ? (
+          <InsightsTable
+            rows={people.rows}
+            who
+            heading={shownWho === 'person' ? 'By person' : 'By conversation'}
+            column={shownWho === 'person' ? 'Person' : 'Conversation'}
+            nameOf={(row) => row.label}
+            total={people.totals.total}
+            onOpen={open}
+            action={
+              <ChoiceMenu
+                label="Rows"
+                quietLabel
+                value={who}
+                choices={WHO}
+                onChange={(value) => setWho(value as Who)}
+                align="end"
+              />
+            }
+          />
+        ) : null}
       </div>
     </div>
   )

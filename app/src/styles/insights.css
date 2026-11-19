@@ -1,133 +1,243 @@
-/* Insights: one question of the whole archive at a time, after Amplitude's
-   chart builder. The question stands on the left as a column of labelled
-   rows; the answer fills the right: the question read back as a sentence,
-   its total, the answer as columns, and a table of its busiest rows. In a
-   narrow workspace the question stands over the answer. */
+/* Insights: the whole archive counted under one question, after ElevenLabs'
+   usage page and Mixpanel's breakdown. One row of controls; under it one
+   card, its figures as tabs over the chart; under that a table of the
+   people the answer is with. The page fills the width; nothing stands in a
+   side column. */
 
 @layer views {
-  .insights {
-    display: grid;
-    gap: var(--s-8);
-    align-items: start;
+  .insights > * + * {
+    margin-top: var(--s-6);
   }
 
-  @container workspace (min-width: 56rem) {
-    .insights {
-      grid-template-columns: 16rem minmax(0, 1fr);
-      gap: var(--s-10);
-    }
-
-    /* the question stays in view while a long table scrolls past */
-    .insights-query {
-      position: sticky;
-      top: var(--s-4);
-    }
+  .insights > .insights-table {
+    margin-top: var(--s-8);
   }
 
-  /* ---- the question: one row a part, 44px each, parted by hairlines, the
-     name of the part in a quiet column on the left ---- */
-  .insights-query {
-    display: grid;
-    align-content: start;
-  }
-
-  .query-row {
-    display: grid;
-    grid-template-columns: 3.5rem minmax(0, 1fr);
+  /* ---- the row of controls: the words, the filters of search, and at its end the grouping ---- */
+  .insights-toolbar {
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    min-height: 2.75rem;
-    border-top: 1px solid var(--line);
+    gap: var(--s-1);
   }
 
-  .query-row:first-child {
-    border-top: 0;
+  .insights-toolbar > .search {
+    flex: 0 1 20rem;
+    min-width: 12rem;
+    margin-right: var(--s-2);
   }
 
-  .query-label {
-    color: var(--text-3);
+  /* the filters of search stand in this row as its own buttons */
+  .insights-toolbar > .search-filters {
+    display: contents;
   }
 
-  /* each control starts on the line of the labels' column, and can take the whole row */
-  .query-row > .picker {
-    justify-self: start;
-    max-width: 100%;
-    margin-left: calc(var(--s-3) * -1);
+  .insights-toolbar-end {
+    margin-left: auto;
   }
 
-  .query-row > .search {
+  /* ---- the card: figures as tabs, then the chart ---- */
+  .insights-card {
+    overflow: hidden;
+  }
+
+  .insights-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    border-bottom: 1px solid var(--line);
+  }
+
+  .insights-tablist {
+    display: contents;
+  }
+
+  /* each figure: its name over it; a hairline parts it from the one before */
+  .insights-tab {
+    position: relative;
+    display: grid;
+    gap: 0.125rem;
     min-width: 0;
-  }
-
-  /* a part that is set is filled in the hue of the theme, as a filter of search is */
-  .query-row[data-set] > .picker {
-    color: var(--you-ink);
-    background: color-mix(in oklab, var(--you) 12%, transparent);
-  }
-
-  .query-row[data-set] > .picker > .icon,
-  .query-row[data-set] .picker-label {
+    padding: var(--s-3) var(--s-6);
+    border-left: 1px solid var(--line);
+    font: inherit;
+    text-align: left;
     color: inherit;
   }
 
-  /* how the answer is grouped is a part of its own, a step apart from the filters */
-  .query-group {
-    margin-top: var(--s-3);
-    border-top: 1px solid var(--line-strong);
+  .insights-tablist > .insights-tab:first-child {
+    border-left: 0;
   }
 
-  .query-reset {
-    justify-self: start;
-    margin-top: var(--s-3);
-  }
-
-  /* ---- the answer ---- */
-  .insights-answer {
-    min-width: 0;
-  }
-
-  /* the question read back, set large in the face of the theme */
-  .insights-question {
-    font-family: var(--font-display);
-    font-size: var(--t-display);
-    line-height: var(--lh-display);
-    font-weight: var(--w-regular);
-    letter-spacing: -0.01em;
-    text-wrap: balance;
-  }
-
-  .insights-total {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: var(--s-1) var(--s-5);
-    margin-top: var(--s-2);
-    color: var(--text-2);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .insights-count b {
-    color: var(--text);
-    font-size: var(--t-heading);
-    font-weight: var(--w-medium);
-  }
-
-  .insights-none {
-    margin-top: var(--s-8);
+  .insights-tab-label {
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
     color: var(--text-3);
   }
 
-  /* ---- the columns ---- */
-  .columns {
-    margin-top: var(--s-8);
+  .insights-tab-value {
+    display: block;
+    font-family: var(--font-display);
+    font-size: var(--t-heading);
+    line-height: var(--lh-heading);
+    font-weight: var(--w-medium);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
+  /* the tab that is chosen is marked by a rule under it, in the theme's hue */
+  button.insights-tab::after {
+    content: '';
+    position: absolute;
+    right: var(--s-6);
+    bottom: -1px;
+    left: var(--s-6);
+    height: 2px;
+    border-radius: 1px;
+    background: var(--you);
+    opacity: 0;
+    transition: opacity var(--dur-short) var(--ease-out);
+  }
+
+  button.insights-tab[aria-selected='true']::after {
+    opacity: 1;
+  }
+
+  button.insights-tab:focus-visible {
+    outline: 2px solid var(--you-ink);
+    outline-offset: -4px;
+    border-radius: var(--r-md);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    button.insights-tab:hover {
+      background: var(--fill-hover);
+    }
+  }
+
+  /* the figure that is no tab: no hover, no rule */
+  .insights-figure {
+    cursor: default;
+  }
+
+  .insights-plot {
+    padding: var(--s-4) var(--s-6) var(--s-5);
+  }
+
+  .insights-plot-waiting {
+    height: calc(var(--lh-body) + var(--s-2) + 16rem + var(--s-2) + var(--lh-small));
+  }
+
+  .insights-none {
+    display: grid;
+    place-items: center;
+    height: 16rem;
+    color: var(--text-3);
+  }
+
+  /* ---- the line chart ---- */
+  .lines-readout {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-1) var(--s-4);
+    min-height: var(--lh-body);
+    margin-bottom: var(--s-2);
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .lines-when {
+    color: var(--text-2);
+  }
+
+  /* the number at the top of the scale, at the end of the line over the chart */
+  .lines-top {
+    margin-left: auto;
+    font-size: var(--t-small);
+  }
+
+  .lines-plot {
+    position: relative;
+    height: 16rem;
+    border-bottom: 1px solid var(--line-strong);
+    cursor: crosshair;
+  }
+
+  .lines-plot:focus-visible {
+    outline: 2px solid var(--you-ink);
+    outline-offset: 4px;
+    border-radius: var(--r-sm);
+  }
+
+  .lines-plot > svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  .lines-grid {
+    stroke: var(--line);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .lines-you,
+  .lines-them {
+    fill: none;
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .lines-you {
+    stroke: var(--you);
+  }
+
+  .lines-them {
+    stroke: var(--them-mark);
+  }
+
+  /* the point being read: a hairline down the chart and a dot on each line */
+  .lines-cross {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--line-strong);
+    translate: -50% 0;
+    pointer-events: none;
+  }
+
+  .lines-dot {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--bg-card);
+    translate: -50% 50%;
+    pointer-events: none;
+  }
+
+  .lines-dot.you {
+    background: var(--you);
+  }
+
+  .lines-dot.them {
+    background: var(--them-mark);
+  }
+
+  /* ---- the columns (by weekday or hour) ---- */
   .columns-readout {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
     gap: var(--s-1) var(--s-4);
     min-height: var(--lh-body);
-    margin-bottom: var(--s-3);
+    margin-bottom: var(--s-2);
     color: var(--text-3);
     font-variant-numeric: tabular-nums;
   }
@@ -136,11 +246,9 @@
     color: var(--text-2);
   }
 
-  /* a hairline at the top of the scale and a firmer one at its foot; the
-     number of the top stands at the end of its line, over it */
   .columns-plot {
     position: relative;
-    height: 15rem;
+    height: 16rem;
     border-top: 1px solid var(--line);
     border-bottom: 1px solid var(--line-strong);
     cursor: crosshair;
@@ -160,6 +268,7 @@
   .columns-plot:focus-visible {
     outline: 2px solid var(--you-ink);
     outline-offset: 4px;
+    border-radius: var(--r-sm);
   }
 
   .columns-plot > svg {
@@ -176,7 +285,6 @@
     fill: var(--them-mark);
   }
 
-  /* while a column is read, the others step back */
   .columns-plot g {
     transition: opacity var(--dur-micro) ease;
   }
@@ -206,11 +314,7 @@
     translate: 0 0;
   }
 
-  /* ---- the table under the answer ---- */
-  .insights-table {
-    margin-top: var(--s-8);
-  }
-
+  /* ---- the table of people ---- */
   .data-table {
     width: 100%;
     border-collapse: collapse;
@@ -263,7 +367,26 @@
     color: var(--text);
   }
 
-  /* in a narrow workspace the table keeps the name, the count and the share */
+  /* ---- a narrow workspace: the figures two by two, the table to its name, count and share ---- */
+  @container workspace (max-width: 48rem) {
+    .insights-tabs {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .insights-tablist > .insights-tab:nth-child(3) {
+      border-left: 0;
+    }
+
+    .insights-tablist > .insights-tab:nth-child(-n + 2) {
+      border-bottom: 1px solid var(--line);
+    }
+
+    .insights-toolbar > .search {
+      flex-basis: 100%;
+      margin-right: 0;
+    }
+  }
+
   @container workspace (max-width: 40rem) {
     .data-table .bar,
     .data-table th:nth-last-child(2),
@@ -273,7 +396,6 @@
       display: none;
     }
 
-    /* the numbers take less room, so the names keep theirs */
     .data-table .num {
       width: 4.5rem;
       padding-left: var(--s-2);
@@ -282,6 +404,11 @@
     .data-table .num.place {
       width: 1.5rem;
       padding-left: 0;
+    }
+
+    .insights-tab,
+    .insights-plot {
+      padding-inline: var(--s-4);
     }
   }
 }
