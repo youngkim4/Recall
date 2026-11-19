@@ -458,7 +458,8 @@ The memory of chat is the digest of each conversation with at least `PREPARE_MIN
 - `memory_prep.run(on_progress, cancel, archive=..., names=...)` is the `memory` job. It reads each conversation that is not read whole, busiest first, `PREPARE_PARALLEL` (4) at a time, with the model port of a report.
 - The parts of one conversation are read one at a time: the prompt of a part holds the notes of the part before it. The conversations share one pool of calls (`digests.call_pool`): at most 4 requests are in flight, and they share the tokens per minute of the model.
 - A conversation that fails is counted, and the others are read. A failure that each conversation would have stops the job (`FATAL`: `no_key`, `key_rejected`, `unknown_model`, `rate_limit`, `offline`, `cache_unreadable`). No new request is sent; the requests in flight end, and their parts are kept.
-- `memory_prep.completed_before(archive_file)` says whether a `memory` job of this archive completed before: its marker is there (`memory_prep_marker.py`, `saves/memory/<16 hex digits>.json`, private to its owner, holding the time only). `prepare_memory` in `ui_server.py` writes it with `mark_completed` when the job ends completed. A question, a report and a `digest` job never write it.
+- `memory_prep.completed_before(archive_file)` says whether a `memory` job of this archive completed before: its marker is there (`memory_prep_marker.py`, `saves/memory/<16 hex digits>.json`, private to its owner, holding the time and `minMessages`). `prepare_memory` in `ui_server.py` writes it with `mark_completed(archive_file, min_messages)` when the job ends completed. The marker keeps the lower of the threshold it holds and the new one. `memory_prep.marker_threshold(archive_file)` reads it: None for a marker of an earlier build. A question, a report and a `digest` job never write it.
+- A `memory` job reads with `minMessages` of its request when it has one (a whole number, 1 or more; anything else is refused with 400), else `PREPARE_MIN_MESSAGES`. The job that the server starts after an import names the threshold of the marker.
 - `memory_prep.worth_starting(found, completed_before=...)` says whether the server starts the job by itself after an import: a `memory` job of this archive completed before, a part is not read, and the parts that are not read cost at most `PREPARE_AUTO_USD` (0.25 USD).
 - Each end of `run` writes one line to the log `recall.spend` with counts and the cost: `the memory job: 4 parts read now, 0 from the notes, 0 not read, 4 model calls, 0.0123 USD`, or `the memory job stopped (<code>): ...` for a failure. A `MemoryFailure` carries what was spent in `usage`. An error of no known kind in a task is wrapped as `MemoryFailure("run_failed", ...)` with that usage.
 - No line, progress label or sentence holds text of a message, a name, a handle, an id or the label of a part.
@@ -813,7 +814,15 @@ The answers:
 | 409 | `OPENAI_API_KEY` is set in the environment | OPENAI_API_KEY is set where the server starts, and that key is used. A key saved here would not be used. |
 | 500 | the file can not be written | The key could not be saved in the file .env in Recall's data folder. Check the free space on the disk, then try again. |
 
-WARNING: These three routes have a stricter check than the other routes. A request that sends an `Origin` header must come from the exact origin of this server: `http://` and the `Host` of the request, with its port. A page of another local port (the Vite dev server too) is refused. A request with no `Origin` passes (the Mac app, curl).
+WARNING: These three routes, and every `POST` and `DELETE` under `/api/`, have a stricter check than a `GET`. A request that sends an `Origin` header must come from the exact origin of this server: `http://` and the `Host` of the request, with its port (`is_own_write` in `ui_server.py`, `key_store.same_origin`). A request with no `Origin` passes (the Mac app, curl). A page of another local port is refused with 403: it could send a simple `text/plain` POST with no preflight and start a paid job (`first_run`, `memory`, `people`, `meaning`, `digest`) or ask a question. A `GET` other than `/api/key` keeps the check of `is_local_api_request`.
+
+WARNING: The Vite dev server is a page of another local port. Its proxy with `changeOrigin: true` changes `Host` to the target, but it does not change `Origin`, so each write of the dev UI gets 403. The proxy of `/api` in `app/vite.config.ts` must give the origin of the target to a request that names the origin of the dev server:
+
+```ts
+configure: (proxy) => proxy.on('proxyReq', (req) => { if (req.getHeader('origin') === 'http://127.0.0.1:5173') req.setHeader('origin', target) })
+```
+
+Here `target` is the string of the proxy target (for example `http://127.0.0.1:8765`). A dev server on `localhost` sends `http://localhost:5173`: name that origin too.
 
 No sentence, no log line, no job record and no traceback holds the key. A fault of the disk is told in one sentence, and its cause is dropped.
 
@@ -849,6 +858,7 @@ No sentence, no log line, no job record and no traceback holds the key. A fault 
 - `key` has `present` and `source`, as `GET /api/key` gives them.
 - `jobId` is the `first_run` job that runs now, read fresh.
 - The answer is kept in the server process for one key (`first_run_counts`): the signature of the archive, the Contacts cache file, the notes file and its `-wal` file, the people store file, the id of the build of the index of meanings (`first_run.index_mark`) and the model of the memory. Each step that a job builds changes one of them, so a request after a job finds a fresh answer.
+- WARNING: While a job writes the notes, each part that it saves changes the key, so each request plans every step again. While a `first_run` job is unfinished, the app polls `GET /api/jobs/<id>`, not `GET /api/first-run`. It asks `GET /api/first-run` again when the job has ended.
 
 ### The `first_run` job
 
@@ -862,6 +872,7 @@ The job builds, in order, only the steps that are not `ready` (`get_chat_ready` 
 
 - A step that is `ready` is skipped with one line. A memory that is read already gets its marker.
 - After a `first_run` job that completed, `meaning.built`, `memory_prep.completed_before` and `people.completed_before` are true for its archive. So the builds after a later import start as they start for the owner.
+- The marker of the memory saves the threshold of the reading (`minMessages`): 1 after a first run. `refresh_memory` plans and starts the `memory` job after an import with that threshold, so a message added to a small conversation is read, its profile is written again, and chat stays ready. A marker of an earlier build has no threshold: the reading uses `PREPARE_MIN_MESSAGES`. The marker keeps the lower of the threshold it holds and the new one, so a `memory` job with the threshold of the app does not take back what a first run read.
 - A step that fails ends the job failed, with the sentence and the code of that step's own job. The steps that ended before stay saved: a new `first_run` job starts at the first step that is not ready.
 - `spent` (`{"usd", "usage"}`) holds what all steps spent, also when a step failed. The index of meanings tells no money: its tokens are priced at the price of the embedding model.
 - With an archive that holds no message the job fails with `no_messages`: The archive holds no message yet. Read your messages first, then get chat ready.
@@ -912,7 +923,8 @@ Known limits:
 
 - A `first_run` job can not be stopped from the app. On a large archive it takes as long as its three jobs together: the people step alone is about 25 minutes for 1,400 profiles.
 - A job works the estimate out when it starts, if no request did it before (about as long as the three routes together).
-- The upper bound of the people index is far above what a build pays: each part counts its whole output limit. The app shows it as "at most".
+- The upper bound of the people index is above what a build pays: each part counts the most notes that the limits of a digest allow. The app shows it as "at most".
+- The bound counts 3 characters for one token, as `people_plans.input_bound` does. Text in other scripts (Chinese, Japanese, Korean, emoji) can have more tokens than that, and a build can then pay more than the bound.
 
 ## Reports
 
