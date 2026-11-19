@@ -181,13 +181,14 @@ def settings(town: Town, llm: Any = None, embedder: Any = None, **more: Any) -> 
     """The keywords of a build, an estimate or a search in these tests."""
     from recall_services.people_store import PeopleStore
 
-    model = llm if llm is not None else FakeLLM()
+    model = llm if llm is not None else FakeLLM(lambda _call: profile_reply())
     made = embedder if embedder is not None else fake_embedder()
     return {
         **town.notes(),
         "llm_factory": lambda _info: model,
         "embedder_factory": lambda _model, _dimensions: made,
         "facts": FAKE_FACTS,
+        "count_tokens": lambda text: len(text.split()),
         "store": PeopleStore(town.folder / "saves" / "people" / "town"),
         **more,
     }
