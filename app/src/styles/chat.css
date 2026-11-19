@@ -261,18 +261,23 @@
     gap: var(--s-2);
   }
 
+  /* The lamp stands on the line of the words like a letter: the dish, its
+     bottom row, on their baseline. Centred, it sank below the words, since
+     the flame leaves empty rows over it. An image in a line of text sits on
+     the baseline by itself; a flex row does not do this for words that clip. */
   .work-now {
-    display: flex;
-    align-items: center;
-    gap: var(--s-2);
-    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* the lamp of the slider in cells of 1px: 22 by 20, sharp on a Retina screen */
   .work-lamp {
-    flex: none;
+    display: inline-block;
     width: 22px;
     height: 20px;
+    margin-right: var(--s-2);
+    vertical-align: baseline;
     image-rendering: pixelated;
   }
 
@@ -293,6 +298,11 @@
     animation: shimmer 2.4s linear infinite;
   }
 
+  /* inline, so a long step ends in an ellipsis; a new step still fades in */
+  .work-now > .work-text {
+    display: inline;
+  }
+
   @keyframes shimmer {
     from {
       background-position: 100% 0;
@@ -300,12 +310,6 @@
     to {
       background-position: 0% 0;
     }
-  }
-
-  .work-text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .work-steps {
