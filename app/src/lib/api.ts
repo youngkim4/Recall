@@ -18,6 +18,7 @@ import type {
 import { ApiError, apiErrorFrom } from './apiError'
 import { readFrame, takeFrames } from './askEvents'
 import type { PartEvent } from './chatWork'
+import type { StatsAsk, StatsPayload } from './insights'
 import type { SearchFilters } from './searchFilters'
 
 const apiBase = import.meta.env.VITE_RECALL_API_BASE?.replace(/\/$/, '') ?? ''
@@ -150,6 +151,10 @@ export const recallApi = {
         prefix: input.prefix,
       })}`,
     ),
+
+  // counts of the messages the filters and words let through, grouped by `by` (Insights)
+  stats: (messagesPath: string, ask: StatsAsk) =>
+    request<StatsPayload>(`/api/stats${queryString({ ...ask, messagesPath })}`),
 
   // one day of one conversation: all of it, or the part around a time or from a place in it
   day: (input: {

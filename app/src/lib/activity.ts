@@ -2,6 +2,8 @@
 // by month for a long one. A day's key is "YYYY-MM-DD", a month's "YYYY-MM".
 
 export type ActivityUnit = 'day' | 'month'
+// what one point of a chart counts; a week (Insights) is keyed by its Monday
+export type ChartUnit = ActivityUnit | 'week'
 export type ActivityPoint = { key: string; total: number; sent: number; received: number }
 
 const ROUND_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]
@@ -23,8 +25,12 @@ export function roundUp(value: number) {
 const dateOf = (key: string) =>
   new Date(Date.UTC(Number(key.slice(0, 4)), Number(key.slice(5, 7)) - 1, Number(key.slice(8, 10)) || 1))
 
-// "March 2024" for a month, "Sun, Dec 8, 2024" for a day
-export function pointName(key: string, unit: ActivityUnit, locale?: string) {
+// "March 2024" for a month, "Sun, Dec 8, 2024" for a day, "Week of Mar 3, 2025" for a week
+export function pointName(key: string, unit: ChartUnit, locale?: string) {
+  if (unit === 'week') {
+    const monday = new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+    return `Week of ${monday.format(dateOf(key))}`
+  }
   const parts: Intl.DateTimeFormatOptions =
     unit === 'month'
       ? { month: 'long', year: 'numeric' }
@@ -70,6 +76,7 @@ function dayLabels(points: ActivityPoint[], locale?: string): AxisLabel[] {
   })
 }
 
-export function axisLabels(points: ActivityPoint[], unit: ActivityUnit, locale?: string): AxisLabel[] {
+// weeks are keyed by their Mondays, and labelled as days are
+export function axisLabels(points: ActivityPoint[], unit: ChartUnit, locale?: string): AxisLabel[] {
   return unit === 'month' ? monthLabels(points, locale) : dayLabels(points, locale)
 }

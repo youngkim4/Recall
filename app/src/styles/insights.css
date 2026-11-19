@@ -1,0 +1,69 @@
+/* Insights: counts over the whole archive under one row of filters, after
+   Plausible. The page is open, as the Overview is: its parts stand on the
+   page's own ground, 32px apart, with hairlines between figures and rows. */
+
+@layer views {
+  .insights > * + * {
+    margin-top: var(--s-8);
+  }
+
+  /* the words to count, and under them the filters of search */
+  .insights-bar > .search {
+    max-width: 40rem;
+  }
+
+  /* four figures of one width, where the Overview's lead takes more room; in
+     a narrow workspace they go two by two, as the Overview's do */
+  @container workspace (min-width: 60.0625rem) {
+    .insights-figures {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+  }
+
+  /* the chart's name, and beside it how its points are grouped: "By Month" */
+  .insights-chart-head {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--s-2);
+    min-width: 0;
+  }
+
+  .insights-chart-head > .picker {
+    align-self: center;
+  }
+
+  /* The heading of a list is a pair of tabs, after Plausible's: the one
+     shown in the colour of text, the other quieter, both in the heading's
+     face and size. */
+  .section-tabs {
+    display: flex;
+    gap: var(--s-4);
+    min-width: 0;
+  }
+
+  /* the size of a section's heading (shell.css), so the tabs read as its heading */
+  .section-tab {
+    font: inherit;
+    font-size: var(--t-reading);
+    line-height: var(--lh-body);
+    font-weight: var(--w-medium);
+    color: var(--text-3);
+    transition: color var(--dur-micro) ease;
+  }
+
+  .section-tab[aria-selected='true'] {
+    color: var(--text);
+  }
+
+  .section-tab:focus-visible {
+    outline: 2px solid var(--you-ink);
+    outline-offset: 2px;
+    border-radius: var(--r-sm);
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .section-tab:hover {
+      color: var(--text);
+    }
+  }
+}

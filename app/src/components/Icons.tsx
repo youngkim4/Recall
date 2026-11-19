@@ -89,6 +89,16 @@ export function AnalyzeIcon({ className, filled }: NavIconProps) {
   )
 }
 
+// a line that rises: counts over time, for Insights; the filled form is the same line, heavier
+export function InsightsIcon({ className, filled }: NavIconProps) {
+  return (
+    <Line className={className} width={filled ? 2 : 1.5}>
+      <path d="M2.75 12.25 6.25 8.5l2.5 2.25 4.5-5.5" />
+      <path d="M10.5 5.25h2.75V8" />
+    </Line>
+  )
+}
+
 export function SearchIcon({ className, filled }: NavIconProps) {
   return (
     <Line className={className} width={filled ? 2 : 1.5}>

@@ -1,7 +1,7 @@
 import type { ActivityPoint, ActivityUnit } from './lib/activity'
 import type { Daily } from './lib/days'
 
-export type ViewKey = 'home' | 'analyze' | 'explore' | 'ask' | 'reports' | 'jobs' | 'settings'
+export type ViewKey = 'home' | 'analyze' | 'insights' | 'explore' | 'ask' | 'reports' | 'jobs' | 'settings'
 
 // How carefully a model reads, as the server ranks it.
 export type ModelLevel = 'low' | 'medium' | 'high' | 'top'

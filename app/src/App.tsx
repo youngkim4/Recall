@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { AnalyzeView } from './components/analyze/AnalyzeView'
 import { ChatView } from './components/chat/ChatView'
 import { FirstWords } from './components/firstwords/FirstWords'
+import { InsightsView } from './components/insights/InsightsView'
 import { JobsView } from './components/jobs/JobsView'
 import { OverviewView } from './components/overview/OverviewView'
 import { ArchiveWait } from './components/onboarding/ArchiveWait'
@@ -427,6 +428,7 @@ function App() {
   const shellTitle = useMemo(() => {
     if (activeView === 'home') return 'Overview'
     if (activeView === 'explore') return 'Search'
+    if (activeView === 'insights') return 'Insights'
     if (activeView === 'ask') return 'Chat'
     if (activeView === 'reports') return 'Reports'
     if (activeView === 'jobs') return 'Jobs'
@@ -624,6 +626,8 @@ function App() {
           </ReportDays>
         ) : activeView === 'explore' ? (
           <SearchView defaults={effectiveDefaults} contacts={contacts} onSelectContact={selectContactForAnalyze} />
+        ) : activeView === 'insights' ? (
+          <InsightsView defaults={effectiveDefaults} contacts={contacts} onSelectContact={selectContactForAnalyze} />
         ) : activeView === 'ask' ? (
           <ChatView
             defaults={effectiveDefaults}

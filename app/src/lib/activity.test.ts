@@ -108,3 +108,12 @@ test('a point is named in full for the readout', () => {
   assert.equal(pointName('2024-03', 'month', 'en-US'), 'March 2024')
   assert.equal(pointName('2024-12-08', 'day', 'en-US'), 'Sun, Dec 8, 2024')
 })
+
+test('a week is named by its Monday, and its axis is labelled like days', () => {
+  assert.equal(pointName('2025-03-03', 'week', 'en-US'), 'Week of Mar 3, 2025')
+  const weeks: ActivityPoint[] = ['2025-03-03', '2025-03-10', '2025-03-17'].map((key) => ({ key, total: 1, sent: 1, received: 0 }))
+  assert.deepEqual(
+    axisLabels(weeks, 'week', 'en-US').map((label) => label.text),
+    axisLabels(weeks, 'day', 'en-US').map((label) => label.text),
+  )
+})

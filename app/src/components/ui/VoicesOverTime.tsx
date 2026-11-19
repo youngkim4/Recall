@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import { pointName, type ActivityPoint, type ActivityUnit } from '../../lib/activity'
+import { pointName, type ActivityPoint, type ChartUnit } from '../../lib/activity'
 import { formatNumber } from '../../lib/format'
 import { ActivityChart } from './ActivityChart'
 import { Truncate } from './Truncate'
@@ -8,7 +8,7 @@ import { VoiceBar } from './VoiceBar'
 type VoicesOverTimeProps = {
   // one bar a day or a month, oldest first
   points: ActivityPoint[]
-  unit: ActivityUnit
+  unit: ChartUnit
   // what the two voices come to over the whole stretch
   sent: number
   received: number
@@ -63,7 +63,7 @@ function Frame({ heading, figures, when, waiting, children }: FrameProps) {
   )
 }
 
-function summaryOf(points: ActivityPoint[], unit: ActivityUnit) {
+function summaryOf(points: ActivityPoint[], unit: ChartUnit) {
   if (!points.length) return ''
   const busiest = points.reduce((best, current) => (current.total > best.total ? current : best), points[0])
   return `Messages by ${unit} from ${pointName(points[0].key, unit)} to ${pointName(

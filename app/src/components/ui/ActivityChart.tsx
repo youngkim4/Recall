@@ -1,10 +1,10 @@
 import { useMemo, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react'
-import { axisLabels, roundUp, type ActivityPoint, type ActivityUnit } from '../../lib/activity'
+import { axisLabels, roundUp, type ActivityPoint, type ChartUnit } from '../../lib/activity'
 
 type ActivityChartProps = {
   // one bar a day or a month, oldest first
   points: ActivityPoint[]
-  unit: ActivityUnit
+  unit: ChartUnit
   // the bar under the pointer or the arrow keys, by index; null for none
   active: number | null
   onActiveChange: (index: number | null) => void
