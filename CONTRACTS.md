@@ -456,6 +456,16 @@ Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `rec
 - The estimate counts the input of each profile as its request is counted, and the output as the fullest reply that the limits of the reply allow (`OUTPUT_TOKENS`, 416), with no reasoning. It does not count the limit of the request (`MAX_OUTPUT_TOKENS`).
 - Known limit: a `people` job can not be stopped from the app.
 
+### People in chat
+
+- `chat_engine` has a third optional port, `PeopleSearch` (`chat_engine/ports.py`), and its tool `find_people` (`chat_engine/tool_people.py`). With no port, the tool list, the prompt, the requests and the payload are as before: `tests/chat_engine/test_no_memory_ports.py`.
+- `recall_services/people_port.py` gives the port over `recall_services.people.search`. It is None with no key, when the service is not in the build, or when `status` says there is no profile. `chat.py` adds it beside `memory.ports`.
+- A search that did not run (`reason` is not None) raises `PeopleNotAvailable`. The engine gives the model one line.
+- The scope binds the tool: a person none of whose conversations is in the scope is never shown. Only conversations inside the scope get an alias.
+- A profile is text that a model wrote. The engine masks every phone number and every address in it, and in the description, before the model or the port gets them (`mask_every_handle`).
+- A story of a person is never a quote and never a citation. The prompt tells the model to check each person in their own conversation before it names them.
+- A word of the question is a name only when at most 0.5 percent of the messages hold it (`COMMON_WORD_SHARE` in `chat_engine/question_names.py`). At most 4 words are counted, one time each. This holds with no port too.
+
 ## Mac shell
 
 - The page sends the command `tick` to the shell when a control with steps goes to another step (`recallBridge.tick` in `app/src/lib/bridge.ts`). The shell gives one tick of the trackpad (`NSHapticFeedbackManager`, `.levelChange`). The command has no answer. In a browser it does nothing.
