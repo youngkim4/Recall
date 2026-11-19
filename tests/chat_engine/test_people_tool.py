@@ -207,3 +207,40 @@ def test_a_cancel_while_the_port_searches_reads_nothing_more() -> None:
     made.cancel.cancel()
     outcome = prepared.run(3000)
     assert outcome.text == "" and not outcome.ok
+
+
+class _Odd:
+    """A port that gives no list, or cancels the question while it searches."""
+
+    def __init__(self, cancel: Any = None) -> None:
+        self.cancel = cancel
+
+    def search(self, description: str, **_: Any) -> Any:
+        if self.cancel is not None:
+            self.cancel()
+            return [MAYA]
+        return "not a list"
+
+
+def test_a_port_that_gives_no_list_is_a_port_that_failed() -> None:
+    outcome = MemoryBench(people=_Odd()).run("find_people", description="x")
+    assert outcome.text.startswith("The people index was not available")
+
+
+def test_a_cancel_that_comes_while_the_port_searches_shows_nothing() -> None:
+    made = MemoryBench(people=_Odd())
+    made.box.context.memory.people.cancel = made.cancel.cancel
+    outcome = made.run("find_people", description="x")
+    assert outcome.text == "" and not outcome.ok
+
+
+def test_a_day_that_is_not_a_day_is_left_out() -> None:
+    row = person(
+        "person:1", [MAYA_PHONE], summary="Story.",
+        turning_points=[{"date": "soon", "what": "A plan"}, {"date": "2021-03-04"}, "odd",
+                        turning_point("2021-03-05", "They meet")],
+        figures={"first_day": "someday", "last_day": None, "messages": "many", "wrote_first_share": 3},
+    )
+    outcome = bench(row).run("find_people", description="x", since="2021-01-01")
+    assert "   Turning points: 2021-03-05 They meet" in outcome.text
+    assert "   Figures: call conversation_stats." in outcome.text

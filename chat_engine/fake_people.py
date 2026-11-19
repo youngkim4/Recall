@@ -13,6 +13,10 @@ from typing import Any, Mapping, Optional, Sequence
 from .ports import PersonHit, TurningPoint
 
 
+def _copy(row: Any) -> Any:
+    return dict(row) if isinstance(row, Mapping) else row
+
+
 def turning_point(date: str, what: str) -> TurningPoint:
     return {"date": date, "what": what}
 
@@ -36,7 +40,8 @@ def person(
         "kind": kind,
         "status": status,
         "summary": summary,
-        "turning_points": [dict(row) for row in turning_points],  # type: ignore[misc]
+        # a row in a wrong form is kept as it is: a test scripts it on purpose
+        "turning_points": [_copy(row) for row in turning_points],
         "figures": dict(figures or {}),
         "score": float(score),
     }
