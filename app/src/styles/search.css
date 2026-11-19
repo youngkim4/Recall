@@ -73,7 +73,7 @@
   }
 
   .search-status-row > .picker {
-    margin-block: calc((var(--lh-body) - var(--control-h)) / 2);
+    margin-block: calc((var(--lh-body) - var(--picker-h)) / 2);
   }
 
   /* the one thing this page is for is set a size up */

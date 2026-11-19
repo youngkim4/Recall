@@ -289,9 +289,10 @@
     align-items: center;
     gap: var(--s-1);
     max-width: 16rem;
-    height: var(--control-h);
-    padding: 0 var(--s-2) 0 var(--s-3);
-    border-radius: var(--picker-r, var(--r-md));
+    /* slim, so the fill on hover hugs the words (the user found 32px with 12px in "a bit fat") */
+    height: var(--picker-h);
+    padding: 0 var(--s-1) 0 var(--s-2);
+    border-radius: var(--picker-r, var(--r-sm));
     color: var(--text-2);
     font-weight: var(--w-medium);
     transition:

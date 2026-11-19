@@ -164,6 +164,8 @@
     --control-h: 2rem; /* 32 */
     --control-h-sm: 1.5rem; /* 24 */
     --control-h-lg: 2.5rem; /* 40 */
+    /* a picker is a quiet button around a few words: its hover fill hugs them */
+    --picker-h: 1.75rem; /* 28 */
     --icon: 1rem; /* 16 */
     --page-pad: 2rem; /* 32 */
     --page-max: 45rem; /* 720: one column to read */
