@@ -29,7 +29,7 @@ from .prompt import LIMIT_NOTE, question_block, scope_line, system_prompt, timez
 from .render import Limits, ResultWriter, add_block, time_key
 from .result import build_payload
 from .scope import Scope
-from .seed import archive_years, plan_seed
+from .seed import plan_seed
 from .session import ChatSession, Turn
 from .tool_context import Memory, ToolOutcome
 from .tools import ToolBox
@@ -117,16 +117,16 @@ class QuestionTurn:
         if self._cancel.cancelled:
             return Reply(cancelled=True)
         summary = self._box.guard(self._archive.summary)
-        lookups = yield from self._seed(archive_years(summary))
+        lookups = yield from self._seed(summary)
         if self._cancel.cancelled:
             return Reply(cancelled=True)
         self._transcript = self._box.guard(lambda: self._opening(summary, lookups))
         yield status(_THINKING)  # the line of the last lookup does not stay while the model works
         return (yield from self._loop())
 
-    def _seed(self, held: tuple[int, int]) -> Generator[Event, None, list[tuple[str, str]]]:
+    def _seed(self, summary: Any) -> Generator[Event, None, list[tuple[str, str]]]:
         lookups: list[tuple[str, str]] = []
-        for seed in plan_seed(self._box, self._question, held):
+        for seed in plan_seed(self._box, self._question, summary):
             yield status(seed.prepared.status)
             if self._cancel.cancelled:
                 break
