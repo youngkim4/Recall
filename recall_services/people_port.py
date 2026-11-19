@@ -13,8 +13,8 @@ Rules:
 
 WARNING: `recall_services.people` belongs to the people index. The lines that
 depend on it are `SERVICE`, the call of `status` and the keys "state" and
-"profiles" it reads, the call of `search` and its `reason`, and the keys of a
-row in `_hit`.
+"profiles" it reads, the call of `search` (with `conversations` only in a
+scope) and its `reason`, and the keys of a row in `_hit`.
 """
 
 from __future__ import annotations
@@ -82,7 +82,10 @@ class PeoplePort:
         since: str | None,
         until: str | None,
         limit: int,
+        conversations: Sequence[str] | None = None,
     ) -> list[PersonHit]:
+        """`conversations` (the scope) is sent only when there is one."""
+        scoped = {} if conversations is None else {"conversations": list(conversations)}
         found = self._service.search(
             self._archive,
             self._names,
@@ -91,6 +94,7 @@ class PeoplePort:
             since=since,
             until=until,
             limit=limit,
+            **scoped,
         )
         reason = getattr(found, "reason", None)
         if reason is not None:

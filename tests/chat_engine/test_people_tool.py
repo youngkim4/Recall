@@ -49,10 +49,13 @@ def asked(made: MemoryBench) -> list[dict]:
 
 def test_the_fake_returns_the_scripted_people_and_records_each_call() -> None:
     fake = FakePeople([MAYA, JONAS])
-    found = fake.search("a fling", kinds=["talking_stage"], since="2021-01-01", until=None, limit=1)
+    found = fake.search(
+        "a fling", kinds=["talking_stage"], since="2021-01-01", until=None, limit=1, conversations=(MAYA_PHONE,)
+    )
     assert [row["key"] for row in found] == ["person:1"]
     assert fake.calls == [
-        {"description": "a fling", "kinds": ["talking_stage"], "since": "2021-01-01", "until": None, "limit": 1}
+        {"description": "a fling", "kinds": ["talking_stage"], "since": "2021-01-01", "until": None, "limit": 1,
+         "conversations": [MAYA_PHONE]}
     ]
     found[0]["conversations"].append("tampered")
     assert fake.search("again", kinds=None, since=None, until=None, limit=5)[0]["conversations"] == [
@@ -89,7 +92,7 @@ def test_each_person_shows_the_aliases_the_kind_the_status_the_span_the_counts_a
     assert outcome.summary == "Found 2 people like “a talking stage that faded”"
     assert asked(made) == [
         {"description": "a talking stage that faded", "kinds": None, "since": None, "until": None,
-         "limit": PEOPLE_LIMIT_DEFAULT},
+         "limit": PEOPLE_LIMIT_DEFAULT, "conversations": None},
     ]
     assert made.prepare("find_people", description="a talking stage that faded").status == (
         "Finding people like “a talking stage that faded”"
@@ -116,7 +119,9 @@ def test_a_person_with_no_conversation_in_the_scope_never_appears() -> None:
     # the figures cover conversations outside the scope: they are not shown
     assert "4 messages" not in outcome.text
     assert "   Figures: call conversation_stats inside the scope." in outcome.text
-    assert asked(made)[0]["limit"] == 3 * PEOPLE_LIMIT_DEFAULT  # some people of the port fall outside the scope
+    # the port ranks inside the conversations of the scope; the engine checks every row again
+    assert asked(made)[0]["limit"] == PEOPLE_LIMIT_DEFAULT
+    assert asked(made)[0]["conversations"] == [JONAS_PHONE]
 
 
 def test_only_the_conversations_inside_the_scope_are_named() -> None:
@@ -244,3 +249,11 @@ def test_a_day_that_is_not_a_day_is_left_out() -> None:
     outcome = bench(row).run("find_people", description="x", since="2021-01-01")
     assert "   Turning points: 2021-03-05 They meet" in outcome.text
     assert "   Figures: call conversation_stats." in outcome.text
+
+
+def test_the_longest_gap_is_rounded_not_cut() -> None:
+    row = person("person:2", [JONAS_PHONE], figures={"longest_gap_days": 1.85, "active_days": 2})
+    outcome = bench(row).run("find_people", description="x")
+    assert "active on 2 days · longest gap 2 days" in outcome.text
+    near = person("person:2", [JONAS_PHONE], figures={"longest_gap_days": 0.4})
+    assert "longest gap 0 days" in bench(near).run("find_people", description="x").text
