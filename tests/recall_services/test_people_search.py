@@ -164,3 +164,77 @@ def test_by_default_the_store_of_the_archive_and_the_embedder_of_the_app(built, 
     found = people.search(built.archive, built.names, "a boat for sale")
     assert found.reason is None and found[0]["conversations"] == [THEO]
     shutil.rmtree(target)
+
+
+# --- the review of the join of Part G ------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _no_kept_vectors() -> Any:
+    from recall_services import query_vectors
+
+    query_vectors.forget()
+    yield
+    query_vectors.forget()
+
+
+def test_a_search_waits_five_seconds_at_most_for_the_embedder(built, monkeypatch: pytest.MonkeyPatch) -> None:
+    import shutil
+
+    from recall_services import people_search
+
+    asked: list[float] = []
+
+    def embedder_for(model: str, dimensions: int, *, timeout_s: float) -> Any:
+        asked.append(timeout_s)
+        return FakeEmbedder(dimensions, model)
+
+    target = people.people_folder(built.archive.path)
+    shutil.copytree(settings(built)["store"].folder, target)
+    monkeypatch.setattr(meaning, "embedder_for", embedder_for)
+    people.search(built.archive, built.names, "a ferry")
+    shutil.rmtree(target)
+    assert people_search.SEARCH_TIMEOUT_SECONDS == 5.0 and asked == [5.0]
+
+
+def test_conversations_keep_the_profiles_that_hold_one_of_them(built) -> None:
+    found = find(built, "anything", conversations=[MINA_MAIL, "+19995550000"])
+    assert [row["conversations"] for row in found] == [[MINA, MINA_MAIL]]
+    assert find(built, "anything", conversations=[]) == []
+    assert len(find(built, "anything", conversations=None)) == 3
+
+
+@pytest.mark.parametrize("conversations", ["+12025550143", [3], [""]])
+def test_conversations_that_are_not_a_list_of_ids_raise(built, conversations: Any) -> None:
+    with pytest.raises(ValueError):
+        find(built, "x", conversations=conversations)
+
+
+def _without_vectors(town: Any, keep: int = 0) -> None:
+    from recall_services.people_store import Held
+
+    store: PeopleStore = settings(town)["store"]
+    held = store.read()
+    rows = tuple(
+        profile if place < keep else profile.__class__(**{**profile.__dict__, "vector": None})
+        for place, profile in enumerate(held.profiles)
+    )
+    store.write(Held(held.meta, rows))
+
+
+def test_profiles_that_can_not_be_searched_are_not_nobody(built) -> None:
+    _without_vectors(built)
+    embedder = FakeEmbedder(dimensions=FAKE_FACTS.dimensions, model=FAKE_FACTS.model)
+    found = find(built, "a boat for sale", embedder)
+    assert (found, found.reason, found.index_missing, found.not_searched) == ([], "not_embedded", False, 3)
+    assert embedder.calls == []
+
+
+def test_some_profiles_without_a_vector_are_counted_and_the_others_searched(built) -> None:
+    _without_vectors(built, keep=2)
+    found = find(built, "anything")
+    assert (len(found), found.reason, found.not_searched) == (2, None, 1)
+
+
+def test_a_search_with_every_vector_searches_all(built) -> None:
+    assert find(built, "anything").not_searched == 0

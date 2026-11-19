@@ -1,8 +1,9 @@
 """The search by meaning of chat: `chat_engine.ports.MeaningSearch` over the index of one archive.
 
 `MeaningPort` embeds the description with the model and the dimensions of the
-index. The process keeps one loaded index for each index folder, and the
-vectors of the last descriptions.
+index. The process keeps one loaded index for each index folder. The vectors
+of the last descriptions are kept in `query_vectors.py`, which the search of
+people shares.
 
 Rules:
 - The description that reaches `MeaningPort.search` is masked by the engine.
@@ -14,27 +15,23 @@ Rules:
 
 from __future__ import annotations
 
-import hashlib
 import logging
-import math
 import threading
-from collections import OrderedDict
 from collections.abc import Callable, Sequence
 
 from chat_engine.ports import MeaningHit
 from meaning_index import Embedder, IndexStore, MeaningIndex, MeaningIndexError, SearchHit
-from recall_services import meaning
+from recall_services import meaning, query_vectors
 
 logger = logging.getLogger(__name__)
 
-QUERY_VECTORS = 64
+QUERY_VECTORS = query_vectors.QUERY_VECTORS
 QUERY_TIMEOUT_SECONDS = 10.0
 # segments read for each hit that is asked for: a repeat inside one conversation is one hit
 FETCH_FACTOR = 2
 LOAD_TRIES = 3
 
 EmbedderFactory = Callable[[str, int], Embedder]
-_VectorKey = tuple[str, int, str]
 
 
 class MeaningNotReady(Exception):
@@ -58,24 +55,12 @@ def _load(store: IndexStore) -> MeaningIndex | None:
     return None
 
 
-def _one_vector(reply: Sequence[Sequence[float]], dimensions: int) -> tuple[float, ...]:
-    """The vector of one description. A reply that a search can not use is not kept."""
-    rows = list(reply)
-    if len(rows) != 1:
-        raise ValueError("the embedder must give one vector for one description")
-    vector = tuple(float(value) for value in rows[0])
-    if len(vector) != dimensions or not all(math.isfinite(value) for value in vector):
-        raise ValueError("the embedder must give one vector of finite numbers with the dimensions of the index")
-    return vector
-
-
 class _Kept:
-    """What the process keeps for one index folder: the loaded index and the vectors of the last descriptions."""
+    """What the process keeps for one index folder: the loaded index."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._index: MeaningIndex | None = None
-        self._vectors: OrderedDict[_VectorKey, tuple[float, ...]] = OrderedDict()
 
     def index(self, store: IndexStore) -> MeaningIndex | None:
         """The index of the build on disk, loaded again when that build changed.
@@ -100,21 +85,8 @@ class _Kept:
             return self._index
 
     def vector(self, index: MeaningIndex, query: str, factory: EmbedderFactory) -> tuple[float, ...]:
-        """The vector of a description. One of the last QUERY_VECTORS descriptions is not embedded again."""
-        text = hashlib.sha256(query.encode("utf-8", "surrogatepass")).hexdigest()
-        key = (index.model, index.dimensions, text)
-        with self._lock:
-            found = self._vectors.get(key)
-            if found is not None:
-                self._vectors.move_to_end(key)
-                return found
-        made = _one_vector(factory(index.model, index.dimensions).embed([query]), index.dimensions)
-        with self._lock:
-            self._vectors[key] = made
-            self._vectors.move_to_end(key)
-            while len(self._vectors) > QUERY_VECTORS:
-                self._vectors.popitem(last=False)
-        return made
+        """The vector of a description. One of the last QUERY_VECTORS descriptions of the process is not embedded again."""
+        return query_vectors.query_vector(query, index.model, index.dimensions, factory)
 
 
 _KEPT: dict[str, _Kept] = {}
@@ -135,6 +107,7 @@ def forget() -> None:
     """Let go of every loaded index and every vector of a description."""
     with _KEPT_LOCK:
         _KEPT.clear()
+    query_vectors.forget()
 
 
 def _hits(found: Sequence[SearchHit], limit: int) -> list[MeaningHit]:

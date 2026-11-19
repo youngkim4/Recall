@@ -2,14 +2,21 @@
 
 `search` embeds the description with the model and the dimensions of the
 store, and ranks the profiles by cosine (each vector has length 1). It keeps
-only the kinds asked for, and the profiles whose span (first to last day)
-overlaps `since` to `until`. The caller masks the description first.
+only the kinds asked for, the profiles that hold one of `conversations` when
+a list is given, and the profiles whose span (first to last day) overlaps
+`since` to `until`. The caller masks the description first. The vector of a
+description is kept for the process (`query_vectors.py`), shared with the
+search by meaning, so one question embeds its text once.
 
 It never fails a question. With no profile, a store that can not be read, or
 a description that can not be embedded, it gives an empty list whose
-`reason` says why: `no_index`, `no_key` or `embed_failed`. `reason` is None
-when the search ran. It raises ValueError only for arguments that can not be
-used: a kind that is not one of `KINDS`, a day that is not `YYYY-MM-DD`,
+`reason` says why: `no_index`, `no_key` or `embed_failed`. When the store has
+profiles but none of those asked for has a vector yet (an embedding that
+failed), the reason is `not_embedded`. When only some have none, the others
+are searched, `reason` is None, and `not_searched` counts the ones left out.
+`reason` is None when the search ran. It raises ValueError only for
+arguments that can not be used: a kind that is not one of `KINDS`,
+`conversations` that is not a list of ids, a day that is not `YYYY-MM-DD`,
 `since` after `until`, a `limit` that is not a whole number from 1 to 50.
 
 A process keeps the store that it read last, for each file, and reads it
@@ -27,7 +34,7 @@ from typing import Any
 import numpy as np
 
 from archive import Archive
-from recall_services import meaning
+from recall_services import meaning, query_vectors
 from recall_services.meaning_failures import NoKey
 from recall_services.names import Names
 from recall_services.people_prompt import KINDS
@@ -35,9 +42,10 @@ from recall_services.people_store import Held, PeopleStore, PeopleStoreError, Pr
 
 logger = logging.getLogger(__name__)
 
-NO_INDEX, NO_KEY, EMBED_FAILED = "no_index", "no_key", "embed_failed"
+NO_INDEX, NO_KEY, EMBED_FAILED, NOT_EMBEDDED = "no_index", "no_key", "embed_failed", "not_embedded"
 MOST_ROWS = 50
-SEARCH_TIMEOUT_SECONDS = 20.0
+# the seeded search runs for every question: it waits less than the search by meaning (10 s)
+SEARCH_TIMEOUT_SECONDS = 5.0
 SCORE_DECIMALS = 4
 DAY_CHARS = 10
 
@@ -46,11 +54,17 @@ _loaded_lock = threading.Lock()
 
 
 class Found(list):  # type: ignore[type-arg]
-    """The rows of a search, best first, and why there are none when that is so."""
+    """The rows of a search, best first, why there are none when that is so, and how many
+    profiles asked for could not be searched because they have no vector yet."""
 
-    def __init__(self, rows: Iterable[dict[str, Any]] = (), reason: str | None = None) -> None:
+    def __init__(self, rows: Iterable[dict[str, Any]] = (), reason: str | None = None, not_searched: int = 0) -> None:
         super().__init__(rows)
         self._reason = reason
+        self._not_searched = not_searched
+
+    @property
+    def not_searched(self) -> int:
+        return self._not_searched
 
     @property
     def reason(self) -> str | None:
@@ -67,6 +81,14 @@ def _kinds(kinds: Sequence[str] | None) -> frozenset[str] | None:
     if isinstance(kinds, str) or not all(isinstance(kind, str) and kind in KINDS for kind in kinds):
         raise ValueError(f"kinds must be a list of these words: {', '.join(KINDS)}")
     return frozenset(kinds)
+
+
+def _conversations(conversations: Sequence[str] | None) -> frozenset[str] | None:
+    if conversations is None:
+        return None
+    if isinstance(conversations, str) or not all(isinstance(one, str) and one for one in conversations):
+        raise ValueError("conversations must be a list of conversation ids")
+    return frozenset(conversations)
 
 
 def _day(value: str | None, name: str) -> str | None:
@@ -104,15 +126,12 @@ def _held(store: PeopleStore) -> Held | None:
     return held
 
 
-def _searchable(held: Held) -> list[Profile]:
-    """The rows with a vector of the embedding model and the dimensions of the store."""
+def _searchable(held: Held, profile: Profile) -> bool:
+    """True for a row with a vector of the embedding model and the dimensions of the store."""
     meta = held.meta
-    return [
-        profile
-        for profile in held.profiles
-        if profile.vector is not None
-        and profile.text_hash == text_hash(profile_text(profile), meta.embed_model, meta.dimensions)
-    ]
+    return profile.vector is not None and profile.text_hash == text_hash(
+        profile_text(profile), meta.embed_model, meta.dimensions
+    )
 
 
 def _overlaps(profile: Profile, since: str | None, until: str | None) -> bool:
@@ -143,8 +162,8 @@ def _app_embedder(model: str, dimensions: int) -> Any:
 def _query(description: str, held: Held, factory: Callable[[str, int], Any]) -> np.ndarray | str:
     """The vector of the description, or the reason why there is none."""
     try:
-        embedder = factory(held.meta.embed_model, held.meta.dimensions)
-        values = np.asarray(embedder.embed([description])[0], dtype="<f4")
+        found = query_vectors.query_vector(description, held.meta.embed_model, held.meta.dimensions, factory)
+        values = np.asarray(found, dtype="<f4")
     except NoKey:
         return NO_KEY
     except Exception as error:  # noqa: BLE001 - a search never fails a question
@@ -163,6 +182,7 @@ def search(
     since: str | None = None,
     until: str | None = None,
     limit: int = 10,
+    conversations: Sequence[str] | None = None,
     store: PeopleStore | None = None,
     embedder_factory: Callable[[str, int], Any] | None = None,
 ) -> Found:
@@ -170,22 +190,27 @@ def search(
     if not isinstance(description, str) or not description.strip():
         raise ValueError("a description is needed")
     wanted, first, last, size = _kinds(kinds), _day(since, "since"), _day(until, "until"), _limit(limit)
+    within = _conversations(conversations)
     if first is not None and last is not None and first > last:
         raise ValueError("since is after until")
     held = _held(store or PeopleStore(people_folder(archive.path)))
     if held is None or not held.profiles:
         return Found((), NO_INDEX)
-    chosen = [
+    asked = [
         profile
-        for profile in _searchable(held)
-        if (wanted is None or profile.kind in wanted) and _overlaps(profile, first, last)
+        for profile in held.profiles
+        if (wanted is None or profile.kind in wanted)
+        and (within is None or not within.isdisjoint(profile.conversations))
+        and _overlaps(profile, first, last)
     ]
+    chosen = [profile for profile in asked if _searchable(held, profile)]
+    left_out = len(asked) - len(chosen)
     if not chosen:
-        return Found(())
+        return Found((), NOT_EMBEDDED if left_out else None, left_out)
     query = _query(description, held, embedder_factory or _app_embedder)
     if isinstance(query, str):
-        return Found((), query)
+        return Found((), query, left_out)
     vectors = np.stack([np.frombuffer(profile.vector or b"", dtype="<f4") for profile in chosen])
     scores = vectors @ query
     order = sorted(range(len(chosen)), key=lambda place: (-float(scores[place]), place))[:size]
-    return Found(_row(chosen[place], scores[place]) for place in order)
+    return Found((_row(chosen[place], scores[place]) for place in order), None, left_out)
