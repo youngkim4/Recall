@@ -328,6 +328,15 @@ WARNING: Do not run `merge_export.py` on an archive that was written before the 
   - The request carries only the filters that are set (`filterParams`). Best match needs words: with none it is not offered and not sent.
   - A filter with no words is a search: it lists the messages it lets through, newest first, and asks once.
 
+### Insights
+
+- The rail is Overview, Chat, Analyze, Insights, Search, Reports, Jobs: the order the user agreed. Insights is `insights` in `ViewKey`.
+- Insights follows Plausible: one row of filters on top, and every figure and chart under it follows them. The filters are the words to count (`query`) and the filter row of Search (`SearchFilterBar`), with no sort: a count has no order. Words are counted whole (the route's default) once typing pauses 400ms.
+- It asks `/api/stats` three times for each set of filters: by the grain of the chart (day, week or month; the totals and the span come with it), by person or conversation (`PEOPLE_ASKED` rows), and by `weekday_hour` for the heat map (`rhythmOf`). Each ask is a key of `useLoad` (`statsKey`), so a set of filters asked for again shows at once.
+- A chart that follows a filter changes in place: `useLastReady` keeps the last answer on the page while the next one loads. Do not show a placeholder for each change.
+- A year a bar is not offered: the user's archive is a few years, and a chart of a few bars says nothing (the rule of the Overview). A week is named by its Monday (`ChartUnit` in `lib/activity.ts`); the server's `ActivityUnit` stays day or month.
+- In a wide window the ranked list stands beside the heat map and shows the rows that fit there (`useRowsThatFit`, in an `.overview-col`), so the two end on one line.
+
 ### The work before an answer
 
 - The user asked for the motion of Claude's and ChatGPT's chats. Each piece follows a shipped app, and only these: a step that shimmers (ChatGPT, Copilot), the steps before it with a check (Grok), a thin bar for a conversation read part by part (ChatGPT's research), "Worked for 6s" over the answer that opens to the steps (ChatGPT's "Thought for 42s"), and words that fade in as they stream. The lamp stands beside the step in the place of Claude's spark.
