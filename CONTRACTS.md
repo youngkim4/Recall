@@ -464,7 +464,9 @@ Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `rec
 - The scope binds the tool: a person none of whose conversations is in the scope is never shown. Only conversations inside the scope get an alias.
 - A profile is text that a model wrote. The engine masks every phone number and every address in it, and in the description, before the model or the port gets them (`mask_every_handle`).
 - A story of a person is never a quote and never a citation. The prompt tells the model to check each person in their own conversation before it names them.
-- A word of the question is a name only when at most 0.5 percent of the messages hold it (`COMMON_WORD_SHARE` in `chat_engine/question_names.py`). At most 4 words are counted, one time each. This holds with no port too.
+- Names of the question (`chat_engine/question_names.py`, also with no port): a word of the name of a person is a name. A word that only a group title holds is a name only when at most `max(20, 0.5 percent of the messages)` hold it. Every candidate is looked at, at most 8 title words are counted, one time each, and the first 4 names are kept.
+- The scope's conversations go to `PeopleSearch.search` (`conversations`), so the port ranks only the people of the scope. `PeoplePort` sends the keyword only when there is a scope.
+- A search of people that failed is not asked again in the same question.
 
 ## Mac shell
 

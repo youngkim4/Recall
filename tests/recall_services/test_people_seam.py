@@ -38,7 +38,9 @@ def responder(made: FakeCall) -> Any:
     if "conversation: Mina." in user:
         return profile_reply(
             kind="talking_stage", status="faded",
-            summary="A few coffees in early 2023, then it faded. She wrote from +1 (202) 555-0143 and mina@example.com.",
+            summary=(
+                "A few coffees in early 2023, then it faded. She wrote from +1 (202) 555-0143 and mina@example.com."
+            ),
             turning_points=[{"date": "2023-02-14", "what": "You sent a valentine to theo@example.com by mistake."}],
         )
     return profile_reply(kind="service", status="ended", summary="Tried to sell you a boat.")
