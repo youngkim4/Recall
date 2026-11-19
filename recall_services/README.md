@@ -48,6 +48,10 @@ Ask for `state.archive()` and for `names.cached(...)` at the start of each reque
 | job `memory` | `memory_prep.run(on_progress, cancel, archive=..., names=...)` |
 | the reading of the memory after an import | `memory_prep.completed_before(archive_file)`, `memory_prep.payload(archive, names)`, `memory_prep.worth_starting(found, completed_before=True)` |
 | the marker of a completed `memory` job | `memory_prep.mark_completed(archive_file)` |
+| `/api/people` | `people.payload(archive, names)` |
+| job `people` | `people.build(archive, names, cancel, on_progress)` |
+| the build of the people index after a `memory` job or an import | `people.completed_before(archive_file)`, `people.payload(archive, names)`, `people.worth_starting(found)` |
+| find people by description (chat) | `people.search(archive, names, description, kinds=..., since=..., until=..., limit=...)`, `people.status(archive, names)` |
 | several digests at once | `digests.call_pool(model, max_parallel)`, then `digests.build(..., pool=pool)` in each thread |
 | the two optional ports of the chat engine | `memory.ports(archive, names)` |
 | the saved report of a report file | `reports.saved_report(contact, report_text)` |
@@ -569,6 +573,195 @@ Known limits:
 - A report with `DIGEST_MODEL` (the low level) can run beside the `memory` job and pay for the parts of one conversation twice, when both send them at the same moment.
 - The job and a question do not share a lock. A part is paid twice only when both send it at the same moment (see "A digest inside a question is bounded" in `CONTRACTS.md`).
 - A conversation whose new parts fail for a key or a rate limit, while its other parts are in the notes, gives a digest with failed parts and no failure. The job then goes on to the next conversation; each request is refused, and nothing is paid.
+
+## The people index
+
+The people index answers "which people" questions. It holds one profile for each person and each group, and it is searched by meaning. `people.py` is the service. The steps are in `people_inputs.py` (who, and what the model reads), `people_figures.py`, `people_prompt.py`, `people_reply.py`, `people_calls.py`, `people_build.py`, `people_store.py`, `people_search.py` and `people_words.py`.
+
+### What a profile is
+
+- A person is the archive's `person_id` with all of its direct threads (phone and email), busiest first. Its key is `person:<person_id>`. A group conversation is a profile of its own, and so is a direct conversation with no `person_id`. Their key is `conversation:<conversation id>`.
+- The label is the name that chat gives the busiest conversation of the profile (`names.chat_labeler`): a saved name, a group title or name, or a mask such as "a number ending in 0171".
+- The figures come from the archive only: one stream of the messages of all the conversations of the profile, group events left out (`people_figures.py`). A message with no text is a message.
+- The rest comes from one model call: `kind`, `status`, `summary` (at most 600 characters) and `turning_points` (at most 5 of `{date, what}`). The model is the model of the memory (`memory_prep.model()`, `gpt-6-luna`). It reads the period summaries and the moments (title and detail, no quote) of the digests of the profile's own conversations, the figures and the label. No message is read again by a model.
+- A profile is made only when every part of every conversation of the profile is in the notes. The notes are read with no model call and no mark of use: a digest with `max_new_periods=0` over a cache that does not mark what it reads. A profile whose notes are not all read is left out of a build and counted in `notRead`; its row from an earlier build stays. A profile with no message with text has no notes: it is not built and not counted.
+
+### The prompt and the reply
+
+- The prompt (`people_prompt.py`) defines each kind and each status in one sentence. It says that the summary states what the notes show and nothing else, and that a relationship is judged only from its own conversation: what the owner said about a person to someone else is not that relationship.
+- The reply is a strict JSON object: `kind` (one of `KINDS`), `status` (one of `STATUSES`), `summary`, and `turning_points` with `date` and `what`. The request asks for no reasoning (`PROFILE_REASONING = "none"`) and at most `MAX_OUTPUT_TOKENS` (1,664).
+- A reply in the wrong shape is asked for once more. A second one fails the profile, not the build. A kind or a status that is not one of the words is `unclear`. A group is always `group`, and only a group is one. A turning point whose date is no day or is outside the span of the figures is dropped. Text that is too long is cut at a word.
+- Text loses the line references of the report engine (`report_engine/chat_digest_refs.py`). Each handle that is not saved is masked by `redact` of `names.chat_labeler`, as in the notes the model read, and any other phone number or email address left in the text is masked too.
+
+### What is paid for again
+
+- Each row holds the hash of its inputs: the prompt version, the model and the request itself (label, figures and notes). A build calls the model only for a profile whose notes are read and whose hash is not in the store.
+- Each row also holds the hash of its embedded text with the embedding model and the dimensions. A row whose text, model or dimensions changed is embedded again. That costs no model call.
+- A new message changes the figures, so the profile is written again once its new part is read. A contact that is saved later changes the label and the masks, so the profiles that held it are written again.
+
+### The estimate
+
+- The input of a profile is its request as a build would send it, counted with the token counter of the model and the margin of the report engine (`meter_for`).
+- The output of a profile is sized from the limits of the reply: the fullest reply that the limits allow (`fullest_reply`: the longest kind and status, a summary of 600 characters, 5 turning points of 160 characters) is 1,661 characters of JSON. At 4 characters for one token that is `OUTPUT_TOKENS` = 416. The request asks for no reasoning, so no hidden output is added. A real reply is shorter, so this part is an upper bound. The limit of the request (`MAX_OUTPUT_TOKENS`) is not used for the estimate: the estimate of the memory used the limit of 4,000 tokens for a part, where the real mean was about 1,230, and said 4.60 USD for a run that cost 1.87.
+- The embedding of a new profile counts `OUTPUT_TOKENS` tokens at the price of the embedding model. A row that is only embedded again counts its text at 4 characters for one token.
+
+### The store
+
+- `saves/people/<16 hex digits of the SHA-256 of the resolved path of the archive file>/people.sqlite3` (`people_store.people_folder`). The folder is 0700 and the file 0600.
+- One row for each profile: key, conversation ids, label, figures, kind, status, summary, turning points, input hash, text hash and vector (float32, length 1, or none until it is embedded). The table `meta` holds the format, the model, the embedding model, the dimensions, the time of the build and the time of the last build that completed.
+- A write makes a new file and puts it in place with one rename. A write that fails leaves the old file. A store of a newer format is not read and not replaced (`store_newer`).
+- A build that stops (a failure that each profile would have, or a cancel) saves the profiles that it paid for with no vector, and raises. The next build embeds them and pays nothing for them again.
+
+### `people.search`
+
+```python
+people.search(archive, names, description, *, kinds=None, since=None, until=None, limit=10,
+              store=None, embedder_factory=None) -> people.Found
+```
+
+- `Found` is a `list` of rows, best first, with two attributes: `reason` (None when the search ran; `no_index` with no profile or a store that can not be read; `no_key` or `embed_failed` when the description could not be embedded) and `index_missing` (`reason == "no_index"`).
+- The description is embedded with the embedding model and the dimensions of the store, and the profiles are ranked by cosine. A profile with no vector for those facts is not searched. The caller masks the description first.
+- `kinds` keeps the profiles of those kinds. `since` and `until` keep the profiles whose span (first to last day) overlaps them.
+- It raises ValueError only for arguments that can not be used: an empty description, a kind that is not in `people.KINDS`, a day that is not `YYYY-MM-DD`, `since` after `until`, a `limit` that is not a whole number from 1 to 50. Nothing else raises.
+
+A row:
+
+```json
+{
+  "key": "person:12",
+  "conversations": ["+12025550143", "mina@example.com"],
+  "label": "Mina",
+  "kind": "talking_stage",
+  "status": "faded",
+  "summary": "Coffee dates and a valentine in early 2023, then it faded.",
+  "turning_points": [{"date": "2023-02-14", "what": "You sent a valentine."}],
+  "figures": {
+    "first_day": "2023-01-02",
+    "last_day": "2023-02-20",
+    "messages": 8,
+    "sent": 4,
+    "received": 4,
+    "active_days": 4,
+    "longest_gap_days": 39.45,
+    "busiest_month": "2023-01",
+    "wrote_first_share": 0.5
+  },
+  "score": 0.4123
+}
+```
+
+`people.status(archive, names)` reads the store only:
+
+```json
+{"state": "ready", "profiles": 1180, "builtAt": "2026-11-18T10:00:00+00:00", "model": "gpt-6-luna",
+ "embedding": {"model": "text-embedding-3-large", "dimensions": 1024}}
+```
+
+With no profile it is `{"state": "none", "profiles": 0, "builtAt": null, "model": null, "embedding": null}`.
+
+### `GET /api/people` and the `people` job
+
+`GET /api/people?messagesPath=...` answers `people.payload` with `jobId` (`people_answer` in `ui_server.py`):
+
+```json
+{
+  "state": "partial",
+  "model": "gpt-6-luna",
+  "people": 1200,
+  "profiles": 1180,
+  "current": 1170,
+  "toWrite": 12,
+  "notRead": 18,
+  "estimatedCost": 0.0061,
+  "builtAt": "2026-11-18T10:00:00+00:00",
+  "error": null,
+  "code": null,
+  "jobId": null
+}
+```
+
+- `people` counts the profiles with text. `profiles` counts the rows of the store. `current` counts the profiles whose row has the hash of their inputs now. `toWrite` counts the model calls that a build would make now, and `estimatedCost` is their cost with the embeddings. `notRead` counts the profiles whose notes are not all read.
+- `state` is `none` with no row, `ready` when nothing is to write and nothing is left out, and `partial` otherwise.
+- When the store or the archive can not be read, or the model can not be run, the counts are 0, `state` is `none`, and `error` and `code` say why. It makes no model call, needs no key and writes no file.
+- The answer is kept in the server process for one key: the signature of the archive, the Contacts cache file, the notes file and its `-wal` file, the store file and the model. `jobId` is read fresh.
+
+The job is asked for as every job: `POST /api/jobs` with `{"action": "people", "messagesPath": "..."}` (`messagesPath` is optional). The answer is 202 with `{"job": {...}}`, and the record has `contact` "".
+
+Its `progress`:
+
+```json
+{"step": 1, "of": 3, "label": "Looking at the people in your conversations", "done": 40, "total": 1204}
+{"step": 2, "of": 3, "label": "Writing a profile of each person", "done": 5, "total": 12}
+{"step": 3, "of": 3, "label": "Saving the people index", "done": 1, "total": 1}
+```
+
+Its lines:
+
+```text
+Looking at 1,200 people and groups
+12 profiles to write, 1,170 kept as they are, 18 left out because their memory is not read
+The people index is saved: 12 profiles written now, 1,170 kept, 0 failed, 18 left out, 2 removed.
+```
+
+Its `result`, and its record under `spent` as `{"usd", "usage"}`, also when it failed after paid calls:
+
+```json
+{
+  "people": 1200,
+  "built": 12,
+  "kept": 1170,
+  "failed": 0,
+  "notRead": 18,
+  "removed": 2,
+  "embedded": 12,
+  "embedTokens": 1630,
+  "usd": 0.0049,
+  "usage": {"input_tokens": 30000, "cached_input_tokens": 0, "output_tokens": 3100, "cost_usd": 0.0046, "calls": 12}
+}
+```
+
+- `failed` counts the profiles whose replies were in the wrong shape twice, or whose call failed on its own. Their rows from an earlier build stay. `removed` counts the rows of profiles that the archive no longer holds, or that have no text now.
+- `usage` is what the model calls spent. `usd` adds the embeddings, counted with the token counter of the index of meanings.
+- Each end of a build writes one line to the log `recall.spend`: `the people job: 12 profiles written, 1170 kept, 0 failed, 12 model calls, 0.0049 USD`, or `the people job stopped (<code>): ...`.
+
+A refusal is 409 with `{"error": sentence}`:
+
+| Asked for | Held up by | Sentence |
+|---|---|---|
+| `people` | `people` | The people index is being built. Wait until it ends. |
+| `people` | an import | An import is running. Wait until it ends, then build the people index. |
+| an import | `people` | The people index is being built. Wait until it ends. |
+| `people` | `memory` | Recall is reading the memory of chat. Wait until it ends, then build the people index. |
+
+A `memory` job is not refused by a `people` job: a profile whose notes the memory job reads later is written by the build that starts after it. A report, the `meaning` job, a `digest` job and chat run beside a `people` job.
+
+The sentences of a `people` job that failed (`code` is the first column):
+
+| Code | Sentence |
+|---|---|
+| `no_key` | No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then build the people index again. |
+| `key_rejected` | OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, then build the people index again. The profiles that were written are kept. |
+| `unknown_model` | OpenAI does not know the model gpt-6-luna. The profiles that were written are kept. |
+| `rate_limit` | OpenAI is limiting requests, or the account has no credit left. Wait a moment, then build the people index again. The profiles that were written are kept. |
+| `offline` | OpenAI could not be reached. Check the internet connection, then build the people index again. The profiles that were written are kept. |
+| `embed_failed` | The profiles could not be made searchable. The profiles that were written are kept. Build the people index again. |
+| `archive_error` | The message archive could not be read. Update the archive, then build the people index again. |
+| `cache_unreadable` | What earlier runs read could not be read. Nothing was written. |
+| `store_error` | The people index could not be read or written. Check the free space on the disk, then build the people index again. |
+| `store_newer` | A newer version of Recall made the people index. Update Recall, then try again. |
+| `cancelled` | The build was stopped. The profiles that were written are kept. |
+| `run_failed` | The people index could not be built. The profiles that were written are kept. |
+
+`no_key`, `key_rejected`, `unknown_model`, `rate_limit` and `offline` stop the build: no new call starts, the calls in flight end, and what they paid for is saved. A failure of the embedder has the same codes.
+
+After a `memory` job that completed, or an import that changed the archive, `refresh_people` in `ui_server.py` starts one `people` job when a build of this archive completed before (`people.completed_before`: `completed_at` in the store) and `people.worth_starting` says yes: a profile is to write, and they cost at most `PEOPLE_AUTO_USD` (0.10 USD). After an import that started a `memory` job, it waits: the end of that job starts it. With no completed build it starts nothing and takes no estimate. Above the cost it writes one line with the count of profiles to the log of the server.
+
+Known limits:
+
+- A `people` job can not be stopped from the app.
+- `ongoing` and `faded` are judged from the notes, not from the date of the end of the archive: that date would change the hash of every profile at each import.
+- A `memory` job that ends while a `people` job runs does not start another one (the second is refused). The next `memory` job or import does.
+- `GET /api/people` plans every conversation and reads its notes. On an invented archive of 400 conversations it took 1.0 s; the answer is kept until the archive, the names, the notes or the store change.
 
 ## Reports
 

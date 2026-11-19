@@ -168,7 +168,7 @@ WARNING: The story of a report is written by an AI model from the messages of ot
 ### Jobs
 
 - One import writes the archive at a time. `create_job` in `ui_server.py` decides this once, with `JOBS_LOCK` held, when the job is made. `IMPORT_ACTIONS` holds the jobs that write the archive: `setup_import`, `export` and `bridge`.
-- `ONE_AT_A_TIME` lists the jobs that do not run together. An import, the `meaning` job, the `digest` job and the `memory` job are in it. See "Chat memory".
+- `ONE_AT_A_TIME` lists the jobs that do not run together. An import, the `meaning` job, the `digest` job, the `memory` job and the `people` job are in it. See "Chat memory".
 - The first job runs. The second is refused: `/api/jobs` answers 409 with a plain sentence, and no job is made.
 - `check_request` refuses a request that cannot be a job. `/api/jobs` answers 400, and no job is made.
   - The action is text, and it is one of `JOB_ACTIONS`.
@@ -439,6 +439,22 @@ Four parts hold them: `meaning_index/`, `report_engine/chat_digest.py` with `rec
 - The job and a question do not share a lock. The bound of a double spend in "A digest inside a question is bounded" holds for the `memory` job.
 - Known limit: a report with the model of the digest (`DIGEST_MODEL`, the low level) can run beside the `memory` job and pay for the parts of one conversation twice, when both send them at the same moment. No lock for each conversation holds the two apart.
 - Known limit: a `memory` job can not be stopped from the app. An import that is asked for while it runs is refused with 409 and a plain sentence.
+
+### People
+
+- The people index holds one profile for each person and each group (`recall_services/people.py`). A person is the archive's `person_id` with all of its direct threads. A group conversation, and a direct conversation with no `person_id`, is a profile of its own.
+- The figures of a profile come from the archive only (`people_figures.py`). The kind, the status, the summary and the turning points come from one call of the model of the memory (`memory_prep.model()`), which reads the period summaries and the moments of the digests of the profile's own conversations, the figures and the label. No message is read again by a model, and no quote of a moment is sent.
+- A profile is judged only from its own conversation. The prompt says so, and the model reads no digest of another conversation. A summary of a profile is never a quote and never a citation: chat confirms a person in their own conversation before it names them.
+- A profile is made only when every part of its conversations is in the notes. The notes are read with no model call and no mark of use (`people_inputs.py`): a digest with no new part allowed, over a cache that does not mark what it reads. A profile whose notes are not all read keeps its row from an earlier build and is counted in `notRead`.
+- What leaves the machine: the request of a profile holds the label as chat gives it (a saved name or a mask), and the notes masked with `redact` of `names.chat_labeler`. The reply loses the line references of the report engine and every phone number and email address (`people_reply.py`). The embedding provider gets the text of each profile, and the description of a search.
+- These change together, or a build pays again: the prompt version (`people_prompt.PROMPT_VERSION`, a hash of the fixed text, the shape and the reasoning level), the model of the memory, the label, the figures and the notes are the hash of the inputs of a row. A build calls the model only for a profile whose hash is not in the store. The embedding model and the dimensions (`meaning.default_facts()`) are in the hash of the embedded text; a change embeds again with no model call.
+- Each archive has a store of its own: `saves/people/<16 hex digits of the SHA-256 of the resolved path of the archive file>/people.sqlite3` (`people_store.people_folder`). The folder is 0700 and the file 0600. A write puts a whole new file in place with one rename. A store of a newer format is not read and not replaced.
+- `people.search` never fails a question. With no profile, a store that can not be read, or a description that can not be embedded, it gives an empty list with `reason`. It raises ValueError only for arguments that can not be used. The caller masks the description first. The shapes are in `recall_services/README.md`.
+- The `people` job (`build_people_index` in `ui_server.py`, `people.build`) and an import do not run together, two `people` jobs do not run together, and a `people` job waits for a `memory` job (`ONE_AT_A_TIME`). A `memory` job is not refused by a `people` job. A report, the `meaning` job, a `digest` job and chat run beside it.
+- `GET /api/people` answers `people.payload` with `jobId` (`people_answer`). It makes no model call, needs no key and writes no file. The answer is kept for one key: the signature of the archive, the Contacts cache file, the notes file and its `-wal` file, the store file and the model.
+- After a `memory` job that completed, or an import that changed the archive, `refresh_people` (called by `after_job`) starts one `people` job only when a build of this archive completed before (`completed_at` in the store), and the profiles to write cost at most `PEOPLE_AUTO_USD` (0.10 USD, `people.worth_starting`). After an import that started a `memory` job it starts nothing: the end of that job does. A fault there does not change how the job ended.
+- The estimate counts the input of each profile as its request is counted, and the output as the fullest reply that the limits of the reply allow (`OUTPUT_TOKENS`, 416), with no reasoning. It does not count the limit of the request (`MAX_OUTPUT_TOKENS`).
+- Known limit: a `people` job can not be stopped from the app.
 
 ## Mac shell
 
