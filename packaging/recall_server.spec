@@ -18,6 +18,29 @@ BUNDLE_DATAS = [
     (str(ROOT / "meaning_index" / "models.json"), "meaning_index"),
 ]
 
+
+def fetch_vocabularies(folder: Path) -> Path:
+    """The vocabularies of tiktoken that the server uses, fetched at build time into a new folder.
+    The app ships them (server_entry.use_bundled_vocabulary): with no network, a first start works."""
+    import os
+    import shutil
+
+    shutil.rmtree(folder, ignore_errors=True)
+    folder.mkdir(parents=True)
+    os.environ["TIKTOKEN_CACHE_DIR"] = str(folder)
+    import tiktoken
+
+    # conversation.TOKENIZER_NAMES and meaning_index.tokens.ENCODING
+    for name in ("o200k_base", "cl100k_base"):
+        try:
+            tiktoken.get_encoding(name)
+        except Exception as exc:
+            raise SystemExit(f"could not fetch the tiktoken vocabulary {name}: {type(exc).__name__}") from exc
+    return folder
+
+
+BUNDLE_DATAS = [*BUNDLE_DATAS, (str(fetch_vocabularies(ROOT / "build" / "tiktoken-cache")), "tiktoken_cache")]
+
 # tripwire: the repo root holds the founder's personal iMessage archive in
 # dev mode -- a careless add-data here would ship it to every downloader
 FORBIDDEN_PARTS = (
