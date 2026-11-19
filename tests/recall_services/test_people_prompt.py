@@ -10,9 +10,10 @@ from recall_services import people_prompt as prompt
 from recall_services.people_figures import Figures
 from report_engine.chat_digest import MomentNote, PeriodNote
 
+# the kind says what it was; the status says how it stands, so a talking stage can be ongoing
 TALKING_STAGE = (
     "A one-to-one exchange with romantic interest on at least one side that did not become a relationship, "
-    "usually weeks to a few months, then faded or stopped."
+    "usually lasting weeks to a few months."
 )
 FIGURES = Figures("2023-01-02", "2023-02-20", 8, 4, 4, 4, 39.45, "2023-01", 0.5)
 PERIOD = PeriodNote(

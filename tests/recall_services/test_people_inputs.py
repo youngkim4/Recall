@@ -130,3 +130,20 @@ def test_a_group_member_who_is_saved_is_named_in_the_notes(town) -> None:
     user = reader.plan(group).messages[-1]["content"]
     assert "This is a group conversation: Harbor Walkers." in user
     assert THEO not in user and MINA not in user
+
+
+def test_every_handle_in_the_notes_is_masked_before_it_leaves(town) -> None:
+    """A summary of a digest can hold any handle: the notes are masked as the chat digest masks them."""
+    from report_engine.fake_llm import FakeCall, FakeLLM, default_map_reply
+
+    def map_reply(call: FakeCall) -> Any:
+        reply = default_map_reply(call)
+        return {**reply, "summary": "Mina gave 415-555-0199, someone@else.org and theo@example.com on 2023-01-05."}
+
+    town.read_memory(llm=FakeLLM(map_reply))
+    reader = planner(town)
+    (mina,) = [subject for subject in reader.subjects() if MINA in subject.conversations]
+    user = reader.plan(mina).messages[-1]["content"]
+    assert "415-555-0199" not in user and "someone@else.org" not in user and THEO not in user
+    assert "a phone number" in user and "an email address" in user and "an unsaved email contact" in user
+    assert "2023-01-05" in user

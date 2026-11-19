@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from archive import Archive
+from chat_engine.handle_mask import mask_every_handle
 from archive import ArchiveError as ArchiveFault
 from recall_services import digests, models, people_prompt, reports
 from recall_services.names import Names
@@ -151,10 +152,15 @@ class Planner:
         except ArchiveFault as error:
             raise failure("archive_error") from error
         self._records = {str(record["id"]): record for record in self._listed}
-        self.redact = names.chat_labeler(self._listed).redact
+        self._labeler = names.chat_labeler(self._listed)
+        self.redact = self._labeler.redact
         self._options = options
         self._counter = counter
         self._notes = _notes_file((places or reports.default_places()).cache_path)
+
+    def mask(self, text: str) -> str:
+        """Text for the model with every handle masked, as the chat digest masks a summary."""
+        return mask_every_handle(text, self._labeler)
 
     def subjects(self) -> tuple[Subject, ...]:
         return subjects_of(_Listed(self._listed), self._names)
@@ -188,7 +194,7 @@ class Planner:
         except ArchiveFault as error:
             raise failure("archive_error") from error
         person = people_prompt.PromptInput(subject.label, subject.is_group, figures, notes.periods)
-        messages = tuple(people_prompt.profile_messages(person, self.redact))
+        messages = tuple(people_prompt.profile_messages(person, self.mask))
         return Planned(subject, notes, figures, messages, input_hash(self.info.id, messages))
 
 
