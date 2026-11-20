@@ -1,99 +1,156 @@
 # Recall
 
-Extract iMessage history and generate AI relationship analysis with visual reports.
+Your iMessage history as a private archive on your Mac. Search it, chart it, ask it questions, and replay how your conversations started.
 
-## Features
+![The Overview: a greeting, a chart of every message since the first one, the people of the last 30 days, moments from this day in earlier years, and conversations that have gone quiet](docs/images/overview.png)
 
-- List top contacts by message volume and date range
-- Full-context AI analysis via OpenAI Responses API
-- Key event extraction with quotes
-- Attachment and reaction breakdowns
-- Monthly sent/received progression
-- Desktop report reader with Story, Events, Patterns, Media, Activity, and Files sections
-- Local preview cache for faster conversation switching
-- Auto-chunking based on the selected model's context window
+Recall reads the Messages database of your Mac into its own archive. Everything runs on your Mac: the archive, the search, the charts and the app. The optional AI features use your own API key. They send only the excerpts that a question needs, and only when you ask.
+
+> Every name, number and message in these screenshots is invented. They come from a generated archive, not from a real one.
+
+## What it does
+
+### Overview
+
+A greeting, then your messages over time (the last 30 days, the last year or all time), the people you have talked with most lately, moments from this day in earlier years, and the conversations that have gone quiet. A moment opens the whole day of that conversation.
+
+### Insights
+
+Count the whole archive with one question: words, a conversation, who sent it, attachments and dates. The answer comes as figures, a chart of you and them, your habits (how fast each side replies, who starts, the longest streak, late nights) and a map of the hours of the week.
+
+![Insights: figure tabs over a line chart, the habits of the answer, and the hours of the week](docs/images/insights.png)
+
+### Search
+
+Find any message by its words, with the same filters. A result opens its day beside the list, so you see the message in its conversation.
+
+![Search: results as message bubbles on the left, the day of the selected result on the right](docs/images/search.png)
+
+### Chat
+
+Ask a question about your messages in plain words: "When did we first plan the trip?" A model searches, reads and counts in the archive until it can answer, and the answer cites the messages it used. Names that you have not saved are masked before anything leaves your Mac.
+
+### Share cards
+
+Make a picture of a moment: an anniversary, a busy day from years ago, or you and one person over the years. Each card stands on one of Recall's pixel scenes. A quoted message stays off the card until you tick the box.
+
+<p>
+  <img src="docs/images/card-anniversary.png" width="32%" alt="An anniversary card: a pixel sunrise over the sea, then five years of messages with one person, their chart and the split between you" />
+  <img src="docs/images/card-day.png" width="32%" alt="An on-this-day card: a pixel moon over the sea, then 429 messages on one day, the days around it, and the busiest day of the year" />
+  <img src="docs/images/card-duo.png" width="32%" alt="A card of two people: pixel northern lights, then the total messages, their chart, the split and who writes first" />
+</p>
+
+### Replay first words
+
+The first message you exchanged with each of the people you write to most, one person at a time, arriving the way a message does.
+
+<p>
+  <img src="docs/images/replay-opening.png" width="49%" alt="The opening of Replay first words: the title over a pixel moon and sea" />
+  <img src="docs/images/replay-first-words.png" width="49%" alt="One person's first words: their name and the first two messages under pixel northern lights" />
+</p>
+
+### Themes
+
+Graphite follows the look of Messages, in light and dark. Four scene themes (Broadsheet, Shoreline, Canopy and Sky) each set their own colours and typeface, and an animated pixel picture fills the sidebar.
+
+<p>
+  <img src="docs/images/overview-shoreline.png" width="49%" alt="The Overview in the Shoreline theme, dark, with a pixel shoreline in the sidebar" />
+  <img src="docs/images/overview-broadsheet.png" width="49%" alt="The Overview in the Broadsheet theme, light, in a serif face with claret accents" />
+</p>
+
+## How it works
+
+```mermaid
+flowchart LR
+    chatdb[("Messages database<br/>chat.db, read only")] --> importer["Importer<br/>archive/"]
+    importer --> store[("Recall archive<br/>SQLite + full-text index")]
+    store --> services["Services<br/>recall_services/"]
+    services --> server["Local server<br/>ui_server.py on 127.0.0.1"]
+    server --> ui["React app<br/>app/"]
+    ui --> shell["Mac window<br/>Swift + WKWebView"]
+    services -.->|your API key, excerpts only| ai["Chat, meaning search, reports<br/>chat_engine/ meaning_index/ report_engine/"]
+```
+
+1. **Import.** The importer reads Apple's `chat.db` and mirrors it into one SQLite file, Recall's own archive. It decodes the `attributedBody` blobs that newer versions of macOS use for message text. It keeps Apple's message ids, so a second import updates the archive in place. Tapbacks are stored as reactions, not as messages.
+2. **Read.** Search uses an SQLite FTS5 index. The figures, habits, days and moments are SQL over the archive, in the services package. Each service returns the JSON of one route of the local server.
+3. **Show.** The local server listens only on `127.0.0.1`. The React app talks to it, and a small Swift app shows it in a native Mac window.
+4. **Ask (optional).** Chat gives a model tools to search, read and count the archive, and checks each citation against the messages. Meaning search finds messages by what they mean, with vectors of conversation segments that are kept on disk. Reports read one conversation period by period and check every date and quote. All three use your own API key, and the setup tells you the most it can cost before it starts.
+
+## Privacy
+
+- Your archive, your saved names and your API key stay in files on your Mac. There is no account and no server of Recall's.
+- Search, Insights, the Overview, share cards and Replay first words need no API key and send none of your messages anywhere.
+- Chat, meaning search and reports send only the excerpts that a question needs, and only when you ask. Names that you have not saved are masked first.
+- Requests to the model provider are made with storage turned off.
+- The test suite blocks every network connection and runs on invented data only.
+
+## Built with
+
+| Part | Stack |
+|---|---|
+| App | React 19, TypeScript, Vite; plain CSS with cascade layers and container queries; hand-drawn SVG charts and canvas share cards |
+| Mac window | Swift and WKWebView |
+| Server and data | Python 3, SQLite (FTS5), pandas |
+| AI | An agent loop with tools and citations, embeddings for meaning search, map-reduce reports with a cache |
+| Tests | pytest (about 7,800 tests) and Node's test runner (about 600 tests) |
+
+## Run it
+
+You need macOS, Python 3 and Node. Recall reads `~/Library/Messages/chat.db`, so the app asks for Full Disk Access the first time you import.
 
 ```bash
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-echo "OPENAI_API_KEY=your-key-here" > .env # Need your own OpenAI API key
 ```
 
-## Usage
-
-### Mac app
-
-Build a local macOS app wrapper:
+Build the Mac app and open it:
 
 ```bash
 scripts/build_macos_app.sh
+```
+
+```bash
 open saves/Recall.app
 ```
 
-This creates `saves/Recall.app`, a native window that starts the Recall backend on a private local port and loads the UI inside the app. This developer build still depends on this checkout and `venv`; a distributable release should bundle the Python runtime/dependencies and be signed/notarized.
+The first run guides you through access, the first import and, if you want them, the AI features. Add an API key in Settings, under Archive.
 
-The build script compiles the React UI from `app/` first when Node/npm is available. Set `NPM_BIN=/path/to/npm` if npm is not on your shell path.
+### Develop
 
-### Local UI
+Run the local server, then the app with hot reload:
 
 ```bash
 venv/bin/python ui_server.py
-open http://127.0.0.1:8765
 ```
-
-The local server serves the React build from `app/dist` when present and falls back to the dependency-free `ui/` surface otherwise. The UI lets you browse conversations, preview message volume, estimate model cost, launch analysis, and open generated reports without memorizing CLI flags.
-
-Settings in the app can refresh Contacts names, update the archive from Messages, change the model level, and clear the preview cache.
-
-The app keeps its own archive of your messages in `saves/archive.sqlite3`. An update is one full pull of the Messages database of this Mac into that archive. If an earlier build left a `messages.csv` here, the app loads it into the archive one time at its first start, and it does not delete the file.
-
-Chat and reports need a key of the model provider. Put `OPENAI_API_KEY=...` in the file `.env` in the data folder (this checkout for a development run, `~/Library/Application Support/Recall` for the packaged app).
-
-### CLI
 
 ```bash
-# List top contacts
-python cli.py --list-contacts --db ~/Library/Messages/chat.db
-
-# Analyze a contact
-python cli.py --contact +12165551234 --db ~/Library/Messages/chat.db
-
-# With HTML report
-python cli.py --contact +12165551234 --db ~/Library/Messages/chat.db --html
-
-# Date range filter
-python cli.py --contact +12165551234 --since 2024-01-01 --until 2024-12-31
-
-# Skip cost confirmation
-python cli.py --contact +12165551234 --no-confirm
+cd app && npm install && npm run dev
 ```
 
-| Flag | Description |
-|------|-------------|
-| `--db` | Path to chat.db |
-| `--messages` | Path to pre-exported messages.csv |
-| `--contact` | Contact chat_id to analyze |
-| `--list-contacts` | List top contacts by message count |
-| `--since` / `--until` | Date range filter (YYYY-MM-DD) |
-| `--html` | Generate HTML report with charts |
-| `--model` | OpenAI model (default: gpt-5.5) |
-| `--no-confirm` | Skip cost estimate confirmation |
-| `--out` | Output directory (default: out) |
-| `--limit` | Contacts to show (default: 30) |
+Run the checks:
 
-## Outputs
+```bash
+venv/bin/python -m pytest -q
+```
 
-- `out/analysis_<contact>.md` -- Markdown report
-- `out/analysis_<contact>.html` -- HTML report (with `--html`)
-- `out/events_timeline_<contact>.csv` -- Key events timeline
-- `messages.csv`, `messages_attachments.csv`, `messages_reactions.csv` -- Extracted data
+```bash
+cd app && npx tsc -b && npx eslint . --quiet && npm test
+```
 
-## Notes
+## Project layout
 
-- `chat_id` is usually the phone number for 1:1 chats, or starts with `chat` for group chats. Use `--list-contacts` to discover IDs.
-- If the DB is locked, close Messages or copy it first. Copy `chat.db`, `chat.db-wal` and `chat.db-shm` to a folder outside this checkout, for example `cp ~/Library/Messages/chat.db* ~/Desktop/`, and name the copy with `--db`.
-- WARNING: `cli.py --db` writes `messages.csv` in the current folder. In this checkout that file is the export that the app loads into its archive when it has none. Run the command in another folder, or name another file with `--messages`. The app does not read a `chat.db` in this folder.
-- Full conversation history is sent to the OpenAI API with `store=false` -- cost estimates are shown before any API call.
+| Folder | What it holds |
+|---|---|
+| `app/` | The React app |
+| `macos/` | The Swift window |
+| `ui_server.py` | The local HTTP server |
+| `archive/` | The importer and the query API of the archive |
+| `recall_services/` | One function for each route that reads the archive |
+| `chat_engine/` | Chat: the agent, its tools, citations and masking |
+| `meaning_index/` | Search by meaning |
+| `report_engine/` | Reports on one conversation |
+| `tests/` | Tests and the invented archives they run on |
+| `CONTRACTS.md` | The rules that hold across files |
 
 ## License
 
