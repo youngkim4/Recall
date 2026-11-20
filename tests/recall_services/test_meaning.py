@@ -27,7 +27,7 @@ from tests.report_engine.synth import MINA, THEO
 
 NO_NAMES = Names.from_records([])
 STATUS_KEYS = {"state", "segments", "model", "dimensions", "builtAt", "coveredUntil"}
-ESTIMATE_KEYS = {"segments", "newSegments", "staleSegments", "tokens", "estimatedCost", "upperBound"}
+ESTIMATE_KEYS = {"segments", "newSegments", "staleSegments", "tokens", "estimatedCost", "upperBound", "recipeChanged"}
 BUILD_KEYS = {"segments", "embedded", "reused", "removed", "tokens"}
 NO_KEY = "No API key is set. Add one in Settings > Archive > API key, then build the index again."
 

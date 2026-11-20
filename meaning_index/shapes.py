@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from meaning_index.recipe import DEFAULT_NAME
+
 IndexState = Literal["none", "ready"]
 BuildPhase = Literal["read", "embed", "write"]
 
@@ -39,7 +41,7 @@ class Segment:
 
 @dataclass(frozen=True)
 class IndexMeta:
-    """The content of `meta.json`."""
+    """The content of `meta.json`. A file with no `recipe` was built with the default recipe."""
 
     format_version: int
     build_id: str
@@ -48,6 +50,7 @@ class IndexMeta:
     built_at: str
     segments: int
     covered_until: str | None
+    recipe: str = DEFAULT_NAME
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,8 @@ class BuildEstimate:
 
     `upper_bound` is True when the work file of a stopped build could not be
     read. The build can then cost less than the estimate says, and never more.
+    `recipe_changed` is True when the index on disk was built with another
+    recipe: a build is due, even when it embeds nothing.
     """
 
     segments: int
@@ -75,6 +80,7 @@ class BuildEstimate:
     tokens: int
     usd: float
     upper_bound: bool = False
+    recipe_changed: bool = False
 
 
 @dataclass(frozen=True)

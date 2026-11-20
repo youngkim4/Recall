@@ -27,6 +27,7 @@ import numpy as np
 from meaning_index import store_files as files
 from meaning_index import store_swap as swapping
 from meaning_index.errors import IndexBusyError, StoreError
+from meaning_index.recipe import DEFAULT_NAME
 from meaning_index.shapes import IndexMeta, IndexStatus, Segment
 from meaning_index.store_files import FORMAT_VERSION, META_FILE, SEGMENTS_FILE, VECTORS_FILE
 from meaning_index.workfile import WorkFile
@@ -152,11 +153,17 @@ class IndexStore:
         return self._now().astimezone(UTC).isoformat(timespec="seconds")
 
     def replace(
-        self, model: str, dimensions: int, segments: Sequence[Segment], rows: Iterable[np.ndarray]
+        self,
+        model: str,
+        dimensions: int,
+        segments: Sequence[Segment],
+        rows: Iterable[np.ndarray],
+        recipe: str = DEFAULT_NAME,
     ) -> IndexMeta:
         """Write a new index and swap it for the old one. Call it inside `building()`.
 
         `rows` gives the vectors in the order of `segments`, in chunks of any size.
+        `recipe` is the name of the recipe of the segments.
         """
         if self._lock is None:
             raise StoreError("the index is replaced only inside building()")
@@ -168,6 +175,7 @@ class IndexStore:
             built_at=self._stamp(),
             segments=len(segments),
             covered_until=max((segment.last_timestamp for segment in segments), default=None),
+            recipe=recipe,
         )
         staged = {name: self._folder / (name + swapping.NEW_ENDING) for name in swapping.SWAP_ORDER}
         try:

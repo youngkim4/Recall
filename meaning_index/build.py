@@ -25,6 +25,7 @@ from meaning_index.batching import DEFAULT_LIMITS, VECTOR_TYPE, BatchLimits, emb
 from meaning_index.errors import BuildCancelled, IndexFormatError, MeaningIndexError, SourceError, StoreError
 from meaning_index.model_facts import EmbedderFacts
 from meaning_index.ports import CountTokens, Embedder, MessageSource, Sleep
+from meaning_index.recipe import DEFAULT_RECIPE, Recipe, SegmentContext
 from meaning_index.segments import cut_segments, stored
 from meaning_index.shapes import BuildEstimate, BuildProgress, BuildResult, CutSegment, Segment
 from meaning_index.store import IndexStore, StoredIndex
@@ -38,6 +39,14 @@ TOKENS_PER_PRICE = 1_000_000
 
 ProgressCallback = Callable[[BuildProgress], None]
 _Check = Callable[[int, int], None]
+
+
+@dataclass(frozen=True)
+class _Cutting:
+    """How the segments are cut and written: the recipe, and the words of the context line."""
+
+    recipe: Recipe = DEFAULT_RECIPE
+    context: SegmentContext | None = None
 
 
 @dataclass(frozen=True)
@@ -83,9 +92,9 @@ def _conversations(source: MessageSource) -> list[str]:
         raise SourceError(f"the message source failed ({type(exc).__name__})") from None
 
 
-def _cuts(source: MessageSource, conversation_id: str) -> list[CutSegment]:
+def _cuts(source: MessageSource, conversation_id: str, cutting: _Cutting) -> list[CutSegment]:
     try:
-        return list(cut_segments(conversation_id, source.messages(conversation_id)))
+        return list(cut_segments(conversation_id, source.messages(conversation_id), cutting.recipe, cutting.context))
     except MeaningIndexError:
         raise
     except Exception as exc:  # noqa: BLE001 - what a source raises can hold the text of a message
@@ -99,6 +108,7 @@ def _read(
     known: Set[str],
     check: _Check,
     progress: ProgressCallback | None,
+    cutting: _Cutting,
 ) -> _Reading:
     conversations = _conversations(source)
     segments: list[Segment] = []
@@ -108,7 +118,7 @@ def _read(
     _tell(progress, "read", 0, len(conversations))
     for number, conversation_id in enumerate(conversations, start=1):
         check()
-        for cut in _cuts(source, conversation_id):
+        for cut in _cuts(source, conversation_id, cutting):
             if cut.segment_id in seen:  # a source that gives one message id two times
                 repeats += 1
                 continue
@@ -211,12 +221,17 @@ def build_index(
     count_tokens: CountTokens = default_count_tokens,
     sleep: Sleep = time.sleep,
     limits: BatchLimits = DEFAULT_LIMITS,
+    recipe: Recipe = DEFAULT_RECIPE,
+    context: SegmentContext | None = None,
 ) -> BuildResult:
     """Make the index hold the segments of the source, with the vectors of this embedder.
 
     `cancel` is a callable that returns a bool, or an object with `is_set()` or
     `cancelled`. It is looked at before each conversation, between two requests,
     and one time a second while the build waits for a rate limit.
+
+    `recipe` cuts the segments, and the meta file names it. `context` gives
+    the words of the context line when the recipe has `context`.
     """
     check = _checker(cancel)
     model, dimensions = embedder.model, embedder.dimensions
@@ -226,10 +241,10 @@ def build_index(
         work.repair()
         old_rows = _old_rows(old, dimensions)
         known = old_rows.keys() | work.hashes()
-        reading = _read(source, model, dimensions, known, check, progress)
+        reading = _read(source, model, dimensions, known, check, progress, _Cutting(recipe, context))
         tokens = _embed(embedder, reading.texts, work, count_tokens, limits, sleep, check, progress)
         rows = _rows(reading.segments, old, old_rows, work, dimensions, progress)
-        store.replace(model, dimensions, reading.segments, rows)
+        store.replace(model, dimensions, reading.segments, rows, recipe.name)
         work.clear()
     reused = sum(1 for segment in reading.segments if segment.content_hash in known)
     now = {segment.segment_id for segment in reading.segments}
@@ -253,21 +268,25 @@ def estimate_build(
     store: IndexStore,
     embedder_facts: EmbedderFacts,
     count_tokens: CountTokens = default_count_tokens,
+    *,
+    recipe: Recipe = DEFAULT_RECIPE,
+    context: SegmentContext | None = None,
 ) -> BuildEstimate:
-    """What a build with this model would embed now, and what that costs. It writes nothing.
+    """What a build with this model and this recipe would embed now, and what that costs. It writes nothing.
 
     A work file that can not be read is not taken for empty: the estimate then
     counts what the index does not hold, and says that it is an upper bound.
     """
     dimensions = embedder_facts.dimensions
-    known: Set[str] = _old_rows(_old_index(store), dimensions).keys()
+    old = _old_index(store)
+    known: Set[str] = _old_rows(old, dimensions).keys()
     upper_bound = False
     try:
         known = known | store.work_file(dimensions).hashes()
     except StoreError as exc:
         logger.warning("the work file can not be read (%s); the estimate is an upper bound", type(exc).__name__)
         upper_bound = True
-    reading = _read(source, embedder_facts.model, dimensions, known, _checker(None), None)
+    reading = _read(source, embedder_facts.model, dimensions, known, _checker(None), None, _Cutting(recipe, context))
     tokens = sum(count_tokens(text) for text in reading.texts.values())
     return BuildEstimate(
         segments=len(reading.segments),
@@ -275,4 +294,5 @@ def estimate_build(
         tokens=tokens,
         usd=tokens * embedder_facts.usd_per_mtok / TOKENS_PER_PRICE,
         upper_bound=upper_bound,
+        recipe_changed=old is not None and old.meta.recipe != recipe.name,
     )

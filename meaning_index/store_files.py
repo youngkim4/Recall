@@ -24,6 +24,7 @@ from urllib.parse import quote
 import numpy as np
 
 from meaning_index.errors import IndexFormatError, StoreError
+from meaning_index.recipe import DEFAULT_NAME
 from meaning_index.shapes import IndexMeta, Segment
 
 FORMAT_VERSION = 1
@@ -119,8 +120,10 @@ def all_finite(rows: np.ndarray) -> bool:
 
 
 def write_meta(path: Path, meta: IndexMeta) -> None:
+    """The meta file. The default recipe is not written: the file is then the one of an older build."""
+    facts = {key: value for key, value in asdict(meta).items() if key != "recipe" or value != DEFAULT_NAME}
     with os.fdopen(private_file(path), "w", encoding="utf-8") as handle:
-        json.dump(asdict(meta), handle, indent=2)
+        json.dump(facts, handle, indent=2)
         handle.flush()
         os.fsync(handle.fileno())
 
@@ -191,7 +194,10 @@ def read_meta(path: Path) -> IndexMeta | None:
     fits = isinstance(raw, dict) and all(
         isinstance(raw.get(key), kinds) and not isinstance(raw.get(key), bool) for key, kinds in _META_TYPES.items()
     )
-    return IndexMeta(**{key: raw[key] for key in _META_TYPES}) if fits else None
+    recipe = raw.get("recipe", DEFAULT_NAME) if isinstance(raw, dict) else None
+    if not fits or not isinstance(recipe, str) or not recipe:
+        return None
+    return IndexMeta(**{key: raw[key] for key in _META_TYPES}, recipe=recipe)
 
 
 def read_segments(path: Path, *, rows: bool) -> SegmentsFile | None:

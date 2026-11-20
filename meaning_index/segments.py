@@ -8,17 +8,26 @@ and no handle is added.
 
 A change to a rule here changes the ids and the content hashes: the next build
 then embeds every segment again.
+
+A recipe (`recipe.py`) can turn on three switches: a context line, an overlap
+with the segment before, and a gap from the rhythm of the conversation. With
+the default recipe the segments are the ones above, byte for byte. The
+context line holds the words that the caller gives: this package adds no name
+and no handle of its own. With overlap, the carried messages are part of the
+segment: its id, its first message and its count hold them, so a hit reads
+back what was embedded.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import datetime, timedelta
 
 from meaning_index.errors import SourceError
 from meaning_index.ports import SourceMessage
+from meaning_index.recipe import DEFAULT_RECIPE, OVERLAP_MESSAGES, Recipe, SegmentContext, adaptive_gap, context_line
 from meaning_index.shapes import CutSegment, Segment
 
 GAP_MINUTES = 120
@@ -32,6 +41,7 @@ STAMP_LENGTH = 19
 
 _GAP = timedelta(minutes=GAP_MINUTES)
 _Open = tuple[str, str, str]  # (message id, timestamp, line)
+_Head = Callable[[str], str]  # the timestamp of the first message -> the context line
 
 
 def _digest(parts: Sequence[object]) -> str:
@@ -81,11 +91,12 @@ def _line(message: SourceMessage) -> str:
     return f"{label}: {flat}"[:LINE_CHARS]
 
 
-def _close(conversation_id: str, held: Sequence[_Open]) -> CutSegment:
+def _close(conversation_id: str, held: Sequence[_Open], head: str | None) -> CutSegment:
     ids = [message_id for message_id, _, _ in held]
     stamps = [stamp for _, stamp, _ in held]
     first_stamp, last_stamp = min(stamps), max(stamps)  # a source can give a time that goes back
-    text = "\n".join([first_stamp[:DAY_LENGTH], *(line for _, _, line in held)])
+    lines = [first_stamp[:DAY_LENGTH], *(line for _, _, line in held)]
+    text = "\n".join(lines if head is None else [head, *lines])
     return CutSegment(
         segment_id=segment_id(conversation_id, ids),
         conversation_id=conversation_id,
@@ -98,27 +109,63 @@ def _close(conversation_id: str, held: Sequence[_Open]) -> CutSegment:
     )
 
 
-def cut_segments(conversation_id: str, messages: Iterable[SourceMessage]) -> Iterator[CutSegment]:
+def _header(recipe: Recipe, conversation_id: str, context: SegmentContext | None) -> _Head | None:
+    """The maker of the context line, or None when the recipe has no context."""
+    if not recipe.context:
+        return None
+    return lambda first: context_line(first, context(conversation_id, first) if context is not None else "")
+
+
+def _rhythm(messages: Sequence[SourceMessage]) -> timedelta:
+    """The adaptive gap of the messages that are in a segment."""
+    return adaptive_gap([_moment(message["timestamp"]) for message in messages if _line(message)], _GAP)
+
+
+def cut_segments(
+    conversation_id: str,
+    messages: Iterable[SourceMessage],
+    recipe: Recipe = DEFAULT_RECIPE,
+    context: SegmentContext | None = None,
+) -> Iterator[CutSegment]:
     """The segments of one conversation, oldest first. `messages` are oldest first.
 
     A message whose text is empty or only white space is in no segment.
+    `context` gives the words of the context line; it is asked one time for
+    each segment, and only when the recipe has `context`.
+
+    MAX_MESSAGES counts the messages of the segment itself, not the carried
+    ones. MAX_CHARS counts the whole text: the context line and the carried
+    lines take room from the messages. So no text is longer than MAX_CHARS +
+    LINE_CHARS, with any recipe.
     """
-    held: list[_Open] = []
-    size = 0
+    read: Iterable[SourceMessage] = messages
+    gap = _GAP
+    if recipe.adaptive:
+        listed = list(messages)
+        read, gap = listed, _rhythm(listed)
+    header = _header(recipe, conversation_id, context)
+    held: list[_Open] = []  # the carried messages, then the messages of the segment
+    own = size = 0
+    head: str | None = None
     last: datetime | None = None
-    for message in messages:
+    for message in read:
         line = _line(message)
         if not line:
             continue
         moment = _moment(message["timestamp"])
-        full = len(held) >= MAX_MESSAGES or size >= MAX_CHARS
-        if held and (full or (last is not None and moment - last > _GAP)):
-            yield _close(conversation_id, held)
-            held, size = [], 0
-        if not held:
-            size = DAY_LENGTH
-        held = [*held, (str(message["id"]), message["timestamp"], line)]
+        opening: _Open = (str(message["id"]), message["timestamp"], line)
+        full = own >= MAX_MESSAGES or size >= MAX_CHARS
+        gapped = last is not None and moment - last > gap
+        if own and (full or gapped):
+            yield _close(conversation_id, held, head)
+            carried = held[len(held) - own :][-OVERLAP_MESSAGES:] if recipe.overlap and not gapped else []
+            held, own = carried, 0
+        if not own:
+            head = None if header is None else header(min(stamp for _, stamp, _ in (*held, opening)))
+            size = DAY_LENGTH + sum(1 + len(text) for _, _, text in held) + (0 if head is None else 1 + len(head))
+        held = [*held, opening]
+        own += 1
         size += 1 + len(line)
         last = moment
-    if held:
-        yield _close(conversation_id, held)
+    if own:
+        yield _close(conversation_id, held, head)

@@ -41,7 +41,7 @@ FAKE_FACTS = EmbedderFacts(
     model="fake-embedding-1", dimensions=64, usd_per_mtok=0.13, max_input_tokens=8192, tokenizer_family="words"
 )
 STATUS_KEYS = {"state", "segments", "model", "dimensions", "builtAt", "coveredUntil"}
-ESTIMATE_KEYS = {"segments", "newSegments", "staleSegments", "tokens", "estimatedCost", "upperBound"}
+ESTIMATE_KEYS = {"segments", "newSegments", "staleSegments", "tokens", "estimatedCost", "upperBound", "recipeChanged"}
 BUILD_KEYS = {"segments", "embedded", "reused", "removed", "tokens"}
 IMPORTS = ["setup_import", "export", "bridge"]
 INDEX_IS_BUILT = "The index for the search by meaning is being built. Wait until it ends."

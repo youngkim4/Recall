@@ -15,6 +15,9 @@ Rules:
 - The text of a message is read as a report reads it: each handle that is not
   saved is masked (`reports._Masked`). So no such handle goes to the provider.
 - A status and an estimate make no request and no file. They need no key.
+- The recipe of the segments is read one time, from RECALL_SEGMENTS
+  (`meaning_recipe`). An index of another recipe is `behind`: the estimate
+  says `recipeChanged`, and the next build writes the new recipe.
 - A build asks for the key when the first text must be embedded. A build with
   nothing new needs no key.
 - Each failure is a `MeaningFailure`: a code and one plain sentence. What the
@@ -38,7 +41,6 @@ from archive import ArchiveError as ArchiveFault
 from meaning_index import (
     ArchiveSource,
     BatchLimits,
-    BuildProgress,
     Embedder,
     EmbedderFacts,
     IndexStatus,
@@ -52,11 +54,15 @@ from meaning_index import (
     embedder_facts,
     estimate_build,
 )
-from recall_services import keys, reports
+from meaning_index.recipe import Recipe, SegmentContext
+from recall_services import keys, meaning_recipe, reports
 from recall_services.meaning_failures import MeaningFailure as MeaningFailure
 from recall_services.meaning_failures import NoKey as NoKey
 from recall_services.meaning_failures import failed
 from recall_services.meaning_failures import failure_of as failure_of
+from recall_services.meaning_notes import MemoryNotes
+from recall_services.meaning_progress import STEPS as STEPS
+from recall_services.meaning_progress import Teller, count
 from recall_services.names import Names
 from report_engine import ReportEngineError
 
@@ -69,13 +75,9 @@ BUILD_TIMEOUT_SECONDS = 120.0
 # at most this many segments, or at most this share of the segments, whichever is more.
 REFRESH_SEGMENTS = 2_000
 REFRESH_SHARE = 0.10
-# the three steps of a build, as a job shows them
-STEPS = {
-    "read": (1, "Reading your conversations"),
-    "embed": (2, "Reading the meaning of your messages"),
-    "write": (3, "Saving the index"),
-}
 _FAULTS = (MeaningIndexError, ArchiveFault, ReportEngineError)
+# the recipe of the segments of this process: RECALL_SEGMENTS, read one time
+RECIPE: Recipe = meaning_recipe.from_env(os.environ)
 
 EmbedderFactory = Callable[[str, int], Embedder]
 Listener = Callable[[dict[str, Any]], None]
@@ -137,15 +139,27 @@ class _Masked:
     The rows come through `reports._Masked`, so a handle that is not saved is
     masked by the same function in a report, in a digest and here. A message
     with no text is in no segment. With `note_ids`, `segment_ids` holds the id
-    of each segment that the messages read so far make.
+    of each segment that the messages read so far make, cut by `recipe` with
+    the words of `context`, as the build cuts them.
     """
 
-    def __init__(self, archive: Archive, names: Names, since: str | None = None, *, note_ids: bool = False) -> None:
+    def __init__(
+        self,
+        archive: Archive,
+        names: Names,
+        since: str | None = None,
+        *,
+        note_ids: bool = False,
+        recipe: Recipe | None = None,
+        context: SegmentContext | None = None,
+    ) -> None:
         redact = names.chat_labeler(archive.conversations()).redact
         self._archive = archive
         self._rows = reports._Masked(archive, redact)
         self._since = since
         self._note_ids = note_ids
+        self._recipe = recipe or Recipe()
+        self._context = context
         self.segment_ids: set[str] = set()
 
     def conversation_ids(self) -> Sequence[str]:
@@ -165,7 +179,8 @@ class _Masked:
             if self._note_ids:
                 read.append(message)
             yield message
-        self.segment_ids.update(cut.segment_id for cut in cut_segments(conversation_id, read))
+        cuts = cut_segments(conversation_id, read, self._recipe, self._context)
+        self.segment_ids.update(cut.segment_id for cut in cuts)
 
 
 def _held(store: IndexStore) -> IndexStatus:
@@ -181,6 +196,18 @@ def _held(store: IndexStore) -> IndexStatus:
     except StoreError as error:  # a newer format is one of these
         logger.warning("the index can not be read (%s); it counts as none", type(error).__name__)
         return IndexStatus(state="none")
+
+
+def _on_disk(store: IndexStore, held: IndexStatus) -> str | None:
+    """The name of the recipe of the index on disk, or None when there is no index."""
+    if held.state != "ready":
+        return None
+    try:
+        meta = store.meta()
+    except StoreError as error:
+        logger.warning("the index can not be read (%s); its recipe is not known", type(error).__name__)
+        return None
+    return None if meta is None else meta.recipe
 
 
 def _shown(held: IndexStatus, state: str) -> dict[str, Any]:
@@ -215,16 +242,23 @@ def built(archive_file: str | os.PathLike[str], *, store: IndexStore | None = No
     return _held(store or index_store(archive_file)).state == "ready"
 
 
-def status(archive: Archive, names: Names, *, store: IndexStore | None = None) -> dict[str, Any]:
+def status(
+    archive: Archive, names: Names, *, store: IndexStore | None = None, recipe: Recipe | None = None
+) -> dict[str, Any]:
     """`state`, `segments`, `model`, `dimensions`, `builtAt` and `coveredUntil` of the index.
 
     `state` is `none`, `ready` or `behind`. This is the quick look: `behind`
-    means a later message with text. `payload` also knows what the estimate
+    means a later message with text, or an index of another recipe than
+    `recipe` (RECIPE when None). `payload` also knows what the estimate
     found. Raises MeaningFailure (`archive_error`).
     """
-    held = _held(store or index_store(archive.path))
+    chosen = store or index_store(archive.path)
+    held = _held(chosen)
     if held.state != "ready":
         return _shown(held, held.state)
+    on_disk = _on_disk(chosen, held)
+    if on_disk != (recipe or RECIPE).name:
+        return _shown(held, "behind")
     try:
         behind = _later_text(archive, names, held.covered_until)
     except _FAULTS as error:
@@ -239,21 +273,34 @@ def estimate(
     store: IndexStore | None = None,
     facts: EmbedderFacts | None = None,
     count_tokens: CountTokens | None = None,
+    recipe: Recipe | None = None,
+    notes: MemoryNotes | None = None,
 ) -> dict[str, Any]:
     """What a build that starts now would do: `segments`, `newSegments`, `staleSegments`, `tokens`,
-    `estimatedCost` and `upperBound`.
+    `estimatedCost`, `upperBound` and `recipeChanged`.
 
     `newSegments` are embedded, and they cost. `staleSegments` are the
     segments whose id the store does not hold: a build writes them, and it
     pays only for those that are also new. `upperBound` is true when the
     vectors that a stopped build paid for could not be read: the build then
-    sends at most this much. It reads every conversation. It makes no request
-    and no file. Raises MeaningFailure.
+    sends at most this much. `recipeChanged` is true when the index was built
+    with another recipe than `recipe` (RECIPE when None): a build is due. With
+    `context`, `notes` says where the memory is read. It reads every
+    conversation. It makes no request and no file. Raises MeaningFailure.
     """
+    cutting = recipe or RECIPE
     try:
         chosen = store or index_store(archive.path)
-        source = _Masked(archive, names, note_ids=True)
-        found = estimate_build(source, chosen, facts or default_facts(), count_tokens or default_count_tokens)
+        context = meaning_recipe.context_for(cutting, archive, names, notes)
+        source = _Masked(archive, names, note_ids=True, recipe=cutting, context=context)
+        found = estimate_build(
+            source,
+            chosen,
+            facts or default_facts(),
+            count_tokens or default_count_tokens,
+            recipe=cutting,
+            context=context,
+        )
         stale = len(source.segment_ids - _stored_ids(chosen))
     except _FAULTS as error:
         raise failed(error, "the estimate of an index build") from None
@@ -264,6 +311,7 @@ def estimate(
         "tokens": found.tokens,
         "estimatedCost": found.usd,
         "upperBound": bool(found.upper_bound),
+        "recipeChanged": bool(getattr(found, "recipe_changed", False)),
     }
 
 
@@ -279,59 +327,21 @@ def small_enough(found: Mapping[str, Any]) -> bool:
 def payload(archive: Archive, names: Names, **more: Any) -> dict[str, Any]:
     """The answer of `GET /api/meaning`: `status`, `estimate`, `error` and `code`.
 
-    The state is `behind` also when a build would embed or write a segment.
-    When the status or the estimate fails, `estimate` is None, and `error` and
-    `code` say why. `more` goes to `estimate`; `store` goes to both.
+    The state is `behind` also when a build would embed or write a segment,
+    or when the recipe changed. When the status or the estimate fails,
+    `estimate` is None, and `error` and `code` say why. `more` goes to
+    `estimate`; `store` and `recipe` go to both.
     """
     store = more.get("store") or index_store(archive.path)
     try:
-        shown = status(archive, names, store=store)
+        shown = status(archive, names, store=store, recipe=more.get("recipe"))
         cost = estimate(archive, names, **{**more, "store": store})
     except MeaningFailure as failure:
         held = _held(store)
         return {"status": _shown(held, held.state), "estimate": None, "error": str(failure), "code": failure.code}
-    changes = bool(cost["newSegments"] or cost["staleSegments"])
+    changes = bool(cost["newSegments"] or cost["staleSegments"] or cost["recipeChanged"])
     state = "behind" if shown["state"] == "ready" and changes else shown["state"]
     return {"status": {**shown, "state": state}, "estimate": cost, "error": None, "code": None}
-
-
-class _Teller:
-    """Turns the steps of a build into updates for a listener. A listener that fails does not stop the build."""
-
-    def __init__(self, listener: Listener | None) -> None:
-        self._listener = listener
-        self._warned = False
-
-    def tell(self, update: dict[str, Any]) -> None:
-        if self._listener is None:
-            return
-        try:
-            self._listener(update)
-        except Exception as error:  # noqa: BLE001 - the build is worth more than its progress line
-            if not self._warned:
-                logger.warning("the progress listener of an index build failed (%s)", type(error).__name__)
-                self._warned = True
-
-    def step(self, event: BuildProgress) -> None:
-        number, label = STEPS[event.phase]
-        progress = {"step": number, "of": len(STEPS), "label": label, "done": event.done, "total": event.total}
-        update: dict[str, Any] = {"progress": progress}
-        if event.done == 0:
-            update["log"] = _started(event)
-        self.tell(update)
-
-
-def _count(number: int, word: str) -> str:
-    return f"{number:,} {word}{'' if number == 1 else 's'}"
-
-
-def _started(event: BuildProgress) -> str:
-    """The line of a step that starts. An exchange is a segment of the index."""
-    if event.phase == "read":
-        return f"Reading {_count(event.total, 'conversation')}"
-    if event.phase == "embed":
-        return f"Reading the meaning of {_count(event.total, 'exchange')}" if event.total else "No new exchange to read"
-    return f"Saving {_count(event.total, 'exchange')}"
 
 
 def build(
@@ -346,8 +356,13 @@ def build(
     count_tokens: CountTokens | None = None,
     sleep: Callable[[float], None] = time.sleep,
     limits: BatchLimits | None = None,
+    recipe: Recipe | None = None,
+    notes: MemoryNotes | None = None,
 ) -> dict[str, Any]:
     """Build the index, or bring it up to date. Gives `segments`, `embedded`, `reused`, `removed` and `tokens`.
+
+    The segments are cut by `recipe` (RECIPE when None), and the index names
+    it. With `context`, `notes` says where the memory is read.
 
     `cancel` is a callable that returns a bool, or a token with `cancelled`.
     `on_progress` gets `{"progress": {"step", "of", "label", "done", "total"}}`,
@@ -356,9 +371,11 @@ def build(
     Raises MeaningFailure when no index was written. The index is then as it
     was, and the vectors that were paid for are kept for the next build.
     """
-    teller = _Teller(on_progress)
+    teller = Teller(on_progress)
+    cutting = recipe or RECIPE
     try:
         chosen = facts or default_facts()
+        context = meaning_recipe.context_for(cutting, archive, names, notes)
         found = build_index(
             _Masked(archive, names),
             _OnDemand(embedder_factory or embedder_for, chosen),
@@ -368,12 +385,14 @@ def build(
             count_tokens=count_tokens or default_count_tokens,
             sleep=sleep,
             limits=limits or BatchLimits(),
+            recipe=cutting,
+            context=context,
         )
     except _FAULTS as error:
         raise failed(error, "an index build") from None
     teller.tell(
         {
-            "log": f"The index holds {_count(found.segments, 'exchange')}: {found.embedded:,} new, "
+            "log": f"The index holds {count(found.segments, 'exchange')}: {found.embedded:,} new, "
             f"{found.reused:,} kept, {found.removed:,} removed."
         }
     )
