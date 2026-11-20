@@ -13,8 +13,6 @@ type MomentsProps = {
   onSelectContact: (contact: Contact) => void
   // opens the day a moment is of, at the message it quotes
   onOpenDay: (day: MomentOfDay) => void
-  onReplayFirstWords: () => void
-  onMakeCard: () => void
 }
 
 export type { MomentOfDay } from '../../lib/momentOpen'
@@ -27,16 +25,12 @@ const CARDS_AT_FIRST = 9
 // What is worth opening today, as one shelf of cards, after Spotify's home:
 // what was said on this day in earlier years, then the anniversaries that
 // are near, three cards a row. Each card is who, when, what was said, and
-// how much was said that day; it opens the day.
-export function Moments({
-  memories,
-  onRetry,
-  contacts,
-  onSelectContact,
-  onOpenDay,
-  onReplayFirstWords,
-  onMakeCard,
-}: MomentsProps) {
+// how much was said that day; it opens the day. Replaying first words and
+// making a card are in the row of actions at the top of the page. The shelf
+// has no heading on the page: each card says when it is from, and a heading
+// over the cards pushed them below the card beside them (it stays for a
+// screen reader).
+export function Moments({ memories, onRetry, contacts, onSelectContact, onOpenDay }: MomentsProps) {
   const moments = useMemo(() => (memories ? shelfOf(memories) : []), [memories])
   const loaded = useMemo(() => new Map(contacts.map((contact) => [contact.chat_id, contact])), [contacts])
   const list = useRef<HTMLUListElement>(null)
@@ -66,18 +60,10 @@ export function Moments({
   }, [answered, count])
 
   return (
-    <section className="section" aria-labelledby="moments-title">
-      <div className="section-head">
-        <h2 id="moments-title">Moments</h2>
-        <span className="section-links">
-          <button type="button" className="link" onClick={onReplayFirstWords}>
-            Replay first words
-          </button>
-          <button type="button" className="link" onClick={onMakeCard}>
-            Make a card
-          </button>
-        </span>
-      </div>
+    <section className="section overview-moments" aria-labelledby="moments-title">
+      <h2 id="moments-title" className="sr-only">
+        Moments
+      </h2>
       {moments.length ? (
         <ul ref={list} className="moment-shelf" role="list">
           {moments.map((moment) => (
@@ -152,14 +138,7 @@ export function MomentsSkeleton() {
   const [shape] = useState(() => readShape(SHAPE))
   const cards = shape ? shape.rows : CARDS_AT_FIRST
   return (
-    <section className="section" aria-hidden="true">
-      <div className="section-head">
-        <h2>Moments</h2>
-        <span className="section-links">
-          <span className="skeleton">Replay first words</span>
-          <span className="skeleton">Make a card</span>
-        </span>
-      </div>
+    <section className="section overview-moments" aria-hidden="true">
       {cards ? (
         <ul className="moment-shelf" role="list" style={shape ? { minHeight: shape.height } : undefined}>
           {Array.from({ length: cards }, (_, card) => (

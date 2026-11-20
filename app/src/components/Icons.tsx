@@ -167,6 +167,16 @@ export function SidebarIcon({ className }: IconProps) {
   )
 }
 
+// a share card: a rounded card with a line of words and a smaller one
+export function CardIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <rect x="2.25" y="3.25" width="11.5" height="9.5" rx="2" />
+      <path d="M5 7.25h6M5 9.75h3.5" />
+    </Line>
+  )
+}
+
 export function PlusIcon({ className }: IconProps) {
   return (
     <Line className={className}>

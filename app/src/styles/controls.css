@@ -653,4 +653,60 @@
     line-height: var(--lh-small);
     color: var(--bad);
   }
+
+  /* ---- segmented: a few choices side by side in one well, 28px tall. The
+     options share the width evenly, so the raised fill under the chosen one
+     slides by one width at a time, as the rail's fill does by one row. ---- */
+  .segmented {
+    position: relative;
+    isolation: isolate;
+    display: inline-grid;
+    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-flow: column;
+    padding: 2px;
+    border-radius: var(--r-md);
+    background: var(--fill-hover);
+  }
+
+  .segmented::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    top: 2px;
+    bottom: 2px;
+    left: 2px;
+    width: calc((100% - 4px) / var(--count, 1));
+    border-radius: var(--r-sm);
+    background: var(--bg-raised);
+    box-shadow: var(--shadow-raised);
+    translate: calc(var(--at, 0) * 100%) 0;
+    transition: translate var(--dur-long) var(--ease-out);
+  }
+
+  .segmented-option {
+    height: 1.5rem;
+    padding: 0 var(--s-3);
+    border-radius: var(--r-sm);
+    font-size: var(--t-small);
+    line-height: 1.5rem;
+    white-space: nowrap;
+    color: var(--text-2);
+    transition: color var(--dur-micro) ease;
+  }
+
+  .segmented-option[aria-checked='true'] {
+    color: var(--text);
+    font-weight: var(--w-medium);
+  }
+
+  .segmented-option:focus-visible {
+    outline: 2px solid var(--you-ink);
+    outline-offset: 0;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .segmented-option[aria-checked='false']:hover {
+      color: var(--text);
+    }
+  }
 }

@@ -16,10 +16,10 @@ type GoneQuietProps = {
   onSelectContact: (contact: Contact) => void
 }
 
-// The conversations that have gone quiet, beside the people of lately: who,
-// since when, and how much was said before. Each opens on its last day. It
-// shows as many as reach the foot of the window (overviewFit.ts); "All" opens
-// the rest in place, where there are more than fit.
+// The conversations that have gone quiet, a card under Lately and as wide as
+// it: who, since when, and how much was said before. Each opens on its last
+// day. It shows as many as its card holds beside the moments (overviewFit.ts);
+// "All" opens the rest in place, where there are more than fit.
 export function GoneQuiet({ memories, failed, contacts, onOpenDay, onSelectContact }: GoneQuietProps) {
   const [all, setAll] = useState(false)
   const [box, fit] = useRowsThatFit(listRowHeight, LIST_FEWEST, LIST_FEWEST)
@@ -30,7 +30,7 @@ export function GoneQuiet({ memories, failed, contacts, onOpenDay, onSelectConta
   const loaded = useMemo(() => new Map(contacts.map((contact) => [contact.chat_id, contact])), [contacts])
   const shown = quiet ?? Array.from({ length: fit }, () => null)
   return (
-    <section className="section" aria-labelledby="quiet-title">
+    <section className="section card overview-quiet" aria-labelledby="quiet-title">
       <div className="section-head">
         <h2 id="quiet-title">Gone quiet</h2>
         {more || all ? (

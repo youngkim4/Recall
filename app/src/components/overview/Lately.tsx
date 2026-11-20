@@ -53,17 +53,17 @@ function Change({ change }: { change: number | null }) {
   )
 }
 
-// Who the messages have been with lately, after Spotify's "Recently played"
-// row: the people of the archive's last thirty days, the busiest first, each
+// Who the messages have been with lately, as the card of accounts beside
+// Mercury's balance: the people of the archive's last thirty days, the busiest first, each
 // with their last eight weeks as a small line, the count, and how it moved
 // against the thirty days before, in the theme's green or red. The way to
-// Insights is in its heading. It shows as many people as reach the foot of
-// the window (overviewFit.ts).
+// Insights is in its heading. It shows as many people as fit
+// its card, which is as tall as the messages card beside it (overviewFit.ts).
 export function Lately({ rows, messagesPath, lastDay, onOpen, onOpenInsights }: LatelyProps) {
   const [box, fit] = useRowsThatFit(listRowHeight, LIST_FEWEST, LIST_FEWEST)
   const shown = rows ? rows.slice(0, fit) : Array.from({ length: fit }, () => null)
   return (
-    <section className="section" aria-labelledby="lately-title">
+    <section className="section card overview-lately" aria-labelledby="lately-title">
       <div className="section-head">
         <h2 id="lately-title">Lately</h2>
         <span className="meta">Last {LATELY_DAYS} days</span>

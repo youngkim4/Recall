@@ -1,10 +1,9 @@
-/* Overview, after Spotify's home: the archive in one line set large,
-   a shelf of moments, then two lists side by side, Lately and Gone quiet.
-   The page is open: its parts stand on the page's own ground, set apart by
-   space and by hairlines. Only the moments are cards. Every distance is a
-   step of the scale: 16px to the top of the window, 32px between blocks,
-   8px from a heading to what it heads, 12px bands in a list, 40px between
-   the two lists. */
+/* Overview, after Mercury's home: a short greeting and a row of actions;
+   two cards of one height, the messages and their line (two thirds) and
+   Lately (one third); the shelf of moments; then Gone quiet to the foot of
+   the window. Every distance is a step of the scale: 16px to the top of the
+   window, 32px between blocks, 16px from the greeting to its actions, 12px
+   between cards. */
 
 @layer views {
   /* ---- lead: what an empty archive says, set large ---- */
@@ -15,46 +14,114 @@
     color: var(--text);
   }
 
-  /* ---- masthead: the front page of the app, after a newspaper's. The
-     archive in one line, as large as the workspace allows (36px narrow, 52px
-     wide, set by the width of the workspace so it never runs past it), then
-     12px down a double rule the width of the page (3px, 2px clear, 1px), then
-     8px down the dateline: today's date at the left, through which day the
-     archive is imported at the right. Its words stand 16px from the top of
-     the window, as the first words of every view do, and the moments are
-     32px under it. ---- */
-  /* the size here holds until the line is measured; useFitText then sets it
-     so the line runs from edge to edge (24px to 64px), with no room left at
-     its end. A wrapped line left a gap at the right, and the user saw it. */
-  .overview-title {
-    font-size: clamp(2.25rem, 3.4cqi + 0.5rem, 3.25rem);
-    line-height: 1.15;
-    font-weight: var(--w-regular);
-    letter-spacing: -0.025em;
+  /* ---- head: the greeting in the view's opening size, the actions 16px
+     under it. Its words stand 16px from the top of the window, as the first
+     words of every view do. ---- */
+  .overview-greeting {
+    font-family: var(--font-display);
+    font-size: var(--t-display);
+    line-height: var(--lh-display);
+    font-weight: var(--w-medium);
+    letter-spacing: -0.02em;
     color: var(--text);
-    text-wrap: balance;
   }
 
-  .overview-rule {
-    height: 6px;
-    margin-top: var(--s-3);
-    border-top: 3px solid var(--text);
-    border-bottom: 1px solid var(--text);
-  }
-
-  .overview-dateline {
+  /* the row of actions stands as far under the greeting as the cards stand
+     under it: the user saw 16px over it against 32px under it */
+  .overview-actions {
     display: flex;
     flex-wrap: wrap;
-    justify-content: space-between;
-    gap: var(--s-1) var(--s-4);
-    margin-top: var(--s-2);
-    font-size: var(--t-small);
-    line-height: var(--lh-small);
+    gap: var(--s-2);
+    margin-top: var(--s-6);
+  }
+
+  /* ---- the grid: two columns with room, two thirds and one third. Every
+     part is a card and every card is 12px from the next, across and down,
+     after Mercury's home: the user saw 60px between the rows against 12px
+     between the columns. The left column holds the messages card and the
+     moments, the right one Lately and Gone quiet, two cards of one width.
+     Without room the four follow each other. A card keeps 16px over and
+     under what it holds and 20px beside it. ---- */
+  .overview > * + .overview-grid {
+    margin-top: var(--s-6);
+  }
+
+  .overview-grid {
+    display: grid;
+    gap: var(--s-3);
+  }
+
+  .overview-grid > * {
+    min-width: 0;
+  }
+
+  @container workspace (min-width: 64rem) {
+    .overview-grid {
+      grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
+    }
+
+    /* two thirds of the page holds two moments a row, each as wide as a third */
+    .overview-grid .moment-shelf {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  .overview-grid > .card {
+    padding: var(--s-4) var(--s-5);
+  }
+
+  /* the rows of the two lists answer to their card, not to the window; the
+     card's edge closes the last row */
+  .overview-lately,
+  .overview-quiet {
+    container: half / inline-size;
+  }
+
+  :is(.overview-lately, .overview-quiet) .overview-list > li:last-child {
+    border-bottom: 0;
+  }
+
+  /* the figure is the largest type of the page, 32px; what it counts
+     follows it on its baseline, in the second ink */
+  .overview-figure {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-1) var(--s-3);
+    margin-bottom: var(--s-4);
     color: var(--text-2);
   }
 
-  .overview-imported {
-    color: var(--text-3);
+  .overview-figure > b {
+    font-family: var(--font-display);
+    font-size: 2rem;
+    line-height: 2.5rem;
+    font-weight: var(--w-medium);
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+
+  .overview-messages {
+    container: messages / inline-size;
+  }
+
+  .overview-messages .lines-plot {
+    height: 9rem;
+  }
+
+  /* a narrow card has room for every other date under its line: the first
+     date of a month, set at the edge, ran into the next one at 400px */
+  @container messages (max-width: 30rem) {
+    .overview-messages .columns-axis > span:nth-child(even) {
+      display: none;
+    }
+  }
+
+  /* holds the room of the chart while its first answer loads */
+  .overview-plot-waiting {
+    height: calc(var(--lh-body) + var(--s-2) + 9rem + 1px + var(--s-2) + var(--lh-small));
   }
 
   /* ---- moments: a shelf of cards, three a row, 12px apart. In a card: who
@@ -153,38 +220,14 @@
     color: var(--text-3);
   }
 
-  /* ---- the two lists: 32px under the moments. In a narrow workspace they
-     follow each other, 32px apart; with room they stand side by side, 40px
-     apart. Each is closed with a hairline, so two lists of one length end
-     on one line. ---- */
-  .overview > * + .overview-row,
-  .overview-row > * + * {
-    margin-top: var(--s-8);
-  }
-
-  /* what is inside a list answers to the list, not to the window */
-  .overview-row > * {
-    min-width: 0;
-    container: half / inline-size;
-  }
-
   @container workspace (min-width: 64rem) {
-    .overview-row {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      column-gap: var(--s-10);
-    }
-
-    .overview-row > * + * {
-      margin-top: 0;
-    }
-
-    /* The page reaches the foot of the window, and so do the two lists: the
-       row of lists takes the height that is left, 16px short of the foot as
-       the first words are 16px from the top. Each list shows the rows its
-       box holds (useRowsThatFit reads --fit), never fewer than five, and the
-       rows share the box, so the last one ends where the box does. With more
-       than fit the page scrolls as before. */
+    /* The page reaches the foot of the window, and so does the grid's second
+       row, 16px short of the foot as the first words are 16px from the top.
+       Lately takes the height of the messages card beside it, and Gone quiet
+       the height of the moments or of what is left. Each list shows the rows its box holds (useRowsThatFit
+       reads --fit), never fewer than five, and the rows share the box, so the
+       last one ends where the box does. With more than fit the page scrolls
+       as before. */
     .page.overview {
       display: flex;
       flex-direction: column;
@@ -192,11 +235,12 @@
       padding-bottom: var(--s-4);
     }
 
-    .overview > .overview-row {
+    .overview > .overview-grid {
       flex: 1 0 auto;
     }
 
-    .overview-row > .section {
+    .overview-lately,
+    .overview-quiet {
       display: flex;
       flex-direction: column;
       min-height: 0;
@@ -320,8 +364,9 @@
     color: var(--fall);
   }
 
-  /* a list too narrow for every column keeps the name and the first figure */
-  @container half (max-width: 26rem) {
+  /* a list too narrow for every column keeps the name and the first figure:
+     under 30rem "Quiet since" and its date had less room than their words */
+  @container half (max-width: 30rem) {
     .lately-row {
       grid-template-columns: minmax(0, 1fr) 4rem 3.5rem;
     }

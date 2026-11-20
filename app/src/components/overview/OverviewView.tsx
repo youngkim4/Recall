@@ -9,10 +9,11 @@ import { useLoad } from '../../lib/useLoad'
 import type { ArchiveSummary, Contact, Defaults, ViewKey } from '../../types'
 import { CardStudio } from '../cards/CardStudio'
 import { DaySheet } from '../ui/DaySheet'
-import { ArchiveHead, ArchiveHeadSkeleton } from './ArchiveHead'
 import { GoneQuiet } from './GoneQuiet'
 import { Lately } from './Lately'
+import { MessagesCard } from './MessagesCard'
 import { Moments, MomentsSkeleton, type MomentOfDay } from './Moments'
+import { OverviewHead, OverviewHeadSkeleton } from './OverviewHead'
 
 type OverviewViewProps = {
   defaults: Defaults | null
@@ -49,13 +50,13 @@ function useLately(messagesPath: string, lastDay: string) {
   }, [now, before])
 }
 
-// After Spotify's home: what the archive holds, in one line set large; what is
-// worth opening today, as a shelf of cards; then two lists side by side, who
-// the messages have been with lately and who has gone quiet. Counting the
-// archive every other way is Insights' work. The page is open: 32px between
-// its blocks, hairlines between the rows of a list, and no card but the
-// moments. The two lists end on one line; in a narrow window they follow
-// each other.
+// After Mercury's home: a short greeting and the things to do from here,
+// then a grid of two columns. On the left, two thirds of the width: how many
+// messages with their line, and under it the moments worth opening today,
+// two cards a row. On the right, one third: who the messages have been with
+// lately, and under it who has gone quiet, each a card of one width. The
+// second row reaches the foot of the window. Counting the archive every other
+// way is Insights' work. In a narrow window the four follow each other.
 export function OverviewView({
   defaults,
   archive,
@@ -88,7 +89,7 @@ export function OverviewView({
           <p className="sr-only" role="status">
             Reading your archive
           </p>
-          <ArchiveHeadSkeleton />
+          <OverviewHeadSkeleton />
           <MomentsSkeleton />
         </div>
       </div>
@@ -113,23 +114,15 @@ export function OverviewView({
   return (
     <div className="view">
       <div className="page wide overview arrive-each">
-        <ArchiveHead archive={archive} />
+        <OverviewHead
+          onAsk={() => onViewChange('ask')}
+          onSearch={() => onViewChange('explore')}
+          onReplayFirstWords={onReplayFirstWords}
+          onMakeCard={() => setShowCardStudio(true)}
+        />
 
-        {moments.state === 'loading' ? (
-          <MomentsSkeleton />
-        ) : (
-          <Moments
-            memories={memories}
-            onRetry={retryMoments}
-            contacts={contacts}
-            onSelectContact={onSelectContact}
-            onOpenDay={setOpenDay}
-            onReplayFirstWords={onReplayFirstWords}
-            onMakeCard={() => setShowCardStudio(true)}
-          />
-        )}
-
-        <div className="overview-row">
+        <div className="overview-grid">
+          <MessagesCard archive={archive} messagesPath={messagesPath} />
           <Lately
             rows={lately}
             messagesPath={messagesPath}
@@ -137,6 +130,17 @@ export function OverviewView({
             onOpen={openPerson}
             onOpenInsights={() => onViewChange('insights')}
           />
+          {moments.state === 'loading' ? (
+            <MomentsSkeleton />
+          ) : (
+            <Moments
+              memories={memories}
+              onRetry={retryMoments}
+              contacts={contacts}
+              onSelectContact={onSelectContact}
+              onOpenDay={setOpenDay}
+            />
+          )}
           <GoneQuiet
             memories={memories}
             failed={moments.state === 'failed'}
