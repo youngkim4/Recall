@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import partial
 from typing import Any
@@ -26,15 +26,15 @@ from chat_engine.ports import LLM
 from evals.judge import Judge, JudgeCase, Verdict
 from evals.question_types import Question
 from evals.recorder import CallRecord, Recorder, price, references
-from evals.score import Metrics, citation_precision, citation_recall, cited_guids
+from evals.score import Metrics, citation_scores, cited_guids
 from evals.world.people import NOW, unsaved_handles
 from recall_services import chat
 from recall_services.models import ChatModelConfig
 from recall_services.names import Names
 
 Factory = Callable[[ChatModelConfig], LLM]
-# the engine may use tools in this many calls; one call more is forced to answer
-
+# the start of the error of a question whose answer came and whose judge failed
+JUDGE_ERROR = "judge: "
 
 @dataclass(frozen=True)
 class Settings:
@@ -65,6 +65,7 @@ class Result:
     cited: tuple[str, ...]
     verdict: Verdict
     metrics: Metrics
+    round: int = 0  # with --repeat, which pass over the questions this is, from 0
 
 
 def ask(
@@ -109,17 +110,18 @@ def _leaked(answer: str) -> bool:
     return MaskingLabeler(known_handles=unsaved_handles()).redact(answer) != answer
 
 
-def _metrics(model: str, turns: tuple[Turn, ...], cited: tuple[str, ...], gold: Sequence[str], verdict: Verdict) -> Metrics:
+def _metrics(model: str, turns: tuple[Turn, ...], cited: tuple[str, ...], question: Question, verdict: Verdict) -> Metrics:
     last = turns[-1]
+    recall, precision = citation_scores(question.kind, question.gold_guids, cited)
     payload = last.payload or {}
     calls = [call for turn in turns for call in turn.calls]
     raw = last.calls[-1].text if last.calls else ""
-    error = last.error_code or (f"judge: {verdict.error}" if verdict.error else "")
+    error = last.error_code or (f"{JUDGE_ERROR}{verdict.error}" if verdict.error else "")
     return Metrics(
         correct=verdict.correct,
         score=verdict.score,
-        citation_recall=citation_recall(gold, cited),
-        citation_precision=citation_precision(gold, cited),
+        citation_recall=recall,
+        citation_precision=precision,
         citations=len(payload.get("citations") or []),
         unverified_quotes=len(payload.get("unverifiedQuotes") or []),
         invalid_references=max(0, len(references(raw)) - len(payload.get("citations") or [])),
@@ -158,7 +160,7 @@ def run_question(
         case = JudgeCase(question.text, question.kind, question.gold, question.key_facts, turn.answer, question.prior)
         verdict = judge.judge(case)
     prior_answer = turns[0].answer if question.prior else ""
-    metrics = _metrics(settings.model, turns, cited, question.gold_guids, verdict)
+    metrics = _metrics(settings.model, turns, cited, question, verdict)
     return Result(question, turn.answer, prior_answer, cited, verdict, metrics)
 
 
@@ -171,11 +173,17 @@ def run_all(
     factory: Factory,
     judge: Judge,
     on_result: Callable[[Result], None] | None = None,
+    repeat: int = 1,
 ) -> tuple[Result, ...]:
+    """Ask every question, `repeat` times over. Each result says its round."""
+    if repeat < 1:
+        raise ValueError("repeat must be at least 1")
     results: list[Result] = []
-    for question in questions:
-        result = run_question(question, archive=archive, names=names, settings=settings, factory=factory, judge=judge)
-        if on_result is not None:
-            on_result(result)
-        results.append(result)
+    for round_number in range(repeat):
+        for question in questions:
+            asked = run_question(question, archive=archive, names=names, settings=settings, factory=factory, judge=judge)
+            result = replace(asked, round=round_number)
+            if on_result is not None:
+                on_result(result)
+            results.append(result)
     return tuple(results)

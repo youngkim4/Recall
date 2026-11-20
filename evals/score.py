@@ -4,7 +4,9 @@ Citation recall: the share of the gold messages that the answer cites. An
 answer is not asked to cite more than `CITE_TARGET` messages, so the share
 is hits / min(gold, CITE_TARGET), at most 1. A question with no gold
 messages (an absent one) has no recall. Citation precision is the share of
-the cited messages that are gold.
+the cited messages that are gold. A count question has neither: a count
+answer cites no single message, so its gold guids are a sample to read, not
+a target (`NO_CITATION_KINDS`).
 
 Citations are mapped back to guids through the archive: a citation counts
 only when the archive holds a message with its id.
@@ -22,6 +24,7 @@ from statistics import fmean
 from typing import Any, Protocol
 
 CITE_TARGET = 3
+NO_CITATION_KINDS = frozenset({"count"})
 
 
 class MessageLookup(Protocol):
@@ -79,6 +82,13 @@ def citation_precision(gold: Sequence[str], cited: Sequence[str]) -> float | Non
     if not gold or not cited:
         return None
     return len(set(gold) & set(cited)) / len(set(cited))
+
+
+def citation_scores(kind: str, gold: Sequence[str], cited: Sequence[str]) -> tuple[float | None, float | None]:
+    """Recall and precision for a question of `kind`. A kind in NO_CITATION_KINDS has neither."""
+    if kind in NO_CITATION_KINDS:
+        return None, None
+    return citation_recall(gold, cited), citation_precision(gold, cited)
 
 
 def _mean(values: Iterable[float | None]) -> float | None:
@@ -155,4 +165,48 @@ def table(summaries: Mapping[str, Summary]) -> str:
             f"{_share(found.mean_recall):>8}{_share(found.mean_precision):>7}{found.model_calls:>7}"
             f"{found.usd:>9.4f}{wall:>7}"
         )
+    return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class Spread:
+    """The accuracy of one kind over the rounds of a --repeat run."""
+
+    rounds: tuple[float, ...]
+
+    @property
+    def mean(self) -> float:
+        return fmean(self.rounds)
+
+    @property
+    def low(self) -> float:
+        return min(self.rounds)
+
+    @property
+    def high(self) -> float:
+        return max(self.rounds)
+
+
+def spread(kinds: Sequence[str], rows: Sequence[tuple[str, int, Metrics]]) -> dict[str, Spread]:
+    """The accuracy of each round, per kind that has rows and for "all". A row is (kind, round, metrics)."""
+    rounds = sorted({number for _kind, number, _metrics in rows})
+
+    def accuracies(wanted: str | None) -> tuple[float, ...]:
+        found = []
+        for number in rounds:
+            kept = [m for kind, got, m in rows if got == number and (wanted is None or kind == wanted)]
+            if kept:
+                found.append(sum(m.correct for m in kept) / len(kept))
+        return tuple(found)
+
+    per_kind = {kind: Spread(accuracies(kind)) for kind in kinds if any(row[0] == kind for row in rows)}
+    return {**per_kind, "all": Spread(accuracies(None))} if rows else {}
+
+
+def spread_table(spreads: Mapping[str, Spread]) -> str:
+    """Mean accuracy and its range over the rounds, per kind."""
+    head = f"{'kind':<13}{'rounds':>7}{'mean':>7}{'min':>7}{'max':>7}"
+    lines = [head, "-" * len(head)]
+    for kind, found in spreads.items():
+        lines.append(f"{kind:<13}{len(found.rounds):>7}{found.mean:>7.2f}{found.low:>7.2f}{found.high:>7.2f}")
     return "\n".join(lines)

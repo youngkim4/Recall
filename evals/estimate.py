@@ -44,7 +44,8 @@ OUTPUT_BY_EFFORT = {"": 600, "none": 300, "low": 600, "medium": 1200, "high": 25
 @dataclass(frozen=True)
 class Estimate:
     questions: int
-    turns: int
+    rounds: int
+    turns: int  # all rounds
     model: str
     effort: str
     judge_model: str
@@ -116,19 +117,21 @@ def estimate(
     settings: Settings,
     resolved_effort: str,
     judge_model: str,
+    repeat: int = 1,
 ) -> Estimate:
-    """The estimate of a run of `questions`. No call leaves this machine."""
+    """The estimate of a run of `questions`, asked `repeat` times. No call leaves this machine."""
     output = OUTPUT_BY_EFFORT.get(resolved_effort, OUTPUT_BY_EFFORT[""])
     firsts = [
         _first_call(text, archive=archive, names=names, settings=settings)
         for question in questions
         for text in ((question.prior, question.text) if question.prior else (question.text,))
     ]
-    calls = [usage for first in firsts for usage in _turn_usage(first, output)]
-    judged = [_judge_usage(question) for question in questions]
+    calls = [usage for first in firsts for usage in _turn_usage(first, output)] * repeat
+    judged = [_judge_usage(question) for question in questions] * repeat
     return Estimate(
         questions=len(questions),
-        turns=len(firsts),
+        rounds=repeat,
+        turns=len(firsts) * repeat,
         model=settings.model,
         effort=resolved_effort or "none on file",
         judge_model=judge_model,
@@ -145,7 +148,8 @@ def describe(found: Estimate) -> str:
     """The estimate as a few lines of text."""
     return "\n".join(
         (
-            f"dry run: {found.questions} questions, {found.turns} turns, model {found.model}, effort {found.effort}",
+            f"dry run: {found.questions} questions x {found.rounds} rounds, {found.turns} turns, "
+            f"model {found.model}, effort {found.effort}",
             f"first calls: {found.first_call_tokens:,} tokens (system prompt, tools, seeded results, question)",
             f"assumed {ASSUMED_CALLS} calls a turn: {found.input_tokens:,} input tokens "
             f"({found.cached_input_tokens:,} cached), {found.output_tokens:,} output tokens",

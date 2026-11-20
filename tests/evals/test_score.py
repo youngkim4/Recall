@@ -11,14 +11,17 @@ import pytest
 from chat_engine.errors import ModelError
 from chat_engine.fake_llm import FakeLLM, done, say
 from chat_engine.ports import LLMEvent, LLMRequest, Usage
-from evals.judge import JudgeCase, ModelJudge, parse_verdict
+from evals.judge import RUBRIC, JudgeCase, ModelJudge, parse_verdict
 from evals.recorder import references
 from evals.score import (
     Metrics,
     by_kind,
     citation_precision,
     citation_recall,
+    citation_scores,
     cited_guids,
+    spread,
+    spread_table,
     summarize,
     table,
 )
@@ -120,3 +123,27 @@ def test_a_judge_call_that_fails_is_no_pass() -> None:
 def test_references_of_a_raw_answer() -> None:
     assert references("A [m3] and [m3, m7] and [m10-m12] but not [3] or m9") == ("m3", "m7", "m10", "m11", "m12")
     assert references("") == ()
+
+
+def test_a_count_question_has_no_citation_scores() -> None:
+    assert citation_scores("count", ["a", "b"], []) == (None, None)
+    assert citation_scores("fact", ["a", "b"], ["a"]) == (0.5, 1.0)
+
+
+def test_the_spread_gives_the_accuracy_of_each_round() -> None:
+    wrong = replace(BASE, correct=False)
+    rows = [("fact", 0, BASE), ("fact", 0, BASE), ("fact", 1, BASE), ("fact", 1, wrong), ("count", 0, wrong),
+            ("count", 1, BASE)]  # fmt: skip
+    found = spread(("fact", "count", "absent"), rows)
+    assert list(found) == ["fact", "count", "all"]
+    assert found["fact"].rounds == (1.0, 0.5) and found["fact"].mean == 0.75
+    assert (found["count"].low, found["count"].high) == (0.0, 1.0)
+    assert found["all"].rounds == (pytest.approx(2 / 3), pytest.approx(2 / 3))
+    assert spread(("fact",), []) == {}
+    assert spread_table(found).splitlines()[0].split() == ["kind", "rounds", "mean", "min", "max"]
+
+
+def test_the_rubric_is_fair_on_wording_and_strict_on_facts() -> None:
+    for rule in ("Equivalent descriptions count", "light hedging", "equally likely", "arithmetic yourself",
+                 "leave out the year", "could not find", "invented fact or a contradiction"):  # fmt: skip
+        assert rule in RUBRIC, rule

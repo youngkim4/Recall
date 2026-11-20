@@ -30,12 +30,23 @@ RUBRIC = """You grade one answer of an assistant that searches a person's text m
 You get the question, the gold answer, the key facts and the answer. Grade strictly.
 
 Rules:
-- "correct" is true only when the answer states every key fact (in any wording, any date format) and says
-  nothing that contradicts the gold answer.
+- "correct" is true only when the answer states every key fact and says nothing that contradicts the
+  gold answer. An invented fact or a contradiction makes the answer wrong.
+- Equivalent descriptions count. Judge whether the answer conveys the same fact or the same relationship,
+  not whether it uses the same words. Example: for "close friend, still in touch", "a friend from your
+  Oakland days; you are still in touch and the warmth stayed" counts.
+- A key fact counts when the answer gives it as its main reading, even with light hedging ("appears to
+  be your landlord", "likely your manager"). It does not count when the answer offers two different
+  readings as equally likely.
 - A number must match exactly when the key fact is a number. "About" in a key fact allows a near number.
-- A date must have the right day, month and year when the key fact gives them.
-- When the kind is "absent", the archive does not hold the answer. The answer is correct only when it says
-  that the messages do not hold it. An invented answer is wrong, however plausible.
+- A figure stated another way counts when it gives the same values. Example: "285 in the 9 months before
+  against 47 in the 9 months after" counts for "about 32 a month against about 5 a month". Check the
+  arithmetic yourself; a figure that does not work out does not count.
+- A date must have the right day, month and year. The answer may leave out the year when the year is
+  clear from the rest of the answer, from the earlier question, or from the question itself.
+- When the kind is "absent", the archive does not hold the answer. The answer is correct when it says that
+  it could not find it or that the messages do not mention it. Mentioning an unrelated message that it
+  did find is fine. An answer that claims the thing happened is wrong, however plausible.
 - Extra true detail is fine. Hedging that leaves out a key fact is not.
 - "score" is the share of key facts stated, from 0 to 1, and 0 when the answer contradicts the gold.
 - "missing" lists the key facts the answer does not state. "wrong" lists the claims that contradict the gold.

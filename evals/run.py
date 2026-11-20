@@ -11,6 +11,8 @@ and costs money. Run --dry-run first: it prints an estimate and calls nothing.
     python -m evals.run --limit 5 --kinds fact,count
     python -m evals.run --model gpt-6.1-terra --effort low --out /tmp/terra.json
     python -m evals.run --with-memory     # builds the index of meanings, memory and people first
+    python -m evals.run --repeat 3        # each question 3 times: mean and range of accuracy per kind
+    python -m evals.run --rejudge run.json   # judge the stored answers again; no chat call
 
 Exit codes: 0 done, 2 a bad option or no key.
 """
@@ -19,7 +21,7 @@ from __future__ import annotations
 
 import argparse
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -31,8 +33,11 @@ from evals.judge import Judge, ModelJudge
 from evals.memory import build_memory, estimate_memory
 from evals.questions import KINDS, QuestionError, build_questions, select
 from evals.recorder import price
-from evals.runner import Factory, Result, Settings, run_all
-from evals.score import table
+from evals.rejudge import default_out as rejudged_out
+from evals.rejudge import rejudge_rows
+from evals.results_file import ResultsFileError, load
+from evals.runner import Factory, Settings, run_all
+from evals.score import spread_table, table
 from evals.world import build_world, world, zone
 from evals.world.people import NOW
 from recall_services import chat, keys, models
@@ -57,6 +62,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", default="", help="JSON path (default: <data folder>/evals/chat-eval-<time>.json)")
     parser.add_argument("--with-memory", action="store_true", help="build meaning, memory and people first (costs)")
     parser.add_argument("--dry-run", action="store_true", help="estimate tokens and cost; call nothing")
+    parser.add_argument("--repeat", type=int, default=1, help="ask each question N times (default: 1)")
+    parser.add_argument("--rejudge", default="", help="results JSON: judge its answers again; no chat call")
     return parser
 
 
@@ -79,15 +86,23 @@ def _model_judge(model: str, effort: str) -> Judge:
     return ModelJudge(chat.default_llm(config), config.model, lambda usage: price(config.model, usage))
 
 
-def _line(result: Result) -> str:
-    metrics = result.metrics
-    recall = "-" if metrics.citation_recall is None else f"{metrics.citation_recall:.2f}"
-    mark = "ok" if metrics.correct else "no"
-    tail = f"  {metrics.error}" if metrics.error else ""
+def _line(row: Mapping[str, Any]) -> str:
+    """One row of a run or a rejudge, as a line of progress."""
+    metrics = row["metrics"]
+    recall = "-" if metrics["citation_recall"] is None else f"{metrics['citation_recall']:.2f}"
+    mark = "ok" if metrics["correct"] else "no"
+    tail = f"  {metrics['error']}" if metrics["error"] else ""
     return (
-        f"{result.question.id:<24}{result.question.kind:<13}{mark:<4}score {metrics.score:.2f}  "
-        f"recall {recall:<5} ${metrics.usd:.4f}  {metrics.wall_seconds:.1f}s{tail}"
+        f"{row['id']:<24}{row['kind']:<13}{mark:<4}score {metrics['score']:.2f}  "
+        f"recall {recall:<5} ${metrics['usd']:.4f}  {metrics['wall_seconds']:.1f}s{tail}"
     )
+
+
+def _tables(rows: Sequence[Mapping[str, Any]], say: Say) -> None:
+    say(table(report.summaries(rows)))
+    spreads = report.spreads(rows)
+    if spreads and len(spreads["all"].rounds) > 1:
+        say(spread_table(spreads))
 
 
 def _meta(arguments: argparse.Namespace, settings: Settings, judge_model: str, count: int) -> dict[str, Any]:
@@ -101,6 +116,7 @@ def _meta(arguments: argparse.Namespace, settings: Settings, judge_model: str, c
         "kinds": list(_kinds(arguments.kinds)),
         "limit": arguments.limit,
         "questions": count,
+        "repeat": arguments.repeat,
         "with_memory": bool(arguments.with_memory),
         "clock": NOW.isoformat(),
         "world": {"messages": len(made.lines), "tapbacks": len(made.tapbacks)},
@@ -111,7 +127,7 @@ def _dry_run(arguments: argparse.Namespace, archive: Archive, built: Any, settin
              questions: Sequence[Any], say: Say) -> int:  # fmt: skip
     found = estimate(
         questions, archive=archive, names=built.names, settings=settings,
-        resolved_effort=settings.effort, judge_model=judge_model,
+        resolved_effort=settings.effort, judge_model=judge_model, repeat=arguments.repeat,
     )  # fmt: skip
     say(describe(found))
     if arguments.with_memory:
@@ -143,11 +159,35 @@ def _run(
                 questions, archive=archive, names=built.names, settings=settings,
                 factory=factory or chat.default_llm,
                 judge=judge or _model_judge(judge_model, arguments.judge_effort),
-                on_result=lambda result: say(_line(result)),
+                on_result=lambda result: say(_line(report.result_row(result))), repeat=arguments.repeat,
             )  # fmt: skip
+    rows = [report.result_row(result) for result in results]
     out = Path(arguments.out) if arguments.out else places.default_out(datetime.now())
-    written = report.write(out, report.document(meta, results))
-    say(table(report.summaries(results)))
+    written = report.write(out, report.document(meta, rows))
+    _tables(rows, say)
+    say(f"results: {written}")
+    return 0
+
+
+def _rejudge(arguments: argparse.Namespace, judge_model: str, judge: Judge | None, say: Say) -> int:
+    """Judge the answers of a results file again. No chat call, no world."""
+    source = Path(arguments.rejudge).expanduser()
+    try:
+        meta, rows = load(source)
+    except ResultsFileError as problem:
+        say(str(problem))
+        return 2
+    if judge is None and not keys.api_key():
+        say(f"{keys.NO_KEY}. The judge needs the key.")
+        return 2
+    chosen = judge or _model_judge(judge_model, arguments.judge_effort)
+    judged = rejudge_rows(rows, chosen, on_row=lambda row: say(_line(row)))
+    meta = {
+        **meta, "rejudged_from": str(source), "rejudged": datetime.now().isoformat(timespec="seconds"),
+        "judge_model": judge_model, "judge_effort": arguments.judge_effort,
+    }  # fmt: skip
+    written = report.write(Path(arguments.out) if arguments.out else rejudged_out(source), report.document(meta, judged))
+    _tables(judged, say)
     say(f"results: {written}")
     return 0
 
@@ -159,7 +199,7 @@ def main(
     judge: Judge | None = None,
     say: Say = print,
 ) -> int:
-    """Run the eval. A test gives `factory` (the chat model) and `judge`, so nothing leaves the machine."""
+    """Run the eval, or judge a results file again. A test gives `factory` and `judge`: nothing leaves the machine."""
     arguments = _parser().parse_args(argv)
     try:
         model, effort = _checked_model(arguments.model, arguments.effort)
@@ -167,9 +207,13 @@ def main(
         select((), _kinds(arguments.kinds))
         if arguments.limit is not None and arguments.limit < 1:
             raise UsageProblem("--limit must be at least 1")
+        if arguments.repeat < 1:
+            raise UsageProblem("--repeat must be at least 1")
     except (UsageProblem, QuestionError) as problem:
         say(str(problem))
         return 2
+    if arguments.rejudge:
+        return _rejudge(arguments, judge_model, judge, say)
     return _run(arguments, Settings(model, effort), judge_model, factory, judge, say)
 
 
