@@ -147,6 +147,7 @@ def test_a_whole_question_is_answered_from_the_archive(cast: Cast) -> None:
     assert [(step["tool"], step["seeded"]) for step in result["steps"]] == [
         ("search_messages", True),
         ("list_conversations", True),
+        ("search_messages", True),  # the first messages with the person the question names
         ("search_messages", False),
         ("count_messages", False),
         ("read_around", False),

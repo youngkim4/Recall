@@ -160,6 +160,7 @@ def test_the_figures_come_after_the_names_of_the_question() -> None:
     assert [step["tool"] for step in result["steps"]] == [
         "search_messages",
         "list_conversations",
+        "search_messages",  # the first messages with Jonas
         "count_messages",
     ]
     assert FIGURES_2024 in last_user(fake.requests[0])

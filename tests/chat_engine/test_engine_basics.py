@@ -65,7 +65,7 @@ def test_simple_recall_finishes_in_one_model_call() -> None:
     assert result["citations"][0]["conversation_label"] == "Maya Okafor"
     assert result["citations"][0]["sender_label"] == "Maya Okafor"
     assert result["unverified_quotes"] == []
-    assert [step["tool"] for step in result["steps"]] == ["search_messages", "list_conversations"]
+    assert [step["tool"] for step in result["steps"]] == ["search_messages", "list_conversations", "search_messages"]
     assert all(step["seeded"] for step in result["steps"])
     assert result["usage"] == {
         "input_tokens": 900,

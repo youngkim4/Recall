@@ -14,7 +14,8 @@ from tests.chat_engine.helpers import all_text, make_engine, system_text
 
 SPECS_AT_82F55E0 = "fe73fa1d7ccb0aedac549fa4192e1f9692e7e21a72fe504d61324ba9af39343b"
 SYSTEM_AT_82F55E0 = "d8ba85978eac65b4cfb465fb81b04a82ddad655f7ef029fe779144bb24cee652"
-REQUESTS_AT_82F55E0 = "0e2c956ab63b43b78a50a3c1b028419697604723becfeac60af76e07ab34588b"
+# taken again when the seed began to read the first messages with the person a question names
+REQUESTS_AT_82F55E0 = "7a4bef93836d837bdafca0c99517779960a47ca61c0eb5f69309c1aac1bd69b5"
 
 
 def _hash(text: str) -> str:

@@ -8,6 +8,10 @@ that search joins the exchanges found by meaning and by words.
 A question that names years also gets the figures of that period: who the
 user wrote with, and how much. A question about a period is seldom answered
 by a message that holds its words, so the model starts from the pattern.
+
+A question that names one person also gets the first messages with that
+person. How two people met, and how it began, is seldom in a message that
+holds the words of the question.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from .question_names import names_in_question
 from .search import SearchRequest
 from .textnorm import fold, surface_words
 from .tool_args import ToolInputError
+from .tool_browse import BrowseRequest, run_browse
 from .tool_context import Prepared, ToolContext
 from .tool_figures import list_entries, run_count
 from .tool_meaning import MeaningRequest, meaning_lookup
@@ -38,6 +43,8 @@ _MAX_WORD = 40
 _BOOSTED = 8
 _LIST_TOKENS = 700
 _FIGURES_TOKENS = 1500  # room for every row a count by conversation shows
+SEED_OPENING = 10  # the first messages with the one person a question names
+_OPENING_TOKENS = 1200
 ALL_YEARS = (1990, 2099)
 
 
@@ -165,6 +172,9 @@ def plan_seed(box: ToolBox, question: str, summary: ArchiveSummary) -> list[Seed
         calls.append(_search_call(box, ctx, units, entries, question))
     if entries:
         calls.append(_names_call(box, ctx, names, entries))
+        opening = _opening_call(box, ctx, entries[0])
+        if opening is not None:
+            calls.append(opening)
     elif ctx.scope.conversations:
         calls.append(_scope_call(box, ctx, directory))
     if ctx.memory.people is not None:
@@ -213,6 +223,27 @@ def _names_call(box: ToolBox, ctx: ToolContext, names: Sequence[str], entries: S
     )
     label = f'list_conversations(name="{shown}")'
     return SeedCall("list_conversations", label, box.wrap("list_conversations", prepared))
+
+
+def _opening_call(box: ToolBox, ctx: ToolContext, entry: Entry) -> Optional[SeedCall]:
+    """The first messages with the person the question names first. None for a group or a conversation out of scope."""
+    if entry.conversation.get("is_group"):
+        return None
+    conversation = str(entry.conversation["id"])
+    allowed = ctx.conversations(None)
+    if allowed is not None and conversation not in allowed:
+        return None
+    try:
+        since, until = ctx.days(None, None)
+    except ToolInputError:
+        return None
+    request = BrowseRequest(conversation, "oldest", SEED_OPENING, since, until)
+    label = ctx.book.label(conversation)
+    prepared = Prepared(
+        f"Reading how it began with {label}",
+        lambda budget: run_browse(ctx, request, min(budget, _OPENING_TOKENS)),
+    )
+    return SeedCall("search_messages", f'search_messages(order="oldest", one conversation: {label})', box.wrap("search_messages", prepared))
 
 
 def _scope_call(box: ToolBox, ctx: ToolContext, directory: Directory) -> SeedCall:
