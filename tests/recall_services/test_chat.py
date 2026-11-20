@@ -25,7 +25,7 @@ from tests.recall_services.test_messages import RESULT_KEYS
 ASK_KEYS = {"question", "contact", "terms", "answer", "mode", "citations"}
 # what the engine knows beyond that; the app does not read these yet
 # "memory" is there because the key of these tests gives chat a digest source
-MORE_KEYS = {"unverifiedQuotes", "steps", "cancelled", "truncated", "usage", "memory"}
+MORE_KEYS = {"unverifiedQuotes", "steps", "cancelled", "truncated", "limited", "usage", "memory"}
 FLAT_TIRE = "The wheelbarrow has a flat tire"
 QUESTION = "Who said the wheelbarrow has a flat tire?"
 NOW = datetime(2026, 11, 17, 9, 30)

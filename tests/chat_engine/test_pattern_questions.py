@@ -210,6 +210,6 @@ def test_the_rules_tell_a_pattern_question_from_a_search() -> None:
 
 def test_a_pattern_question_has_room_for_figures_and_reading() -> None:
     config = EngineConfig(model="m", max_output_tokens=100)
-    assert config.max_steps == 8
-    assert config.total_tool_tokens == 30_000
+    assert config.max_steps >= 8
+    assert config.total_tool_tokens >= 30_000
     assert config.total_tool_tokens >= config.max_steps * config.result_tokens

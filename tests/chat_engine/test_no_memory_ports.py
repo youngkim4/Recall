@@ -55,4 +55,6 @@ def test_every_request_of_a_question_with_lookups_is_unchanged() -> None:
     engine, fake, _ = make_engine(steps)
     result = engine.ask("What did Maya say about the lease in 2021?")
     sent = "\n\n".join(_request_text(request) for request in fake.requests)
+    # `limited` came later (the lookup limit of a question): it is the only key the old result did not have
+    assert result.pop("limited") is False
     assert _hash(sent + json.dumps(result, ensure_ascii=False, sort_keys=True)) == REQUESTS_AT_82F55E0

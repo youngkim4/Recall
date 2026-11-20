@@ -16,7 +16,8 @@ inside the question: one for each change of a part. `ask` drops them.
 
 The payload of `done` has the keys of `AskResponse` (`question`, `contact`,
 `terms`, `answer`, `mode`, `citations`). It also has what the engine knows
-beyond that: `unverifiedQuotes`, `steps`, `cancelled`, `truncated`, `usage`.
+beyond that: `unverifiedQuotes`, `steps`, `cancelled`, `truncated`,
+`limited` (the question reached its lookup limit), `usage`.
 `terms` is always empty: the engine has no list of search words. With a
 digest source it also has `memory`: `{"notReady": [conversation ids]}`, the
 conversations whose story was too long to read inside the question. Nothing
@@ -32,7 +33,10 @@ Rules:
   never goes to the person.
 - There is no silent keyword answer. `local_answer` runs only when the caller
   sets `use_ai=False`, and the answer then says that no AI model was used.
-- The history of the browser goes through `ChatSession.from_history`. A
+- A follow-up takes the session of the newest answer of its history that
+  this server still holds (`chat_sessions.py`): the messages it read,
+  its references and its limit. Any other history goes through
+  `ChatSession.from_history`. A
   "user" row can say in `contact` which conversation its question was asked
   of. A row that does not say it was asked of everything, so its answer does
   not go to a question that has a scope: the picker of the app can change
@@ -60,7 +64,7 @@ from chat_engine.local_answer import local_answer
 from chat_engine.ports import LLM
 from chat_engine.scope import EVERYTHING, Scope
 from chat_engine.session import ChatSession
-from recall_services import inputs, keys, memory, messages, models, people_port
+from recall_services import chat_sessions, inputs, keys, memory, messages, models, people_port
 from recall_services.models import ChatModelConfig, ModelChoiceError
 from recall_services.names import Names
 
@@ -73,6 +77,8 @@ LLMFactory = Callable[[ChatModelConfig], LLM]
 HISTORY_ROWS = 40
 QUESTION_CHARS = 8_000
 HISTORY_ROW_CHARS = 8_000
+# limits of the engine that differ from its defaults (EngineConfig); a test sets a smaller one
+LIMITS: Mapping[str, int] = {}
 EMPTY_QUESTION = "Type a question first."
 TOO_LONG = "The question is too long. Shorten it, then ask again."
 ASK_AGAIN = "then ask again."
@@ -175,6 +181,7 @@ def _payload(result: Mapping[str, Any], asked: _Asked, archive: Archive, names: 
         "steps": [dict(step) for step in result["steps"]],
         "cancelled": bool(result["cancelled"]),
         "truncated": bool(result["truncated"]),
+        "limited": bool(result.get("limited", False)),
         "usage": dict(result["usage"]),
         **({"memory": {"notReady": list(result["memory"]["notReady"])}} if "memory" in result else {}),
     }
@@ -220,6 +227,7 @@ def _events(
     labeler = names.chat_labeler(archive.conversations())
     adapter = ArchiveAdapter(archive)
     config: ChatModelConfig | None = None
+    kept: tuple[ChatSession, tuple[str, str]] | None = None
     try:
         if not use_ai:
             found = local_answer(adapter, asked.question, asked.scope, labeler=labeler)
@@ -231,26 +239,39 @@ def _events(
             max_output_tokens=config.max_output_tokens,
             # the digest port refuses a longer digest with the same number
             digest_parts_limit=memory.DIGEST_PARTS_LIMIT,
+            **LIMITS,
         )
         # the search by meaning and the digest, each None when it can not work; a test puts its own `memory.ports`
         ports = memory.ports(archive, names)
         if "people" not in ports:  # the search of people, None when it can not work; a test can give its own
             ports = {**ports, "people": people_port.port(archive, names)}
         engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock, **ports)
-        answering = engine.stream(asked.question, scope=asked.scope, session=_session(history), cancel=cancel)
+        # what the last answer read, when the server still holds it; else the plain rows of the app
+        kept = chat_sessions.take(archive.path, history)
+        session = kept[0] if kept else _session(history)
+        answering = engine.stream(asked.question, scope=asked.scope, session=session, cancel=cancel)
     except engine_errors.ChatEngineError as error:
+        if kept is not None:
+            chat_sessions.put_back(archive.path, kept[1], kept[0])
         yield _failure(error.to_event(), config)
         return
+    answered: str | None = None
     try:
         for event in answering:
             if event["type"] == "done":
-                yield {"type": "done", "payload": _payload(event["payload"], asked, archive, names)}
+                payload = _payload(event["payload"], asked, archive, names)
+                answered = None if payload["cancelled"] else payload["answer"]
+                yield {"type": "done", "payload": payload}
             elif event["type"] == "error":
                 yield _failure(event, config)
             else:
                 yield dict(event)
     finally:
         answering.close()  # type: ignore[attr-defined]
+        if answered is not None:
+            chat_sessions.keep(archive.path, asked.question, answered, session)
+        elif kept is not None:
+            chat_sessions.put_back(archive.path, kept[1], kept[0])
 
 
 def stream(

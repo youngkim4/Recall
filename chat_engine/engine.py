@@ -44,11 +44,12 @@ class EngineConfig:
 
     model: str
     max_output_tokens: int
-    max_steps: int = 8
+    # room for a question that reads many conversations; the models of the registry take 400k tokens or more
+    max_steps: int = 16
     max_calls_per_step: int = 8
-    result_tokens: int = 3000
-    total_tool_tokens: int = 30000
-    history_tokens: int = 6000
+    result_tokens: int = 6000
+    total_tool_tokens: int = 120_000
+    history_tokens: int = 24_000
     max_message_chars: int = 4000
     timezone: str = ""
     count_tokens: Callable[[str], int] = estimate_tokens

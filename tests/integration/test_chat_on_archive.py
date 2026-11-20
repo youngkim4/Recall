@@ -37,6 +37,7 @@ CONFIG = EngineConfig(model="scripted", max_output_tokens=800)
 NOW = datetime(2026, 11, 17, 9, 30)
 PAYLOAD_KEYS = {
     "answer",
+    "limited",
     "citations",
     "unverified_quotes",
     "invalid_references",

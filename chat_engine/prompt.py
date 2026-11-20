@@ -9,8 +9,15 @@ from .ports import ArchiveSummary
 from .tool_limits import DIGESTS_PER_QUESTION
 
 LIMIT_NOTE = (
-    "You have reached the limit on lookups for this question. Do not call a tool. "
-    "Answer now from what you have, and say what you could not check."
+    "You have reached the lookup limit for this question. Do not call a tool. "
+    "Answer now from what you have. If a part is still open, name it in one short sentence, "
+    "say that you stopped at the lookup limit of this question, and that the person can ask you "
+    "to keep looking. Do not say that you are not able to check: you can, in the next question."
+)
+# put after an earlier answer that stopped at the lookup limit, so a follow-up knows why it stopped
+EARLIER_LIMITED = (
+    "[This answer stopped at the lookup limit of its question. No lookup failed. "
+    "In this question the tools work again: use them to check what it left open.]"
 )
 
 _PATTERN_START = (

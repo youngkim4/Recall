@@ -25,7 +25,7 @@ from .ports import (
     ToolCall,
     Usage,
 )
-from .prompt import LIMIT_NOTE, question_block, scope_line, system_prompt, timezone_label
+from .prompt import EARLIER_LIMITED, LIMIT_NOTE, question_block, scope_line, system_prompt, timezone_label
 from .render import Limits, ResultWriter, add_block, time_key
 from .result import build_payload
 from .scope import Scope
@@ -37,7 +37,7 @@ from .turn_fetch import run_beside
 from .turn_parts import TOO_MANY, Event, Reply, TurnSettings, no_answer, status, unique_calls
 
 MIN_RESULT_TOKENS = 300  # with less left, a lookup has no room for an answer worth a step
-_CARRIED_TOKENS = 1200
+_CARRIED_TOKENS = 6000
 _REPEATED = "Same lookup as before: its result is above. Try a different lookup, or answer."
 _SKIPPED = "Lookup skipped: the limit on lookups for this question is reached."
 _LOOKING = "Looking at more messages"
@@ -311,7 +311,9 @@ class QuestionTurn:
 
     def _earlier_answer(self, turn: Turn) -> str:
         """An earlier answer, when everything it could read is inside the scope of this question."""
-        return turn.answer if turn.scope.within(self._scope) else _LEFT_OUT
+        if not turn.scope.within(self._scope):
+            return _LEFT_OUT
+        return f"{turn.answer}\n{EARLIER_LIMITED}" if turn.limited else turn.answer
 
     def _recent_turns(self) -> list[Turn]:
         """The newest turns that fit the history budget. With a budget, the last one always fits."""
@@ -374,10 +376,11 @@ class QuestionTurn:
             cancelled=reply.cancelled,
             truncated=reply.stop_reason == "length",
         )
-        payload = {**payload, **self._box.memory_payload()}  # nothing is added with no digest source
+        # nothing is added with no digest source
+        payload = {**payload, **self._box.memory_payload(), "limited": reply.forced}
         if not reply.cancelled:
             cited = frozenset(reply.order)
             answer = stored_form(reply.text, cited.__contains__)
-            self._session.add_turn(Turn(self._question, answer, reply.order, self._scope))
+            self._session.add_turn(Turn(self._question, answer, reply.order, self._scope, reply.forced))
         return {"type": "done", "payload": payload}
 

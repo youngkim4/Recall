@@ -76,6 +76,7 @@ from recall_paths import (
     ensure_data_dirs,
 )
 from recall_services import chat as chat_service
+from recall_services import chat_sessions
 from recall_services import conversations as conversation_service
 from recall_services import day as day_service
 from recall_services import digest_job as digest_service
@@ -991,6 +992,7 @@ def changed_the_archive(job_id: str, action: str) -> bool:
 
 def after_job(job_id: str, action: str, payload: dict) -> None:
     """What the server does by itself when a job has ended in the list. A fault here does not change how the job ended."""
+    forget_chat_sessions(job_id, action)
     refresh_meaning_index(job_id, action, payload)
     refresh_memory(job_id, action, payload)
     refresh_people(job_id, action, payload)
@@ -1155,6 +1157,15 @@ def build_meaning_index(job_id: str, payload: dict, told=None) -> dict:
         return meaning_service.build(archive, saved_names(), None, told or job_teller(job_id))
     except meaning_service.MeaningFailure as failure:
         raise JobStopped(str(failure), failure.code) from failure
+
+
+def forget_chat_sessions(job_id: str, action: str) -> None:
+    """After an import that changed the archive, the kept chats are dropped: what they read can have new ids."""
+    try:
+        if changed_the_archive(job_id, action):
+            chat_sessions.clear()
+    except Exception as exc:  # noqa: BLE001 - the import ended: nothing here is a reason to say otherwise
+        print(f"[chat] the kept chats were not dropped ({type(exc).__name__})", file=sys.__stderr__)
 
 
 def refresh_meaning_index(job_id: str, action: str, payload: dict) -> None:

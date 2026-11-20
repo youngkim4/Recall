@@ -20,6 +20,7 @@ class Turn:
     answer: str
     cited: tuple[str, ...] = ()
     scope: Scope = EVERYTHING  # the scope the question was asked in
+    limited: bool = False  # the answer stopped at the lookup limit of its question
 
 
 class ChatSession:
@@ -121,6 +122,7 @@ def _turn_row(turn: Turn) -> dict[str, Any]:
             "since": turn.scope.since,
             "until": turn.scope.until,
         },
+        "limited": turn.limited,
     }
 
 
@@ -153,7 +155,12 @@ def _texts(value: Any, name: str) -> tuple[str, ...]:
 def _turn(row: Any) -> Turn:
     if not isinstance(row, Mapping):
         raise ValueError("a turn must be a mapping")
-    return Turn(_text(row, "question"), _text(row, "answer"), _texts(row.get("cited"), "cited"), _scope(row))
+    limited = row.get("limited", False)
+    if not isinstance(limited, bool):
+        raise ValueError("limited must be true or false")
+    return Turn(
+        _text(row, "question"), _text(row, "answer"), _texts(row.get("cited"), "cited"), _scope(row), limited
+    )
 
 
 def _scope(row: Mapping[str, Any]) -> Scope:
