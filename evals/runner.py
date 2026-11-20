@@ -21,7 +21,6 @@ from functools import partial
 from typing import Any
 
 from archive import Archive
-from chat_engine.engine import EngineConfig
 from chat_engine.labeler import MaskingLabeler
 from chat_engine.ports import LLM
 from evals.judge import Judge, JudgeCase, Verdict
@@ -35,7 +34,6 @@ from recall_services.names import Names
 
 Factory = Callable[[ChatModelConfig], LLM]
 # the engine may use tools in this many calls; one call more is forced to answer
-MAX_STEPS = EngineConfig(model="any", max_output_tokens=1).max_steps
 
 
 @dataclass(frozen=True)
@@ -126,7 +124,7 @@ def _metrics(model: str, turns: tuple[Turn, ...], cited: tuple[str, ...], gold: 
         unverified_quotes=len(payload.get("unverifiedQuotes") or []),
         invalid_references=max(0, len(references(raw)) - len(payload.get("citations") or [])),
         leaked_handle=_leaked(last.answer),
-        limited=len(last.calls) > MAX_STEPS,
+        limited=bool(payload.get("limited")),
         truncated=bool(payload.get("truncated")),
         model_calls=len(calls),
         tool_calls=sum(call.tool_calls for call in calls),
