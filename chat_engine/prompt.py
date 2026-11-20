@@ -260,9 +260,9 @@ def system_prompt(
 
 
 def question_block(
-    question: str, lookups: Sequence[tuple[str, str]], carried: str = "", note: str = ""
+    question: str, lookups: Sequence[tuple[str, str]], carried: str = "", note: str = "", when: str = ""
 ) -> str:
-    """The user message: evidence carried over, lookups already run, the question."""
+    """The user message: evidence carried over, lookups already run, the days of the question, the question."""
     parts: list[str] = []
     if carried:
         parts.append(
@@ -277,5 +277,7 @@ def question_block(
         parts.append("No lookup was run for this question yet.")
     if note:
         parts.append(note)
+    if when:
+        parts.append(when)
     parts.append(f"Question: {question}")
     return "\n\n".join(parts)

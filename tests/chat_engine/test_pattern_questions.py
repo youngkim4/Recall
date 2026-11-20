@@ -8,7 +8,7 @@ from chat_engine.fake_archive import FakeArchive, make_message
 from chat_engine.fake_llm import say
 from chat_engine.labeler import MaskingLabeler
 from chat_engine.scope import Scope
-from chat_engine.seed import question_period
+from chat_engine.question_time import question_period
 from tests.chat_engine.helpers import RAW_HANDLES, all_text, events_of, last_user, make_engine, system_text
 from tests.chat_engine.tiny import UNSAVED_EMAIL, UNSAVED_PHONE
 

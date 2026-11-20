@@ -11,7 +11,7 @@ import json
 
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, Generator, Iterator, Optional
+from typing import Any, Generator, Iterator, Optional, Sequence
 
 from .cancel import CancelToken
 from .citations import CitationStream, stored_form
@@ -30,10 +30,11 @@ from .ports import (
 )
 from . import condense as condensing
 from .prompt import EARLIER_LIMITED, LIMIT_NOTE, STALL_NOTE, question_block, scope_line, system_prompt, timezone_label
+from .question_time import time_line
 from .render import Limits, ResultWriter, add_block, time_key
 from .result import build_payload
 from .scope import Scope
-from .seed import plan_seed
+from .seed import SeedCall, plan_seed
 from .session import ChatSession, Turn
 from .tool_context import Memory, ToolOutcome
 from .tools import ToolBox
@@ -120,16 +121,18 @@ class QuestionTurn:
         if self._cancel.cancelled:
             return Reply(cancelled=True)
         summary = self._box.guard(self._archive.summary)
-        lookups = yield from self._seed(summary)
+        plan = plan_seed(self._box, self._question, summary, self._now)
+        lookups = yield from self._seed(plan.calls)
         if self._cancel.cancelled:
             return Reply(cancelled=True)
-        self._transcript = self._box.guard(lambda: self._opening(summary, lookups))
+        when = time_line(plan.period)
+        self._transcript = self._box.guard(lambda: self._opening(summary, lookups, when))
         yield status(_THINKING)  # the line of the last lookup does not stay while the model works
         return (yield from self._loop())
 
-    def _seed(self, summary: Any) -> Generator[Event, None, list[tuple[str, str]]]:
+    def _seed(self, calls: Sequence[SeedCall]) -> Generator[Event, None, list[tuple[str, str]]]:
         lookups: list[tuple[str, str]] = []
-        for seed in plan_seed(self._box, self._question, summary):
+        for seed in calls:
             yield status(seed.prepared.status)
             if self._cancel.cancelled:
                 break
@@ -335,7 +338,8 @@ class QuestionTurn:
 
     # --- the prompt ---
 
-    def _opening(self, summary: Any, lookups: list[tuple[str, str]]) -> list[ChatMessage]:
+    def _opening(self, summary: Any, lookups: list[tuple[str, str]], when: str = "") -> list[ChatMessage]:
+        """The system prompt, the earlier turns, and the question block. `when` names the days of the question."""
         context = self._box.context
         where = context.where(self._scope.conversations) if self._scope.conversations else None
         system = system_prompt(
@@ -350,7 +354,7 @@ class QuestionTurn:
         for turn in turns:
             messages.append(ChatMessage("user", turn.question))
             messages.append(ChatMessage("assistant", self._earlier_answer(turn)))
-        block = question_block(self._question, lookups, self._carried(turns), self._note)
+        block = question_block(self._question, lookups, self._carried(turns), self._note, when)
         return [*messages, ChatMessage("user", block)]
 
     def _earlier_answer(self, turn: Turn) -> str:
