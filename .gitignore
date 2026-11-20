@@ -1,3 +1,7 @@
+# Notes and specs stay on this Mac; README.md is the one doc in the repo
+*.md
+!/README.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

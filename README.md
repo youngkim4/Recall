@@ -150,7 +150,6 @@ cd app && npx tsc -b && npx eslint . --quiet && npm test
 | `meaning_index/` | Search by meaning |
 | `report_engine/` | Reports on one conversation |
 | `tests/` | Tests and the invented archives they run on |
-| `CONTRACTS.md` | The rules that hold across files |
 
 ## License
 
