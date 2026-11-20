@@ -22,7 +22,7 @@ from pathlib import Path
 
 from archive import import_chat_db
 from evals.world.filler import filler
-from evals.world.people import BY_KEY, CHATS, CONTACTS
+from evals.world.people import CHATS, CONTACTS, PEOPLE, Chat, Person
 from evals.world.scenes_friends import friend_scenes
 from evals.world.scenes_home import home_scenes
 from evals.world.scenes_wren import WREN_QUIET_DAYS, wren_scenes
@@ -42,10 +42,28 @@ class WorldError(Exception):
 
 @dataclass(frozen=True)
 class World:
-    """Every message and tapback of the eval world, oldest first."""
+    """Every message and tapback of the eval world, oldest first, and who is in it.
+
+    `name` is "base" for the small world and "hard" for the big one.
+    """
 
     lines: tuple[Line, ...]
     tapbacks: tuple[Tapback, ...]
+    name: str = "base"
+    people: tuple[Person, ...] = PEOPLE
+    chats: tuple[Chat, ...] = CHATS
+    contacts: tuple[dict[str, object], ...] = CONTACTS
+
+    def chat_id(self, chat_key: str) -> str:
+        """The id of a conversation in the archive."""
+        for chat in self.chats:
+            if chat.key == chat_key:
+                return chat.identifier
+        raise WorldError(f"no conversation has the key {chat_key}")
+
+    def unsaved_handles(self) -> tuple[str, ...]:
+        """The handles nobody saved. An answer must never hold them."""
+        return tuple(person.handle for person in self.people if not person.saved_as)
 
     def labelled(self, label: str) -> Line:
         for line in self.lines:
@@ -107,14 +125,14 @@ def zone() -> Iterator[None]:
 def _write(made: World, source: Path) -> None:
     builder = ChatDbBuilder(source)
     try:
-        handles = {person.key: builder.handle(person.handle) for person in BY_KEY.values()}
+        handles = {person.key: builder.handle(person.handle) for person in made.people}
         chats = {
             chat.key: builder.chat(
                 chat.identifier,
                 display_name=chat.title or None,
                 members=[handles[member] for member in chat.members],
             )
-            for chat in CHATS
+            for chat in made.chats
         }
         ordered: list[Item] = sorted([*made.lines, *made.tapbacks], key=lambda item: item.when)
         for item in ordered:
@@ -129,9 +147,9 @@ def _write(made: World, source: Path) -> None:
         builder.close()
 
 
-def build_world(folder: Path) -> Built:
-    """Write the world under `folder` and pull it into `folder/data/archive.sqlite3`."""
-    made = world()
+def build_world(folder: Path, made: World | None = None) -> Built:
+    """Write a world (the small one by default) under `folder` and pull it into `folder/data/archive.sqlite3`."""
+    made = made or world()
     source = Path(folder) / "source" / "chat.db"
     archive_path = Path(folder) / "data" / "archive.sqlite3"
     if source.exists() or archive_path.exists():
@@ -140,5 +158,5 @@ def build_world(folder: Path) -> Built:
     archive_path.parent.mkdir(parents=True)
     with zone():
         _write(made, source)
-        import_chat_db(source, archive_path, contacts=[dict(record) for record in CONTACTS])
-    return Built(made, source, archive_path, Names.from_records(CONTACTS))
+        import_chat_db(source, archive_path, contacts=[dict(record) for record in made.contacts])
+    return Built(made, source, archive_path, Names.from_records(made.contacts))

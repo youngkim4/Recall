@@ -24,7 +24,7 @@ from statistics import fmean
 from typing import Any, Protocol
 
 CITE_TARGET = 3
-NO_CITATION_KINDS = frozenset({"count"})
+NO_CITATION_KINDS = frozenset({"count", "aggregate"})
 
 
 class MessageLookup(Protocol):

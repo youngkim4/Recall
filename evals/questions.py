@@ -10,6 +10,8 @@ Kinds:
 - absent: the archive does not hold it. A right answer says so.
 - follow_up: two turns. `prior` is asked first; `text` is scored.
 
+The hard world (`--world hard`) adds six kinds; see `evals.hard_questions`.
+
 Each question has a short gold answer, the key facts that a right answer
 states, and the guids of the messages that support it.
 """
@@ -18,12 +20,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from evals.hard_questions import hard_questions
 from evals.question_computed import computed_questions
 from evals.question_static import STATIC
-from evals.question_types import KINDS, CountQuery, Question, Spec
+from evals.question_types import BASE_KINDS, HARD_KINDS, KINDS, CountQuery, Question, from_spec
 from evals.world import World
 
-__all__ = ["KINDS", "CountQuery", "Question", "QuestionError", "build_questions", "select"]
+__all__ = ["BASE_KINDS", "HARD_KINDS", "KINDS", "CountQuery", "Question", "QuestionError", "build_questions", "select"]
 
 
 class QuestionError(ValueError):
@@ -47,16 +50,11 @@ def _checked(questions: Sequence[Question]) -> tuple[Question, ...]:
     return tuple(questions)
 
 
-def _from_spec(made: World, spec: Spec) -> Question:
-    return Question(
-        id=spec.id, kind=spec.kind, text=spec.text, gold=spec.gold, key_facts=spec.key_facts,
-        gold_guids=made.guids(spec.labels), prior=spec.prior, absent_terms=spec.absent_terms,
-    )  # fmt: skip
-
-
 def build_questions(made: World) -> tuple[Question, ...]:
-    """Every question, kind by kind in the order of KINDS."""
-    every = [*(_from_spec(made, spec) for spec in STATIC), *computed_questions(made)]
+    """Every question of a world, kind by kind in the order of KINDS. The hard world adds its own."""
+    every = [*(from_spec(made, spec) for spec in STATIC), *computed_questions(made)]
+    if made.name == "hard":
+        every = [*every, *hard_questions(made)]
     for question in every:
         if question.kind not in KINDS:
             raise QuestionError(f"{question.id}: unknown kind {question.kind}")

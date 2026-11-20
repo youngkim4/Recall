@@ -46,7 +46,7 @@ def pick(
     )
 
 
-def _sample(lines: tuple[Line, ...]) -> tuple[str, ...]:
+def sample(lines: tuple[Line, ...]) -> tuple[str, ...]:
     """A few guids from the start and the end of a run of lines."""
     if len(lines) <= SAMPLE_GUIDS:
         return tuple(line.guid for line in lines)
@@ -63,7 +63,7 @@ def _count(
     number = len(found)
     return Question(
         id=qid, kind="count", text=text, gold=f"{number} {what}.", key_facts=(f"{number} {what}",),
-        gold_guids=_sample(found), expected_count=number, count_query=query,
+        gold_guids=sample(found), expected_count=number, count_query=query,
     )  # fmt: skip
 
 

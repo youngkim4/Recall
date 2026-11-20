@@ -13,6 +13,7 @@ and costs money. Run --dry-run first: it prints an estimate and calls nothing.
     python -m evals.run --with-memory     # builds the index of meanings, memory and people first
     python -m evals.run --repeat 3        # each question 3 times: mean and range of accuracy per kind
     python -m evals.run --rejudge run.json   # judge the stored answers again; no chat call
+    python -m evals.run --world hard --dry-run --with-memory   # the big world: 101 questions
 
 Exit codes: 0 done, 2 a bad option or no key.
 """
@@ -22,6 +23,7 @@ from __future__ import annotations
 import argparse
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -38,12 +40,14 @@ from evals.rejudge import rejudge_rows
 from evals.results_file import ResultsFileError, load
 from evals.runner import Factory, Settings, run_all
 from evals.score import spread_table, table
-from evals.world import build_world, world, zone
+from evals.world import World, build_world, world, zone
+from evals.world.hard import hard_world
 from evals.world.people import NOW
 from recall_services import chat, keys, models
 from recall_services.models import ModelChoiceError
 
 Say = Callable[[str], None]
+WORLDS = ("base", "hard")
 JUDGE_EFFORT = "low"
 
 
@@ -62,6 +66,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--out", default="", help="JSON path (default: <data folder>/evals/chat-eval-<time>.json)")
     parser.add_argument("--with-memory", action="store_true", help="build meaning, memory and people first (costs)")
     parser.add_argument("--dry-run", action="store_true", help="estimate tokens and cost; call nothing")
+    parser.add_argument("--world", choices=WORLDS, default="base", help="base (1,801 messages) or hard (about 54,000)")
     parser.add_argument("--repeat", type=int, default=1, help="ask each question N times (default: 1)")
     parser.add_argument("--rejudge", default="", help="results JSON: judge its answers again; no chat call")
     return parser
@@ -105,8 +110,11 @@ def _tables(rows: Sequence[Mapping[str, Any]], say: Say) -> None:
         say(spread_table(spreads))
 
 
-def _meta(arguments: argparse.Namespace, settings: Settings, judge_model: str, count: int) -> dict[str, Any]:
-    made = world()
+def _world(name: str) -> World:
+    return hard_world() if name == "hard" else world()
+
+
+def _meta(arguments: argparse.Namespace, made: World, settings: Settings, judge_model: str, count: int) -> dict[str, Any]:
     return {
         "started": datetime.now().isoformat(timespec="seconds"),
         "model": settings.model,
@@ -119,7 +127,8 @@ def _meta(arguments: argparse.Namespace, settings: Settings, judge_model: str, c
         "repeat": arguments.repeat,
         "with_memory": bool(arguments.with_memory),
         "clock": NOW.isoformat(),
-        "world": {"messages": len(made.lines), "tapbacks": len(made.tapbacks)},
+        "world": {"name": made.name, "messages": len(made.lines), "tapbacks": len(made.tapbacks),
+                  "conversations": len(made.chats)},
     }
 
 
@@ -133,7 +142,11 @@ def _dry_run(arguments: argparse.Namespace, archive: Archive, built: Any, settin
     if arguments.with_memory:
         try:
             spent = estimate_memory(archive, built.names)
-            say(f"with memory: about ${spent['usd']:.4f} more to build the meaning, memory and people indexes")
+            assumed = " (people assumed: their memory is not read yet)" if spent["people_assumed"] else ""
+            say(
+                f"with memory: about ${spent['usd']:.4f} more: meaning ${spent['meaning_usd']:.4f}, "
+                f"memory ${spent['memory_usd']:.4f}, people ${spent['people_usd']:.4f}{assumed}"
+            )
         except Exception as error:  # noqa: BLE001 - an estimate that fails must not stop the dry run
             say(f"with memory: no estimate ({type(error).__name__})")
     return 0
@@ -143,16 +156,18 @@ def _run(
     arguments: argparse.Namespace, settings: Settings, judge_model: str, factory: Factory | None,
     judge: Judge | None, say: Say,
 ) -> int:  # fmt: skip
-    questions = select(build_questions(world()), _kinds(arguments.kinds), arguments.limit)
+    made = _world(arguments.world)
+    settings = replace(settings, unsaved=made.unsaved_handles())
+    questions = select(build_questions(made), _kinds(arguments.kinds), arguments.limit)
     with tempfile.TemporaryDirectory(prefix="recall-eval-") as folder, zone(), places.isolated_saves(Path(folder)):
-        built = build_world(Path(folder) / "world")
+        built = build_world(Path(folder) / "world", made)
         with Archive.open(built.archive_path) as archive:
             if arguments.dry_run:
                 return _dry_run(arguments, archive, built, settings, judge_model, questions, say)
             if factory is None and not keys.api_key():
                 say(f"{keys.NO_KEY}. A run needs the key; --dry-run does not.")
                 return 2
-            meta = _meta(arguments, settings, judge_model, len(questions))
+            meta = _meta(arguments, made, settings, judge_model, len(questions))
             if arguments.with_memory:
                 meta = {**meta, "memory": build_memory(archive, built.names, say)}
             results = run_all(

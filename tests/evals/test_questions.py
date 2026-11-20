@@ -8,7 +8,7 @@ import pytest
 
 from archive import Archive
 from chat_engine.archive_adapter import ArchiveAdapter
-from evals.questions import KINDS, QuestionError, build_questions, select
+from evals.questions import BASE_KINDS, QuestionError, build_questions, select
 from evals.world import Built, world
 
 QUESTIONS = build_questions(world())
@@ -18,8 +18,8 @@ COUNTED = [question for question in QUESTIONS if question.count_query is not Non
 def test_about_sixty_questions_of_every_kind() -> None:
     kinds = Counter(question.kind for question in QUESTIONS)
     assert 55 <= len(QUESTIONS) <= 65
-    assert set(kinds) == set(KINDS)
-    assert all(kinds[kind] >= 5 for kind in KINDS)
+    assert set(kinds) == set(BASE_KINDS)
+    assert all(kinds[kind] >= 5 for kind in BASE_KINDS)
 
 
 def test_the_set_is_the_same_each_time() -> None:

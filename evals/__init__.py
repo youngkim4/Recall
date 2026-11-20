@@ -15,6 +15,10 @@ What it does:
    precision against the gold guids, a judge model for correctness, and the
    calls, tokens, money and time.
 5. `evals.run` is the command. `evals.estimate` is its --dry-run.
+6. `--world hard` (`evals.world.hard`, `evals.hard_questions`) puts the small
+   world inside a busy six-year phone of about 54,000 messages and adds 41
+   hard questions: paraphrase, disambiguate, temporal, aggregate, long_story
+   and needle.
 
 How to run (from the repository root, with the key that Recall uses):
 

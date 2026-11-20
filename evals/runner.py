@@ -41,6 +41,7 @@ class Settings:
     model: str
     effort: str = ""
     clock: datetime = NOW
+    unsaved: tuple[str, ...] = unsaved_handles()  # handles an answer must never hold
 
 
 @dataclass(frozen=True)
@@ -106,11 +107,11 @@ def _cost(model: str, turns: Iterable[Turn]) -> float:
     return total
 
 
-def _leaked(answer: str) -> bool:
-    return MaskingLabeler(known_handles=unsaved_handles()).redact(answer) != answer
+def _leaked(answer: str, unsaved: tuple[str, ...]) -> bool:
+    return MaskingLabeler(known_handles=unsaved).redact(answer) != answer
 
 
-def _metrics(model: str, turns: tuple[Turn, ...], cited: tuple[str, ...], question: Question, verdict: Verdict) -> Metrics:
+def _metrics(settings: Settings, turns: tuple[Turn, ...], cited: tuple[str, ...], question: Question, verdict: Verdict) -> Metrics:
     last = turns[-1]
     recall, precision = citation_scores(question.kind, question.gold_guids, cited)
     payload = last.payload or {}
@@ -125,7 +126,7 @@ def _metrics(model: str, turns: tuple[Turn, ...], cited: tuple[str, ...], questi
         citations=len(payload.get("citations") or []),
         unverified_quotes=len(payload.get("unverifiedQuotes") or []),
         invalid_references=max(0, len(references(raw)) - len(payload.get("citations") or [])),
-        leaked_handle=_leaked(last.answer),
+        leaked_handle=_leaked(last.answer, settings.unsaved),
         limited=bool(payload.get("limited")),
         truncated=bool(payload.get("truncated")),
         model_calls=len(calls),
@@ -134,7 +135,7 @@ def _metrics(model: str, turns: tuple[Turn, ...], cited: tuple[str, ...], questi
         cached_input_tokens=sum(call.usage.cached_input_tokens for call in calls),
         output_tokens=sum(call.usage.output_tokens for call in calls),
         reasoning_tokens=sum(call.usage.reasoning_tokens for call in calls),
-        chat_usd=_cost(model, turns),
+        chat_usd=_cost(settings.model, turns),
         judge_usd=verdict.cost_usd,
         wall_seconds=sum(turn.wall_seconds for turn in turns),
         error=error,
@@ -160,7 +161,7 @@ def run_question(
         case = JudgeCase(question.text, question.kind, question.gold, question.key_facts, turn.answer, question.prior)
         verdict = judge.judge(case)
     prior_answer = turns[0].answer if question.prior else ""
-    metrics = _metrics(settings.model, turns, cited, question, verdict)
+    metrics = _metrics(settings, turns, cited, question, verdict)
     return Result(question, turn.answer, prior_answer, cited, verdict, metrics)
 
 
