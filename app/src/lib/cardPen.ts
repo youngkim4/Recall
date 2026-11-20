@@ -1,7 +1,8 @@
 // What every part of a share card is drawn with. A card is an object that
-// leaves the app, so it carries its own fixed colors, the ones Messages uses
-// in light mode, whatever theme the app is in. Text is fitted, wrapped or cut
-// here, so that nothing a card says leaves its margins.
+// leaves the app, so it carries its own fixed colors whatever theme the app is
+// in: words in white on the night under its scene (cardScenes.ts), your
+// messages in Messages' blue, theirs in its light gray. Text is fitted,
+// wrapped or cut here, so that nothing a card says leaves its margins.
 
 export const WIDTH = 1080
 export const MARGIN = 96
@@ -14,18 +15,20 @@ export const BETWEEN = 32
 const FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif'
 
 export const COLOR = {
-  paper: '#ffffff',
-  text: '#1d1d1f',
-  quiet: '#636368',
-  line: 'rgba(60, 60, 67, 0.18)',
+  text: '#ffffff',
+  // the foam of the night sea (backdrop/shoreline.ts): 5:1 or more on every night a card stands on
+  quiet: '#bedeea',
+  line: 'rgba(255, 255, 255, 0.18)',
   // the line a chart stands on
-  ground: 'rgba(60, 60, 67, 0.36)',
+  ground: 'rgba(255, 255, 255, 0.4)',
   you: '#0071e3',
   onYou: '#ffffff',
   them: '#e9e9eb',
-  mark: '#8e8e93',
-  // a bar that is there for the others to be read against
-  faint: '#d1d1d6',
+  onThem: '#1d1d1f',
+  // the other voice in a chart and the mark: a faint star of the night sky (backdrop/sky.ts)
+  mark: '#8c96cc',
+  // a bar that is there for the others to be read against: the shallows at night
+  faint: '#12425c',
 }
 
 export type Pen = CanvasRenderingContext2D

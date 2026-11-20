@@ -5,8 +5,8 @@
 import { chance, dithered, put, type Frame, type Rgb, type Scene } from './craft.ts'
 
 // deep, open water, shallows, foam, wet sand, sand, dry sand
-const DAY: Rgb[] = [[13, 92, 128], [22, 134, 162], [72, 186, 194], [246, 251, 246], [205, 182, 138], [236, 217, 174], [245, 232, 198]]
-const NIGHT: Rgb[] = [[5, 16, 30], [9, 34, 56], [18, 66, 92], [190, 222, 234], [30, 34, 46], [42, 44, 58], [52, 52, 66]]
+export const DAY: Rgb[] = [[13, 92, 128], [22, 134, 162], [72, 186, 194], [246, 251, 246], [205, 182, 138], [236, 217, 174], [245, 232, 198]]
+export const NIGHT: Rgb[] = [[5, 16, 30], [9, 34, 56], [18, 66, 92], [190, 222, 234], [30, 34, 46], [42, 44, 58], [52, 52, 66]]
 const SAND = 5
 
 function paint(frame: Frame, time: number, dark: boolean) {

@@ -1,6 +1,8 @@
 /* First words: the first message exchanged with each of the people written
-   to most, one at a time, on the whole window. This is the one place the app
-   stages an arrival, so the motion here is deliberate and nowhere else. */
+   to most, one at a time, on the whole window, over one of Recall's night
+   scenes. This is the one place the app stages an arrival, so the motion here
+   is deliberate and nowhere else. The story is always dark, whatever the
+   theme: its words stand on a night sky. */
 
 @layer views {
   .story {
@@ -13,8 +15,28 @@
     margin: 0;
     padding: 0;
     border: 0;
+    color-scheme: dark;
+    isolation: isolate;
     background: var(--bg);
     color: var(--text);
+  }
+
+  /* the scene fills the window behind everything, cell by cell, and a new
+     one fades in over the night of the last */
+  .story-scene {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    animation: scene-in 0.6s ease both;
+  }
+
+  @keyframes scene-in {
+    from {
+      opacity: 0;
+    }
   }
 
   .story[open] {
@@ -102,7 +124,7 @@
   }
 
   .story-page {
-    width: min(100%, 34rem);
+    width: min(100%, 46rem);
     animation: story-in 0.4s var(--ease-out) both;
   }
 
@@ -113,16 +135,22 @@
     }
   }
 
+  /* the words of a part are set as large as a poster's, after the mockup the
+     user picked: the opening line 48px to 88px with the window, over a
+     quieter line in the foam of the night sea */
   .story-kicker {
-    font-size: var(--t-reading);
-    line-height: var(--lh-reading);
-    color: var(--text-3);
+    margin-bottom: var(--s-3);
+    font-size: 1.125rem;
+    line-height: 1.5rem;
+    font-weight: var(--w-medium);
+    color: #bedeea;
   }
 
   .story-display {
-    font-size: var(--t-display-lg);
-    line-height: var(--lh-display-lg);
-    letter-spacing: -0.025em;
+    font-size: clamp(3rem, 1.5rem + 4.5vw, 5.5rem);
+    line-height: 0.95;
+    font-weight: 700;
+    letter-spacing: -0.04em;
     text-wrap: balance;
   }
 
@@ -133,12 +161,37 @@
     margin-top: var(--s-8);
   }
 
-  /* ---- an exchange: who it is with, set over the thread the way Messages
-     names a conversation, then the first message and the first answer ---- */
+  /* ---- an exchange: who it is with, set large, the day under it, then the
+     first message and the first answer in large bubbles. It stands in the
+     lower half of the window, under the clear sky below the lights. ---- */
+  .story-page.exchange {
+    align-self: end;
+  }
+
   .exchange-who {
-    margin-bottom: var(--s-3);
+    font-size: clamp(2.25rem, 1.5rem + 2vw, 3.25rem);
+    line-height: 1.05;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+  }
+
+  .exchange .stamp {
+    justify-self: start;
+    margin: var(--s-2) 0 var(--s-6);
+    font-size: 1.0625rem;
+    line-height: 1.5rem;
     font-weight: var(--w-medium);
-    text-align: center;
+    color: #c4cbf0;
+  }
+
+  .exchange .msg {
+    max-width: min(80%, 36rem);
+  }
+
+  .exchange .bubble.lg {
+    padding: 0.625rem 1.125rem;
+    font-size: 1.375rem;
+    line-height: 1.875rem;
   }
 
   /* a message and the dots that announce it share one place */
@@ -213,6 +266,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     .story-page,
+    .story-scene,
     .story-progress i[data-running] {
       animation: none;
     }

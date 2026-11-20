@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { recallApi } from '../../lib/api'
 import { copyCardPng, exportCardPng, renderCardToCanvas, type CardData, type CardFormat } from '../../lib/cardCanvas'
+import { sceneFor, type SceneName } from '../../lib/cardScenes'
 import { rovingKeyDown } from '../../lib/roving'
 import { useLoad } from '../../lib/useLoad'
 import type { Contact, Defaults, MemoriesPayload, PreviewPayload } from '../../types'
@@ -9,6 +10,7 @@ import { ChoiceMenu } from '../ui/ChoiceMenu'
 import { Truncate } from '../ui/Truncate'
 import { withFigures } from './figures'
 import { cardMoments, quoteLabel, type CardMoment } from './moments'
+import { SceneSwatches } from './SceneSwatches'
 
 type CardStudioProps = {
   defaults: Defaults | null
@@ -30,10 +32,10 @@ const COPIED_MS = 2000
 const loadFirstWords = (messagesPath: string) =>
   recallApi.firstWords({ messagesPath }).then((response) => response.firstWords)
 
-// Pick a moment, see the card, copy it or save it as a picture. The card is
-// drawn here, on this Mac, from the conversation's own figures. A quoted
-// message is someone's words, so it is left off the card until the box is
-// ticked.
+// Pick a moment, see the card, choose the scene it stands on, copy it or save
+// it as a picture. The card is drawn here, on this Mac, from the
+// conversation's own figures. A quoted message is someone's words, so it is
+// left off the card until the box is ticked.
 export function CardStudio({ defaults, model, contacts, memories, onClose }: CardStudioProps) {
   const dialog = useRef<HTMLDialogElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
@@ -51,6 +53,8 @@ export function CardStudio({ defaults, model, contacts, memories, onClose }: Car
   const [shown, setShown] = useState<{ key: string; data: CardData } | null>(null)
   const [copied, setCopied] = useState(false)
   const [failure, setFailure] = useState('')
+  // the scene chosen for the card on show; each card starts on its own kind's
+  const [picked, setPicked] = useState<{ key: string; scene: SceneName } | null>(null)
 
   const moments = useMemo(
     () => cardMoments(memories, firstWords.state === 'ready' ? firstWords.value : null, contacts),
@@ -91,11 +95,13 @@ export function CardStudio({ defaults, model, contacts, memories, onClose }: Car
   const shownMoment = moments.find((moment) => moment.key === shown?.key) ?? null
   const withQuote = Boolean(shown) && quoteFor === shown?.key
   const asksFor = shown ? quoteLabel(shown.data) : ''
+  const scene = shown ? (picked?.key === shown.key ? picked.scene : sceneFor(shown.data.kind)) : 'sea'
+  const options = { format, includeQuote: withQuote, scene }
 
   // drawn before the frame is shown, so a card that has just arrived is never seen empty
   useLayoutEffect(() => {
-    if (canvas.current && shown) renderCardToCanvas(canvas.current, shown.data, { format, includeQuote: withQuote })
-  }, [shown, format, withQuote])
+    if (canvas.current && shown) renderCardToCanvas(canvas.current, shown.data, { format, includeQuote: withQuote, scene })
+  }, [shown, format, withQuote, scene])
 
   useEffect(() => {
     if (!copied) return
@@ -115,7 +121,7 @@ export function CardStudio({ defaults, model, contacts, memories, onClose }: Car
     if (!shown || !shownMoment) return
     const name = shownMoment.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
     setFailure('')
-    exportCardPng(shown.data, { format, includeQuote: withQuote }, `recall-${shown.data.kind}-${name || 'card'}.png`).catch(() =>
+    exportCardPng(shown.data, options, `recall-${shown.data.kind}-${name || 'card'}.png`).catch(() =>
       setFailure('The picture could not be saved'),
     )
   }
@@ -123,7 +129,7 @@ export function CardStudio({ defaults, model, contacts, memories, onClose }: Car
   function copy() {
     if (!shown) return
     setFailure('')
-    copyCardPng(shown.data, { format, includeQuote: withQuote })
+    copyCardPng(shown.data, options)
       .then(() => setCopied(true))
       .catch(() => {
         setCopied(false)
@@ -181,8 +187,8 @@ export function CardStudio({ defaults, model, contacts, memories, onClose }: Car
           <div className="cards-canvas" data-format={format} aria-busy={waiting}>
             {shown ? (
               <canvas
-                // another card, or another shape of this one, arrives as a new picture
-                key={`${shown.key} ${format}`}
+                // another card, another shape or another scene arrives as a new picture
+                key={`${shown.key} ${format} ${scene}`}
                 ref={canvas}
                 className="arrive"
                 role="img"
@@ -193,6 +199,9 @@ export function CardStudio({ defaults, model, contacts, memories, onClose }: Car
               <div className="skeleton cards-waiting" />
             ) : null}
           </div>
+          {shown ? (
+            <SceneSwatches value={scene} onChange={(next) => setPicked({ key: shown.key, scene: next })} />
+          ) : null}
           <div className="cards-controls">
             <ChoiceMenu
               label="Shape"

@@ -4,9 +4,9 @@
 import { chance, dithered, drift, put, type Frame, type Rgb, type Scene } from './craft.ts'
 
 // night: zenith, mid sky, low sky, green of the curtain, violet of the curtain, faint star, star
-const NIGHT: Rgb[] = [[6, 9, 22], [11, 17, 40], [20, 28, 62], [30, 132, 118], [104, 86, 196], [140, 150, 204], [244, 246, 255]]
+export const NIGHT: Rgb[] = [[6, 9, 22], [11, 17, 40], [20, 28, 62], [30, 132, 118], [104, 86, 196], [140, 150, 204], [244, 246, 255]]
 // day: high blue, pale blue, rose, peach by the horizon, shade of a cloud, cloud, sun
-const DAY: Rgb[] = [[158, 192, 238], [198, 216, 244], [240, 208, 220], [250, 224, 200], [226, 222, 240], [255, 255, 255], [255, 206, 122]]
+export const DAY: Rgb[] = [[158, 192, 238], [198, 216, 244], [240, 208, 220], [250, 224, 200], [226, 222, 240], [255, 255, 255], [255, 206, 122]]
 
 function paintNight(frame: Frame, time: number) {
   const { cols, rows, open } = frame

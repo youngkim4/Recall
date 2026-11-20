@@ -7,9 +7,9 @@ import { asPen, fakePen } from './cardPenDouble.test.ts'
 const WIDTH = 1080
 const MARGIN = 96
 const YOU = '#0071e3'
-const MARK = '#8e8e93'
-const INK = '#1d1d1f'
-const FAINT = '#d1d1d6'
+const MARK = '#8c96cc'
+const INK = '#ffffff'
+const FAINT = '#12425c'
 const TOP = 500
 const HEIGHT = 400
 

@@ -91,7 +91,7 @@ function drawBubble(pen: Pen, { quote, lines, width, height }: Bubble, size: num
   const round = Math.min(size * 1.1, height / 2)
   const tail = size * 0.3
   fillRounded(pen, mine ? COLOR.you : COLOR.them, x, top, width, height, mine ? [round, round, tail, round] : [round, round, round, tail])
-  setType(pen, size, 400, mine ? COLOR.onYou : COLOR.text, 'left')
+  setType(pen, size, 400, mine ? COLOR.onYou : COLOR.onThem, 'left')
   lines.forEach((line, index) => pen.fillText(line, x + size * 0.75, top + size * 0.5 + size * 0.98 + index * size * 1.3))
 }
 

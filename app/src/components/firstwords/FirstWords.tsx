@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { GROUND, type SceneName } from '../../lib/cardScenes'
 import { conversationName } from '../../lib/conversations'
 import { sentByMe } from '../../lib/direction'
 import { formatLongDate, formatNumber, plural } from '../../lib/format'
 import type { FirstWordsEntry, FirstWordsPayload } from '../../types'
 import { CloseIcon, PauseIcon, PlayIcon } from '../Icons'
+import { SceneCanvas } from '../ui/SceneCanvas'
 
 type FirstWordsProps = {
   payload: FirstWordsPayload
@@ -16,11 +18,19 @@ const EXCHANGE_MS = 6500
 
 const prefersStill = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
+// The night each part stands on: the moonlit sea opens and closes the story,
+// and the people take turns under the northern lights and the sea.
+function sceneOf(part: number, last: number): SceneName {
+  if (part === 0 || part === last) return 'sea'
+  return part % 2 === 1 ? 'aurora' : 'sea'
+}
+
 // The first message ever exchanged with the people written to most, one
 // person at a time, each arriving the way a message does. It moves on by
 // itself until the reader takes over: a click or the arrow keys step through
 // it, and it then waits for them; the control beside Close holds it still or
-// sets it going again. With reduced motion it never starts by itself.
+// sets it going again. With reduced motion it never starts by itself. Each
+// part stands on one of Recall's night scenes, which fades in as it comes.
 export function FirstWords({ payload, onClose }: FirstWordsProps) {
   const dialog = useRef<HTMLDialogElement>(null)
   const { entries, totals } = payload
@@ -50,11 +60,13 @@ export function FirstWords({ payload, onClose }: FirstWordsProps) {
 
   const years = totals.firstYear && totals.lastYear ? totals.lastYear - totals.firstYear : 0
   const entry = part >= 1 && part <= entries.length ? entries[part - 1] : null
+  const scene = sceneOf(part, last)
 
   return (
     <dialog
       ref={dialog}
       className="story"
+      style={{ backgroundColor: GROUND[scene] }}
       aria-label="First words"
       // takes the focus when the button that had it goes away
       tabIndex={-1}
@@ -73,6 +85,7 @@ export function FirstWords({ payload, onClose }: FirstWordsProps) {
         }
       }}
     >
+      <SceneCanvas key={scene} scene={scene} className="story-scene" />
       <header className="story-bar">
         <ol className="story-progress" role="list">
           {Array.from({ length: parts }, (_, index) => (

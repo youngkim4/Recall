@@ -1,7 +1,8 @@
 // Share cards, drawn straight onto a canvas. One draw function feeds the
 // preview, the saved picture and the copied one, so the three cannot differ.
 //
-// A card is who it is about, one figure set large, and under it what makes
+// A card is one of Recall's scenes across its top (cardScenes.ts), and on the
+// night under it who it is about, one figure set large, and what makes
 // the figure worth sending: the conversation's own chart, the split of the
 // two voices, the words that were said. What a card has no data for is left
 // off, and the parts that are there share the height between them.
@@ -11,6 +12,7 @@ import type { DaysChart, VoicesChart } from './cardData.ts'
 import { place, type Block } from './cardLayout.ts'
 import { balance, facts, heading, hero, messages, spoken, wordmark, type CardQuote, type Fact } from './cardParts.ts'
 import { COLOR, WIDTH, clipped, count, named, numbers, percent, shareOf, type Pen } from './cardPen.ts'
+import { GROUND, paintScene, sceneFor, type SceneName } from './cardScenes.ts'
 import { shortName } from './conversations.ts'
 
 export type { CardQuote } from './cardParts.ts'
@@ -70,15 +72,21 @@ export type CardOptions = {
   format: CardFormat
   // a quoted message is left off unless the reader asks for it
   includeQuote: boolean
+  // the picture across the top; each kind of card has its own when none is chosen
+  scene?: SceneName
 }
 
-// Where things go in each shape: the heading, the room the parts share, the
-// gap between two parts, and the line the mark stands on. A tall card keeps
-// clear of the top and bottom, where a story is covered by its own controls.
-type Frame = { height: number; head: number; top: number; bottom: number; gap: number; mark: number }
+// Where things go in each shape: how many rows of 12px cells the scene takes,
+// the heading under it, the room the parts share, the gap between two parts,
+// and the line the mark stands on. The scene takes what the parts leave: a
+// card of two people with its chart, its split and its facts still fits.
+// A tall card keeps clear of the bottom, where a story is covered by its own
+// controls.
+type Frame = { height: number; scene: number; head: number; top: number; bottom: number; gap: number; mark: number }
+export const SCENE_CELL = 12
 const FRAMES: Record<CardFormat, Frame> = {
-  story: { height: 1920, head: 230, top: 420, bottom: 1730, gap: 72, mark: 1848 },
-  square: { height: 1080, head: 104, top: 262, bottom: 952, gap: 44, mark: 1016 },
+  story: { height: 1920, scene: 40, head: 516, top: 680, bottom: 1730, gap: 64, mark: 1848 },
+  square: { height: 1080, scene: 17, head: 232, top: 360, bottom: 952, gap: 32, mark: 1016 },
 }
 
 type Card = { name: string; under: string; blocks: Array<Block | null> }
@@ -185,8 +193,10 @@ function duoCard(pen: Pen, data: DuoCardData, opts: CardOptions): Card {
 
 function drawCard(pen: Pen, data: CardData, opts: CardOptions) {
   const frame = FRAMES[opts.format]
-  pen.fillStyle = COLOR.paper
+  const scene = opts.scene ?? sceneFor(data.kind)
+  pen.fillStyle = GROUND[scene]
   pen.fillRect(0, 0, WIDTH, frame.height)
+  paintScene(pen, scene, WIDTH / SCENE_CELL, frame.scene, SCENE_CELL)
   const card =
     data.kind === 'anniversary'
       ? anniversaryCard(pen, data, opts)

@@ -2,15 +2,18 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { copyCardPng, exportCardPng, renderCardToCanvas, type CardData, type CardFormat } from './cardCanvas.ts'
 import type { DaysChart, VoicesChart } from './cardData.ts'
+import { GROUND } from './cardScenes.ts'
 import { fakePen } from './cardPenDouble.test.ts'
 
 const WIDTH = 1080
 const MARGIN = 96
 const YOU = '#0071e3'
 const THEM = '#e9e9eb'
-const MARK = '#8e8e93'
-const INK = '#1d1d1f'
+const MARK = '#8c96cc'
+const INK = '#ffffff'
 const BAR = 24
+// the scene takes the top of the card, rows of 12px cells: 40 on a tall card, 17 on a square one
+const SCENE_BOTTOM: Record<CardFormat, number> = { story: 40 * 12, square: 17 * 12 }
 
 type Drawing = ReturnType<typeof draw>
 
@@ -18,8 +21,8 @@ function draw(data: CardData, format: CardFormat = 'story', includeQuote = true,
   const { pen, texts, boxes } = fakePen(hasRoundRect)
   const canvas = { width: 0, height: 0, getContext: () => pen }
   const drawn = renderCardToCanvas(canvas as unknown as HTMLCanvasElement, data, { format, includeQuote })
-  // the paper is the one box that fills the card
-  return { drawn, canvas, texts, boxes: boxes.filter((box) => box.right - box.left < WIDTH) }
+  // the night is the one box that fills the card, and the scene is drawn above SCENE_BOTTOM
+  return { drawn, canvas, texts, boxes: boxes.filter((box) => box.right - box.left < WIDTH && box.top >= SCENE_BOTTOM[format]) }
 }
 
 const said = (drawing: Drawing) => drawing.texts.map((item) => item.text)
@@ -151,7 +154,7 @@ test('nothing on a card leaves its margins, whatever the names and words are', (
 })
 
 test('everything sits between the heading and the mark, in both shapes', () => {
-  const frames = { story: { top: 420, mark: 1848 }, square: { top: 262, mark: 1016 } }
+  const frames = { story: { top: 680, mark: 1848 }, square: { top: 360, mark: 1016 } }
   const cards = [
     anniversary({ voices: VOICES, balance: 0.4, reply: { text: LONG_QUOTE, fromMe: false }, quote: { text: LONG_QUOTE, fromMe: true } }),
     onThisDay({ date: 'Saturday, November 16, 2024', days: DAYS, busier: { share: 0.96, year: '2024' }, quote: { text: LONG_QUOTE, fromMe: false } }),
@@ -547,4 +550,22 @@ test('copying fails out loud when there is no picture, or nowhere to put one', a
   stubPage(fakePen(true).pen, new Blob(['png']))
   stubClipboard(false)
   await assert.rejects(copyCardPng(duo(), options), /cannot copy a picture/)
+})
+
+test('a card stands on the night of its scene, and each kind starts on its own', () => {
+  const night = (data: CardData, scene?: 'sunrise' | 'sea' | 'aurora') => {
+    const { pen, boxes } = fakePen(true)
+    const canvas = { width: 0, height: 0, getContext: () => pen }
+    renderCardToCanvas(canvas as unknown as HTMLCanvasElement, data, { format: 'story', includeQuote: false, scene })
+    return { ground: boxes.find((box) => box.right - box.left >= WIDTH && box.bottom - box.top >= 1920)?.color, boxes }
+  }
+  assert.equal(night(anniversary()).ground, GROUND.sunrise)
+  assert.equal(night(onThisDay()).ground, GROUND.sea)
+  assert.equal(night(duo()).ground, GROUND.aurora)
+  assert.equal(night(duo(), 'sunrise').ground, GROUND.sunrise)
+  // the picture is drawn across the top, from edge to edge
+  const scene = night(duo()).boxes.filter((box) => box.bottom <= 40 * 12)
+  assert.ok(scene.length > 40)
+  assert.equal(Math.min(...scene.map((box) => box.left)), 0)
+  assert.equal(Math.max(...scene.map((box) => box.right)), WIDTH)
 })

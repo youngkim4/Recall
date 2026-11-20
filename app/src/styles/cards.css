@@ -180,6 +180,45 @@
     aspect-ratio: 1;
   }
 
+  /* ---- the scenes the card can stand on, centred under it, after the
+     swatches under Spotify's share card. The chosen one is ringed in the
+     theme's hue; the ring moves to the next one as it is chosen. ---- */
+  .scene-swatches {
+    display: flex;
+    justify-content: center;
+    gap: var(--s-3);
+  }
+
+  .scene-swatch {
+    padding: 3px;
+    border-radius: var(--r-md);
+    box-shadow: 0 0 0 1px var(--line);
+    transition: box-shadow var(--dur-short) var(--ease-out);
+  }
+
+  .scene-swatch > canvas {
+    display: block;
+    width: 3.5rem;
+    height: 2.25rem;
+    border-radius: var(--r-sm);
+    image-rendering: pixelated;
+  }
+
+  .scene-swatch[aria-checked='true'] {
+    box-shadow: 0 0 0 2px var(--you);
+  }
+
+  .scene-swatch:focus-visible {
+    outline: 2px solid var(--you-ink);
+    outline-offset: 2px;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .scene-swatch[aria-checked='false']:hover {
+      box-shadow: 0 0 0 1px var(--line-strong);
+    }
+  }
+
   .cards-controls {
     display: flex;
     flex-wrap: wrap;
