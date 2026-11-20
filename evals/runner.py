@@ -104,6 +104,7 @@ def _cost(model: str, turns: Iterable[Turn]) -> float:
         total += sum(price(model, call.usage) for call in turn.calls)
         usage = turn.payload.get("usage") if turn.payload else None
         total += float((usage or {}).get("digest_usd") or 0.0)
+        total += float((usage or {}).get("rerank_usd") or 0.0)  # the ranking model, with RECALL_RERANK=1
     return total
 
 

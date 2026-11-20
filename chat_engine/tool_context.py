@@ -11,7 +11,7 @@ from typing import Any, Callable, Optional, Sequence
 
 from .cancel import CancelToken
 from .directory import Directory
-from .ports import ChatArchive, Conversation, DigestSource, Labeler, MeaningSearch, Message, PeopleSearch
+from .ports import ChatArchive, Conversation, DigestSource, Labeler, MeaningSearch, Message, PeopleSearch, Reranker
 from .registry import ConversationAliases, EvidenceRegistry
 from .render import ConversationBook, Limits
 from .scope import Scope
@@ -45,10 +45,13 @@ class Fetch:
 
     work: does the work. It gives each raw report of progress to the function it gets, from any thread.
     event: one raw report as an event of the stream, or None to drop it. The turn calls it on its own thread.
+    start: the part of the lookup that reads the archive before the work, or None. The turn runs it on its
+        own thread, before the worker starts.
     """
 
     work: Callable[[Report], None]
     event: Callable[[object], Optional[dict[str, Any]]]
+    start: Optional[Callable[[], None]] = None
 
 
 @dataclass(frozen=True)
@@ -78,7 +81,8 @@ class Memory:
     """The optional ports of one question, and the limits of a digest.
 
     A port that is None is not offered: its tool is not in the tool list.
-    `cancel` is the token of the question. It goes to the digest source.
+    `cancel` is the token of the question. It goes to the digest source and to the reranker.
+    `reranker` orders the hits of a search; None leaves every search as it is.
     """
 
     meaning: Optional[MeaningSearch] = None
@@ -88,6 +92,7 @@ class Memory:
     cancel: CancelToken = field(default_factory=CancelToken)
     digest_parts_limit: int = 4  # the most periods not yet read that one digest reads inside a question
     people: Optional[PeopleSearch] = None
+    reranker: Optional[Reranker] = None
 
 
 def month_year(timestamp: str) -> str:
@@ -126,6 +131,7 @@ class ToolContext:
         self.digests_built = 0
         self.digest_estimates = 0
         self.digest_usd = 0.0  # what the digests of this question cost, as far as the source said
+        self.rerank_usd = 0.0  # what the rankings of this question cost, as far as the reranker said
         self.people_failed = False  # the search of people failed in this question: it is not asked again
         self.book = ConversationBook(archive, labeler, aliases)
         self._directory: Optional[Directory] = None

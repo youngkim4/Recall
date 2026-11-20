@@ -3,7 +3,8 @@
 Before the first model call the engine runs one search on the words of the
 question and one lookup of the names in it. The results go into the prompt,
 so a simple recall question ends in one model call. With a search by meaning,
-that search joins the exchanges found by meaning and by words.
+that search joins the exchanges found by meaning and by words. With a
+reranker, its hits are ranked against the whole question (`rerank.py`).
 
 A question that names years also gets the figures of that period: who the
 user wrote with, and how much. A question about a period is seldom answered
@@ -30,9 +31,9 @@ from .tool_args import ToolInputError
 from .tool_browse import BrowseRequest, run_browse
 from .tool_context import Prepared, ToolContext
 from .tool_figures import list_entries, run_count
-from .tool_meaning import MeaningRequest, meaning_lookup
+from .tool_meaning import MeaningRequest, meaning_prepared
 from .tool_people import SEED_PEOPLE, seeded_people
-from .tool_search import run_search_tool
+from .tool_search import search_lookup
 from .tools import ToolBox
 
 SEED_HITS = 8
@@ -46,6 +47,7 @@ _FIGURES_TOKENS = 1500  # room for every row a count by conversation shows
 SEED_OPENING = 10  # the first messages with the one person a question names
 _OPENING_TOKENS = 1200
 ALL_YEARS = (1990, 2099)
+_SEARCHING = "Searching your messages"
 
 
 @dataclass(frozen=True)
@@ -202,13 +204,10 @@ def _search_call(
     )
     if ctx.memory.meaning is not None:
         joined = MeaningRequest(question, request, "the question")
-        prepared = Prepared("Searching your messages", meaning_lookup(ctx, joined, radius=SEED_RADIUS))
+        prepared = meaning_prepared(ctx, joined, _SEARCHING, radius=SEED_RADIUS, rank_by=question)
         label = 'search_messages(match="meaning", query=the question)'
         return SeedCall("search_messages", label, box.wrap("search_messages", prepared))
-    prepared = Prepared(
-        "Searching your messages",
-        lambda budget: run_search_tool(ctx, request, budget, radius=SEED_RADIUS),
-    )
+    prepared = search_lookup(ctx, request, _SEARCHING, radius=SEED_RADIUS, rank_by=question)
     label = f'search_messages(query="{request.query}", match="any")'
     return SeedCall("search_messages", label, box.wrap("search_messages", prepared))
 

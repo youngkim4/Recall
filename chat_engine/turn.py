@@ -133,6 +133,8 @@ class QuestionTurn:
             yield status(seed.prepared.status)
             if self._cancel.cancelled:
                 break
+            if seed.prepared.fetch is not None:  # slow work, such as a ranking: its events reach the stream
+                yield from run_beside(seed.prepared.fetch, self._cancel)
             outcome = seed.prepared.run(self._allowance())
             self._record(seed.tool, outcome, seeded=True)
             self._is_new(outcome.text)  # a later lookup that gives the same result finds nothing new

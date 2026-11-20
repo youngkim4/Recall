@@ -16,6 +16,9 @@ The word ranking is always by relevance. The order of the call is not used.
 After a cancel that comes while the port searches, the archive is not read.
 When the archive holds none of the hits of the port, the index is older than
 the archive: the first line of the result says so.
+
+With a reranker, the joined ranking reads a pool of exchanges, and the
+reranker orders them (`rerank.py`). The order of the call is not used either way.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 from .fusion import fuse
 from .ports import MeaningHit, Message
 from .render import ResultWriter, add_block, time_key
+from .rerank import candidate_text, pool_size, ranked_lookup
 from .search import MAX_FETCH, Found, SearchRequest, run_search
 from .tool_args import ToolInputError, bool_arg, choice_arg, day_arg, int_arg, list_arg, text_arg
 from .tool_context import Prepared, ToolContext, ToolOutcome, plural
@@ -85,6 +89,19 @@ class Exchange:
     more: bool = False  # the exchange is longer than what was read
 
 
+@dataclass(frozen=True)
+class MeaningFound:
+    """The exchanges a search by meaning found, best first.
+
+    known: the exchanges that were built, and those past the limit.
+    note: why only the words were searched, or "".
+    """
+
+    exchanges: tuple[Exchange, ...]
+    known: int
+    note: str
+
+
 def prepare_search_or_meaning(ctx: ToolContext, arguments: Mapping[str, Any]) -> Prepared:
     """search_messages of an engine that has a search by meaning."""
     if choice_arg(arguments, "match", MATCHES, "all") != "meaning":
@@ -105,7 +122,33 @@ def prepare_search_or_meaning(ctx: ToolContext, arguments: Mapping[str, Any]) ->
     )
     names = ctx.names(conversations)
     status = f"Searching for moments like “{query}”" + (f" in {names}" if names else "")
-    return Prepared(status, meaning_lookup(ctx, MeaningRequest(query, words, f"“{query}”")))
+    return meaning_prepared(ctx, MeaningRequest(query, words, f"“{query}”"), status, rank_by=query)
+
+
+def meaning_prepared(
+    ctx: ToolContext, request: MeaningRequest, status: str, *, radius: int = SEARCH_RADIUS,
+    rank_by: Optional[str] = None,
+) -> Prepared:
+    """A search by meaning. With `rank_by` and a reranker, its exchanges are ranked against `rank_by`."""
+    if rank_by is None or ctx.memory.reranker is None:
+        return Prepared(status, meaning_lookup(ctx, request, radius))
+    limit = request.words.limit
+
+    def gather() -> tuple[Optional[MeaningFound], list[str]]:
+        hits = ask_port(ctx, request)
+        if ctx.memory.cancel.cancelled:  # the cancel came while the port searched: nothing more is read
+            return None, []
+        found = find_exchanges(ctx, request, hits, radius, pool_size(limit))
+        return found, [candidate_text(ctx, e.messages, e.hits, e.focus) for e in found.exchanges]
+
+    def write(found: Optional[MeaningFound], order: tuple[int, ...], budget: int) -> ToolOutcome:
+        if found is None:
+            return ToolOutcome("", "Stopped before the messages were read", ok=False)
+        chosen = replace(found, exchanges=tuple(found.exchanges[place] for place in order))
+        return write_meaning(ctx, request, chosen, budget)
+
+    run, fetch = ranked_lookup(ctx, rank_by, limit, gather, write)
+    return Prepared(status, run, fetch=fetch)
 
 
 def meaning_lookup(
@@ -166,6 +209,13 @@ def run_meaning_search(
     budget: int,
     radius: int = SEARCH_RADIUS,
 ) -> ToolOutcome:
+    return write_meaning(ctx, request, find_exchanges(ctx, request, hits, radius, request.words.limit), budget)
+
+
+def find_exchanges(
+    ctx: ToolContext, request: MeaningRequest, hits: Optional[Sequence[MeaningHit]], radius: int, limit: int
+) -> MeaningFound:
+    """The best `limit` exchanges of both rankings joined. `hits` is None when the port failed."""
     words = request.words
     segments, stale = _segments(ctx, words, hits or ())
     note = _NOT_AVAILABLE if hits is None else _STALE if stale else ""
@@ -173,8 +223,15 @@ def run_meaning_search(
     found = run_search(ctx.archive, replace(words, limit=_fetch(words.limit), order="relevance")).hits
     keys, by_key = _joined(segments, found)
     by_segment = {segment.key: segment for segment in segments}
-    exchanges, used = _exchanges(ctx, keys, by_key, by_segment, words.limit, radius)
+    exchanges, used = _exchanges(ctx, keys, by_key, by_segment, limit, radius)
     known = len(exchanges) + len(keys) - used  # the exchanges that were built, and those past the limit
+    return MeaningFound(tuple(exchanges), known, note)
+
+
+def write_meaning(ctx: ToolContext, request: MeaningRequest, found: MeaningFound, budget: int) -> ToolOutcome:
+    """The result, from the exchanges in the order they are given."""
+    words = request.words
+    known, exchanges, note = found.known, found.exchanges, found.note
     writer = ResultWriter(budget, ctx.limits.count_tokens)
     place = f"{ctx.where(words.conversations)}{ctx.when(words.since, words.until)}"
     writer.add(_header(request, place, known, note), force=True)

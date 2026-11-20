@@ -3,9 +3,10 @@
 The engine reads the archive, calls a model and names people only through the
 first three interfaces below. Tests replace all three.
 
-Three more ports are optional: a search by meaning, a digest of one
-conversation and a search of people. An engine that gets none of them offers
-no tool for them.
+Four more ports are optional: a search by meaning, a digest of one
+conversation, a search of people and a reranker. An engine that gets none of
+the first three offers no tool for them. The reranker adds no tool: it only
+orders what a search found.
 """
 
 from __future__ import annotations
@@ -396,3 +397,42 @@ class PeopleSearch(Protocol):
         limit: int,
         conversations: Optional[Sequence[str]] = None,
     ) -> list[PersonHit]: ...
+
+
+# --- memory: reranker -------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RerankItem:
+    """One candidate of a ranking: the id the result names it by, and a short text that is already masked."""
+
+    id: str
+    text: str
+
+
+@dataclass(frozen=True)
+class RerankResult:
+    """The ids to keep, best first, and what the ranking cost.
+
+    failed: the ranking did not work, so `ids` keep the order of the
+    candidates. `reason` says why in a few words; it holds no text of a message.
+    """
+
+    ids: tuple[str, ...]
+    usage: Usage = Usage()
+    usd: float = 0.0
+    failed: bool = False
+    reason: str = ""
+
+
+class Reranker(Protocol):
+    """Orders the candidates of a search by how well they answer a query. Best first, at most `keep`.
+
+    It never raises: on any failure it gives the order of the candidates,
+    with `failed` set. The engine checks the ids again, so an id it did not
+    give is dropped. The query and the texts are masked before they get here.
+    """
+
+    def rerank(
+        self, query: str, candidates: Sequence[RerankItem], keep: int, cancel: Optional[CancelToken] = None
+    ) -> RerankResult: ...

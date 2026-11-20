@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Mapping, Optional, Sequence
 
 from .ports import Message
 from .registry import normalize_ref
 from .render import ResultWriter, add_block, fit_messages, time_key
+from .rerank import RERANK_RADIUS, candidate_text, pool_size, ranked_lookup, reranks
 from .search import Found, SearchOutcome, SearchRequest, run_search
 from .tool_args import ToolInputError, bool_arg, choice_arg, day_arg, int_arg, list_arg, text_arg
 from .tool_browse import prepare_browse
@@ -56,7 +57,8 @@ def prepare_search(ctx: ToolContext, arguments: Mapping[str, Any]) -> Prepared:
         query=query, match=match, conversations=conversations, since=since, until=until,
         from_me=from_me, order=order, limit=limit,
     )
-    return Prepared(search_status(ctx, request), lambda budget: run_search_tool(ctx, request, budget))
+    rank_by = query if reranks(ctx, arguments.get("order")) else None
+    return search_lookup(ctx, request, search_status(ctx, request), rank_by=rank_by)
 
 
 def search_status(ctx: ToolContext, request: SearchRequest) -> str:
@@ -64,10 +66,42 @@ def search_status(ctx: ToolContext, request: SearchRequest) -> str:
     return f"Searching for “{request.query}”" + (f" in {names}" if names else "")
 
 
+def search_lookup(
+    ctx: ToolContext, request: SearchRequest, status: str, *, radius: int = SEARCH_RADIUS,
+    rank_by: Optional[str] = None,
+) -> Prepared:
+    """A search with words. With `rank_by` and a reranker, its hits are ranked against `rank_by` (`rerank.py`)."""
+    if rank_by is None or ctx.memory.reranker is None:
+        return Prepared(status, lambda budget: run_search_tool(ctx, request, budget, radius))
+
+    def gather() -> tuple[SearchOutcome, list[str]]:
+        outcome = run_search(ctx.archive, replace(request, limit=pool_size(request.limit)))
+        return outcome, [_candidate(ctx, found) for found in outcome.hits]
+
+    def write(outcome: SearchOutcome, order: tuple[int, ...], budget: int) -> ToolOutcome:
+        ranked = replace(outcome, hits=tuple(outcome.hits[place] for place in order))
+        return write_search(ctx, replace(request, order="relevance"), ranked, budget, radius)
+
+    run, fetch = ranked_lookup(ctx, rank_by, request.limit, gather, write)
+    return Prepared(status, run, fetch=fetch)
+
+
+def _candidate(ctx: ToolContext, found: Found) -> str:
+    message_id = str(found.message["id"])
+    near = _around(ctx, found.message, RERANK_RADIUS, within=_EXCHANGE)
+    return candidate_text(ctx, near.messages, {message_id}, {} if found.focus is None else {message_id: found.focus})
+
+
 def run_search_tool(
     ctx: ToolContext, request: SearchRequest, budget: int, radius: int = SEARCH_RADIUS
 ) -> ToolOutcome:
-    outcome = run_search(ctx.archive, request)
+    return write_search(ctx, request, run_search(ctx.archive, request), budget, radius)
+
+
+def write_search(
+    ctx: ToolContext, request: SearchRequest, outcome: SearchOutcome, budget: int, radius: int = SEARCH_RADIUS
+) -> ToolOutcome:
+    """The result of a search whose hits are found. The order of `request` is the one the header names."""
     windows = build_windows(ctx, outcome.hits, radius)
     writer = ResultWriter(budget, ctx.limits.count_tokens)
     writer.add(_header(ctx, request, outcome), force=True)

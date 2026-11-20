@@ -91,10 +91,15 @@ class ToolBox:
         return self.wrap(name, prepared)
 
     def usage(self, totals: Mapping[str, Any]) -> dict[str, Any]:
-        """The usage of the question. With a digest source it also holds `digest_usd`: what the digests cost."""
-        if self.context.memory.digests is None:
-            return dict(totals)
-        return {**totals, "digest_usd": float(self.context.digest_usd)}
+        """The usage of the question.
+
+        With a digest source it also holds `digest_usd`: what the digests cost.
+        With a reranker it also holds `rerank_usd`: what the rankings cost.
+        """
+        memory = self.context.memory
+        digests = {} if memory.digests is None else {"digest_usd": float(self.context.digest_usd)}
+        ranked = {} if memory.reranker is None else {"rerank_usd": float(self.context.rerank_usd)}
+        return {**totals, **digests, **ranked}
 
     def memory_payload(self) -> dict[str, Any]:
         """`{"memory": {"notReady": [...]}}`: the conversations whose story was too long to read in this question.
@@ -114,11 +119,15 @@ class ToolBox:
             prepared,
             status=redact(prepared.status),
             run=lambda budget: self._run(name, prepared, budget),
-            fetch=None if fetch is None else Fetch(self._guarded(fetch), self._masked(fetch)),
+            fetch=None if fetch is None else Fetch(self._guarded(fetch), self._masked(fetch), self._started(fetch)),
         )
 
     def _guarded(self, fetch: Fetch) -> Callable[[Report], None]:
         return lambda report: self.guard(lambda: fetch.work(report))
+
+    def _started(self, fetch: Fetch) -> Optional[Callable[[], None]]:
+        start = fetch.start
+        return None if start is None else lambda: self.guard(start)
 
     def _masked(self, fetch: Fetch) -> Callable[[object], Optional[dict[str, Any]]]:
         """The event of a report, with every text in it masked."""

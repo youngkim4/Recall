@@ -16,7 +16,7 @@ from typing import Any, Callable, Generator, Iterator, Optional
 from .cancel import CancelToken
 from .digest_fit import MIN_DIGEST_TOKENS
 from .errors import ChatEngineError
-from .ports import LLM, ChatArchive, DigestSource, Labeler, MeaningSearch, PeopleSearch
+from .ports import LLM, ChatArchive, DigestSource, Labeler, MeaningSearch, PeopleSearch, Reranker
 from .render import estimate_tokens
 from .scope import EVERYTHING, Scope
 from .session import ChatSession
@@ -42,6 +42,8 @@ class EngineConfig:
     digest_parts_limit: the most periods not yet read that one digest reads inside a question. 0 reads none.
     digest_usd_limit: a digest that costs more to build is not built.
     timezone: the name shown in the prompt; "" takes the zone of the clock.
+    rerank: a search asks the reranker to order its hits (`rerank.py`). Off, or with no reranker,
+        every search and every request is as without it.
     count_tokens: a tokenizer; the default is a cautious estimate.
     """
 
@@ -60,6 +62,7 @@ class EngineConfig:
     digest_tokens: int = 24_000
     digest_usd_limit: float = 0.5
     digest_parts_limit: int = 4
+    rerank: bool = False
 
     def __post_init__(self) -> None:
         if not str(self.model or "").strip():
@@ -106,9 +109,13 @@ class ChatEngine:
         meaning: Optional[MeaningSearch] = None,
         digests: Optional[DigestSource] = None,
         people: Optional[PeopleSearch] = None,
+        reranker: Optional[Reranker] = None,
         clock: Callable[[], datetime] = datetime.now,
     ) -> None:
-        """`meaning`, `digests` and `people` are optional. Without one, its tool is not offered."""
+        """`meaning`, `digests` and `people` are optional. Without one, its tool is not offered.
+
+        `reranker` is optional too. It is used only when `config.rerank` is on.
+        """
         self._archive = archive
         self._llm = llm
         self._labeler = labeler
@@ -116,6 +123,7 @@ class ChatEngine:
         self._meaning = meaning
         self._digests = digests
         self._people = people
+        self._reranker = reranker if config.rerank else None
         self._clock = clock
 
     def ask(
@@ -194,7 +202,7 @@ class ChatEngine:
             cancel=token,
             memory=Memory(
                 self._meaning, self._digests, config.digest_tokens, config.digest_usd_limit, token,
-                config.digest_parts_limit, people=self._people,
+                config.digest_parts_limit, people=self._people, reranker=self._reranker,
             ),
         )
 

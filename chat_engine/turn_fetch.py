@@ -32,7 +32,10 @@ def run_beside(fetch: Fetch, cancel: CancelToken) -> Generator[Event, None, None
     """Run `fetch.work` on a worker thread. Yield the event of each of its reports, in order, while it runs.
 
     The generator ends when the work ends. What the work raises is raised here.
+    `fetch.start` runs first, here on the thread of the turn.
     """
+    if fetch.start is not None:
+        fetch.start()
     reports: queue.SimpleQueue[object] = queue.SimpleQueue()
     failure: list[Exception] = []
 

@@ -43,12 +43,20 @@ Rules:
   inside one chat.
 - A question over 8,000 characters is refused. A row of the history is cut to
   8,000 characters.
+
+Ranking: with `RERANK` on, the engine gets a reranker over the cheap model
+(`rerank_port.py`). It orders the hits of a search before they are shown, and
+the usage of the payload then has `rerank_usd`. `RERANK` is off by default.
+It is read one time, when this module is imported, from the environment:
+`RECALL_RERANK=1` turns it on (the evaluation harness uses this). Any other
+value, or none, leaves it off. With it off, every request is as before.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import os
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -64,7 +72,7 @@ from chat_engine.local_answer import local_answer
 from chat_engine.ports import LLM
 from chat_engine.scope import EVERYTHING, Scope
 from chat_engine.session import ChatSession
-from recall_services import chat_sessions, inputs, keys, memory, messages, models, people_port
+from recall_services import chat_sessions, inputs, keys, memory, messages, models, people_port, rerank_port
 from recall_services.models import ChatModelConfig, ModelChoiceError
 from recall_services.names import Names
 
@@ -79,6 +87,16 @@ QUESTION_CHARS = 8_000
 HISTORY_ROW_CHARS = 8_000
 # limits of the engine that differ from its defaults (EngineConfig); a test sets a smaller one
 LIMITS: Mapping[str, int] = {}
+RERANK_ENV = "RECALL_RERANK"
+
+
+def rerank_switch(environ: Mapping[str, str]) -> bool:
+    """True when the environment turns the ranking of search hits on: RECALL_RERANK=1."""
+    return str(environ.get(RERANK_ENV) or "").strip() == "1"
+
+
+# the engine ranks search hits with the cheap model (`rerank_port.py`); off unless RECALL_RERANK=1
+RERANK: bool = rerank_switch(os.environ)
 EMPTY_QUESTION = "Type a question first."
 TOO_LONG = "The question is too long. Shorten it, then ask again."
 ASK_AGAIN = "then ask again."
@@ -223,6 +241,7 @@ def _events(
     use_ai: bool,
     llm_factory: LLMFactory,
     clock: Callable[[], datetime],
+    rerank_factory: LLMFactory,
 ) -> Iterator[Event]:
     labeler = names.chat_labeler(archive.conversations())
     adapter = ArchiveAdapter(archive)
@@ -239,12 +258,15 @@ def _events(
             max_output_tokens=config.max_output_tokens,
             # the digest port refuses a longer digest with the same number
             digest_parts_limit=memory.DIGEST_PARTS_LIMIT,
+            rerank=RERANK,
             **LIMITS,
         )
         # the search by meaning and the digest, each None when it can not work; a test puts its own `memory.ports`
         ports = memory.ports(archive, names)
         if "people" not in ports:  # the search of people, None when it can not work; a test can give its own
             ports = {**ports, "people": people_port.port(archive, names)}
+        if RERANK and "reranker" not in ports:  # the ranking of search hits, None when it can not work
+            ports = {**ports, "reranker": rerank_port.port(rerank_factory)}
         engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock, **ports)
         # what the last answer read, when the server still holds it; else the plain rows of the app
         kept = chat_sessions.take(archive.path, history)
@@ -287,6 +309,7 @@ def stream(
     reasoning_effort: object = "",
     llm_factory: LLMFactory | None = None,
     clock: Callable[[], datetime] = datetime.now,
+    rerank_factory: LLMFactory | None = None,
 ) -> Iterator[Event]:
     """Answer one question. See the module docstring for the events.
 
@@ -299,6 +322,8 @@ def stream(
     `contact`, the conversation that its question was asked of. `cancel` stops the model
     call and the lookups: the question then ends with `done` and `cancelled`.
     Closing the iterator stops the model call and the reading of a digest too.
+    `rerank_factory` makes the model port of the reranker when `RERANK` is on;
+    None is `default_llm`. It is never the factory of the chat model.
 
     Nothing is raised for a failure of the model, of the archive or of the
     request: the last event says it.
@@ -322,6 +347,7 @@ def stream(
         use_ai,
         llm_factory or default_llm,
         clock,
+        rerank_factory or default_llm,
     )
     try:
         yield from answering
