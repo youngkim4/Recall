@@ -13,7 +13,8 @@ type ChatCitesProps = {
   citations: SearchResult[]
   // the cited message whose day is open, as bookmarkId gives it; '' for none
   openKey: string
-  onOpen: (citation: SearchResult) => void
+  // `row` is the cite that was clicked, for its day to grow out of
+  onOpen: (citation: SearchResult, row: Element) => void
   // put away: still on the page while its pane closes, but out of reach
   closed: boolean
   onClose: () => void
@@ -43,7 +44,7 @@ export function ChatCites({ id, answerId, citations, openKey, onOpen, closed, on
                 message={citation}
                 index={index + 1}
                 picked={bookmarkId(citation) === openKey}
-                onOpen={() => onOpen(citation)}
+                onOpen={(row) => onOpen(citation, row)}
                 roving
                 tabIndex={index === 0 ? 0 : -1}
               />

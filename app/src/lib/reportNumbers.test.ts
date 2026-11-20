@@ -63,8 +63,8 @@ test('the figures a report leads with are the ones it has, each with one line ab
       ['Longest gap', '12 days'],
     ],
   )
-  // 420 messages over the 70 days from the first to the last
-  assert.equal(figures[0].note, '6 a day')
+  // no count a day under the messages: the user asked for "N a day" to go
+  assert.equal(figures[0].note, undefined)
   assert.equal(figures[1].note, 'of 70')
   // the busiest day is named, so the figure can be found on the chart
   assert.ok(figures[2].note)
@@ -82,7 +82,7 @@ test('a day count is given alone when every day of the span was active', () => {
   assert.deepEqual(
     figures.map((figure) => [figure.label, figure.value, figure.note ?? '']),
     [
-      ['Messages', '9', '3 a day'],
+      ['Messages', '9', ''],
       ['Active days', '3', ''],
     ],
   )

@@ -116,21 +116,24 @@
 
   /* ---- ruled rows: an open list, with no card around it. A hairline stands
      over every row, over the first one too, where it parts the list from its
-     heading. A row is one band: 12px, a line, 12px. Under the pointer its
-     fill reaches 8px past the words on both sides, so the words keep the
-     edge of the column and the hairlines end where the words do. ---- */
+     heading. A row is one band: 12px, a line, 12px. The hairlines and the
+     fill under the pointer share their edges: both reach 8px past the words
+     on each side, and the fill is square, so it lies exactly between two
+     lines and never past them (as Notion's lists do). The words keep the
+     edge of the column. A fill that ran 8px past lines that stopped at the
+     words was refused. ---- */
   .rows.ruled {
     gap: 0;
   }
 
   .rows.ruled > li {
+    margin-inline: calc(var(--s-2) * -1);
     border-top: 1px solid var(--line);
   }
 
   .rows.ruled .row {
-    width: calc(100% + var(--s-4));
-    margin-inline: calc(var(--s-2) * -1);
     padding: var(--s-3) var(--s-2);
+    border-radius: 0;
     outline-offset: -2px;
   }
 
@@ -147,7 +150,6 @@
   }
 
   /* a ranked list answers to its own width, wherever it stands */
-  .ranked-list,
   .people {
     container: ranked / inline-size;
   }

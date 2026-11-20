@@ -13,11 +13,13 @@ import {
   noNotes,
   noted,
   notStartedJob,
+  revealsFirstWords,
   whyNotThisCopy,
   type GuideStage,
   type StepNotes,
 } from '../../lib/setupGuide'
 import type { Job, SetupImportResult, SetupStatus } from '../../types'
+import { ChatStage, KeyStage } from './ChatSteps'
 import { ImportStep } from './ImportStep'
 import { SetupFrame } from './SetupFrame'
 import { DbProblemStep, DoneStep, NoMessagesStep, PermissionStep, WelcomeStep } from './SetupSteps'
@@ -285,6 +287,15 @@ export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, o
     onFinished(result)
   }, [onFinished, result])
 
+  // After a first archive the guide goes on to chat: to the key if there is
+  // none, else to what chat needs. A server that cannot say (an older one)
+  // goes to chat, which then says it could not check and lets the reader leave.
+  const toChat = useCallback(async () => {
+    const key = await recallApi.key().catch(() => null)
+    setStage(key && !key.present ? 'key' : 'chat')
+  }, [])
+  const lastWords = revealsFirstWords(rerun, result) ? 'Show my first words' : 'Done'
+
   return (
     <SetupFrame step={rerun ? null : frameStep(step)} phase={step}>
       {step === 'welcome' ? (
@@ -330,7 +341,16 @@ export function OnboardingWizard({ initialStatus, messagesPath, rerun = false, o
           onBack={rerun ? onSkip : () => setStage('welcome')}
         />
       ) : step === 'done' ? (
-        <DoneStep result={result} rerun={rerun} onFinish={finish} />
+        // an update ends here: chat is kept up to date after an import by itself
+        rerun ? (
+          <DoneStep result={result} label={lastWords} onFinish={finish} />
+        ) : (
+          <DoneStep result={result} label="Continue" onFinish={() => void toChat()} />
+        )
+      ) : step === 'key' ? (
+        <KeyStage onDone={() => setStage('chat')} />
+      ) : step === 'chat' ? (
+        <ChatStage messagesPath={messagesPath} onFinish={finish} finishLabel={lastWords} />
       ) : (
         <ImportStep
           view={importView(step) ?? 'ready'}

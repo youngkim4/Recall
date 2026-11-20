@@ -1,36 +1,45 @@
 import type { ReactNode } from 'react'
-import { formatNumber, formatPercent } from '../../lib/format'
-import { busiest, type StatsRow } from '../../lib/insights'
+import { formatNumber, formatPercent, plural } from '../../lib/format'
+import { formatWait } from '../../lib/habits'
+import type { Habits, StatsRow } from '../../lib/insights'
 import { Truncate } from '../ui/Truncate'
 import { VoiceBar } from '../ui/VoiceBar'
 
 type InsightsTableProps = {
+  // the people or the conversations of the answer, ranked
   rows: StatsRow[]
-  // by who: the rows are people or conversations, ranked, and open their
-  // conversation; otherwise they are periods, weekdays or hours, and the
-  // busiest of them are listed
-  who: boolean
   heading: string
   // what one row is called in its first column
   column: string
-  nameOf: (row: StatsRow) => string
-  total: number
-  onOpen?: (row: StatsRow) => void
+  onOpen: (row: StatsRow) => void
   // a control at the end of the heading, such as what the rows are of
   action?: ReactNode
+  // the habits could not be counted: their cells say nothing, not "loading"
+  habitsFailed: boolean
 }
 
-// how many periods the table lists, the busiest first
-const BUSIEST = 10
+// the habits of a row, each in a column after its count; a narrow table
+// keeps the first ones (`id` names a column for insights.css)
+const HABIT_COLUMNS: Array<{ id: string; label: string; show: (habits: Habits) => string }> = [
+  { id: 'you-reply', label: 'You reply', show: (habits) => formatWait(habits.youReply) },
+  { id: 'you-start', label: 'You start', show: (habits) => formatPercent(habits.youStart) },
+  { id: 'they-reply', label: 'They reply', show: (habits) => formatWait(habits.theyReply) },
+  {
+    id: 'streak',
+    label: 'Longest streak',
+    show: (habits) => (habits.streak ? plural(habits.streak.days, 'day') : '—'),
+  },
+  { id: 'late', label: 'Late night', show: (habits) => formatPercent(habits.lateNight) },
+]
 
-// The rows of the answer as a table, after Mixpanel's breakdown under its
-// chart: a heading row, then one row a person or a period with the count,
-// what you and they sent, and its share of the answer. Rows of people carry
-// a bar against the busiest; rows of periods are the busiest of them.
-export function InsightsTable({ rows, who, heading, column, nameOf, total, onOpen, action }: InsightsTableProps) {
-  const shown = who ? rows : busiest(rows, BUSIEST)
-  if (!shown.length) return null
-  const largest = Math.max(1, ...shown.map((row) => row.total))
+// The people of the answer as a table, after Mixpanel's breakdown under its
+// chart: a heading row, then one row a person with a bar of what you and
+// they sent against the busiest, the count, and how each of you writes:
+// how fast each side replies, who starts, the longest run of days, and how
+// much is late at night. A group has no replies and no starts: a dash.
+export function InsightsTable({ rows, heading, column, onOpen, action, habitsFailed }: InsightsTableProps) {
+  if (!rows.length) return null
+  const largest = Math.max(1, ...rows.map((row) => row.total))
   return (
     <section className="section insights-table" aria-labelledby="insights-table-title">
       <div className="section-head">
@@ -40,42 +49,43 @@ export function InsightsTable({ rows, who, heading, column, nameOf, total, onOpe
       <table className="data-table">
         <thead>
           <tr>
-            {who ? <th className="num place" scope="col">#</th> : null}
+            <th className="num place" scope="col">
+              #
+            </th>
             <th scope="col">{column}</th>
-            {who ? <th className="bar" scope="col"><span className="sr-only">Share</span></th> : null}
-            <th className="num" scope="col">Messages</th>
-            <th className="num" scope="col">You</th>
-            <th className="num" scope="col">Them</th>
-            <th className="num" scope="col">Share</th>
+            <th className="bar" scope="col">
+              <span className="sr-only">You and them</span>
+            </th>
+            <th className="num" scope="col">
+              Messages
+            </th>
+            {HABIT_COLUMNS.map((habit) => (
+              <th key={habit.id} className="num habit" data-col={habit.id} scope="col">
+                {habit.label}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
-          {shown.map((row, index) => {
-            const name = nameOf(row)
-            return (
-              <tr key={row.key}>
-                {who ? <td className="num place">{index + 1}</td> : null}
-                <td className="name">
-                  {who && onOpen ? (
-                    <button type="button" className="link" onClick={() => onOpen(row)}>
-                      <Truncate className="row-title">{name}</Truncate>
-                    </button>
-                  ) : (
-                    <Truncate className="row-title">{name}</Truncate>
-                  )}
+          {rows.map((row, index) => (
+            <tr key={row.key}>
+              <td className="num place">{index + 1}</td>
+              <td className="name">
+                <button type="button" className="link" onClick={() => onOpen(row)}>
+                  <Truncate className="row-title">{row.label}</Truncate>
+                </button>
+              </td>
+              <td className="bar">
+                <VoiceBar sent={row.sent} received={row.received} scale={row.total / largest} />
+              </td>
+              <td className="num">{formatNumber(row.total)}</td>
+              {HABIT_COLUMNS.map((habit) => (
+                <td key={habit.id} className="num habit" data-col={habit.id}>
+                  {row.habits ? habit.show(row.habits) : habitsFailed ? '—' : <span className="skeleton">00 min</span>}
                 </td>
-                {who ? (
-                  <td className="bar">
-                    <VoiceBar sent={row.sent} received={row.received} scale={row.total / largest} />
-                  </td>
-                ) : null}
-                <td className="num">{formatNumber(row.total)}</td>
-                <td className="num">{formatNumber(row.sent)}</td>
-                <td className="num">{formatNumber(row.received)}</td>
-                <td className="num">{formatPercent(row.total / Math.max(1, total))}</td>
-              </tr>
-            )
-          })}
+              ))}
+            </tr>
+          ))}
         </tbody>
       </table>
     </section>

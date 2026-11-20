@@ -40,15 +40,19 @@ export function ChoiceMenu({
   bare,
 }: ChoiceMenuProps) {
   const id = useId()
-  const [active, setActive] = useState(0)
+  // The highlighted choice, or none. The pointer sets it while it is over the
+  // menu and clears it when it leaves; a highlight left behind reads as a
+  // second choice beside the check. The menu opens with none: the check
+  // already says which is in use.
+  const [active, setActive] = useState<number | null>(null)
   const menu = useRef<HTMLUListElement>(null)
   const current = choices.find((choice) => choice.value === value)
+  const inUse = Math.max(0, choices.indexOf(current ?? choices[0]))
   const { control, panel, open, close, panelEvents } = usePanel<HTMLDivElement>({
     align,
     onToggle(opening) {
       if (!opening) return
-      // each opening starts at the choice in use
-      setActive(Math.max(0, choices.indexOf(current ?? choices[0])))
+      setActive(null)
       menu.current?.focus({ preventScroll: true })
     },
   })
@@ -60,13 +64,15 @@ export function ChoiceMenu({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLUListElement>) {
-    const next = stepIndex(event.key, active, choices.length)
+    const stepped = stepIndex(event.key, active ?? inUse, choices.length)
+    // with nothing highlighted, the first arrow lands on the choice in use
+    const next = stepped === null || active !== null ? stepped : inUse
     if (next !== null) {
       event.preventDefault()
       setActive(next)
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
-      choose(choices[active])
+      choose(active === null ? undefined : choices[active])
     } else if (event.key === 'Tab' && !(extra && !event.shiftKey)) {
       // leaving the menu closes it; focus then moves on from the button.
       // With a control under the choices, Tab goes on to that control.
@@ -122,8 +128,9 @@ export function ChoiceMenu({
           role="menu"
           tabIndex={-1}
           aria-label={label}
-          aria-activedescendant={choices[active] ? `${id}-${active}` : undefined}
+          aria-activedescendant={active === null ? undefined : `${id}-${active}`}
           onKeyDown={handleKeyDown}
+          onPointerLeave={() => setActive(null)}
         >
           {choices.map((choice, index) => (
             <li

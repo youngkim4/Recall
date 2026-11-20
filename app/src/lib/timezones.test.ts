@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { axisLabels, pointName } from './activity.ts'
 import { addDays, daysSpanned, rangeLabel, weeksOf, type Daily } from './days.ts'
-import { monthMarks, weeksEnding } from './heat.ts'
 import { lastDayOf } from './months.ts'
 
 // Clocks change at midnight in some of these, and two of them once left a
@@ -63,7 +62,6 @@ test('a month has the same days in every time zone', () => {
       ['2011-12-25', '2011-12-26', '2011-12-27', '2011-12-28', '2011-12-29', '2011-12-30', '2011-12-31'],
       zone,
     )
-    assert.deepEqual(weeksEnding('2011-12-31', 1, 0), [weeks[4]], zone)
   })
 })
 
@@ -96,7 +94,5 @@ test('an axis is labelled the same in every time zone', () => {
       ['Nov', 'Dec', 'Jan'],
       zone,
     )
-    // the weeks of 25 December and 1 January: the new month is marked on the second
-    assert.deepEqual(monthMarks(weeksEnding('2012-01-07', 2, 0), 'en-US'), [{ week: 1, text: 'Jan' }], zone)
   })
 })

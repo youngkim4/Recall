@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from 'react'
 
-const STEPS = ['Welcome', 'Access', 'Import', 'Done']
+const STEPS = ['Welcome', 'Access', 'Import', 'Chat']
 
 type SetupFrameProps = {
   // which of the four steps is showing, from 0; null for an update, which is not a sequence

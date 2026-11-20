@@ -73,6 +73,11 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* under a list of parts, the cost keeps clear of the last part */
+  .setup-phases + .setup-size {
+    margin-top: var(--s-5);
+  }
+
   .setup-size + .setup-lead {
     margin-top: var(--s-1);
   }
@@ -104,6 +109,11 @@
 
   .setup-step > .notice {
     margin-top: var(--s-4);
+  }
+
+  /* the key's field stands where the import's facts stand */
+  .setup-step > .key-form {
+    margin-top: var(--s-6);
   }
 
   .setup-waiting {

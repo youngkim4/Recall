@@ -21,7 +21,8 @@ type MessageHitProps = {
   term?: string
   // the row whose message is open beside the list
   picked?: boolean
-  onOpen: () => void
+  // gets the row that was clicked, for what opens to grow out of
+  onOpen: (row: Element) => void
   // one control at the end of the row, such as saving the message
   action?: ReactNode
   // marks the row for a list the arrow keys move through
@@ -54,7 +55,7 @@ export function MessageHit({
         aria-current={picked || undefined}
         aria-keyshortcuts={shortcut}
         tabIndex={tabIndex}
-        onClick={onOpen}
+        onClick={(event) => onOpen(event.currentTarget)}
       >
         {index === undefined ? null : <span className="hit-index">{index}</span>}
         <span className="hit-main">

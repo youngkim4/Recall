@@ -1,4 +1,5 @@
-import { useId, useLayoutEffect, useRef } from 'react'
+import { useId } from 'react'
+import { useZoomSheet } from '../../lib/useZoomSheet'
 import { CloseIcon } from '../Icons'
 import { DayReader } from './DayReader'
 import { Truncate } from './Truncate'
@@ -15,25 +16,31 @@ type DaySheetProps = {
   pickedId?: string
   onOpenConversation: () => void
   onClose: () => void
+  // what was clicked to open the sheet: it grows out of it and goes back into it
+  from?: Element | null
 }
 
 // One day of one conversation as a sheet, opened from a moment or from a
 // message that an answer cites: whose day it is and the ways out of it, over
 // the day itself. The sheet is named by the conversation and by the day in view.
-export function DaySheet({ messagesPath, chatId, title, day, at, pickedId, onOpenConversation, onClose }: DaySheetProps) {
-  const dialog = useRef<HTMLDialogElement>(null)
+export function DaySheet({
+  messagesPath,
+  chatId,
+  title,
+  day,
+  at,
+  pickedId,
+  onOpenConversation,
+  onClose,
+  from,
+}: DaySheetProps) {
+  // open before the reader's own effect puts the focus on the messages
+  const { close, dialogProps } = useZoomSheet(from, onClose)
   const titleId = useId()
   const dayId = useId()
 
-  // Opened before the page is drawn, and before the reader's own effect puts
-  // the focus on the messages: a sheet that is not open cannot take it.
-  useLayoutEffect(() => {
-    const element = dialog.current
-    if (element && !element.open) element.showModal()
-  }, [])
-
   return (
-    <dialog ref={dialog} className="sheet dayview" aria-labelledby={`${titleId} ${dayId}`} onClose={onClose}>
+    <dialog {...dialogProps} className="sheet dayview" aria-labelledby={`${titleId} ${dayId}`}>
       <header className="sheet-head">
         <h2 id={titleId}>
           <Truncate className="dayview-title">{title}</Truncate>
@@ -42,7 +49,7 @@ export function DaySheet({ messagesPath, chatId, title, day, at, pickedId, onOpe
           <button type="button" className="link" onClick={onOpenConversation}>
             Open conversation
           </button>
-          <button type="button" className="icon-btn" aria-label="Close" onClick={() => dialog.current?.close()}>
+          <button type="button" className="icon-btn" aria-label="Close" onClick={() => void close()}>
             <CloseIcon />
           </button>
         </span>

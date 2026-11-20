@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { MemoriesPayload } from '../types'
-import { momentsOf } from './moments.ts'
+import { momentsOf, quietOf, shelfOf } from './moments.ts'
 
 // invented people and words
 const onThisDay = (chatId: string, yearsAgo: number, preview = 'See you at six'): MemoriesPayload['onThisDay'][number] => ({
@@ -106,6 +106,32 @@ test('an anniversary says how far off it is, and opens on the day it began', () 
   assert.equal(moments[0].line, '1 year since the first message')
   assert.equal(moments[1].line, '3 years since the first message')
   assert.equal(moments[0].day, '2023-11-22')
+  // a server that quotes nothing gives no quote
+  assert.equal(moments[0].quote, undefined)
+})
+
+test('an anniversary quotes its first day, and opens at that message', () => {
+  const [moment] = momentsOf(
+    memories({
+      anniversaries: [
+        {
+          ...anniversary('a', 3),
+          preview: 'the words of the first day',
+          previewFromMe: true,
+          previewSender: '',
+          // the first message that holds words can come a day after a first attachment
+          previewAt: '2023-11-24 21:00:00',
+          previewId: 'm1',
+        },
+      ],
+    }),
+  )
+
+  assert.deepEqual(moment.quote, { text: 'the words of the first day', fromMe: true })
+  assert.equal(moment.at, '2023-11-24 21:00:00')
+  assert.equal(moment.quotedId, 'm1')
+  // it opens on the day of the quote, so the quote is there
+  assert.equal(moment.day, '2023-11-24')
 })
 
 test('a quiet conversation says since when it is quiet, and opens on its last day', () => {
@@ -159,5 +185,30 @@ test('one message is one message', () => {
   assert.deepEqual(
     moments.map((moment) => moment.line),
     ['1 message that day', '1 message'],
+  )
+})
+
+test('the shelf is every moment of this day the server sends, then every anniversary near, and never the quiet', () => {
+  const shelf = shelfOf(
+    memories({
+      onThisDay: ['a', 'b', 'c', 'd', 'e', 'f'].map((id, index) => onThisDay(id, index + 1)),
+      anniversaries: ['g', 'h', 'i', 'j'].map((id, index) => anniversary(id, index)),
+      reconnect: [quiet('q')],
+    }),
+  )
+  assert.deepEqual(
+    shelf.map((moment) => moment.chatId),
+    ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'],
+  )
+})
+
+test('the quiet list is only the quiet, as many as are asked for', () => {
+  const quietList = quietOf(memories({ onThisDay: [onThisDay('a', 1)], reconnect: ['q', 'r', 's'].map(quiet) }), 2)
+  assert.deepEqual(
+    quietList.map((moment) => [moment.kind, moment.chatId]),
+    [
+      ['quiet', 'q'],
+      ['quiet', 'r'],
+    ],
   )
 })

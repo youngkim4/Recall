@@ -1,6 +1,6 @@
 import { recallBridge } from '../../lib/bridge'
 import { plural } from '../../lib/format'
-import { offersCopy, revealsFirstWords } from '../../lib/setupGuide'
+import { offersCopy } from '../../lib/setupGuide'
 import type { SetupImportResult } from '../../types'
 import { OtherSource } from './OtherSource'
 
@@ -215,11 +215,12 @@ export function DbProblemStep({
 type DoneStepProps = {
   // what the import brought in; null when the archive was already there
   result: SetupImportResult | null
-  rerun: boolean
+  // the words of the way on: "Continue" to the key, or the guide's last words
+  label: string
   onFinish: () => void
 }
 
-export function DoneStep({ result, rerun, onFinish }: DoneStepProps) {
+export function DoneStep({ result, label, onFinish }: DoneStepProps) {
   const years =
     result?.firstYear && result?.lastYear
       ? result.firstYear === result.lastYear
@@ -243,7 +244,7 @@ export function DoneStep({ result, rerun, onFinish }: DoneStepProps) {
       ) : null}
       <div className="setup-actions">
         <button type="button" className="btn primary lg" onClick={onFinish}>
-          {revealsFirstWords(rerun, result) ? 'Show my first words' : 'Done'}
+          {label}
         </button>
       </div>
     </>

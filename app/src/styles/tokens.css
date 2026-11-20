@@ -94,6 +94,13 @@
     --bad: light-dark(#b91c1c, #ff8a80);
     --bad-soft: light-dark(rgb(185 28 28 / 0.08), rgb(255 138 128 / 0.14));
 
+    /* ---- trend: more or fewer than before. A green and a red of the theme:
+       the hue of ok and of bad, with 30% of the theme's own ink in it, so a
+       warm palette has a warm green and red, and dark mode a lighter pair.
+       Status colors stay for status; these are for a change only. ---- */
+    --rise: color-mix(in oklab, var(--ok) 70%, var(--text));
+    --fall: color-mix(in oklab, var(--bad) 70%, var(--text));
+
     /* ---- elevation ----
        raised: a hairline ring and no shadow, for controls and cards. A ring
        under a soft shadow is the ghost card: an edge is declared once.

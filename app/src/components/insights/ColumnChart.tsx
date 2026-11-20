@@ -2,6 +2,7 @@ import { useState, type KeyboardEvent, type PointerEvent } from 'react'
 import { roundUp, type AxisLabel } from '../../lib/activity'
 import { formatNumber } from '../../lib/format'
 import type { StatsRow } from '../../lib/insights'
+import { useTweened } from '../../lib/useTweened'
 
 type ColumnChartProps = {
   rows: StatsRow[]
@@ -26,8 +27,14 @@ export function ColumnChart({ rows, labels, nameOf, summary }: ColumnChartProps)
   const [active, setActive] = useState<number | null>(null)
   const count = rows.length
   const top = roundUp(Math.max(1, ...rows.map((row) => row.total)))
+  // A new answer does not jump in: each column grows or shrinks from where it
+  // stands, in hundredths of the scale, the scale with it.
+  const you = useTweened(rows.map((row) => (row.sent / top) * 100))
+  const them = useTweened(rows.map((row) => (row.received / top) * 100))
+  // while the columns move they can be more or fewer than the answer's
+  const drawn = Math.min(you.length, them.length)
   // a gap between columns while they are wide enough to have one
-  const gap = count > 200 ? 0 : count > 60 ? 0.15 : 0.25
+  const gap = drawn > 200 ? 0 : drawn > 60 ? 0.15 : 0.25
   const picked = active === null ? null : rows[active]
 
   function columnAt(event: PointerEvent<HTMLDivElement>) {
@@ -78,16 +85,14 @@ export function ColumnChart({ rows, labels, nameOf, summary }: ColumnChartProps)
         <span className="columns-top" aria-hidden="true">
           {compact.format(top)}
         </span>
-        <svg viewBox={`0 0 ${count} 100`} preserveAspectRatio="none" aria-hidden="true">
-          {rows.map((row, index) => {
-            const you = (row.sent / top) * 100
-            const them = (row.received / top) * 100
+        <svg viewBox={`0 0 ${Math.max(1, drawn)} 100`} preserveAspectRatio="none" aria-hidden="true">
+          {Array.from({ length: drawn }, (_, index) => {
             const x = index + gap
             const width = 1 - gap * 2
             return (
-              <g key={row.key} data-active={index === active || undefined}>
-                <rect className="you" x={x} y={100 - you} width={width} height={you} />
-                <rect className="them" x={x} y={100 - you - them} width={width} height={them} />
+              <g key={index} data-active={index === active || undefined}>
+                <rect className="you" x={x} y={100 - you[index]} width={width} height={you[index]} />
+                <rect className="them" x={x} y={100 - you[index] - them[index]} width={width} height={them[index]} />
               </g>
             )
           })}

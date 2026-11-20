@@ -1,6 +1,10 @@
-/* Overview: how large the archive is, what is worth opening today, and when
-   the messages happen. The page is open: its parts stand on the page's own
-   ground, set apart by space and by hairlines. Only the moments are a card. */
+/* Overview, after Spotify's home: the archive in one line set large,
+   a shelf of moments, then two lists side by side, Lately and Gone quiet.
+   The page is open: its parts stand on the page's own ground, set apart by
+   space and by hairlines. Only the moments are cards. Every distance is a
+   step of the scale: 16px to the top of the window, 32px between blocks,
+   8px from a heading to what it heads, 12px bands in a list, 40px between
+   the two lists. */
 
 @layer views {
   /* ---- lead: what an empty archive says, set large ---- */
@@ -11,245 +15,154 @@
     color: var(--text);
   }
 
-  /* ---- tiles: the archive in four figures, each a name, the figure and
-     one line of words, set apart by a hairline. The first leads: it takes
-     the left half, over the moments, with a larger figure; the other three
-     share the right half, over the ranked list, so the hairline after the
-     lead stands over the middle of the gap between the two columns below. The four figures stand on one baseline: each
-     tile takes its three rows from the row of tiles (subgrid). There is no
-     small chart in a tile; the chart of the months is further down. ---- */
-  .tiles {
+  /* ---- masthead: the front page of the app, after a newspaper's. The
+     archive in one line, as large as the workspace allows (36px narrow, 52px
+     wide, set by the width of the workspace so it never runs past it), then
+     12px down a double rule the width of the page (3px, 2px clear, 1px), then
+     8px down the dateline: today's date at the left, through which day the
+     archive is imported at the right. Its words stand 16px from the top of
+     the window, as the first words of every view do, and the moments are
+     32px under it. ---- */
+  /* the size here holds until the line is measured; useFitText then sets it
+     so the line runs from edge to edge (24px to 64px), with no room left at
+     its end. A wrapped line left a gap at the right, and the user saw it. */
+  .overview-title {
+    font-size: clamp(2.25rem, 3.4cqi + 0.5rem, 3.25rem);
+    line-height: 1.15;
+    font-weight: var(--w-regular);
+    letter-spacing: -0.025em;
+    color: var(--text);
+    text-wrap: balance;
+  }
+
+  .overview-rule {
+    height: 6px;
+    margin-top: var(--s-3);
+    border-top: 3px solid var(--text);
+    border-bottom: 1px solid var(--text);
+  }
+
+  .overview-dateline {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--s-1) var(--s-4);
+    margin-top: var(--s-2);
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-2);
+  }
+
+  .overview-imported {
+    color: var(--text-3);
+  }
+
+  /* ---- moments: a shelf of cards, three a row, 12px apart. In a card: who
+     on the left and when at the end of the same line, the way a list of
+     messages is read; 8px under them what was said, and 8px under that how
+     much was said that day. A card keeps 12px over and under its lines and
+     16px beside them, which look the same distance from its edge, since a
+     line of words keeps 5px clear over its capitals. A card is as tall as
+     the tallest of its row; what is left over is at its foot, never between
+     its lines. ---- */
+  .moment-shelf {
     display: grid;
-    grid-template-columns: minmax(0, 3fr) repeat(3, minmax(0, 1fr));
-    grid-template-rows: auto auto auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--s-3);
   }
 
-  .tile {
-    display: grid;
-    grid-row: span 3;
-    grid-template-rows: subgrid;
-    /* the rows of a tile keep together when the row of tiles has a gap */
-    row-gap: 0;
-    align-items: baseline;
-    min-width: 0;
-    /* the line takes 1px of the room before a figure */
-    padding-inline: calc(var(--s-5) - 1px) var(--s-5);
-    border-left: 1px solid var(--line);
-  }
-
-  .tile:first-child {
-    padding-left: 0;
-    border-left: 0;
-  }
-
-  .tile:last-child {
-    padding-right: 0;
-  }
-
-  /* too narrow for three figures in half the row: two rows of two, the
-     lead first, and the pattern starts again in each row. The chart has no
-     room beside the figure there and is left out. */
   @container workspace (max-width: 60rem) {
-    .tiles {
+    .moment-shelf {
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      grid-template-rows: none;
-      row-gap: var(--s-6);
     }
+  }
 
-    .tile-lead {
+  @container workspace (max-width: 36rem) {
+    .moment-shelf {
       grid-template-columns: minmax(0, 1fr);
     }
+  }
 
-    .lead-chart {
-      display: none;
-    }
+  .moment-shelf > li {
+    display: grid;
+  }
 
-    .tile:nth-child(odd) {
-      padding-left: 0;
-      border-left: 0;
-    }
+  .moment-card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s-2);
+    min-width: 0;
+    padding: var(--s-3) var(--s-4);
+    text-align: start;
+    outline-offset: -2px;
+    transition: background-color var(--dur-micro) ease;
+  }
 
-    .tile:nth-child(even) {
-      padding-right: 0;
+  /* under the pointer the card darkens one step, over its own fill */
+  @media (hover: hover) and (pointer: fine) {
+    button.moment-card:hover {
+      background: linear-gradient(var(--fill-hover), var(--fill-hover)), var(--bg-card);
     }
   }
 
-  .tile-label,
-  .tile-value,
-  .tile-note {
+  button.moment-card:active {
+    background: linear-gradient(var(--fill-active), var(--fill-active)), var(--bg-card);
+  }
+
+  .moment-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s-4);
+    min-width: 0;
+  }
+
+  .moment-name {
+    flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-weight: var(--w-medium);
+    color: var(--text);
   }
 
-  .tile-label,
-  .tile-note {
+  .moment-when {
+    flex: none;
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+
+  /* the bubble stops short of the card the way it does in a transcript */
+  .moment-detail {
+    display: grid;
+    justify-items: start;
+    gap: var(--s-2);
+    min-width: 0;
+  }
+
+  .moment-detail > .bubble {
+    max-width: 88%;
+  }
+
+  .moment-line {
     font-size: var(--t-small);
     line-height: var(--lh-small);
     color: var(--text-3);
   }
 
-  .tile-value {
-    margin-top: 0.125rem;
-    font-size: var(--t-heading);
-    line-height: var(--lh-heading);
-    font-weight: var(--w-medium);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: -0.01em;
-  }
-
-  /* The lead takes two columns of its own: its name and figure, in the
-     middle of the row's height, and beside them the chart of how the
-     messages came, which takes the room the figure leaves. */
-  .tile-lead {
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: auto auto;
-    align-content: center;
-    column-gap: var(--s-8);
-  }
-
-  .tile-lead > .tile-label,
-  .tile-lead > .tile-value {
-    grid-column: 1;
-  }
-
-  .lead-chart {
-    display: grid;
-    grid-template-rows: minmax(0, 1fr) auto;
-    grid-row: 1 / -1;
-    grid-column: 2;
-    align-self: stretch;
-    gap: var(--s-1);
-    min-width: 0;
-    height: 4.5rem;
-    margin: 0;
-  }
-
-  .lead-chart > svg {
-    width: 100%;
-    height: 100%;
-    overflow: visible;
-  }
-
-  .lead-area {
-    fill: var(--heat-1);
-  }
-
-  .lead-line {
-    fill: none;
-    stroke: var(--text-2);
-    stroke-width: 1.5;
-    stroke-linejoin: round;
-    vector-effect: non-scaling-stroke;
-  }
-
-  /* the first year under the start of the line, the last under its end */
-  .lead-chart > figcaption {
-    display: flex;
-    justify-content: space-between;
-    font-size: var(--t-caption);
-    line-height: var(--lh-caption);
-    font-variant-numeric: tabular-nums;
-    color: var(--text-3);
-  }
-
-  .lead-waiting {
-    grid-row: 1 / -1;
-    grid-column: 2;
-  }
-
-  /* the lead figure is set large, and tighter, as large type is: it is the
-     one number the page is about */
-  .tile-lead > .tile-value {
-    font-size: var(--t-display-lg);
-    line-height: var(--lh-display-lg);
-    letter-spacing: -0.025em;
-  }
-
-  .tile-note {
-    margin-top: var(--s-1);
-  }
-
-  /* a line that ends in something to press: the words give way, the control does not */
-  .tile-action {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--s-2);
-    overflow: visible;
-  }
-
-  .tile-action > span {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .tile-action > .link {
-    flex: none;
-  }
-
-  /* A window as narrow as a phone: one figure a row, in the band of a ruled
-     row, its figure beside its name. A name and a figure too long to share
-     the line keep all their letters: the figure goes under the name, still
-     on the right. */
-  @container workspace (max-width: 26rem) {
-    .tiles {
-      grid-template-columns: minmax(0, 1fr);
-      row-gap: 0;
-    }
-
-    .tile {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: baseline;
-      column-gap: var(--s-3);
-      padding: var(--s-3) 0;
-      border-left: 0;
-    }
-
-    .tile + .tile {
-      border-top: 1px solid var(--line);
-    }
-
-    .tile:first-child {
-      padding-top: 0;
-    }
-
-    .tile:last-child {
-      padding-bottom: 0;
-    }
-
-    .tile-label {
-      flex: none;
-      max-width: 100%;
-    }
-
-    .tile-value {
-      max-width: 100%;
-      margin-top: 0;
-      margin-left: auto;
-    }
-
-    .tile-note {
-      flex-basis: 100%;
-    }
-  }
-
-  /* ---- the blocks of the page: the figures, then rows of sections. One
-     block is 32px from the next, and the figures are 16px from the top of
-     the window, as the first words of every view are. In a narrow workspace
-     the parts of a row follow each other. With room they stand side by
-     side, 40px apart, and are each as tall as the row. The row under the
-     figures splits in the middle, under the hairline after the lead figure.
-     A part that holds sections is a column of them (.overview-col). ---- */
+  /* ---- the two lists: 32px under the moments. In a narrow workspace they
+     follow each other, 32px apart; with room they stand side by side, 40px
+     apart. Each is closed with a hairline, so two lists of one length end
+     on one line. ---- */
   .overview > * + .overview-row,
-  .overview-row > * + *,
-  .overview-col > * + .section {
+  .overview-row > * + * {
     margin-top: var(--s-8);
   }
 
-  /* what is inside a part answers to the part, not to the window */
+  /* what is inside a list answers to the list, not to the window */
   .overview-row > * {
     min-width: 0;
     container: half / inline-size;
@@ -259,203 +172,174 @@
     .overview-row {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: var(--s-10);
+      column-gap: var(--s-10);
     }
 
     .overview-row > * + * {
       margin-top: 0;
     }
 
-    /* a part is a heading over what it holds, which takes the height that is left */
-    .overview-row > .section,
-    .overview-col,
-    .overview-col > .section {
+    /* The page reaches the foot of the window, and so do the two lists: the
+       row of lists takes the height that is left, 16px short of the foot as
+       the first words are 16px from the top. Each list shows the rows its
+       box holds (useRowsThatFit reads --fit), never fewer than five, and the
+       rows share the box, so the last one ends where the box does. With more
+       than fit the page scrolls as before. */
+    .page.overview {
       display: flex;
       flex-direction: column;
+      min-height: 100%;
+      padding-bottom: var(--s-4);
     }
 
-    /* The ranked list is as long as the room beside the moments. Its box
-       takes the height the column has left, whatever its rows come to, and
-       the list shows the rows that fit (useRowsThatFit reads --fit). Each row
-       then takes an equal share, so the last one ends where the box does.
-       The box cuts what is under it and not what is beside it: a row's fill
-       reaches past the words. */
-    .overview-col > .section:has(> .ranked-list) {
-      flex: 1 1 auto;
+    .overview > .overview-row {
+      flex: 1 0 auto;
+    }
+
+    .overview-row > .section {
+      display: flex;
+      flex-direction: column;
       min-height: 0;
     }
 
-    .overview-col .ranked-list {
+    .overview-fit {
       --fit: 1;
       flex: 1 1 0;
-      min-height: calc(5 * 2.75rem + 5px);
+      min-height: calc(5 * (2.75rem + 1px));
       overflow-y: clip;
     }
 
-    /* as many equal rows as fit; a list with fewer leaves the rest of the box empty */
-    .overview-col .ranked-list > .rows {
+    .overview-fit > .rows {
       height: 100%;
       grid-template-rows: repeat(var(--rows, 5), minmax(0, 1fr));
     }
 
-    /* a column that holds one list alone gives it the whole height */
-    .overview-col > .section:only-child {
-      flex: 1;
-    }
-
-    .overview-col .ranked-list > .rows > li {
+    .overview-fit > .rows > li {
       display: flex;
       flex-direction: column;
     }
 
-    /* a row takes its share of the box, a little more or less than its own
-       height, and its line stands in the middle of it */
-    .overview-col .ranked-list .row {
+    .overview-fit > .rows .row {
       flex: 1;
-      align-content: center;
       min-height: 0;
       padding-block: 0;
     }
 
-    /* A column that ends with an open list ends on a line: the list is
-       closed with a hairline. So two columns that end at one height both
-       show where they end, as a card does. */
-    .overview-col > .section:last-child .rows.ruled > li:last-child {
-      border-bottom: 1px solid var(--line);
+    /* opened whole ("All"), the list is as long as its rows */
+    .overview-fit[data-all] {
+      --fit: 0;
+      flex: none;
+      overflow-y: visible;
     }
 
-    /* The year of days beside the hours of the week: 53 columns and 24. The
-       row is cut so that a day and an hour come to the same size, and the
-       seven weekdays of both stand on the same lines. Each block spends 2rem
-       on its weekday names; the gaps between cells take 104px of one and 46px
-       of the other; what is left of the row, less its own 2.5rem gap, is 77
-       cells, of which the year has 53. */
-    .overview-heat {
-      grid-template-columns: calc((100% - 6.5rem - 150px) * 53 / 77 + 2rem + 104px) minmax(0, 1fr);
+    .overview-fit[data-all] > .rows {
+      height: auto;
+      grid-template-rows: none;
     }
 
-    /* Side by side the two grids are read as one: an hour may be as small as
-       a day, and the weekdays are named the way the year names them, every
-       second one, in the same size. */
-    .overview-heat .hours > * {
-      --hour: clamp(0.5rem, calc((100cqi - 2rem - 46px) / 24), 1.25rem);
-    }
-
-    .overview-heat .hours-weekdays {
-      font-size: 0.625rem;
-    }
-
-    .overview-heat .hours-weekdays > :nth-child(odd) {
-      visibility: hidden;
+    .overview-fit[data-all] > .rows .row {
+      padding-block: var(--s-3);
     }
   }
 
-  /* ---- moments: each one is a card of its own, 12px from the next. In a
-     card: who on the left and when at the end of the same line, the way a
-     list of messages is read; under them what was said. A card keeps 12px
-     over and under its lines and 16px beside them, which look the same
-     distance from its edge, since a line of words keeps 5px clear over its
-     capitals. The lines of a moment follow each other with no gap, so a
-     quoted message has the same room above it as below. ---- */
-  .moment-cards {
+  .overview-list > li:last-child {
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* A row of either list is a name, then its figures. The figures keep
+     their own columns at the end, 16px apart, so they line up down the
+     list; the name takes what is left and is cut short before it pushes
+     them. */
+  .lately-row,
+  .quiet-row {
     display: grid;
-    gap: var(--s-3);
+    align-items: center;
+    column-gap: var(--s-4);
+    text-align: start;
   }
 
-  /* a card fills its place: what stands in for one is as tall as its share of the list */
-  .moment-cards > li {
-    display: grid;
+  /* as a ranked row does (lists.css): the name keeps 7rem to 14rem and the
+     line takes all the room that remains, so the row is filled from one
+     edge to the other and nothing floats in the middle of it */
+  .lately-row {
+    grid-template-columns: minmax(7rem, 14rem) minmax(4rem, 1fr) 4rem 3.5rem;
   }
 
-  /* The card's fill is taken off here: the page shows through it, which is
-     the fill a card has. A row's fill fades when it changes, and a fill that
-     changed with the theme would fade a beat behind the page. */
-  .moment-cards .row {
-    padding: var(--s-3) var(--s-4);
-    background: none;
-    outline-offset: -2px;
+  /* the same name column as Lately, then since when straight after it, so no
+     gap opens across the middle of the row; the count keeps the end */
+  .quiet-row {
+    grid-template-columns: minmax(7rem, 14rem) minmax(0, 1fr) 7rem;
   }
 
-  @media (hover: hover) and (pointer: fine) {
-    .moment-cards button.row:hover {
-      background: var(--fill-hover);
-    }
+  /* the last eight weeks, one line in ink: it counts both sides, so it wears
+     neither the blue of what you sent nor the gray of what you received */
+  .lately-spark {
+    display: block;
+    width: 100%;
+    height: 1.25rem;
+    overflow: visible;
   }
 
-  .moment-cards button.row:active {
-    background: var(--fill-active);
+  .lately-spark > path {
+    fill: none;
+    stroke: var(--text-2);
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
   }
 
-  .moment {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas:
-      'name when'
-      'detail detail';
-    align-items: baseline;
-    gap: 0 var(--s-4);
+  .lately-count,
+  .lately-change,
+  .quiet-count {
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+    white-space: nowrap;
   }
 
-  /* who and what are read as one thing, and stand in the row's own grid */
-  .moment-main {
-    display: contents;
+  .lately-count {
+    color: var(--text);
   }
 
-  .moment-when {
-    grid-area: when;
+  .lately-change,
+  .quiet-since,
+  .quiet-count {
     font-size: var(--t-small);
-    line-height: var(--lh-body);
     color: var(--text-3);
     white-space: nowrap;
   }
 
-  /* too narrow for both on one line: when goes above who */
-  @container half (max-width: 24rem) {
-    .moment {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-areas:
-        'when'
-        'name'
-        'detail';
+  /* more than the thirty days before is the theme's green, fewer its red
+     (--rise, --fall in tokens.css); the sign says it too, so the color is
+     never the only mark. New and level stay in ink. */
+  .lately-change[data-way='up'] {
+    color: var(--rise);
+  }
+
+  .lately-change[data-way='down'] {
+    color: var(--fall);
+  }
+
+  /* a list too narrow for every column keeps the name and the first figure */
+  @container half (max-width: 26rem) {
+    .lately-row {
+      grid-template-columns: minmax(0, 1fr) 4rem 3.5rem;
     }
-  }
 
-  /* the detail spans the row, so a bubble's 78% is 78% of the row and not of
-     its own text */
-  .moment-detail {
-    display: grid;
-    grid-area: detail;
-    justify-items: start;
-    justify-self: stretch;
-    min-width: 0;
-  }
+    .lately-row > .row-title {
+      grid-column: 1;
+    }
 
-  /* a row with lines beneath its title sets the title in medium */
-  .moment-name {
-    grid-area: name;
-    justify-self: start;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-weight: var(--w-medium);
-  }
+    .lately-spark {
+      display: none;
+    }
 
-  .moment-line {
-    color: var(--text-2);
-  }
+    .quiet-row {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
 
-  /* a quoted message keeps 4px clear above and below, and stops short of the
-     column the way a bubble does in a transcript */
-  .moment .bubble {
-    max-width: 78%;
-    margin-block: var(--s-1);
-  }
-
-  /* under a quoted message the line is a footnote to it; it keeps the body
-     line height so the row ends on the same rhythm as the others */
-  .bubble + .moment-line {
-    font-size: var(--t-small);
-    color: var(--text-3);
+    .quiet-count {
+      display: none;
+    }
   }
 }

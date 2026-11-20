@@ -11,7 +11,7 @@ import { ReportDays } from './components/reports/ReportDays'
 import { ReportsView } from './components/reports/ReportsView'
 import { SearchView } from './components/search/SearchView'
 import { ResizeHandle } from './components/ResizeHandle'
-import { SettingsView } from './components/settings/SettingsView'
+import { SettingsSheet } from './components/settings/SettingsSheet'
 import { Sidebar } from './components/Sidebar'
 import { CloseIcon } from './components/Icons'
 import { recallApi } from './lib/api'
@@ -67,6 +67,8 @@ function markSetup(fields: Parameters<typeof recallApi.setupComplete>[0]) {
 function App() {
   // the app opens where first-run setup leaves you: on the first item in the rail
   const [activeView, setActiveView] = useState<ViewKey>('home')
+  // Settings is a sheet over the view in use; it grows out of the button that opened it
+  const [settings, setSettings] = useState<{ from: Element } | null>(null)
   const [defaults, setDefaults] = useState<Defaults | null>(null)
   const [paths, setPaths] = useState<RuntimePaths>(emptyPaths)
   const { layout, change: changeLayout, toggleSidebar } = useLayout()
@@ -432,7 +434,6 @@ function App() {
     if (activeView === 'ask') return 'Chat'
     if (activeView === 'reports') return 'Reports'
     if (activeView === 'jobs') return 'Jobs'
-    if (activeView === 'settings') return 'Settings'
     return 'Analyze'
   }, [activeView])
 
@@ -560,6 +561,8 @@ function App() {
         canExpand={!narrowWindow}
         onToggleCollapse={toggleSidebar}
         onViewChange={setActiveView}
+        settingsOpen={settings !== null}
+        onOpenSettings={(from) => setSettings({ from })}
       />
       <ResizeHandle
         label="Resize sidebar"
@@ -654,24 +657,6 @@ function App() {
             onOpenReport={openReport}
             onRefresh={loadJobs}
           />
-        ) : activeView === 'settings' ? (
-          <SettingsView
-            key={`${appliedSettingsPaths.messagesPath}\n${appliedSettingsPaths.outDir}`}
-            defaults={effectiveDefaults}
-            archive={archive}
-            defaultPaths={defaultSettingsPaths}
-            paths={appliedSettingsPaths}
-            model={model}
-            contactNameCount={contactNameCount}
-            cacheStats={cacheStats}
-            busy={utilityBusy}
-            statusMessage={settingsStatus}
-            onModelChange={handleModelChange}
-            onApplyPaths={(next) => void applyRuntimePaths(next)}
-            onRefreshContacts={() => void refreshContacts()}
-            onClearPreviewCache={() => void clearPreviewCaches()}
-            onOpenSetup={() => void openSetup()}
-          />
         ) : (
           <AnalyzeView
             defaults={effectiveDefaults}
@@ -698,6 +683,27 @@ function App() {
           />
         )}
       </main>
+      {settings ? (
+        <SettingsSheet
+          defaults={effectiveDefaults}
+          archive={archive}
+          defaultPaths={defaultSettingsPaths}
+          paths={appliedSettingsPaths}
+          contactNameCount={contactNameCount}
+          cacheStats={cacheStats}
+          busy={utilityBusy}
+          statusMessage={settingsStatus}
+          onApplyPaths={(next) => void applyRuntimePaths(next)}
+          onRefreshContacts={() => void refreshContacts()}
+          onClearPreviewCache={() => void clearPreviewCaches()}
+          onOpenSetup={() => {
+            setSettings(null)
+            void openSetup()
+          }}
+          onClose={() => setSettings(null)}
+          from={settings.from}
+        />
+      ) : null}
       {showFirstWords && firstWords ? (
         <FirstWords payload={firstWords} onClose={() => setShowFirstWords(false)} />
       ) : null}

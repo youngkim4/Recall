@@ -6,8 +6,10 @@ import type {
   ContactsResponse,
   DayMessages,
   Defaults,
+  FirstRunStatus,
   FirstWordsPayload,
   Job,
+  KeyState,
   MemoriesPayload,
   PreviewPayload,
   ReportFile,
@@ -315,6 +317,29 @@ export const recallApi = {
     request<{ job: Job }>('/api/jobs', {
       method: 'POST',
       body: JSON.stringify({ action: 'setup_import', ...input }),
+    }),
+
+  // The API key: where it is, never what it is. A key saved here is used
+  // by the next question; the server does not start again.
+  key: () => request<KeyState>('/api/key'),
+
+  saveKey: (key: string) =>
+    request<KeyState>('/api/key', {
+      method: 'POST',
+      body: JSON.stringify({ key }),
+    }),
+
+  removeKey: () => request<KeyState>('/api/key', { method: 'DELETE' }),
+
+  // what getting chat ready builds and what it costs at most; it reads, and asks no model
+  firstRun: (input: { messagesPath?: string }) =>
+    request<FirstRunStatus>(`/api/first-run${queryString({ messagesPath: input.messagesPath })}`),
+
+  // the one job that builds what chat needs: the steps that are not ready, in order
+  createFirstRunJob: (input: { messagesPath?: string }) =>
+    request<{ job: Job }>('/api/jobs', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'first_run', ...input }),
     }),
 
   firstWords: (input: { messagesPath?: string }) =>

@@ -89,10 +89,35 @@
     outline: none;
   }
 
-  /* the message the day was opened for */
-  .dayview-scroll .thread-item[data-picked] .bubble {
-    outline: 2px solid var(--text);
-    outline-offset: 2px;
+  /* The message the day was opened for, as Slack shows a message it jumps
+     to: a band of the theme's hue across the whole pane, held a moment and
+     then let go, so the eye finds it and nothing stays drawn round it. A
+     ring round the bubble was refused ("weird ass border"). The band takes
+     the pane's 16px on each side and gives them back as padding, so the
+     bubbles do not move. */
+  .dayview-scroll .thread-item[data-picked] {
+    margin-inline: calc(var(--s-4) * -1);
+    padding-inline: var(--s-4);
+    animation: picked-band 2.6s var(--ease-out) 0.2s both;
+  }
+
+  @keyframes picked-band {
+    0%,
+    45% {
+      background: color-mix(in srgb, var(--you) 16%, transparent);
+    }
+
+    100% {
+      background: transparent;
+    }
+  }
+
+  /* without motion the band stays, faint, and does not fade */
+  @media (prefers-reduced-motion: reduce) {
+    .dayview-scroll .thread-item[data-picked] {
+      animation: none;
+      background: color-mix(in srgb, var(--you) 10%, transparent);
+    }
   }
 
   /* more of a long day, above or below what is shown */

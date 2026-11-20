@@ -149,6 +149,12 @@ test('when the archive is ready the guide says so', () => {
   }
 })
 
+test('after the archive, the key and then chat show as the reader goes on', () => {
+  const done = job({ status: 'completed' })
+  assert.equal(guideStep({ stage: 'key', job: done, picked: null, live: checked('readable', true) }), 'key')
+  assert.equal(guideStep({ stage: 'chat', job: done, picked: null, live: checked('missing', true) }), 'chat')
+})
+
 test('an import that was started comes before the copy it reads', () => {
   const live = checked('fda_blocked', true)
   const picked = copyAt('/copies/chat.db')
@@ -161,7 +167,8 @@ test('the import step shows one of three views, and the others none', () => {
   assert.equal(importView('import'), 'ready')
   assert.equal(importView('import_running'), 'running')
   assert.equal(importView('import_failed'), 'failed')
-  for (const step of ['welcome', 'permission', 'no_messages', 'db_problem', 'done'] as const) assert.equal(importView(step), null)
+  for (const step of ['welcome', 'permission', 'no_messages', 'db_problem', 'done', 'key', 'chat'] as const)
+    assert.equal(importView(step), null)
 })
 
 test('a copy that was chosen is offered for import, whatever Messages itself allows', () => {
@@ -180,6 +187,7 @@ test('without the copy the guide is back at what Messages itself allows', () => 
 })
 
 test('the four marks at the top follow the step', () => {
+  // the archive being ready ends the import; the key and chat are the last mark
   const marks: Record<GuideStep, number> = {
     welcome: 0,
     permission: 1,
@@ -188,7 +196,9 @@ test('the four marks at the top follow the step', () => {
     import: 2,
     import_running: 2,
     import_failed: 2,
-    done: 3,
+    done: 2,
+    key: 3,
+    chat: 3,
   }
 
   for (const [step, mark] of Object.entries(marks)) assert.equal(frameStep(step as GuideStep), mark, step)

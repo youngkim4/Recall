@@ -51,38 +51,41 @@
 
 /* These answer to rules of a view, so they are in the layer of the views. */
 @layer views {
-  /* The moments are a column of a page, as on a newspaper's front: each one
-     is its own item, set apart by a hairline and not by a card. The first is
-     the lead: its name is set a size up, and what it quotes keeps its size. */
+  /* The moments are columns of a page, as on a newspaper's front: each one
+     is its own item, set apart by a hairline over it and not by a card. The
+     columns keep the 40px the two lists under them keep. */
   :root:is([data-palette='broadsheet'], [data-palette='shoreline'], [data-palette='canopy'], [data-palette='sky']):not([data-paper]) {
-    .moment-cards {
-      gap: 0;
+    .moment-shelf {
+      gap: 0 var(--s-10);
     }
 
-    .moment-cards > li {
+    /* As in a ruled list (lists.css), the hairline and the fill under the
+       pointer share their edges, 8px past the words, and the fill is square:
+       it lies under its line and never past it. The words keep the column. */
+    .moment-shelf > li {
+      margin-inline: calc(var(--s-2) * -1);
       border-top: 1px solid var(--line);
     }
 
-    .moment-cards > li:last-child {
-      border-bottom: 1px solid var(--line);
-    }
-
-    .moment-cards .card {
+    .moment-shelf .card {
       border-radius: 0;
       background: none;
       box-shadow: none;
     }
 
-    /* the words keep the edge of the column; a fill under the pointer reaches 8px past them */
-    .moment-cards .row {
-      width: calc(100% + var(--s-4));
-      margin-inline: calc(var(--s-2) * -1);
+    .moment-shelf .moment-card {
       padding-inline: var(--s-2);
+      border-radius: 0;
     }
 
-    .moment-cards > li:first-child .moment-name {
-      font-size: var(--t-reading);
-      line-height: var(--lh-reading);
+    @media (hover: hover) and (pointer: fine) {
+      .moment-shelf button.moment-card:hover {
+        background: var(--fill-hover);
+      }
+    }
+
+    .moment-shelf button.moment-card:active {
+      background: var(--fill-active);
     }
   }
 }

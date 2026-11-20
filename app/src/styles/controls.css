@@ -163,13 +163,27 @@
     }
   }
 
-  /* ---- text link: color only, no hover surface ---- */
+  /* ---- text link: under the pointer a fill hugs the words, as a picker's
+     does: 28px high on a line of 20px, 6px past the words on each side. It
+     is drawn behind the words and takes no room, so a link stands where its
+     words are. A change of color alone was too faint to see. ---- */
   .link {
     position: relative;
+    isolation: isolate;
     border-radius: var(--r-xs);
     color: var(--text-2);
     font-weight: var(--w-medium);
     transition: color var(--dur-micro) ease;
+  }
+
+  .link::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset: calc((var(--picker-h) - 1lh) / -2) -0.375rem;
+    border-radius: var(--r-sm);
+    background: transparent;
+    transition: background-color var(--dur-micro) ease;
   }
 
   .link::after {
@@ -179,9 +193,17 @@
   }
 
   @media (hover: hover) and (pointer: fine) {
-    .link:hover {
+    .link:hover:not(:disabled) {
       color: var(--text);
     }
+
+    .link:not(.in-text, :disabled):hover::before {
+      background: var(--fill-hover);
+    }
+  }
+
+  .link:not(.in-text, :disabled):active::before {
+    background: var(--fill-active);
   }
 
   /* inside a sentence a link takes the sentence's own type and is told apart
@@ -604,5 +626,31 @@
     background: var(--fill-track);
     color: transparent;
     user-select: none;
+  }
+
+  /* ---- key form: a field that hides what is typed, its Save button beside
+     it, and the reason a key was refused under both ---- */
+  .key-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s-2);
+    width: 100%;
+  }
+
+  .key-form > .field {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .key-form.lg > .field {
+    height: var(--control-h-lg);
+    font-size: var(--t-reading);
+  }
+
+  .key-form-error {
+    flex-basis: 100%;
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--bad);
   }
 }

@@ -1,7 +1,7 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { contactTitle } from '../../lib/conversations'
 import { readShape, storeShape } from '../../lib/keptShape'
-import { momentsOf, type Moment } from '../../lib/moments'
+import { momentTitle, openMoment, type MomentOfDay } from '../../lib/momentOpen'
+import { shelfOf, type Moment } from '../../lib/moments'
 import type { Contact, MemoriesPayload } from '../../types'
 import { Truncate } from '../ui/Truncate'
 
@@ -17,25 +17,17 @@ type MomentsProps = {
   onMakeCard: () => void
 }
 
-// a moment as a place in time: one day of one conversation
-export type MomentOfDay = {
-  contact: Contact
-  title: string
-  // "YYYY-MM-DD"
-  day: string
-  // when the quoted message was sent, if the moment quotes one
-  at: string | null
-  // that message's id, where the server gives one
-  quotedId?: string
-}
+export type { MomentOfDay } from '../../lib/momentOpen'
 
-// the name the list's shape is remembered under, from one drawing to the next
+// the name the shelf's shape is remembered under, from one drawing to the next
 const SHAPE = 'moments'
-// with no shape remembered, what stands in for the list has this many cards
-const CARDS_AT_FIRST = 3
+// with no shape remembered, what stands in for the shelf has this many cards: three rows
+const CARDS_AT_FIRST = 9
 
-// What is worth opening today. Each moment is a thing of its own, so each
-// is its own card: who, when, and what was said or what it is.
+// What is worth opening today, as one shelf of cards, after Spotify's home:
+// what was said on this day in earlier years, then the anniversaries that
+// are near, three cards a row. Each card is who, when, what was said, and
+// how much was said that day; it opens the day.
 export function Moments({
   memories,
   onRetry,
@@ -45,15 +37,14 @@ export function Moments({
   onReplayFirstWords,
   onMakeCard,
 }: MomentsProps) {
-  const moments = useMemo(() => (memories ? momentsOf(memories) : []), [memories])
+  const moments = useMemo(() => (memories ? shelfOf(memories) : []), [memories])
   const loaded = useMemo(() => new Map(contacts.map((contact) => [contact.chat_id, contact])), [contacts])
   const list = useRef<HTMLUListElement>(null)
   const answered = memories !== null
   const count = moments.length
 
-  // The room the list takes is remembered as it was last drawn, so that
-  // what stands in for it the next time takes the same room. An answer
-  // with no moments is remembered as empty. No answer at all changes nothing.
+  // The room the shelf takes is remembered as it was last drawn, so that
+  // what stands in for it the next time takes the same room.
   useLayoutEffect(() => {
     if (!answered) return
     const element = list.current
@@ -61,8 +52,6 @@ export function Moments({
       storeShape(SHAPE, { rows: 0, height: 0 })
       return
     }
-    // measured now, and again whenever the list changes size; a height that
-    // has not changed is not handed on a second time
     let last = -1
     const keep = () => {
       const height = element.getBoundingClientRect().height
@@ -76,34 +65,8 @@ export function Moments({
     return () => observer.disconnect()
   }, [answered, count])
 
-  // a moment can come from a conversation outside the loaded list; it is named
-  // and opened the same way
-  function contactFor(moment: Moment): Contact {
-    return loaded.get(moment.chatId) ?? { chat_id: moment.chatId, display_name: moment.savedName }
-  }
-
-  // "Sam in Family", the way a cited message names its source
-  function titleFor(moment: Moment) {
-    const conversation = contactTitle(contactFor(moment))
-    return moment.quotedFrom ? `${moment.quotedFrom} in ${conversation}` : conversation
-  }
-
-  // a moment is a place in time: it opens on its day. One from a build that
-  // did not say the day opens its conversation.
-  function open(moment: Moment) {
-    const contact = contactFor(moment)
-    if (!moment.day) return onSelectContact(contact)
-    onOpenDay({
-      contact,
-      title: contactTitle(contact),
-      day: moment.day,
-      at: moment.at ?? null,
-      quotedId: moment.quotedId,
-    })
-  }
-
   return (
-    <section className="section ruled" aria-labelledby="moments-title">
+    <section className="section" aria-labelledby="moments-title">
       <div className="section-head">
         <h2 id="moments-title">Moments</h2>
         <span className="section-links">
@@ -116,9 +79,14 @@ export function Moments({
         </span>
       </div>
       {moments.length ? (
-        <ul ref={list} className="moment-cards" role="list">
+        <ul ref={list} className="moment-shelf" role="list">
           {moments.map((moment) => (
-            <MomentCard key={moment.key} moment={moment} title={titleFor(moment)} onOpen={() => open(moment)} />
+            <MomentCard
+              key={moment.key}
+              moment={moment}
+              title={momentTitle(moment, loaded)}
+              onOpen={(card) => openMoment(moment, loaded, onOpenDay, onSelectContact, card)}
+            />
           ))}
         </ul>
       ) : memories ? (
@@ -135,7 +103,7 @@ export function Moments({
   )
 }
 
-function MomentCard({ moment, title, onOpen }: { moment: Moment; title: string; onOpen: () => void }) {
+function MomentCard({ moment, title, onOpen }: { moment: Moment; title: string; onOpen: (card: Element) => void }) {
   const titleId = useId()
   const whenId = useId()
   const detailId = useId()
@@ -144,22 +112,22 @@ function MomentCard({ moment, title, onOpen }: { moment: Moment; title: string; 
       {/* the title is who it is with; when and what are read as its description */}
       <button
         type="button"
-        className="row moment card"
+        className="moment-card card"
         aria-labelledby={titleId}
         aria-describedby={`${whenId} ${detailId}`}
-        onClick={onOpen}
+        onClick={(event) => onOpen(event.currentTarget)}
       >
-        <span className="moment-when" id={whenId}>
-          {moment.when}
-        </span>
-        <span className="moment-main">
+        <span className="moment-head">
           <Truncate className="moment-name" id={titleId}>
             {title}
           </Truncate>
-          <span className="moment-detail" id={detailId}>
-            {moment.quote ? <MomentQuote text={moment.quote.text} fromMe={moment.quote.fromMe} /> : null}
-            <span className="moment-line">{moment.line}</span>
+          <span className="moment-when" id={whenId}>
+            {moment.when}
           </span>
+        </span>
+        <span className="moment-detail" id={detailId}>
+          {moment.quote ? <MomentQuote text={moment.quote.text} fromMe={moment.quote.fromMe} /> : null}
+          <span className="moment-line">{moment.line}</span>
         </span>
       </button>
     </li>
@@ -169,7 +137,7 @@ function MomentCard({ moment, title, onOpen }: { moment: Moment; title: string; 
 // Blue is what you sent and gray is what you received, here as everywhere.
 // When the export does not say, the words are quoted without taking a side.
 function MomentQuote({ text, fromMe }: { text: string; fromMe: boolean | null }) {
-  if (fromMe === null) return <span className="moment-line">“{text}”</span>
+  if (fromMe === null) return <span className="moment-quote">“{text}”</span>
   return (
     <span className={`bubble clamp${fromMe ? ' you' : ''}`}>
       {fromMe ? <span className="sr-only">You wrote: </span> : null}
@@ -178,19 +146,13 @@ function MomentQuote({ text, fromMe }: { text: string; fromMe: boolean | null })
   )
 }
 
-// Stands in for the moments while they load. It takes the room the list
-// took the last time it was drawn: as many cards, spread over the same
-// height. So nothing on the page moves when the moments arrive: not the
-// sections under them, and not the lists beside them, which are as long as
-// these are tall. A day that had no moments is stood in for by the one line
-// it had.
+// Stands in for the shelf while it loads, as many cards as it last had, so
+// nothing under it moves when the moments arrive.
 export function MomentsSkeleton() {
-  // read once, when it is put on the page
   const [shape] = useState(() => readShape(SHAPE))
   const cards = shape ? shape.rows : CARDS_AT_FIRST
-
   return (
-    <section className="section ruled" aria-hidden="true">
+    <section className="section" aria-hidden="true">
       <div className="section-head">
         <h2>Moments</h2>
         <span className="section-links">
@@ -199,20 +161,17 @@ export function MomentsSkeleton() {
         </span>
       </div>
       {cards ? (
-        <ul className="moment-cards" role="list" style={shape ? { minHeight: shape.height } : undefined}>
+        <ul className="moment-shelf" role="list" style={shape ? { minHeight: shape.height } : undefined}>
           {Array.from({ length: cards }, (_, card) => (
             <li key={card}>
-              <div className="row moment card">
-                <span className="moment-when">
-                  <span className="skeleton">2 years ago today</span>
-                </span>
-                <span className="moment-main">
+              <div className="moment-card card">
+                <span className="moment-head">
                   <span className="moment-name">
                     <span className="skeleton">Conversation name</span>
                   </span>
-                  <span className="moment-detail">
-                    <span className="skeleton">000 messages that day</span>
-                  </span>
+                </span>
+                <span className="moment-detail">
+                  <span className="skeleton">000 messages that day</span>
                 </span>
               </div>
             </li>

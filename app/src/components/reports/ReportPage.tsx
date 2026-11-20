@@ -20,7 +20,7 @@ type ReportPageProps = {
 const FILE_NAMES: Record<string, string> = { md: 'Markdown', html: 'Web page', csv: 'Table of moments' }
 // what stands in for the figures while a report loads: a number, and the line under it
 const WAITING_FIGURES = [
-  ['00,000', '000 a day'],
+  ['00,000', ''],
   ['000', 'of 000'],
   ['0,000', 'Jan 00, 0000'],
   ['00 days', 'in all'],
@@ -174,9 +174,7 @@ export function ReportPageSkeleton() {
             <dd>
               <span className="skeleton">{value}</span>
             </dd>
-            <dd className="report-figure-note">
-              <span className="skeleton">{note}</span>
-            </dd>
+            <dd className="report-figure-note">{note ? <span className="skeleton">{note}</span> : null}</dd>
           </div>
         ))}
       </dl>

@@ -78,8 +78,9 @@ export function ChatView({
   const [pane, setPane] = useState<'list' | 'detail'>('detail')
   // the answer whose cited messages the reader asked for, and how many answers cited anything then
   const [chosen, setChosen] = useState<{ id: string; among: number } | null>(null)
-  // the cited message whose day is open
-  const [opened, setOpened] = useState<SearchResult | null>(null)
+  // the cited message open on its day, and the cite clicked to open it, for the sheet to grow out of
+  const [opening, setOpening] = useState<{ citation: SearchResult; from: Element } | null>(null)
+  const opened = opening?.citation ?? null
   const citesId = useId()
   const roomBeside = useMediaQuery(ROOM_BESIDE)
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -110,9 +111,9 @@ export function ChatView({
 
   // A cited message opens on its day. One the export gives no time for is in
   // no day, so it opens its conversation.
-  function openCited(citation: SearchResult) {
+  function openCited(citation: SearchResult, from: Element) {
     if (dayOfMessage(citation.timestamp)) {
-      setOpened(citation)
+      setOpening({ citation, from })
       return
     }
     const contact = contacts.find((item) => item.chat_id === citation.chatId)
@@ -332,7 +333,8 @@ export function ChatView({
           onOpenConversation={() =>
             onSelectContact(openedContact ?? { chat_id: opened.chatId, display_name: opened.displayName })
           }
-          onClose={() => setOpened(null)}
+          onClose={() => setOpening(null)}
+          from={opening?.from}
         />
       ) : null}
     </>

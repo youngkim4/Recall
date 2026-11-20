@@ -9,8 +9,181 @@
     margin-top: var(--s-6);
   }
 
-  .insights > .insights-table {
+  /* the parts under the card stand 32px apart, as the blocks of every page */
+  .insights > :is(.insights-habits, .insights-when, .insights-table) {
     margin-top: var(--s-8);
+  }
+
+  .insights-failed {
+    color: var(--text-3);
+  }
+
+  /* ---- habits: five figures in one row, a hairline between them. The
+     first stands at the page's edge; each after it is 24px from its
+     hairline, as the tabs of the card are. ---- */
+  .habit-figures {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    margin: 0;
+    padding-top: var(--s-3);
+    border-top: 1px solid var(--line);
+  }
+
+  .habit-figure {
+    display: grid;
+    align-content: start;
+    gap: 0.125rem;
+    min-width: 0;
+    padding-inline: var(--s-6);
+    border-left: 1px solid var(--line);
+  }
+
+  .habit-figure:first-child {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .habit-figure > dt,
+  .habit-note {
+    margin: 0;
+    font-size: var(--t-small);
+    line-height: var(--lh-small);
+    color: var(--text-3);
+    overflow-wrap: anywhere;
+  }
+
+  .habit-value {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: var(--t-heading);
+    line-height: var(--lh-heading);
+    font-weight: var(--w-medium);
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* with less room the figures run three a row, then two, then one; the
+     first of each row stands at the edge with no hairline before it */
+  @container workspace (max-width: 64rem) {
+    .habit-figures {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      row-gap: var(--s-4);
+    }
+
+    .habit-figure:nth-child(3n + 1) {
+      padding-left: 0;
+      border-left: 0;
+    }
+  }
+
+  @container workspace (max-width: 40rem) {
+    .habit-figures {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .habit-figure:nth-child(3n + 1) {
+      padding-left: var(--s-4);
+      border-left: 1px solid var(--line);
+    }
+
+    .habit-figure:nth-child(odd) {
+      padding-left: 0;
+      border-left: 0;
+    }
+
+    .habit-figure {
+      padding-inline: var(--s-4);
+    }
+  }
+
+  /* ---- when: a row a day, a cell an hour, the hours named over them. A
+     cell is 20px tall, 3px from the next; its shade is one hue of ink, in
+     seven steps from the quietest hour to the busiest. An empty hour is a
+     trace, so the week keeps its shape. ---- */
+  .when-readout {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .when-grid {
+    display: grid;
+    grid-template-columns: 2.5rem repeat(24, minmax(0, 1fr));
+    grid-auto-rows: 1.25rem;
+    gap: 3px;
+    padding-top: var(--s-3);
+    border-top: 1px solid var(--line);
+    cursor: crosshair;
+  }
+
+  .when-grid:focus-visible {
+    outline: 2px solid var(--you-ink);
+    outline-offset: 4px;
+    border-radius: var(--r-sm);
+  }
+
+  .when-hour,
+  .when-day {
+    font-size: var(--t-small);
+    line-height: 1.25rem;
+    color: var(--text-3);
+    white-space: nowrap;
+  }
+
+  .when-hour {
+    overflow: visible;
+  }
+
+  .when-cell {
+    border-radius: 3px;
+    background: color-mix(in oklab, var(--text) 4%, transparent);
+    transition: opacity var(--dur-micro) ease;
+  }
+
+  .when-cell[data-step='1'] {
+    background: color-mix(in oklab, var(--text) 12%, transparent);
+  }
+
+  .when-cell[data-step='2'] {
+    background: color-mix(in oklab, var(--text) 22%, transparent);
+  }
+
+  .when-cell[data-step='3'] {
+    background: color-mix(in oklab, var(--text) 33%, transparent);
+  }
+
+  .when-cell[data-step='4'] {
+    background: color-mix(in oklab, var(--text) 45%, transparent);
+  }
+
+  .when-cell[data-step='5'] {
+    background: color-mix(in oklab, var(--text) 58%, transparent);
+  }
+
+  .when-cell[data-step='6'] {
+    background: color-mix(in oklab, var(--text) 72%, transparent);
+  }
+
+  .when-cell[data-step='7'] {
+    background: color-mix(in oklab, var(--text) 88%, transparent);
+  }
+
+  /* the hour being read stays; the rest step back, as the columns of the chart do */
+  .when-grid[data-reading] .when-cell:not([data-active]) {
+    opacity: 0.35;
+  }
+
+  /* a narrow grid names every sixth hour, so the names never touch */
+  @container workspace (max-width: 48rem) {
+    .when-grid {
+      grid-template-columns: 2rem repeat(24, minmax(0, 1fr));
+      gap: 2px;
+    }
+
+    .when-hour:not([data-major]) {
+      visibility: hidden;
+    }
   }
 
   /* ---- the row of controls: the words, the filters of search, and at its end the grouping ---- */
@@ -346,9 +519,10 @@
     text-align: right;
   }
 
+  /* the first column: 8px in from the table's edge, which is 8px past the column's */
   .data-table .num.place {
-    width: 2rem;
-    padding-left: 0;
+    width: calc(2rem + var(--s-2));
+    padding-left: var(--s-2);
     text-align: left;
     color: var(--text-3);
   }
@@ -362,9 +536,56 @@
     padding-left: var(--s-4);
   }
 
+  /* A row is pressed as a whole, as in Linear's and Notion's tables: the
+     name's link reaches over the whole row (its hit area is the row), and
+     under the pointer the row fills between its two hairlines, square, never
+     past them. The table reaches 8px past the words on each side, so its
+     hairlines and the fill share their edges and the words keep the column.
+     A fill round the name alone was refused: it floated in the row. */
+  .data-table {
+    width: calc(100% + var(--s-4));
+    margin-inline: calc(var(--s-2) * -1);
+  }
+
+  .data-table :is(th, td):first-child {
+    padding-left: var(--s-2);
+  }
+
+  .data-table :is(th, td):last-child {
+    padding-right: var(--s-2);
+  }
+
+  .data-table tbody tr {
+    position: relative;
+  }
+
+  .data-table td {
+    background-clip: padding-box;
+    transition: background-color var(--dur-micro) ease;
+  }
+
   .data-table .name > .link {
+    position: static;
     max-width: 100%;
     color: var(--text);
+  }
+
+  .data-table .name > .link::before {
+    display: none;
+  }
+
+  .data-table .name > .link::after {
+    inset: 0;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .data-table tbody tr:has(.link:hover) td {
+      background-color: var(--fill-hover);
+    }
+  }
+
+  .data-table tbody tr:has(.link:active) td {
+    background-color: var(--fill-active);
   }
 
   /* ---- a narrow workspace: the figures two by two, the table to its name, count and share ---- */
@@ -387,12 +608,23 @@
     }
   }
 
+  /* the table gives way from its end: first the bar, then the habits after
+     the first two, then those two, so a phone keeps a name, its count and
+     how fast you reply */
+  @container workspace (max-width: 72rem) {
+    .data-table .bar {
+      display: none;
+    }
+  }
+
+  @container workspace (max-width: 64rem) {
+    .data-table :is([data-col='they-reply'], [data-col='streak'], [data-col='late']) {
+      display: none;
+    }
+  }
+
   @container workspace (max-width: 40rem) {
-    .data-table .bar,
-    .data-table th:nth-last-child(2),
-    .data-table th:nth-last-child(3),
-    .data-table td:nth-last-child(2),
-    .data-table td:nth-last-child(3) {
+    .data-table [data-col='you-start'] {
       display: none;
     }
 
@@ -402,8 +634,8 @@
     }
 
     .data-table .num.place {
-      width: 1.5rem;
-      padding-left: 0;
+      width: calc(1.5rem + var(--s-2));
+      padding-left: var(--s-2);
     }
 
     .insights-tab,

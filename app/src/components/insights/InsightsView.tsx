@@ -15,9 +15,11 @@ import { SearchFilterBar } from '../search/SearchFilterBar'
 import { ChoiceMenu } from '../ui/ChoiceMenu'
 import { SearchField } from '../ui/SearchField'
 import { ColumnChart } from './ColumnChart'
+import { InsightsHabits } from './InsightsHabits'
 import { InsightsTable } from './InsightsTable'
 import { InsightsTabs } from './InsightsTabs'
 import { LineChart, type LineSeries } from './LineChart'
+import { WhenGrid } from './WhenGrid'
 
 type InsightsViewProps = {
   defaults: Defaults | null
@@ -67,7 +69,8 @@ function labelsOf(by: StatsBy, rows: StatsRow[]): AxisLabel[] {
 // usage page and Mixpanel's breakdown: one row of controls (the words to
 // count, where, from whom, with what, when, and at its end how the chart
 // groups them); under it one card, its figures as tabs over the chart; under
-// that a table of the people the answer is with. Each part follows the row.
+// that the habits of the answer, when in the week it is sent, and a table of
+// the people it is with and their habits. Each part follows the row.
 export function InsightsView({ defaults, contacts, onSelectContact }: InsightsViewProps) {
   const messagesPath = defaults?.messagesPath ?? ''
   const [typed, setTyped] = useState('')
@@ -80,7 +83,15 @@ export function InsightsView({ defaults, contacts, onSelectContact }: InsightsVi
   const { load: patterns } = useLoad(messagesPath, loadPatterns)
 
   const answer = useLastReady(useLoad(statsKey(messagesPath, statsAsk(filters, words, grain)), loadStats).load)
-  const people = useLastReady(useLoad(statsKey(messagesPath, statsAsk(filters, words, who, WHO_ROWS)), loadStats).load)
+  const counted = useLastReady(useLoad(statsKey(messagesPath, statsAsk(filters, words, who, WHO_ROWS)), loadStats).load)
+  // The same people with the habits of the answer and of each of them. They
+  // read every message of the answer (a second on the whole archive), so the
+  // people are asked for twice: the table stands at once, its habits after.
+  const { load: habitsLoad } = useLoad(statsKey(messagesPath, statsAsk(filters, words, who, WHO_ROWS, true)), loadStats)
+  const people = habitsLoad.state === 'ready' ? habitsLoad.value : counted
+  const week = useLastReady(useLoad(statsKey(messagesPath, statsAsk(filters, words, 'weekday_hour')), loadStats).load)
+  // the words, the sender and the attachments narrow the messages, not the talks
+  const narrowed = Boolean(words.trim() || filters.from || filters.attachments)
   // the answer on the page may be of the question before this one, while this one loads
   const shownGrain = (answer?.by as Grain | undefined) ?? grain
   const shownWho = (people?.by as Who | undefined) ?? who
@@ -111,40 +122,55 @@ export function InsightsView({ defaults, contacts, onSelectContact }: InsightsVi
             daily={patterns.state === 'ready' ? patterns.value.daily : null}
           />
           <span className="insights-toolbar-end">
-            <ChoiceMenu label="By" value={grain} choices={GRAINS} onChange={(value) => setGrain(value as Grain)} align="end" />
+            <ChoiceMenu
+              label="By"
+              value={grain}
+              choices={GRAINS}
+              onChange={(value) => setGrain(value as Grain)}
+              align="end"
+            />
           </span>
         </div>
 
         <section className="card insights-card" aria-label="The answer">
-          <InsightsTabs
-            stats={answer}
-            among={people ? people.rowsTotal : null}
-            amongLabel={shownWho === 'person' ? 'People' : 'Conversations'}
-            series={series}
-            onSeriesChange={setSeries}
-          />
+          <InsightsTabs stats={answer} series={series} onSeriesChange={setSeries} />
           <div className="insights-plot">
             {answer && !answer.totals.total ? (
               <p className="insights-none">No messages match</p>
             ) : !rows.length ? (
               <div className="insights-plot-waiting" aria-hidden="true" />
             ) : groupKind(shownGrain) === 'time' ? (
-              <LineChart rows={rows} series={series} labels={labelsOf(shownGrain, rows)} nameOf={nameOf} summary={summary} />
+              <LineChart
+                rows={rows}
+                series={series}
+                labels={labelsOf(shownGrain, rows)}
+                nameOf={nameOf}
+                summary={summary}
+              />
             ) : (
               <ColumnChart rows={rows} labels={labelsOf(shownGrain, rows)} nameOf={nameOf} summary={summary} />
             )}
           </div>
         </section>
 
+        {answer && !answer.totals.total ? null : (
+          <>
+            <InsightsHabits
+              habits={people?.habits ?? null}
+              failed={habitsLoad.state === 'failed'}
+              narrowed={narrowed}
+            />
+            <WhenGrid rows={week?.rows ?? null} />
+          </>
+        )}
+
         {people && people.totals.total ? (
           <InsightsTable
             rows={people.rows}
-            who
             heading={shownWho === 'person' ? 'By person' : 'By conversation'}
             column={shownWho === 'person' ? 'Person' : 'Conversation'}
-            nameOf={(row) => row.label}
-            total={people.totals.total}
             onOpen={open}
+            habitsFailed={habitsLoad.state === 'failed'}
             action={
               <ChoiceMenu
                 label="Rows"

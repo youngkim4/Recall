@@ -1,16 +1,18 @@
 import { useMemo, useState } from 'react'
-import { messageCount } from '../../lib/conversations'
-import { loadMoments, loadPatterns } from '../../lib/overviewLoads'
+import { statsAsk, statsKey } from '../../lib/insights'
+import { loadStats } from '../../lib/insightsLoad'
+import { latelyRows, latelyWindows, type LatelyRow } from '../../lib/lately'
+import { LIST_MOST } from '../../lib/overviewFit'
+import { loadMoments } from '../../lib/overviewLoads'
+import { NO_FILTERS } from '../../lib/searchFilters'
 import { useLoad } from '../../lib/useLoad'
 import type { ArchiveSummary, Contact, Defaults, ViewKey } from '../../types'
 import { CardStudio } from '../cards/CardStudio'
 import { DaySheet } from '../ui/DaySheet'
-import { VoicesOverTime, VoicesSkeleton } from '../ui/VoicesOverTime'
-import { ArchiveTiles, ArchiveTilesSkeleton } from './ArchiveTiles'
+import { ArchiveHead, ArchiveHeadSkeleton } from './ArchiveHead'
+import { GoneQuiet } from './GoneQuiet'
+import { Lately } from './Lately'
 import { Moments, MomentsSkeleton, type MomentOfDay } from './Moments'
-import { Rhythm } from './Rhythm'
-import { TopConversations, TopConversationsSkeleton } from './TopConversations'
-import { YearOfDays } from './YearOfDays'
 
 type OverviewViewProps = {
   defaults: Defaults | null
@@ -26,24 +28,34 @@ type OverviewViewProps = {
   onOpenSetup: () => void
 }
 
-// stands in for the chart of months while it loads
-function MonthsWaiting() {
-  return (
-    <div className="section ruled" aria-hidden="true">
-      <VoicesSkeleton heading={<h2>By month</h2>} />
-    </div>
-  )
+// the people of the thirty days before, to set each of today's against
+const BEFORE_ROWS = 50
+
+// The archive's own thirty days and the thirty before them, counted by person.
+function useLately(messagesPath: string, lastDay: string) {
+  const asks = useMemo(() => {
+    if (!lastDay) return { now: '', before: '' }
+    const { now, before } = latelyWindows(lastDay)
+    return {
+      now: statsKey(messagesPath, statsAsk({ ...NO_FILTERS, ...now }, '', 'person', LIST_MOST)),
+      before: statsKey(messagesPath, statsAsk({ ...NO_FILTERS, ...before }, '', 'person', BEFORE_ROWS)),
+    }
+  }, [messagesPath, lastDay])
+  const { load: now } = useLoad(asks.now, loadStats)
+  const { load: before } = useLoad(asks.before, loadStats)
+  return useMemo(() => {
+    if (now.state !== 'ready' || before.state === 'loading') return null
+    return latelyRows(now.value.rows, before.state === 'ready' ? before.value.rows : [], LIST_MOST)
+  }, [now, before])
 }
 
-// The archive at a glance, in rows. How much it holds. Then what is worth
-// opening: today's moments, with the busiest conversations beside them, as
-// tall as the moments are. (Recent reports once stood under the busiest
-// conversations and took their rows: the table showed one conversation less
-// for each report written. Reports are one click away in the rail.) Then
-// when the messages happen: by month, and under that by day and by hour. The page is open: space between the sections,
-// hairlines between the rows of a list, and no card but the moments. In a
-// wide window the things of a row stand side by side and end on one line; in
-// a narrow one they follow each other.
+// After Spotify's home: what the archive holds, in one line set large; what is
+// worth opening today, as a shelf of cards; then two lists side by side, who
+// the messages have been with lately and who has gone quiet. Counting the
+// archive every other way is Insights' work. The page is open: 32px between
+// its blocks, hairlines between the rows of a list, and no card but the
+// moments. The two lists end on one line; in a narrow window they follow
+// each other.
 export function OverviewView({
   defaults,
   archive,
@@ -59,16 +71,15 @@ export function OverviewView({
   // the moment whose day is open
   const [openDay, setOpenDay] = useState<MomentOfDay | null>(null)
   const messagesPath = archive ? defaults?.messagesPath || '' : ''
+  const lastDay = archive?.lastMessage?.slice(0, 10) ?? ''
   const { load: moments, retry: retryMoments } = useLoad(messagesPath, loadMoments)
-  const { load: patterns, retry: retryPatterns } = useLoad(messagesPath, loadPatterns)
-  const ranked = useMemo(() => [...contacts].sort((a, b) => messageCount(b) - messageCount(a)), [contacts])
-  const voices = useMemo(() => {
-    const months = patterns.state === 'ready' ? patterns.value.monthly : []
-    return {
-      sent: months.reduce((sum, month) => sum + month.sent, 0),
-      received: months.reduce((sum, month) => sum + month.received, 0),
-    }
-  }, [patterns])
+  const lately = useLately(messagesPath, lastDay)
+  const loaded = useMemo(() => new Map(contacts.map((contact) => [contact.chat_id, contact])), [contacts])
+
+  const openPerson = (row: LatelyRow) => {
+    const contact = (row.conversations ?? [row.key]).map((id) => loaded.get(id)).find(Boolean)
+    if (contact) onSelectContact(contact)
+  }
 
   if (loading && !archive) {
     return (
@@ -77,14 +88,8 @@ export function OverviewView({
           <p className="sr-only" role="status">
             Reading your archive
           </p>
-          <ArchiveTilesSkeleton />
-          <div className="overview-row">
-            <MomentsSkeleton />
-            <div className="overview-col">
-              <TopConversationsSkeleton />
-            </div>
-          </div>
-          <MonthsWaiting />
+          <ArchiveHeadSkeleton />
+          <MomentsSkeleton />
         </div>
       </div>
     )
@@ -103,71 +108,43 @@ export function OverviewView({
     )
   }
 
+  const memories = moments.state === 'ready' ? moments.value : null
+
   return (
     <div className="view">
       <div className="page wide overview arrive-each">
-        <ArchiveTiles
-          archive={archive}
-          months={patterns.state === 'ready' ? patterns.value.monthly : null}
-          waiting={patterns.state === 'loading'}
-          ranked={ranked}
-          onOpenSetup={onOpenSetup}
-        />
+        <ArchiveHead archive={archive} />
 
-        {/* what is worth opening */}
+        {moments.state === 'loading' ? (
+          <MomentsSkeleton />
+        ) : (
+          <Moments
+            memories={memories}
+            onRetry={retryMoments}
+            contacts={contacts}
+            onSelectContact={onSelectContact}
+            onOpenDay={setOpenDay}
+            onReplayFirstWords={onReplayFirstWords}
+            onMakeCard={() => setShowCardStudio(true)}
+          />
+        )}
+
         <div className="overview-row">
-          {moments.state === 'loading' ? (
-            <MomentsSkeleton />
-          ) : (
-            <Moments
-              memories={moments.state === 'ready' ? moments.value : null}
-              onRetry={retryMoments}
-              contacts={contacts}
-              onSelectContact={onSelectContact}
-              onOpenDay={setOpenDay}
-              onReplayFirstWords={onReplayFirstWords}
-              onMakeCard={() => setShowCardStudio(true)}
-            />
-          )}
-          <div className="overview-col">
-            <TopConversations
-              ranked={ranked}
-              archive={archive}
-              onSelectContact={onSelectContact}
-              onViewAll={() => onViewChange('analyze')}
-            />
-          </div>
+          <Lately
+            rows={lately}
+            messagesPath={messagesPath}
+            lastDay={lastDay}
+            onOpen={openPerson}
+            onOpenInsights={() => onViewChange('insights')}
+          />
+          <GoneQuiet
+            memories={memories}
+            failed={moments.state === 'failed'}
+            contacts={contacts}
+            onOpenDay={setOpenDay}
+            onSelectContact={onSelectContact}
+          />
         </div>
-
-        {/* when the messages happen */}
-        {patterns.state === 'loading' ? (
-          <MonthsWaiting />
-        ) : patterns.state === 'failed' ? (
-          <p className="section section-note">
-            The shape of the archive could not be loaded.{' '}
-            <button type="button" className="link in-text" onClick={retryPatterns}>
-              Try again
-            </button>
-          </p>
-        ) : patterns.value.monthly.length ? (
-          <section className="section ruled" aria-labelledby="months-title">
-            <VoicesOverTime
-              heading={<h2 id="months-title">By month</h2>}
-              points={patterns.value.monthly}
-              unit="month"
-              sent={voices.sent}
-              received={voices.received}
-              them="Everyone else"
-            />
-          </section>
-        ) : null}
-
-        {patterns.state === 'ready' && patterns.value.daily.counts.length ? (
-          <div className="overview-row overview-heat">
-            <YearOfDays daily={patterns.value.daily} />
-            <Rhythm rhythm={patterns.value.rhythm} />
-          </div>
-        ) : null}
       </div>
 
       {openDay ? (
@@ -181,6 +158,7 @@ export function OverviewView({
           pickedId={openDay.quotedId}
           onOpenConversation={() => onSelectContact(openDay.contact)}
           onClose={() => setOpenDay(null)}
+          from={openDay.from}
         />
       ) : null}
 
@@ -189,7 +167,7 @@ export function OverviewView({
           defaults={defaults}
           model={model}
           contacts={contacts}
-          memories={moments.state === 'ready' ? moments.value : null}
+          memories={memories}
           onClose={() => setShowCardStudio(false)}
         />
       ) : null}

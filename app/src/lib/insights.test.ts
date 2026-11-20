@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { NO_FILTERS } from './searchFilters.ts'
-import { busiest, groupKind, querySentence, readAsk, readStatsKey, statsAsk, statsKey } from './insights.ts'
+import { groupKind, querySentence, readAsk, readStatsKey, statsAsk, statsKey } from './insights.ts'
 
 test('a count asks with only what is set, its words, and the grouping', () => {
   assert.deepEqual(statsAsk(NO_FILTERS, '', 'month'), { by: 'month' })
@@ -15,6 +15,11 @@ test('a count asks with only what is set, its words, and the grouping', () => {
       limit: 10,
     },
   )
+})
+
+test('habits are asked for only by name, since they read every message of the set', () => {
+  assert.deepEqual(statsAsk(NO_FILTERS, '', 'person', 10, true), { by: 'person', limit: 10, habits: true })
+  assert.equal('habits' in statsAsk(NO_FILTERS, '', 'person', 10), false)
 })
 
 test('the sort of search is never sent with a count', () => {
@@ -46,28 +51,23 @@ test('the question reads back as one sentence, naming only what is set', () => {
     'Messages with “love” from you in group chats, by weekday',
   )
   assert.equal(
-    querySentence({ words: '', filters: { ...NO_FILTERS, contact: 'chat-1', attachments: 'image' }, by: 'hour', where: 'Sam' }),
+    querySentence({
+      words: '',
+      filters: { ...NO_FILTERS, contact: 'chat-1', attachments: 'image' },
+      by: 'hour',
+      where: 'Sam',
+    }),
     'All messages with Sam with a photo, by hour',
   )
   assert.equal(
-    querySentence({ words: 'hi', filters: { ...NO_FILTERS, from: 'them', since: '2025-01-01', until: '2025-03-31' }, by: 'person', range: 'Jan 1 to Mar 31, 2025' }),
+    querySentence({
+      words: 'hi',
+      filters: { ...NO_FILTERS, from: 'them', since: '2025-01-01', until: '2025-03-31' },
+      by: 'person',
+      range: 'Jan 1 to Mar 31, 2025',
+    }),
     'Messages with “hi” from others, Jan 1 to Mar 31, 2025, by person',
   )
-})
-
-test('the busiest rows come first, the most in each, a tie in order of time', () => {
-  const rows = [
-    { key: '2025-01', label: '2025-01', total: 3, sent: 1, received: 2 },
-    { key: '2025-02', label: '2025-02', total: 9, sent: 4, received: 5 },
-    { key: '2025-03', label: '2025-03', total: 3, sent: 3, received: 0 },
-    { key: '2025-04', label: '2025-04', total: 0, sent: 0, received: 0 },
-  ]
-  assert.deepEqual(
-    busiest(rows, 3).map((row) => row.key),
-    ['2025-02', '2025-01', '2025-03'],
-  )
-  // an empty row is never among the busiest
-  assert.deepEqual(busiest(rows, 9).length, 3)
 })
 
 test('a grouping is over time, over the week, or by who', () => {

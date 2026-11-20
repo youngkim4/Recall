@@ -6,6 +6,25 @@ import { filterParams, type SearchFilters } from './searchFilters.ts'
 
 export type StatsBy = 'day' | 'week' | 'month' | 'weekday' | 'hour' | 'weekday_hour' | 'person' | 'conversation'
 
+// How the messages of a set are sent (recall_services/habits.py). A figure
+// with nothing to count is null, never 0: a reply at once is 0 seconds.
+export type Habits = {
+  messages: number
+  // the median seconds to the first reply of a talk
+  youReply: number | null
+  theyReply: number | null
+  replies: { you: number; they: number }
+  // the share of talks you started; a talk starts after 6 hours of quiet
+  youStart: number | null
+  talks: number
+  streak: { days: number; first: string; last: string } | null
+  // the share of messages from midnight to 5 a.m.
+  lateNight: number | null
+  // the mean characters of a text
+  sentLength: number | null
+  receivedLength: number | null
+}
+
 export type StatsRow = {
   key: string
   label: string
@@ -14,6 +33,8 @@ export type StatsRow = {
   received: number
   // on a row of a person or a conversation: the conversations it counts
   conversations?: string[]
+  // on a row of a person or a conversation, when habits were asked for
+  habits?: Habits
 }
 
 export type StatsPayload = {
@@ -22,9 +43,13 @@ export type StatsPayload = {
   // the first and last day of what was counted; null when nothing was
   first: string | null
   last: string | null
+  // how many days hold a message of what was counted
+  days: number
   rows: StatsRow[]
   // how many rows there were before the limit
   rowsTotal: number
+  // when habits were asked for
+  habits?: Habits
 }
 
 // one count to ask for, in the words of the route
@@ -32,12 +57,16 @@ export type StatsAsk = Partial<Omit<SearchFilters, 'order'>> & {
   by: StatsBy
   query?: string
   limit?: number
+  // several conversations, comma separated, where `contact` names one
+  contacts?: string
+  // the habits of the set and of each row of people; they read every message of it
+  habits?: boolean
 }
 
 // The count to ask for: only the filters that are set, the words when there
 // are any, the grouping, and how many rows of people. The sort of search
 // orders a list and means nothing to a count.
-export function statsAsk(filters: SearchFilters, words: string, by: StatsBy, limit?: number): StatsAsk {
+export function statsAsk(filters: SearchFilters, words: string, by: StatsBy, limit?: number, habits = false): StatsAsk {
   // with the order at newest, filterParams leaves it out
   const set = filterParams({ ...filters, order: 'newest' }, false)
   const query = words.trim()
@@ -46,6 +75,7 @@ export function statsAsk(filters: SearchFilters, words: string, by: StatsBy, lim
     ...(query ? { query } : {}),
     ...set,
     ...(limit ? { limit } : {}),
+    ...(habits ? { habits } : {}),
   }
 }
 
@@ -115,15 +145,4 @@ export function querySentence({ words, filters, by, where, range }: Question) {
   ].filter(Boolean)
   const grouped = `by ${by === 'weekday_hour' ? 'hour of the week' : by}`
   return [parts.join(' '), range, grouped].filter(Boolean).join(', ')
-}
-
-// The rows that hold the most, the most first; a tie keeps the order of the
-// rows (time, for a time grouping). An empty row is never among them.
-export function busiest(rows: StatsRow[], count: number): StatsRow[] {
-  return rows
-    .map((row, place) => ({ row, place }))
-    .filter(({ row }) => row.total > 0)
-    .sort((a, b) => b.row.total - a.row.total || a.place - b.place)
-    .slice(0, count)
-    .map(({ row }) => row)
 }

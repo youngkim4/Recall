@@ -16,7 +16,7 @@ export function MomentDate({ opens, children }: MomentDateProps) {
   const openDay = useDayOpener()
   if (!opens || !openDay) return children
   return (
-    <button type="button" className="link in-text" onClick={() => openDay(opens)}>
+    <button type="button" className="link in-text" onClick={(event) => openDay(opens, event.currentTarget)}>
       <span className="sr-only">Open the day of </span>
       {children}
     </button>

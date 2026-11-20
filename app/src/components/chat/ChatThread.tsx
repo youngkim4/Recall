@@ -24,7 +24,8 @@ type ChatThreadProps = {
   onShowCited: (answerId: string) => void
   // the cited message whose day is open, as bookmarkId gives it; '' for none
   openKey: string
-  onOpenCitation: (citation: SearchResult) => void
+  // `row` is the cite that was clicked, for its day to grow out of
+  onOpenCitation: (citation: SearchResult, row: Element) => void
 }
 
 // message ids carry the time they were made: "user-<ms>-<random>"
@@ -96,7 +97,7 @@ export function ChatThread({
                         message={citation}
                         index={index + 1}
                         picked={bookmarkId(citation) === openKey}
-                        onOpen={() => onOpenCitation(citation)}
+                        onOpen={(row) => onOpenCitation(citation, row)}
                       />
                     </li>
                   ))}

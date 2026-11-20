@@ -21,10 +21,13 @@ type SidebarProps = {
   canExpand: boolean
   onToggleCollapse: () => void
   onViewChange: (view: ViewKey) => void
+  // Settings is a sheet over the view, not a view: it grows out of its button
+  settingsOpen: boolean
+  onOpenSettings: (from: Element) => void
 }
 
 type NavEntry = {
-  key: ViewKey
+  key: ViewKey | 'settings'
   label: string
   icon: typeof HomeIcon
   // a number beside a destination reads as work waiting there, so only
@@ -39,6 +42,8 @@ export function Sidebar({
   canExpand,
   onToggleCollapse,
   onViewChange,
+  settingsOpen,
+  onOpenSettings,
 }: SidebarProps) {
   const primary: NavEntry[] = [
     { key: 'home', label: 'Overview', icon: HomeIcon },
@@ -54,16 +59,20 @@ export function Sidebar({
   function renderItem(item: NavEntry) {
     const Icon = item.icon
     const active = activeView === item.key
+    const key = item.key
+    const sheet = key === 'settings'
     return (
       <button
-        key={item.key}
+        key={key}
         type="button"
         className="nav-item"
         aria-current={active ? 'page' : undefined}
+        aria-haspopup={sheet ? 'dialog' : undefined}
+        aria-expanded={sheet ? settingsOpen : undefined}
         // folded, the words are gone, so the name is given here, with the number the row would show
         aria-label={collapsed ? (item.count ? `${item.label}, ${formatNumber(item.count)} running` : item.label) : undefined}
         title={collapsed ? item.label : undefined}
-        onClick={() => onViewChange(item.key)}
+        onClick={(event) => (key === 'settings' ? onOpenSettings(event.currentTarget) : onViewChange(key))}
       >
         <Icon filled={active} />
         <span className="nav-label">{item.label}</span>
@@ -72,29 +81,21 @@ export function Sidebar({
     )
   }
 
-  // Where the fill behind the current row sits in each list. When the row is
-  // in the other list, the fill fades on the row at the end nearest it: it
-  // stays inside the rows, so it never crosses the picture of a scene.
-  const inPrimary = primary.findIndex((item) => item.key === activeView)
-  const inSecondary = secondary.findIndex((item) => item.key === activeView)
+  // Where the fill behind the current row sits. Every view is in the first
+  // list: Settings, in the second, is never the current row, because it
+  // opens over the view that is.
+  const inPrimary = Math.max(
+    0,
+    primary.findIndex((item) => item.key === activeView),
+  )
 
   return (
     <div className="rail">
-      <nav
-        className="nav"
-        aria-label="Primary"
-        data-current={inPrimary >= 0 || undefined}
-        style={{ '--at': inPrimary >= 0 ? inPrimary : primary.length - 1 } as CSSProperties}
-      >
+      <nav className="nav" aria-label="Primary" data-current style={{ '--at': inPrimary } as CSSProperties}>
         {primary.map(renderItem)}
       </nav>
       <div className="rail-foot">
-        <nav
-          className="nav"
-          aria-label="App"
-          data-current={inSecondary >= 0 || undefined}
-          style={{ '--at': inSecondary >= 0 ? inSecondary : 0 } as CSSProperties}
-        >
+        <nav className="nav" aria-label="App">
           {secondary.map(renderItem)}
         </nav>
         {canExpand ? (

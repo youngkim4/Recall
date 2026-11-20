@@ -58,9 +58,9 @@ export function keyFigures(stats: PreviewStats): KeyFigure[] {
   const total = whole(stats.totalMessages)
   const active = whole(stats.activeDays)
   const gap = whole(stats.longestGapDays)
-  const aDay = span ? Math.round(total / span) : 0
   const figures: Array<KeyFigure | null> = [
-    total ? { label: 'Messages', value: formatNumber(total), ...(aDay ? { note: `${formatNumber(aDay)} a day` } : {}) } : null,
+    // the count alone: "N a day" under it was asked to go
+    total ? { label: 'Messages', value: formatNumber(total) } : null,
     active
       ? { label: 'Active days', value: formatNumber(active), ...(span > active ? { note: `of ${formatNumber(span)}` } : {}) }
       : null,

@@ -1,7 +1,8 @@
 import type { ActivityPoint, ActivityUnit } from './lib/activity'
 import type { Daily } from './lib/days'
 
-export type ViewKey = 'home' | 'analyze' | 'insights' | 'explore' | 'ask' | 'reports' | 'jobs' | 'settings'
+// Settings is no view: it is a sheet over the view in use
+export type ViewKey = 'home' | 'analyze' | 'insights' | 'explore' | 'ask' | 'reports' | 'jobs'
 
 // How carefully a model reads, as the server ranks it.
 export type ModelLevel = 'low' | 'medium' | 'high' | 'top'
@@ -297,6 +298,13 @@ export type MemoriesPayload = {
     date: string
     inDays: number
     count: number
+    // what was said on the first day, as a moment of this day quotes its
+    // day; absent from a server that does not quote it
+    preview?: string
+    previewFromMe?: boolean | null
+    previewSender?: string
+    previewAt?: string | null
+    previewId?: string
   }>
   reconnect: Array<{
     chatId: string
@@ -399,7 +407,10 @@ export type Job = {
   createdAt: string
   updatedAt: string
   logs: Array<string | { time?: string; message?: string }>
-  progress?: { step: number; of: number; label: string }
+  // `done` of `total`: how far the step is, where the step can tell
+  progress?: { step: number; of: number; label: string; done?: number; total?: number }
+  // what the job paid the model provider so far, in US dollars
+  spent?: { usd: number } | null
   result?: {
     reportPath?: string
     eventsPath?: string | null
@@ -423,4 +434,38 @@ export type Job = {
   error?: string | null
   // a fixed word for why a job failed, beside the sentence in error
   code?: string
+}
+
+// Where the API key is (GET /api/key). The key itself is never sent back.
+export type KeyState = {
+  present: boolean
+  // 'environment': set where the server starts, and a saved key would not be
+  // used; 'file': saved by the app; null: there is none
+  source: 'environment' | 'file' | null
+  // where it is, in words
+  place?: string
+}
+
+// What getting chat ready builds, in this order (GET /api/first-run)
+export type FirstRunStepName = 'meaning' | 'memory' | 'people'
+
+export type FirstRunStep = {
+  name: FirstRunStepName
+  // 'behind' and 'partial' are begun and not ready
+  state: 'none' | 'behind' | 'partial' | 'ready'
+  // an upper bound in US dollars; 0 when `error` says why it is not known
+  estimatedCost: number
+  error: string | null
+  code: string | null
+}
+
+export type FirstRunStatus = {
+  key: Pick<KeyState, 'present' | 'source'>
+  archive: { holdsMessages: boolean; conversations: number; messages: number }
+  steps: FirstRunStep[]
+  // the sum over the steps that are not ready: an upper bound
+  estimatedCost: number
+  ready: boolean
+  // the first_run job that runs now, or null
+  jobId: string | null
 }

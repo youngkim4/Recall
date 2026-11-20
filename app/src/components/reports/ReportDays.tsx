@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { contactTitle } from '../../lib/conversations'
-import { DayOpener } from '../../lib/dayOpener'
+import { DayOpener, type OpenDay } from '../../lib/dayOpener'
 import type { MomentDay } from '../../lib/momentDay'
 import type { Contact } from '../../types'
 import { DaySheet } from '../ui/DaySheet'
@@ -19,13 +19,14 @@ type ReportDaysProps = {
 // day through DayOpener, wherever in the report it is drawn; the sheet shows
 // that day of the conversation over the report.
 export function ReportDays({ messagesPath, contacts, name, onOpenConversation, children }: ReportDaysProps) {
-  const [open, setOpen] = useState<MomentDay | null>(null)
+  const [open, setOpen] = useState<(MomentDay & { from?: Element }) | null>(null)
+  const openDay: OpenDay = (day, from) => setOpen({ ...day, from })
   const contact = open
     ? (contacts.find((one) => one.chat_id === open.chatId) ?? { chat_id: open.chatId, display_name: name })
     : null
 
   return (
-    <DayOpener value={messagesPath ? setOpen : null}>
+    <DayOpener value={messagesPath ? openDay : null}>
       {children}
       {open && contact ? (
         <DaySheet
@@ -38,6 +39,7 @@ export function ReportDays({ messagesPath, contacts, name, onOpenConversation, c
           pickedId={open.pickedId}
           onOpenConversation={() => onOpenConversation(contact)}
           onClose={() => setOpen(null)}
+          from={open.from}
         />
       ) : null}
     </DayOpener>

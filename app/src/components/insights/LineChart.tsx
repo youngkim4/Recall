@@ -2,6 +2,7 @@ import { useState, type KeyboardEvent, type PointerEvent } from 'react'
 import { roundUp, type AxisLabel } from '../../lib/activity'
 import { formatNumber } from '../../lib/format'
 import type { StatsRow } from '../../lib/insights'
+import { useTweened } from '../../lib/useTweened'
 
 export type LineSeries = 'both' | 'sent' | 'received'
 
@@ -19,6 +20,19 @@ const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumF
 const WIDE = 1000
 const TALL = 100
 
+// A line through heights in the drawing's units, spread across its width. It
+// is spread by its own number of points: while it moves from one answer to the
+// next it can have a different number of points than the answer.
+function pathOf(heights: readonly number[]) {
+  const last = heights.length - 1
+  return heights
+    .map((height, index) => {
+      const across = last < 1 ? WIDE / 2 : (index / last) * WIDE
+      return `${index ? 'L' : 'M'}${across.toFixed(2)} ${height.toFixed(2)}`
+    })
+    .join(' ')
+}
+
 // The answer over time as lines, after ElevenLabs' usage chart: what you
 // sent and what they sent, 2px each, over three quiet gridlines, with the
 // top of the scale named at its end. Moving across it, by pointer or arrow
@@ -34,8 +48,11 @@ export function LineChart({ rows, series, labels, nameOf, summary }: LineChartPr
   const top = roundUp(peak)
   const x = (index: number) => (count < 2 ? WIDE / 2 : (index / (count - 1)) * WIDE)
   const y = (value: number) => TALL - (value / top) * TALL
-  const path = (pick: (row: StatsRow) => number) =>
-    rows.map((row, index) => `${index ? 'L' : 'M'}${x(index).toFixed(2)} ${y(pick(row)).toFixed(2)}`).join(' ')
+  // A new answer does not jump in: each line moves from where it stands to
+  // where it goes, the scale with it. A line that is hidden lies flat on the
+  // baseline, so it rises when it is shown again.
+  const sent = useTweened(rows.map((row) => (showSent ? y(row.sent) : TALL)))
+  const received = useTweened(rows.map((row) => (showReceived ? y(row.received) : TALL)))
   const picked = active === null ? null : rows[active]
   // a share of the width or the height, for what stands over the drawing in the page's own type
   const across = (index: number) => `${(x(index) / WIDE) * 100}%`
@@ -110,17 +127,25 @@ export function LineChart({ rows, series, labels, nameOf, summary }: LineChartPr
           {[0.25, 0.5, 0.75].map((share) => (
             <line key={share} className="lines-grid" x1="0" x2={WIDE} y1={TALL * share} y2={TALL * share} />
           ))}
-          {showReceived ? <path className="lines-them" d={path((row) => row.received)} /> : null}
-          {showSent ? <path className="lines-you" d={path((row) => row.sent)} /> : null}
+          {showReceived ? <path className="lines-them" d={pathOf(received)} /> : null}
+          {showSent ? <path className="lines-you" d={pathOf(sent)} /> : null}
         </svg>
         {picked && active !== null ? (
           <>
             <span className="lines-cross" style={{ left: across(active) }} aria-hidden="true" />
             {showReceived ? (
-              <span className="lines-dot them" style={{ left: across(active), bottom: up(picked.received) }} aria-hidden="true" />
+              <span
+                className="lines-dot them"
+                style={{ left: across(active), bottom: up(picked.received) }}
+                aria-hidden="true"
+              />
             ) : null}
             {showSent ? (
-              <span className="lines-dot you" style={{ left: across(active), bottom: up(picked.sent) }} aria-hidden="true" />
+              <span
+                className="lines-dot you"
+                style={{ left: across(active), bottom: up(picked.sent) }}
+                aria-hidden="true"
+              />
             ) : null}
           </>
         ) : null}

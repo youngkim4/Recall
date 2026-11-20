@@ -261,6 +261,37 @@ export function PaperclipIcon({ className }: IconProps) {
   )
 }
 
+/* ---- the parts of Settings ---- */
+
+// how the app looks: a circle, half of it filled, as light and dark
+export function AppearanceIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <circle cx="8" cy="8" r="5.75" />
+      <path d="M8 2.25a5.75 5.75 0 0 1 0 11.5Z" fill="currentColor" stroke="none" />
+    </Line>
+  )
+}
+
+// the archive: a box with its lid
+export function ArchiveIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <path d="M2.75 3.25h10.5v3H2.75z" />
+      <path d="M3.75 6.25v6a1 1 0 0 0 1 1h6.5a1 1 0 0 0 1-1v-6M6.75 9h2.5" />
+    </Line>
+  )
+}
+
+// where files are kept
+export function FolderIcon({ className }: IconProps) {
+  return (
+    <Line className={className}>
+      <path d="M2.25 4.25a1 1 0 0 1 1-1h3l1.5 1.5h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9.5a1 1 0 0 1-1-1Z" />
+    </Line>
+  )
+}
+
 export function BookmarkIcon({ className, filled }: NavIconProps) {
   return (
     <Line className={className}>

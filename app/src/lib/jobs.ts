@@ -26,6 +26,7 @@ export function lastLog(logs: Job['logs'] = []) {
 const KINDS: Record<string, string> = {
   export: 'Message export',
   setup_import: 'Archive import',
+  first_run: 'Getting chat ready',
   // the server loads an earlier export into the archive by itself
   bridge: 'Archive load',
 }

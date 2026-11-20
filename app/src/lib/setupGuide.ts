@@ -4,8 +4,9 @@
 import type { Job, SetupDbStatus, SetupImportResult, SetupStatus } from '../types'
 
 // How far the reader has gone, apart from what the database allows. A first
-// setup opens on its welcome; an update opens on what there is to do.
-export type GuideStage = 'welcome' | 'source' | 'done'
+// setup opens on its welcome; an update opens on what there is to do. After a
+// first archive comes the API key, then getting chat ready.
+export type GuideStage = 'welcome' | 'source' | 'done' | 'key' | 'chat'
 
 export type GuideStep =
   | 'welcome'
@@ -17,6 +18,8 @@ export type GuideStep =
   | 'import_running'
   | 'import_failed'
   | 'done'
+  | 'key'
+  | 'chat'
 
 // A database that the server will try. A busy one is among them: Messages may
 // only be in the middle of a write, and the server tries once more.
@@ -44,8 +47,8 @@ export function guideStep(input: {
   picked: SetupStatus | null
   live: SetupStatus
 }): GuideStep {
-  if (input.stage === 'welcome') return 'welcome'
-  if (input.stage === 'done') return 'done'
+  if (input.stage === 'welcome' || input.stage === 'done' || input.stage === 'key' || input.stage === 'chat')
+    return input.stage
   if (input.job) return input.job.status === 'failed' ? 'import_failed' : 'import_running'
   return input.picked ? 'import' : stepForDatabase(input.live.db.status)
 }
@@ -60,11 +63,12 @@ export function importView(step: GuideStep): ImportView | null {
   return step === 'import_failed' ? 'failed' : null
 }
 
-// which of the four marks at the top a step lights
+// Which of the four marks at the top a step lights: Welcome, Access, Import,
+// Chat. The archive being ready is the end of the import.
 export function frameStep(step: GuideStep) {
   if (step === 'welcome') return 0
-  if (step === 'done') return 3
-  return importView(step) ? 2 : 1
+  if (step === 'key' || step === 'chat') return 3
+  return step === 'done' || importView(step) ? 2 : 1
 }
 
 // What the reader was told at a step. It belongs to that step: when another
