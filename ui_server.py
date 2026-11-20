@@ -83,6 +83,7 @@ from recall_services import digest_job as digest_service
 from recall_services import first_run as first_run_service
 from recall_services import first_run_job
 from recall_services import frame as frame_service
+from recall_services import insights as insights_service
 from recall_services import inputs, key_store, keys, models, places
 from recall_services import meaning as meaning_service
 from recall_services import memory as memory_service
@@ -631,7 +632,7 @@ def pull_into_archive(action: str, payload: dict) -> PullDone:
     raise ImportStopped(outcome.reason)
 
 
-JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge", "meaning", "digest", "memory", "people", "first_run"})
+JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge", "meaning", "digest", "memory", "people", "first_run", "insights"})
 # each of these writes the archive
 IMPORT_ACTIONS = frozenset({"setup_import", "export", "bridge"})
 # this one reads the whole archive into the index for the search by meaning
@@ -659,6 +660,10 @@ MEMORY_BEFORE_PEOPLE = "Recall is reading the memory of chat. Wait until it ends
 FIRST_RUN_ACTIONS = frozenset({"first_run"})
 FIRST_RUN_RUNS = "Recall is getting chat ready. Wait until it ends."
 IMPORT_BEFORE_FIRST_RUN = "An import is running. Wait until it ends, then get chat ready."
+# this one reads the recent talk of each person for plans, promises and news
+INSIGHT_ACTIONS = frozenset({"insights"})
+INSIGHTS_ARE_READ = "Recall is looking for things to follow up on. Wait until it ends."
+IMPORT_BEFORE_INSIGHTS = "An import is running. Wait until it ends, then look for things to follow up on."
 UNFINISHED = frozenset({"queued", "running"})
 # Jobs that do not run together: the job that is asked for, the jobs that
 # hold it up, and what the reader is told.
@@ -686,6 +691,9 @@ ONE_AT_A_TIME = (
     (FIRST_RUN_ACTIONS, MEMORY_ACTIONS, MEMORY_IS_READ),
     (FIRST_RUN_ACTIONS, DIGEST_ACTIONS, DIGEST_IS_READ),
     (FIRST_RUN_ACTIONS, PEOPLE_ACTIONS, PEOPLE_IS_BUILT),
+    # one reading of insights at a time, and no import writes the archive meanwhile
+    (IMPORT_ACTIONS | INSIGHT_ACTIONS, INSIGHT_ACTIONS, INSIGHTS_ARE_READ),
+    (INSIGHT_ACTIONS, IMPORT_ACTIONS, IMPORT_BEFORE_INSIGHTS),
     (
         IMPORT_ACTIONS | INDEX_ACTIONS | MEMORY_ACTIONS | DIGEST_ACTIONS | PEOPLE_ACTIONS | FIRST_RUN_ACTIONS,
         FIRST_RUN_ACTIONS,
@@ -732,6 +740,9 @@ def check_request(action, payload: dict) -> None:
     if action in FIRST_RUN_ACTIONS and not keys.api_key():
         # every step but the index of an archive with nothing new pays a provider: no job is made with no key
         raise JobRefused(first_run_service.NO_KEY, 409)
+    if action in INSIGHT_ACTIONS and not keys.api_key():
+        # every call of the reading pays a provider: no job is made with no key
+        raise JobRefused(insights_service.NO_KEY, 409)
     if action == "setup_import":
         usable_path(payload.get("dbPath"), "the copy")
         if not isinstance(payload.get("includeContacts", True), bool):
@@ -1307,6 +1318,41 @@ def build_people_index(job_id: str, payload: dict, told=None) -> dict:
     return result
 
 
+def read_insights(job_id: str, payload: dict) -> dict:
+    """The `insights` job: read the recent talk of each person for plans, promises and news. Its lines hold counts only."""
+    _state, archive = archive_for(named_archive(payload))
+    told = job_teller(job_id)
+    try:
+        return insights_service.run(archive, saved_names(), told)
+    except insights_service.InsightFailure as failure:
+        told({"spent": {"usd": failure.usd, "usage": None}})
+        raise JobStopped(str(failure), failure.code) from failure
+
+
+# The answer of `GET /api/insights` for one archive, its names, the saved reading and the hour.
+_INSIGHTS_CACHE: dict = {"key": None, "value": None}
+_INSIGHTS_LOCK = threading.Lock()
+
+
+def insights_answer(state: ArchiveState, archive: Archive) -> dict:
+    """The answer of `GET /api/insights`: what is found now (kept for one hour of one archive, names and
+    saved reading), and the `insights` job that runs now, read fresh."""
+    key = (
+        archive_signature(state),
+        file_cache_signature(CONTACTS_CACHE_PATH),
+        file_cache_signature(insights_service.store_file(archive.path)),
+        insights_service.model(),
+        datetime.now().strftime("%Y-%m-%d %H"),
+    )
+    with _INSIGHTS_LOCK:
+        if _INSIGHTS_CACHE["key"] != key:
+            _INSIGHTS_CACHE.update({"key": key, "value": insights_service.payload(archive, saved_names())})
+        found = _INSIGHTS_CACHE["value"]
+    with JOBS_LOCK:
+        running = [job["id"] for job in JOBS.values() if job["action"] in INSIGHT_ACTIONS and job["status"] in UNFINISHED]
+    return {**found, "jobId": running[0] if running else None}
+
+
 # The answer of `GET /api/people` for one archive, its names, the notes and the store as they are.
 _PEOPLE_CACHE: dict = {"key": None, "value": None}
 _PEOPLE_LOCK = threading.Lock()
@@ -1470,6 +1516,8 @@ def do_job(job_id: str, action: str, payload: dict) -> dict:
         return build_people_index(job_id, payload)
     if action == "first_run":
         return get_chat_ready(job_id, payload)
+    if action == "insights":
+        return read_insights(job_id, payload)
     raise ValueError(f"Unknown job action: {action}")
 
 
@@ -3116,6 +3164,10 @@ class RecallHandler(BaseHTTPRequestHandler):
             # the people index: what is built, and what writing the rest would cost now
             state, archive = archive_for(named_archive(query))
             send_json(self, 200, people_answer(state, archive))
+        elif parsed.path == "/api/insights":
+            # who to reach out to and why: counted now, with the plans, promises and news of the last reading
+            state, archive = archive_for(named_archive(query))
+            send_json(self, 200, insights_answer(state, archive))
         elif parsed.path == "/api/first-run":
             # what getting chat ready costs a new person, and what is ready
             send_json(self, 200, first_run_answer(named_archive(query)))
