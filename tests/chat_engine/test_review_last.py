@@ -324,14 +324,14 @@ def test_a_refused_call_stays_inside_its_budget(budget: int) -> None:
 
 def test_lookups_past_the_cap_of_one_step_get_no_answer_of_their_own() -> None:
     steps = [[call("count_messages", f"c{i}", text=f"lease x{i}") for i in range(200)], say("done")]
-    engine, fake, _ = make_engine(steps, total_tool_tokens=600, result_tokens=300, max_calls_per_step=4)
+    engine, fake, _ = make_engine(steps, result_tokens=300, max_calls_per_step=4)
     result = engine.ask("zz?")
     request = fake.requests[1]
     answers = [m for m in request.messages if m.role == "tool"]
     called = [c.id for m in request.messages if m.role == "assistant" for c in m.tool_calls]
     assert result["usage"]["tool_calls"] == 4 and len(answers) == 4 and called == [f"c{i}" for i in range(4)]
     assert "196 more lookups of this step were not run" in answers[-1].content
-    assert sum(estimate_tokens(m.content) for m in answers) <= 600
+    assert all(estimate_tokens(m.content) <= 340 for m in answers)
 
 
 def test_a_handle_learned_while_a_result_is_written_does_not_leave_a_message_without_a_line() -> None:

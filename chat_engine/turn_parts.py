@@ -22,7 +22,8 @@ class TurnSettings:
     max_steps: int
     max_calls_per_step: int
     result_tokens: int
-    total_tool_tokens: int
+    held_tool_tokens: int
+    stall_rounds: int
     history_tokens: int
     max_message_chars: int
     timezone: str
@@ -43,6 +44,7 @@ class Reply:
     streamed: bool = False
     cancelled: bool = False
     forced: bool = False  # the call that had to answer without tools
+    capped: bool = False  # it had to answer because the safety cap on rounds was reached
 
 
 def status(text: str, reset: bool = False) -> Event:

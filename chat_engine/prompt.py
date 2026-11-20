@@ -14,6 +14,11 @@ LIMIT_NOTE = (
     "say that you stopped at the lookup limit of this question, and that the person can ask you "
     "to keep looking. Do not say that you are not able to check: you can, in the next question."
 )
+# when the last lookups found nothing new: the search goes in circles, so the model answers
+STALL_NOTE = (
+    "Your last lookups found nothing new. Do not call a tool. Answer now from what you have. "
+    "If a part is still open, say plainly that the archive does not show it."
+)
 # put after an earlier answer that stopped at the lookup limit, so a follow-up knows why it stopped
 EARLIER_LIMITED = (
     "[This answer stopped at the lookup limit of its question. No lookup failed. "

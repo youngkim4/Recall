@@ -255,7 +255,7 @@ def test_a_digest_has_a_budget_of_its_own() -> None:
         return [call("conversation_digest", "d1", conversation=alias), call("count_messages", "d2", group_by="year")]
 
     engine, fake, _ = engine_with(
-        [ask_digest, say("Close friends.")], digests=digests, total_tool_tokens=1500, result_tokens=400
+        [ask_digest, say("Close friends.")], digests=digests, result_tokens=400
     )
     engine.ask("What is my friendship with Maya like?")
     digest, count = tool_results(fake.requests[1])

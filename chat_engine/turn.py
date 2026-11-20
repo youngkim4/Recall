@@ -6,6 +6,9 @@ the archive fails. It never switches to another way of answering by itself.
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 from dataclasses import replace
 from datetime import datetime
 from typing import Any, Generator, Iterator, Optional
@@ -25,7 +28,8 @@ from .ports import (
     ToolCall,
     Usage,
 )
-from .prompt import EARLIER_LIMITED, LIMIT_NOTE, question_block, scope_line, system_prompt, timezone_label
+from . import condense as condensing
+from .prompt import EARLIER_LIMITED, LIMIT_NOTE, STALL_NOTE, question_block, scope_line, system_prompt, timezone_label
 from .render import Limits, ResultWriter, add_block, time_key
 from .result import build_payload
 from .scope import Scope
@@ -36,12 +40,11 @@ from .tools import ToolBox
 from .turn_fetch import run_beside
 from .turn_parts import TOO_MANY, Event, Reply, TurnSettings, no_answer, status, unique_calls
 
-MIN_RESULT_TOKENS = 300  # with less left, a lookup has no room for an answer worth a step
 _CARRIED_TOKENS = 6000
 _REPEATED = "Same lookup as before: its result is above. Try a different lookup, or answer."
-_SKIPPED = "Lookup skipped: the limit on lookups for this question is reached."
 _LOOKING = "Looking at more messages"
 _THINKING = "Thinking it over"
+_CONDENSING = "Condensing what I have read"
 _LEFT_OUT = "[This earlier answer is left out: it was written for another scope than this question has.]"
 
 
@@ -78,7 +81,7 @@ class QuestionTurn:
         self._steps: list[Event] = []
         self._ran: set[tuple[str, str]] = set()
         self._call_ids: set[str] = set()
-        self._left = settings.total_tool_tokens
+        self._seen_results: set[str] = set()  # the text of every lookup result: a result seen before is nothing new
         self._totals = {
             "input_tokens": 0,
             "output_tokens": 0,
@@ -132,21 +135,58 @@ class QuestionTurn:
                 break
             outcome = seed.prepared.run(self._allowance())
             self._record(seed.tool, outcome, seeded=True)
+            self._is_new(outcome.text)  # a later lookup that gives the same result finds nothing new
             lookups.append((seed.label, outcome.text))
         return lookups
 
     def _loop(self) -> Generator[Event, None, Reply]:
+        """Rounds of lookups until the model answers.
+
+        The model answers by itself when it has what it needs. It must answer
+        when `stall_rounds` rounds in a row found nothing new, or at the safety
+        cap `max_steps`; only the cap marks the answer limited.
+        """
+        stale = 0
         for round_number in range(self._settings.max_steps + 1):
-            forced = round_number >= self._settings.max_steps or self._left < MIN_RESULT_TOKENS
+            capped = round_number >= self._settings.max_steps
+            forced = capped or stale >= self._settings.stall_rounds
             if forced:
-                self._transcript.append(ChatMessage("user", LIMIT_NOTE))
+                self._transcript.append(ChatMessage("user", LIMIT_NOTE if capped else STALL_NOTE))
+            else:
+                yield from self._condense_if_needed()
+                if self._cancel.cancelled:
+                    return Reply(cancelled=True)
             reply = yield from self._call_model(allow_tools=not forced)
             if reply.cancelled or forced or not reply.calls:
-                return replace(reply, forced=forced)
-            yield from self._run_tools(reply)
+                return replace(reply, forced=forced, capped=capped)
+            fresh = yield from self._run_tools(reply)
+            stale = 0 if fresh else stale + 1
             if self._cancel.cancelled:
                 return Reply(cancelled=True)
         raise ModelError(detail="the tool loop ended without a forced answer")
+
+    def _condense_if_needed(self) -> Generator[Event, None, None]:
+        """Condense the results before the newest round when the held results pass the mark."""
+        count = self._settings.count_tokens
+        if not condensing.needs_condensing(self._transcript, self._settings.held_tool_tokens, count):
+            return
+        yield status(_CONDENSING)
+        outbound = self._outbound()
+        asked = condensing.request(
+            self._settings.model, self._question, outbound, self._settings.max_output_tokens, self._cancel
+        )
+        try:
+            done = condensing.condense(self._llm, asked, outbound)
+        except ChatEngineError:
+            raise
+        except Exception as error:
+            raise ModelError(detail=f"{type(error).__name__}: {error}") from error
+        self._count_usage(done.usage)
+        kept = condensing.older_results(self._transcript)
+        self._transcript = [
+            replace(message, content=done.transcript[place].content) if place in kept else message
+            for place, message in enumerate(self._transcript)
+        ]
 
     # --- the model ---
 
@@ -228,7 +268,8 @@ class QuestionTurn:
 
     # --- the tools ---
 
-    def _run_tools(self, reply: Reply) -> Generator[Event, None, None]:
+    def _run_tools(self, reply: Reply) -> Generator[Event, None, bool]:
+        """Run the calls of a reply. True when a lookup found something new: a new message or a new result."""
         limit = self._settings.max_calls_per_step
         calls = reply.calls[:limit]
         extra = len(reply.calls) - len(calls)
@@ -237,56 +278,57 @@ class QuestionTurn:
         self._transcript.append(ChatMessage("assistant", reply.text, tool_calls=calls, provider_items=items))
         if reply.streamed:
             yield status(_LOOKING, reset=True)  # the text shown so far was not the answer
-        yield from self._run_calls(calls)
+        known = self._session.registry.checkpoint()
+        fresh = yield from self._run_calls(calls)
         if extra and self._transcript[-1].role == "tool":
             note = TOO_MANY.format(count=extra, limit=limit)
             last = self._transcript[-1]
             self._transcript[-1] = replace(last, content=f"{last.content}\n{note}")
-            self._left -= self._settings.count_tokens(note)
+        return fresh or self._session.registry.checkpoint() > known
 
-    def _run_calls(self, calls: tuple[ToolCall, ...]) -> Generator[Event, None, None]:
+    def _run_calls(self, calls: tuple[ToolCall, ...]) -> Generator[Event, None, bool]:
+        fresh = False
         for call in calls:
             if self._cancel.cancelled:
-                return
-            key = (call.name, call.arguments)
+                return fresh
+            key = (call.name, same_lookup_key(call.arguments))
             if key in self._ran:
-                self._skip(call, _REPEATED)
-                continue
-            if self._left < MIN_RESULT_TOKENS:
-                self._skip(call, _SKIPPED)
+                self._answer(call, _REPEATED)
                 continue
             prepared = self._box.prepare(call.name, call.arguments)
             if prepared.repeated:
-                self._skip(call, _REPEATED)
+                self._answer(call, _REPEATED)
                 continue
             if prepared.status:
                 yield status(prepared.status)
             if self._cancel.cancelled:
-                return
+                return fresh
             if prepared.fetch is not None:  # slow work: its progress reaches the stream while it runs
                 yield from run_beside(prepared.fetch, self._cancel)
-            own = prepared.own_budget  # a lookup with a budget of its own does not spend from the question's
+            own = prepared.own_budget  # a lookup with a budget of its own, such as a digest
             outcome = prepared.run(self._allowance() if own is None else own)
             if not prepared.answers_repeats:
                 self._ran.add(key)
             self._totals["tool_calls"] += 1
-            self._record(call.name, outcome, seeded=False, spends=own is None)
+            self._record(call.name, outcome, seeded=False)
+            fresh = self._is_new(outcome.text) or fresh
             self._answer(call, outcome.text)
+        return fresh
+
+    def _is_new(self, text: str) -> bool:
+        digest = hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()
+        if digest in self._seen_results:
+            return False
+        self._seen_results.add(digest)
+        return True
 
     def _answer(self, call: ToolCall, text: str) -> None:
         self._transcript.append(ChatMessage("tool", text, tool_call_id=call.id))
 
-    def _skip(self, call: ToolCall, text: str) -> None:
-        """Answer a call that is not run. The note counts as tool output too."""
-        self._answer(call, text)
-        self._left -= self._settings.count_tokens(text)
-
     def _allowance(self) -> int:
-        return max(0, min(self._settings.result_tokens, self._left))
+        return self._settings.result_tokens
 
-    def _record(self, tool: str, outcome: ToolOutcome, *, seeded: bool, spends: bool = True) -> None:
-        if spends:
-            self._left -= self._settings.count_tokens(outcome.text)
+    def _record(self, tool: str, outcome: ToolOutcome, *, seeded: bool) -> None:
         self._steps.append({"tool": tool, "text": outcome.summary, "seeded": seeded})
 
     # --- the prompt ---
@@ -377,10 +419,28 @@ class QuestionTurn:
             truncated=reply.stop_reason == "length",
         )
         # nothing is added with no digest source
-        payload = {**payload, **self._box.memory_payload(), "limited": reply.forced}
+        payload = {**payload, **self._box.memory_payload(), "limited": reply.capped}
         if not reply.cancelled:
             cited = frozenset(reply.order)
             answer = stored_form(reply.text, cited.__contains__)
-            self._session.add_turn(Turn(self._question, answer, reply.order, self._scope, reply.forced))
+            self._session.add_turn(Turn(self._question, answer, reply.order, self._scope, reply.capped))
         return {"type": "done", "payload": payload}
 
+
+def same_lookup_key(arguments: str) -> str:
+    """The arguments of a call, so that a near-same call (case, spaces, key order) counts as a repeat."""
+    try:
+        value = json.loads(arguments)
+    except (TypeError, ValueError):
+        return arguments
+    return json.dumps(_folded(value), sort_keys=True, ensure_ascii=False)
+
+
+def _folded(value: Any) -> Any:
+    if isinstance(value, str):
+        return " ".join(value.lower().split())
+    if isinstance(value, list):
+        return [_folded(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _folded(item) for key, item in value.items()}
+    return value

@@ -274,13 +274,12 @@ def test_closing_the_event_iterator_closes_the_model_stream() -> None:
     assert fake.closed_early == 1
 
 
-def test_tool_results_never_exceed_the_total_budget_by_much() -> None:
+def test_each_tool_result_stays_near_its_own_budget() -> None:
     words = ["lease", "the", "you"]
     searches = [call("search_messages", f"s{i}", query=word, limit=20) for i, word in enumerate(words)]
-    engine, fake, _ = make_engine([searches, say("done")], total_tool_tokens=400, result_tokens=300)
+    engine, fake, _ = make_engine([searches, say("done")], result_tokens=300)
     engine.ask("zzz?")
-    spent = sum((len(text.encode()) + 2) // 3 for text in tool_results(fake.requests[1]))
-    assert spent <= 400
+    assert all((len(text.encode()) + 2) // 3 <= 330 for text in tool_results(fake.requests[1]))
     assert events_of("done", list(engine.stream("zzz?"))) == []
 
 

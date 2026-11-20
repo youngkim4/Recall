@@ -30,10 +30,13 @@ MAX_QUESTION_CHARS = 4000
 class EngineConfig:
     """Settings of the engine. `model` and `max_output_tokens` have no default.
 
-    max_steps: model calls that may use tools; one more call must answer.
+    max_steps: a safety cap on the model calls that may use tools; one more call must answer.
+        A question is not meant to reach it: the model reads until it answers.
     max_calls_per_step: the most lookups one model call may start.
     result_tokens: the most one tool result may hold.
-    total_tool_tokens: the most all tool results of one question may hold.
+    held_tool_tokens: past this many tokens of results in the prompt, the results before the newest
+        round are condensed (`condense.py`). Nothing stops.
+    stall_rounds: rounds in a row whose lookups found nothing new; then the model must answer.
     history_tokens: the most the earlier turns of the chat may hold.
     digest_tokens: the most one conversation digest may hold. It has this budget of its own, at least 600.
     digest_parts_limit: the most periods not yet read that one digest reads inside a question. 0 reads none.
@@ -44,11 +47,12 @@ class EngineConfig:
 
     model: str
     max_output_tokens: int
-    # room for a question that reads many conversations; the models of the registry take 400k tokens or more
-    max_steps: int = 16
+    max_steps: int = 60
     max_calls_per_step: int = 8
     result_tokens: int = 6000
-    total_tool_tokens: int = 120_000
+    # the models of the registry take 400k tokens or more
+    held_tool_tokens: int = 150_000
+    stall_rounds: int = 3
     history_tokens: int = 24_000
     max_message_chars: int = 4000
     timezone: str = ""
@@ -61,8 +65,8 @@ class EngineConfig:
         if not str(self.model or "").strip():
             raise ValueError("model is required")
         for name in (
-            "max_output_tokens", "max_steps", "max_calls_per_step", "result_tokens", "total_tool_tokens",
-            "max_message_chars",
+            "max_output_tokens", "max_steps", "max_calls_per_step", "result_tokens", "held_tool_tokens",
+            "stall_rounds", "max_message_chars",
         ):
             if int(getattr(self, name)) < 1:
                 raise ValueError(f"{name} must be at least 1")
@@ -82,7 +86,8 @@ class EngineConfig:
             max_steps=self.max_steps,
             max_calls_per_step=self.max_calls_per_step,
             result_tokens=self.result_tokens,
-            total_tool_tokens=self.total_tool_tokens,
+            held_tool_tokens=self.held_tool_tokens,
+            stall_rounds=self.stall_rounds,
             history_tokens=self.history_tokens,
             max_message_chars=self.max_message_chars,
             timezone=self.timezone,

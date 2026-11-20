@@ -70,7 +70,7 @@ def test_a_stored_session_of_an_older_build_is_not_limited() -> None:
 
 def test_the_budgets_leave_room_for_a_question_that_needs_many_lookups() -> None:
     settings = EngineConfig(model="m", max_output_tokens=800)
-    assert settings.max_steps >= 16
-    assert settings.total_tool_tokens >= 120_000
+    assert settings.max_steps >= 50
+    assert settings.held_tool_tokens >= 150_000
     assert settings.result_tokens >= 6_000
     assert settings.history_tokens >= 24_000

@@ -3,6 +3,7 @@
 import json
 
 from chat_engine.cancel import CancelToken
+from chat_engine.render import estimate_tokens
 from chat_engine.fake_llm import call, done, say
 from chat_engine.ports import ToolCall
 from chat_engine.prompt import LIMIT_NOTE
@@ -96,34 +97,31 @@ def test_step_cap_ends_the_loop_with_an_answer() -> None:
     assert result["usage"]["model_calls"] == 3
 
 
-def test_tool_output_cap_ends_the_loop_with_an_answer() -> None:
+def test_a_large_result_is_cut_and_the_loop_goes_on() -> None:
     engine, fake, _ = make_engine(
         [
             [call("search_messages", query="lease", limit=20)],
             say("The lease was signed in 2021."),
         ],
-        total_tool_tokens=420,
         result_tokens=400,
     )
     result = engine.ask("zzz?")
-    assert [request.allow_tools for request in fake.requests] == [True, False]
-    assert LIMIT_NOTE in last_user(fake.requests[1])
+    assert [request.allow_tools for request in fake.requests] == [True, True]
+    assert estimate_tokens(tool_results(fake.requests[1])[0]) <= 440
     assert result["answer"] == "The lease was signed in 2021."
 
 
-def test_lookups_after_the_cap_in_one_step_are_skipped() -> None:
+def test_every_lookup_of_a_step_runs_with_no_budget_of_the_question() -> None:
     engine, fake, archive = make_engine(
         [
             [call("search_messages", "a", query="lease", limit=20), call("search_messages", "b", query="sourdough")],
             say("Done."),
         ],
-        total_tool_tokens=420,
         result_tokens=400,
     )
     engine.ask("zzz?")
-    second = tool_results(fake.requests[1])[1]
-    assert "limit on lookups" in second
-    assert not [a for name, a in archive.calls if name == "search" and a["query"] == "sourdough"]
+    assert "limit on lookups" not in tool_results(fake.requests[1])[1]
+    assert [a for name, a in archive.calls if name == "search" and a["query"] == "sourdough"]
 
 
 def test_tool_calls_in_the_forced_last_step_are_ignored() -> None:

@@ -88,7 +88,9 @@ def test_one_question_of_many_identical_calls_asks_the_source_one_time() -> None
         alias = alias_of_line(last_user(request), "Maya Okafor · direct, phone")
         return [call("conversation_digest", f"d{len(request.messages)}-{n}", conversation=alias) for n in range(8)]
 
-    engine, fake, _ = engine_with([step] * 8 + [say("From the figures.")], digests=digests, digest_parts_limit=2)
+    engine, fake, _ = engine_with(
+        [step] * 8 + [say("From the figures.")], digests=digests, digest_parts_limit=2, stall_rounds=100
+    )
     result = engine.ask("What is it like with Maya?")
     assert [name for name, _ in digests.calls] == ["estimate"]
     assert result["usage"]["tool_calls"] == 64 and result["usage"]["digest_usd"] == 0.0
