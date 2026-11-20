@@ -34,7 +34,7 @@ Ask for `state.archive()` and for `names.cached(...)` at the start of each reque
 | `/api/defaults` (models) | `models.defaults_payload()` |
 | `/api/contacts` | `conversations.payload(archive, saved, limit, messages_path)` |
 | `/api/search` | `search.answer(archive, saved, query_string)`, which calls `search.payload(archive, saved, query, contact, limit, offset, as_you_type=..., filters=..., order=...)` |
-| `/api/stats` | `stats.answer(archive, saved, query_string)`, which calls `stats.payload(archive, saved, filters, words=..., by=..., limit=..., prefix=...)` |
+| `/api/stats` | `stats.answer(archive, saved, query_string)`, which calls `stats.payload(archive, saved, filters, words=..., by=..., limit=..., prefix=..., habits=...)` |
 | `/api/day` | `day.payload(archive, saved, contact, day, around, offset, limit)` |
 | `/api/ask/stream` | `chat.stream(question, contact, model, history, cancel, archive=..., names=..., use_ai=...)` |
 | `/api/ask` | `chat.ask(...)`, the same arguments |
@@ -193,6 +193,7 @@ Each filter is optional. All of them are combined with AND. A value of a filter,
   "totals": {"total": 5, "sent": 1, "received": 4},
   "first": "2025-01-01",
   "last": "2025-01-05",
+  "days": 4,
   "rows": [
     {"key": "+15550000001", "label": "Avery Stone", "total": 2, "sent": 1, "received": 1,
      "conversations": ["+15550000001"]}
@@ -203,6 +204,7 @@ Each filter is optional. All of them are combined with AND. A value of a filter,
 
 - `by`: `day`, `week`, `month`, `year`, `weekday`, `hour`, `weekday_hour`, `person`, `conversation`, or empty. Empty gives `rows` `[]` and the totals only.
 - `totals` covers the whole filtered set. `first` and `last` are its first and last local day, or `null` when the set is empty. `received` is the count of the archive. In the archive every message is sent or received (`is_from_me` is 0 or 1), so its `received` is `total` less `sent`; the service adds the counts of the archive and never works one out itself.
+- `days` is the number of local days that hold a message of the filtered set. It is 0 when the set is empty. It is not the length of the range from `first` to `last`.
 - `rowsTotal` is the number of rows before `limit`.
 - No `prefix` is `false` here: `query=hi` counts the word "hi" only, never "hit", "him" or "hiking". `prefix=true` counts the words that start with the last word. `prefix` says what was applied.
 - Time rows: `{"key", "label", "total", "sent", "received"}`.
@@ -211,9 +213,16 @@ Each filter is optional. All of them are combined with AND. A value of a filter,
   - With an empty set and no `since` or `until`, `day` to `year` have no row.
 - People rows: the time row and `conversations`, the ids that the row counts.
   - `conversation`: one row per conversation.
-  - `person`: one row per person. The phone thread and the email thread of one person are one row: the archive joins handles of one contact record (`Conversation["person_id"]`). A group is its own row. The key is the id of the busiest thread in the set.
+  - `person`: one row per person. The phone thread and the email thread of one person are one row: the archive joins handles of one contact record (`Conversation["person_id"]`). A group chat is no person and is left out: it is listed by `conversation` only. (Once a group was its own row here, and the two lists matched row for row.) The key is the id of the busiest thread in the set.
   - The label is `conversation_label(names.conversation(record), id)` from `conversation.py`: the words of `conversationName` in the app. A saved name, a group name, "Unnamed group", "Number ending in 1234", or an email address as it is. No full phone number of a person who is not saved.
   - The busiest come first (a tie: the key). `limit` is 50 by default, held between 1 and 500.
+- `habits=true` adds `"habits"` to the payload, and to each row of `person` and `conversation` (`habits.py`, counted by `archive/habits.py`). False by default: habits read every message of the set. A value other than `true` or `false` is a 400.
+  - `{"messages", "youReply", "theyReply", "replies": {"you", "they"}, "youStart", "talks", "streak": {"days", "first", "last"}, "lateNight", "sentLength", "receivedLength"}`.
+  - A talk starts after 6 hours of quiet in a one-to-one conversation. Its first message says who started it. A reply is the first message from the other side in the talk. `youReply` and `theyReply` are the median seconds from the start of the talk, in elapsed time. A group has no talks.
+  - Late night is midnight to 5 a.m. local. A length is the mean characters of a text (kind `text`). The streak is the longest run of local days in a row with a message; a tie goes to the earliest.
+  - The words, `from` and `attachments` narrow the messages, not the talks: with only the messages that hold a word, nobody replies to anybody. The contacts, the days and `kind` narrow both.
+  - A figure with nothing to count is `null`, never 0: a reply at once is 0 seconds.
+  - A person row joins the habits of its threads before the medians and the streak.
 - One answer reads one state of the archive (`Archive.snapshot()`): the totals and the rows agree also while an import commits.
 - `GET /api/stats/words` (the most used words) is not built. On the invented archive below, a count of the words of every message took 3.9 s in Python (2.4 s of it to read the texts), and `fts5vocab` with a filter of one year took 1.7 s. Both miss the limit of 2 s.
 
@@ -223,6 +232,7 @@ Measured on an invented archive of 545,000 messages and 1,400 conversations (`te
 
 - `/api/stats` on the whole archive: 212 ms (`person`) to 626 ms (`year`). The total alone: 235 ms. A grouping by time makes two counts: the days, and the grouping.
 - `/api/stats` with filters (one year, `from=me&kind=group`, `attachments=image`, a word): 6 ms to 244 ms.
+- `/api/stats?by=person&limit=10&habits=true` on the user's archive (545,000 messages): 1.1 s to 1.2 s. One year: 0.35 s. A word: 0.3 s.
 - `/api/search` with words: 27 ms to 88 ms, also with filters and with `prefix=true`. With no words and a filter: 16 ms (one year) to 506 ms (`attachments=none`, 490,673 messages).
 
 

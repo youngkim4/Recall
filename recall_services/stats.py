@@ -9,12 +9,16 @@ prefix. Only the messages that match the words are counted. It also takes:
   conversation, or empty for the totals only.
 - `limit`: rows of `person` and `conversation`, busiest first. 50 by default,
   held between 1 and 500.
+- `habits`: true adds the habits of the filtered set (recall_services/habits.py):
+  `"habits"` in the payload, and `"habits"` in each row of `person` and
+  `conversation`. False by default: they read every message of the set.
 
 The payload:
 
     {"by", "query", "prefix", "filters",
      "totals": {"total", "sent", "received"},   the whole filtered set
      "first", "last",                           its first and last local day, or null
+     "days",                                    how many local days hold a message of it
      "rows": [{"key", "label", "total", "sent", "received"}],
      "rowsTotal"}                               the number of rows before the limit
 
@@ -26,7 +30,8 @@ The payload:
   bucket, in order. The label names the day and the hour in English.
 - conversation: one row for each conversation. person: the same, but the
   threads of one person (a phone number and an email address) are one row,
-  as the archive joins them (`Person`). A group stays its own row. The key is
+  as the archive joins them (`Person`). A group is no person and is left out:
+  it is listed by `conversation` only. The key is
   the id of the busiest thread in the set; `conversations` lists every id.
   The label is the name the app shows (`conversation_label`): a saved name,
   a group name, "Number ending in 1234", or an address as it is.
@@ -40,10 +45,11 @@ from typing import Any
 
 from archive import Archive
 from conversation import conversation_label
+from recall_services import habits as habit_figures
 from recall_services import inputs
 from recall_services.names import Names
 from recall_services.search import as_typed
-from recall_services.search_filters import Filters, read_filters, read_prefix
+from recall_services.search_filters import Filters, read_flag, read_filters, read_prefix
 from recall_services.stats_time import COUNTS, RANGED, TIME_GROUPS, Span, time_rows
 
 PEOPLE_GROUPS = ("person", "conversation")
@@ -109,12 +115,17 @@ def _joined_row(names: Names, records: Mapping[str, Mapping[str, Any]], threads:
 
 
 def _people_rows(archive: Archive, names: Names, by: str, counted: Sequence[Row]) -> list[Row]:
-    """One row per conversation, or per person with the threads of one person joined. Busiest first."""
+    """One row per conversation, or per person with the threads of one person joined. Busiest first.
+    A group chat is no person: `person` lists the one-to-one threads only, so it is not the
+    list of conversations again (the two once matched row for row)."""
     records = {str(record["id"]): record for record in archive.conversations()}
     threads: dict[object, list[Row]] = {}
     for found in counted:  # the archive gives the busiest first
         key = str(found["key"])
-        threads.setdefault(_group_of(by, key, records.get(key)), []).append(found)
+        record = records.get(key)
+        if by == "person" and record and record.get("is_group"):
+            continue
+        threads.setdefault(_group_of(by, key, record), []).append(found)
     rows = [_joined_row(names, records, joined) for joined in threads.values()]
     return sorted(rows, key=lambda row: (-row["total"], row["key"]))
 
@@ -141,6 +152,7 @@ def payload(
     by: str = "",
     limit: int = DEFAULT_LIMIT,
     prefix: bool = False,
+    habits: bool = False,
 ) -> dict[str, Any]:
     """Counts of the filtered set: the totals, its days, and the rows of `by`. One state of the archive."""
     text = (as_typed(words) if prefix else words.strip()) or None
@@ -148,7 +160,9 @@ def payload(
     with archive.snapshot():
         days: list[Row] = archive.count(group_by="day", **scope)  # type: ignore[assignment]
         rows = _rows(archive, names, filters, by, scope, days)
-    return {
+        parts = archive.habits(**scope) if habits else {}
+    shown = rows[:limit] if by in PEOPLE_GROUPS else rows
+    found = {
         "by": by,
         "query": words.strip(),
         "prefix": prefix,
@@ -156,9 +170,16 @@ def payload(
         "totals": _totals(days),
         "first": days[0]["key"] if days else None,
         "last": days[-1]["key"] if days else None,
-        "rows": rows[:limit] if by in PEOPLE_GROUPS else rows,
+        "days": len(days),
+        "rows": [_with_habits(row, parts) for row in shown] if habits and by in PEOPLE_GROUPS else shown,
         "rowsTotal": len(rows),
     }
+    return {**found, "habits": habit_figures.figures(parts.values())} if habits else found
+
+
+def _with_habits(row: Row, parts: Mapping[str, Any]) -> Row:
+    """A row of people or conversations with the habits of its threads."""
+    return {**row, "habits": habit_figures.figures(parts[key] for key in row["conversations"] if key in parts)}
 
 
 def answer(archive: Archive, names: Names, params: Mapping[str, object]) -> dict[str, Any]:
@@ -171,4 +192,5 @@ def answer(archive: Archive, names: Names, params: Mapping[str, object]) -> dict
         by=read_by(params),
         limit=read_limit(params),
         prefix=read_prefix(params, default=PREFIX_WHEN_NOT_GIVEN),
+        habits=read_flag(params, "habits", default=False),
     )

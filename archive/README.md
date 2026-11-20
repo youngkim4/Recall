@@ -234,6 +234,7 @@ The order of `members` is fixed: the member who wrote the most messages in that 
 | `search(query, *, conversations=None, since=None, until=None, from_me=None, limit=50, offset=0, order="newest")` | `{"total": int, "hits": [{"message": Message, "ranges": [[start, end], ...]}]}` |
 | `count(*, conversations=None, since=None, until=None, from_me=None, text=None, group_by=None)` | int, or a list of `{"key", "total", "sent", "received"}` |
 | `stats(conversation_id, *, since=None, until=None)` | dict, see "stats" |
+| `habits(*, conversations=None, since=None, until=None, from_me=None, text=None, kind=None, attachments=None)` | `{conversation_id: Habits}`, see `archive/habits.py` |
 | `people()` | list of Person, named people first |
 | `person(person_id)` | Person or `None` |
 | `reactions(message_ids)` | `{message_id: [{"kind", "is_from_me", "sender"}]}` |

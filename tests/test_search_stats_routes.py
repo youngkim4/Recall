@@ -170,11 +170,13 @@ def test_people_are_named_as_the_app_names_them(app_archive, server):
 
     assert [(row["key"], row["label"], row["total"]) for row in answer["rows"]] == [
         (AVERY, "Avery Stone", 2),
-        (GROUP, "Avery Stone and Blake Reyes", 2),
         (UNSAVED, "Number ending in 0009", 1),
     ]
     # no full number of a person who is not saved
     assert UNSAVED not in {row["label"] for row in answer["rows"]}
+    # a group chat is no person: it is listed by conversation only
+    _status, threads = get(server, "/api/stats", by="conversation", query="pizza")
+    assert (GROUP, "Avery Stone and Blake Reyes", 2) in [(row["key"], row["label"], row["total"]) for row in threads["rows"]]
 
 
 def test_stats_refuse_a_value_that_is_not_allowed(app_archive, server):

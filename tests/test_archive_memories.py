@@ -388,6 +388,34 @@ def test_an_anniversary_is_seen_for_a_week_and_on_its_day(tmp_path, saved_names)
     assert in_days("2026-11-24 00:30:00") == []
 
 
+def test_an_anniversary_quotes_the_first_message(tmp_path, saved_names):
+    # "N years since the first message": the quote is that message, not the best line of the day
+    first_day = [
+        row(AVERY, "2020-11-20 21:00:00", "hey"),
+        row(AVERY, "2020-11-20 21:05:00", "a longer line of the same day that reads better as a quote"),
+    ]
+    csv = loaded(tmp_path / "messages.csv", first_day + hourly(AVERY, "2020-11-21 09:00:00", 300))
+
+    (item,) = ui_server.memories_payload(csv, now=pd.Timestamp("2026-11-18 12:00:00"))["anniversaries"]
+
+    assert item["preview"] == "hey"
+    assert item["previewAt"].startswith("2020-11-20 21:00")
+    assert item["previewId"]
+
+
+def test_an_anniversary_quotes_the_first_message_that_holds_words(tmp_path, saved_names):
+    # a bare link or an attachment first is passed over for the first words
+    first = [
+        row(AVERY, "2020-11-20 20:59:00", "https://example.com/a"),
+        row(AVERY, "2020-11-20 21:00:00", "the first words"),
+    ]
+    csv = loaded(tmp_path / "messages.csv", first + hourly(AVERY, "2020-11-21 09:00:00", 300))
+
+    (item,) = ui_server.memories_payload(csv, now=pd.Timestamp("2026-11-18 12:00:00"))["anniversaries"]
+
+    assert item["preview"] == "the first words"
+
+
 def test_a_conversation_that_started_this_year_has_no_anniversary_yet(tmp_path, saved_names):
     csv = loaded(tmp_path / "messages.csv", hourly(AVERY, "2026-11-10 09:00:00", 300))
 

@@ -129,6 +129,14 @@ def read_order(params: Mapping[str, object]) -> str:
     return value
 
 
+def read_flag(params: Mapping[str, object], name: str, *, default: bool) -> bool:
+    """A value of true or false. None (or an empty one, which the app drops) is `default`."""
+    value = _value(params, name).lower()
+    if value and value not in _FLAGS:
+        raise ValueError(f"{name} must be true or false.")
+    return _FLAGS.get(value, default)
+
+
 def read_prefix(params: Mapping[str, object], *, default: bool = PREFIX_WHEN_NOT_GIVEN) -> bool:
     """`prefix`: true makes the last word a prefix, false makes every word whole.
 
@@ -136,7 +144,4 @@ def read_prefix(params: Mapping[str, object], *, default: bool = PREFIX_WHEN_NOT
     /api/search it is true: the search of the app of today, which finds words
     as the reader types them. /api/stats gives false.
     """
-    value = _value(params, "prefix").lower()
-    if value and value not in _FLAGS:
-        raise ValueError("prefix must be true or false.")
-    return _FLAGS.get(value, default)
+    return read_flag(params, "prefix", default=default)

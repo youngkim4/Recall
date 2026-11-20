@@ -15,6 +15,7 @@ from contextlib import AbstractContextManager
 from typing import Any
 
 from archive import figures, filters
+from archive import habits as habits_module
 from archive import search as search_module
 from archive.filters import as_id_list, check_bool, check_choice, conversation_keys, day_bounds
 
@@ -110,6 +111,37 @@ class FigureQueries:
                 attachments=attachments,
             )
             return figures.count(conn, where, group_by, lower, upper)
+
+    def habits(
+        self,
+        *,
+        conversations: str | Iterable[str] | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        from_me: bool | None = None,
+        text: str | None = None,
+        kind: str | None = None,
+        attachments: str | None = None,
+    ) -> dict[str, habits_module.Habits]:
+        """Habits by conversation id, for every conversation with a message in the scope or a talk in it.
+
+        The words, `from_me` and `attachments` narrow the messages, not the talks (archive/habits.py).
+        """
+        parsed = None if text is None else search_module.parse_query(text)
+        lower, upper = day_bounds(since, until)
+        with self._reading() as conn:
+            messages = filters.scope(
+                conn,
+                conversations=conversations,
+                since=since,
+                until=until,
+                from_me=from_me,
+                text=parsed,
+                kind=kind,
+                attachments=attachments,
+            )
+            talks = filters.scope(conn, conversations=conversations, since=since, until=until, kind=kind)
+            return habits_module.habits(conn, messages, talks, lower, upper)
 
     def stats(
         self,

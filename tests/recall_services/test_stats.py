@@ -20,7 +20,7 @@ from recall_services.names import Names
 from tests.recall_services import world
 
 NOTHING_APPLIED = {"contacts": [], "since": "", "until": "", "from": "", "kind": "", "attachments": ""}
-PAYLOAD_KEYS = {"by", "query", "prefix", "filters", "totals", "first", "last", "rows", "rowsTotal"}
+PAYLOAD_KEYS = {"by", "query", "prefix", "filters", "totals", "first", "last", "days", "rows", "rowsTotal"}
 INES = "Ines Calder"
 
 
@@ -54,6 +54,16 @@ def test_every_day_of_the_range_has_a_row(archive: Archive, saved: Names) -> Non
         ("2024-03-08", "2024-03-08", 0, 0, 0),
     ]
     assert (found["first"], found["last"], found["totals"]["total"]) == ("2024-03-01", "2024-03-07", 464)
+    # the days that hold a message: the range above less its three empty days
+    assert found["days"] == 5
+
+
+def test_days_counts_the_days_with_a_message_of_the_set(archive: Archive, saved: Names) -> None:
+    every = asked(archive, saved, by="day")
+    assert asked(archive, saved)["days"] == sum(1 for row in every["rows"] if row["total"]) > 5
+    # the words narrow it: "pruning" from me is on two days
+    assert asked(archive, saved, query="pruning", **{"from": "me"})["days"] == 2
+    assert asked(archive, saved, query="zeppelin")["days"] == 0
 
 
 def test_months_and_years_from_the_first_to_the_last_message(archive: Archive, saved: Names) -> None:
@@ -136,13 +146,14 @@ def test_conversations_keep_the_threads_of_one_person_apart(archive: Archive, sa
 
 
 def test_a_person_joins_the_phone_and_the_email_thread(archive: Archive, saved: Names) -> None:
+    # people are the one-to-one threads, one row a person; a group chat is no
+    # person, and is listed only by conversation (the two lists once matched)
     found = asked(archive, saved, by="person")
     assert table(found) == [
         (world.INES_PHONE, INES, 461, 155, 306),
-        (world.UNTITLED, world.UNTITLED_NAME, 10, 1, 9),
-        (world.GARDEN, world.GARDEN_TITLE, 5, 1, 4),
         (world.UNSAVED, "Number ending in 9999", 3, 2, 1),
     ]
+    assert found["rowsTotal"] == 2
     assert found["rows"][0]["conversations"] == [world.INES_PHONE, world.INES_EMAIL]
     # the busiest thread in the filtered set gives the key
     email_first = asked(archive, saved, by="person", since="2024-03-06")
@@ -153,9 +164,9 @@ def test_an_unsaved_handle_is_masked_as_the_app_masks_it(archive: Archive) -> No
     found = asked(archive, Names(), by="person")
     labels = {row["key"]: row["label"] for row in found["rows"]}
     assert labels[world.INES_PHONE] == "Number ending in 0001"
-    assert labels[world.UNTITLED] == "Unnamed group"
     assert not any("555" in label for label in labels.values())
     by_thread = asked(archive, Names(), by="conversation")
+    assert {row["key"]: row["label"] for row in by_thread["rows"]}[world.UNTITLED] == "Unnamed group"
     # an address is shown as it is, as the app shows it
     assert {row["key"]: row["label"] for row in by_thread["rows"]}[world.INES_EMAIL] == world.INES_EMAIL
 
@@ -164,7 +175,7 @@ def test_the_busiest_come_first_up_to_the_limit(archive: Archive, saved: Names) 
     found = asked(archive, saved, by="conversation", limit="2")
     assert [row["key"] for row in found["rows"]] == [world.INES_PHONE, world.UNTITLED]
     assert found["rowsTotal"] == 5
-    assert len(asked(archive, saved, by="person", limit="9999")["rows"]) == 4
+    assert len(asked(archive, saved, by="person", limit="9999")["rows"]) == 2
     assert len(asked(archive, saved, by="person", limit="-5")["rows"]) == 1
 
 

@@ -2168,6 +2168,8 @@ def first_words_payload(messages_path: Path, limit: int = 5) -> dict:
 
 # an anniversary is shown from this many days before it
 ANNIVERSARY_DAYS_AHEAD = 7
+# quiet threads sent at most: the Overview shows five and opens the rest under "All"
+RECONNECT_LIMIT = 20
 
 
 def _next_anniversary(first: pd.Timestamp, today: pd.Timestamp) -> pd.Timestamp | None:
@@ -2257,12 +2259,16 @@ def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> di
         lengths = clean.str.len()
         sweet = lengths[(lengths >= MEMORY_QUOTE_MIN) & (lengths <= MEMORY_QUOTE_LIMIT)]
         chosen = day_rows.loc[(sweet if not sweet.empty else lengths).idxmax()]
+        return quote_of(cid, chosen, texts.loc[chosen.name])
+
+    def quote_of(cid: str, chosen: pd.Series, text: str) -> dict:
+        """The fields of a quote: the words, who sent them, and which message it is."""
         mine = sent_by_me(chosen.get("is_from_me"))
         sender = _row_str(chosen, "sender")
         # in a group the title is the group, so the quote needs its own name
         in_group = is_group_chat(cid) and mine is False and bool(sender)
         return {
-            "preview": clip_text(texts.loc[chosen.name], MEMORY_QUOTE_LIMIT),
+            "preview": clip_text(text, MEMORY_QUOTE_LIMIT),
             "previewFromMe": mine,
             "previewSender": saved_names().saved(sender) if in_group else "",
             # when it was sent, so the day can be opened at this message
@@ -2333,6 +2339,19 @@ def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> di
                 }
             )
     anniversaries.sort(key=lambda item: (item["inDays"], -item["count"]))
+    # An anniversary quotes the first message, as its line says ("N years
+    # since the first message"): the first that holds words, short or not.
+    # The best line of the first day was quoted once, and the user saw that
+    # it was not the first message. Only the few that are shown are read.
+    shown_anniversaries = anniversaries[:4]
+    for item in shown_anniversaries:
+        chat_rows = df[cids == item["chatId"]].sort_values("timestamp", kind="stable").head(80)
+        real = _first_real_texts(chat_rows)
+        if real.empty:
+            item.update({"preview": "", "previewFromMe": None, "previewSender": "", "previewAt": None, "previewId": ""})
+            continue
+        first = real.iloc[0]
+        item.update(quote_of(item["chatId"], first, display_text(first["text"])))
 
     # --- reconnect: big 1:1 threads gone quiet ---
     reconnect: list[dict] = []
@@ -2356,8 +2375,8 @@ def memories_payload(messages_path: Path, now: pd.Timestamp | None = None) -> di
 
     return {
         "onThisDay": on_this_day,
-        "anniversaries": anniversaries[:4],
-        "reconnect": reconnect[:5],
+        "anniversaries": shown_anniversaries,
+        "reconnect": reconnect[:RECONNECT_LIMIT],
     }
 
 
