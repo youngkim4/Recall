@@ -42,6 +42,11 @@ def build_memory(archive: Archive, names: Names, say: Say = print) -> dict[str, 
     meaning_usd = _meaning_usd(int(found.get("tokens") or 0))
     say("memory: reading each conversation")
     read = memory_prep.run(archive=archive, names=names, min_messages=MEMORY_MIN_MESSAGES)
+    if meaning.RECIPE.context:
+        # the context line of a segment holds the summary of its period: build again now that the memory is read
+        say("memory: building the index of meanings again with the summaries of the memory")
+        again = meaning.build(archive, names)
+        meaning_usd += _meaning_usd(int(again.get("tokens") or 0))
     say("memory: building the people index")
     profiles = people.build(archive, names)
     spent = {
