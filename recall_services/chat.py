@@ -46,10 +46,11 @@ Rules:
 
 Ranking: with `RERANK` on, the engine gets a reranker over the cheap model
 (`rerank_port.py`). It orders the hits of a search before they are shown, and
-the usage of the payload then has `rerank_usd`. `RERANK` is off by default.
-It is read one time, when this module is imported, from the environment:
-`RECALL_RERANK=1` turns it on (the evaluation harness uses this). Any other
-value, or none, leaves it off. With it off, every request is as before.
+the usage of the payload then has `rerank_usd`. `RERANK` is on: on the hard
+evaluation it raised right answers from 83% to 88%. It is read one time, when
+this module is imported, from the environment: `RECALL_RERANK=0` turns it off
+(the tests do, so their requests stay as they were). With it off, every
+request is as before.
 """
 
 from __future__ import annotations
@@ -91,11 +92,11 @@ RERANK_ENV = "RECALL_RERANK"
 
 
 def rerank_switch(environ: Mapping[str, str]) -> bool:
-    """True when the environment turns the ranking of search hits on: RECALL_RERANK=1."""
-    return str(environ.get(RERANK_ENV) or "").strip() == "1"
+    """False only when the environment turns the ranking of search hits off: RECALL_RERANK=0."""
+    return str(environ.get(RERANK_ENV) or "").strip() != "0"
 
 
-# the engine ranks search hits with the cheap model (`rerank_port.py`); off unless RECALL_RERANK=1
+# the engine ranks search hits with the cheap model (`rerank_port.py`); on unless RECALL_RERANK=0
 RERANK: bool = rerank_switch(os.environ)
 EMPTY_QUESTION = "Type a question first."
 TOO_LONG = "The question is too long. Shorten it, then ask again."

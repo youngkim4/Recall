@@ -58,15 +58,16 @@ def recording(ranker: Any, made: list[ChatModelConfig]) -> Any:
 
 @pytest.mark.parametrize(
     ("environ", "on"),
-    [({"RECALL_RERANK": "1"}, True), ({"RECALL_RERANK": " 1 "}, True), ({}, False), ({"RECALL_RERANK": "0"}, False),
-     ({"RECALL_RERANK": "yes"}, False)],
+    [({"RECALL_RERANK": "1"}, True), ({}, True), ({"RECALL_RERANK": "0"}, False), ({"RECALL_RERANK": " 0 "}, False),
+     ({"RECALL_RERANK": "yes"}, True)],
 )
 def test_the_switch_comes_from_the_environment(environ: dict[str, str], on: bool) -> None:
     assert chat.rerank_switch(environ) is on
 
 
-def test_the_switch_is_off_by_default() -> None:
-    assert chat.RERANK is False
+def test_the_switch_is_on_in_the_app_and_off_in_the_tests() -> None:
+    assert chat.rerank_switch({}) is True
+    assert chat.RERANK is False  # tests/guards.py sets RECALL_RERANK=0
 
 
 def test_the_ranking_model_is_the_cheap_model_of_the_memory_with_no_reasoning() -> None:

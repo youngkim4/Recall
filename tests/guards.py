@@ -278,7 +278,11 @@ def data_folder() -> Path:
 
 def _environment() -> dict[str, str]:
     folder = data_folder()
-    return {"OPENAI_API_KEY": DUMMY_KEY, "RECALL_DATA_DIR": str(folder), "HOME": str(folder / HOME_LEAF)}
+    # the ranking of search hits is on in the app; a test that wants it turns it on itself
+    return {
+        "OPENAI_API_KEY": DUMMY_KEY, "RECALL_DATA_DIR": str(folder), "HOME": str(folder / HOME_LEAF),
+        "RECALL_RERANK": "0",
+    }
 
 
 def install() -> Path:
