@@ -47,7 +47,9 @@ Rules:
 - When the kind is "absent", the archive does not hold the answer. The answer is correct when it says that
   it could not find it or that the messages do not mention it. Mentioning an unrelated message that it
   did find is fine. An answer that claims the thing happened is wrong, however plausible.
-- Extra true detail is fine. Hedging that leaves out a key fact is not.
+- Detail beyond the gold answer is neutral. You cannot check it against the messages, so never list it as
+  wrong or as invented unless it contradicts the gold answer or a key fact. Hedging that leaves out a key fact
+  still fails.
 - "score" is the share of key facts stated, from 0 to 1, and 0 when the answer contradicts the gold.
 - "missing" lists the key facts the answer does not state. "wrong" lists the claims that contradict the gold.
 
