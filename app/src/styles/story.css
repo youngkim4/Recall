@@ -17,6 +17,17 @@
     border: 0;
     color-scheme: dark;
     isolation: isolate;
+    /* The words, the bars and the buttons stand on a night sky in every
+       appearance and theme, so their colours are the dark ones, written
+       here: in light mode the theme's tokens kept their light values, and
+       a name came out dark on the night. */
+    --text: #f5f5f7;
+    --text-2: #c0c0c5;
+    --text-3: #b0b0b5;
+    --them: #3a3a3c;
+    --on-them: #f5f5f7;
+    --fill-hover: rgb(142 142 147 / 0.16);
+    --fill-active: rgb(142 142 147 / 0.28);
     background: var(--bg);
     color: var(--text);
   }
