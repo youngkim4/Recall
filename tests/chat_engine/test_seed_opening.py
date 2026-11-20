@@ -40,3 +40,12 @@ def test_the_opening_stays_inside_the_scope_of_the_question() -> None:
 def test_the_opening_is_only_read_when_the_scope_holds_that_conversation() -> None:
     prompt = _opening("Who is Maya?", scope=Scope(conversations=(MAYA_PHONE,)))
     assert "one conversation: Maya Okafor)" in prompt
+
+
+def test_the_prompt_asks_a_who_is_answer_for_how_it_began() -> None:
+    from chat_engine.prompt import _WHO_IS
+
+    engine, fake, _ = make_engine([say("ok")])
+    engine.ask("Who is Jonas to me?")
+    system = next(m.content for m in fake.requests[0].messages if m.role == "system")
+    assert _WHO_IS in system and "how it began" in _WHO_IS
