@@ -31,7 +31,7 @@
 @layer base {
   /* Broadsheet: a newspaper. The paper, wheat, ink and claret of the
      Financial Times (its Origami palette); the whole interface in the
-     Mac's serif (New York); square corners and ink lines, as
+     Mac's serif (New York); near-square corners (4px) and ink lines, as
      Semafor and the Obsidian theme Newspaper draw them. The rail is a print
      in halftone. The far end of a scale is the print's red run hotter. */
   [data-palette='broadsheet']:not([data-paper]) {
@@ -57,15 +57,15 @@
     --font: ui-serif, 'New York', Charter, Georgia, serif;
     --r-xs: 1px;
     --r-sm: 2px;
-    --r-md: 2px;
-    --r-lg: 2px;
+    --r-md: 4px;
+    --r-lg: 4px;
   }
 
   /* Shoreline: a shore from above, in the rail. The page is woodblock
      paper and sumi ink; the hue is Prussian blue, the pigment of the Edo
      coast prints (Hokusai, Hiroshige); the far end of a scale is the teal
      of the shallows in the rail. The interface is set in Iowan
-     Old Style, a book face; corners are square. */
+     Old Style, a book face; corners are 4px, one cell of its scene. */
   [data-palette='shoreline']:not([data-paper]) {
     --bg: light-dark(#eef1f1, #15191c);
     --bg-rail: light-dark(#e3e9ea, #1b2024);
@@ -89,15 +89,15 @@
     --font: 'Iowan Old Style', ui-serif, Georgia, serif;
     --r-xs: 1px;
     --r-sm: 2px;
-    --r-md: 2px;
-    --r-lg: 2px;
+    --r-md: 4px;
+    --r-lg: 4px;
   }
 
   /* Canopy: under trees, looking up, in the rail. The page is herbarium
      paper and ink; the hue is the sap green of botanical plates; the far end of a scale is
      the yellow-green of the fireflies in the rail. The interface is
      set in Palatino, a book face with an open, tall lowercase that reads well
-     small; corners are square. */
+     small; corners are 4px, one cell of its scene. */
   [data-palette='canopy']:not([data-paper]) {
     --bg: light-dark(#eff1ea, #171a16);
     --bg-rail: light-dark(#e5e9dc, #1d211b);
@@ -121,15 +121,15 @@
     --font: Palatino, 'Palatino Linotype', 'Iowan Old Style', ui-serif, serif;
     --r-xs: 1px;
     --r-sm: 2px;
-    --r-md: 2px;
-    --r-lg: 2px;
+    --r-md: 4px;
+    --r-lg: 4px;
   }
 
   /* Sky: first light with cloud by day, stars and northern light by night,
      in the rail. The page is paper and ink; the hue is a dusty plum, the ink
      of a dawn sky in a print; the far end of a scale is the violet of the
      northern lights in the rail. The interface is set in Charter, which holds
-     up small on a dark page; corners are square. */
+     up small on a dark page; corners are 4px, one cell of its scene. */
   [data-palette='sky']:not([data-paper]) {
     --bg: light-dark(#f4f1f2, #1b181a);
     --bg-rail: light-dark(#ebe5e8, #211d20);
@@ -153,8 +153,8 @@
     --font: Charter, ui-serif, Georgia, serif;
     --r-xs: 1px;
     --r-sm: 2px;
-    --r-md: 2px;
-    --r-lg: 2px;
+    --r-md: 4px;
+    --r-lg: 4px;
   }
 
   /* Increase Contrast: the two quieter text steps come nearer the first.
