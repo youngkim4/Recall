@@ -588,9 +588,10 @@
     }
   }
 
-  /* an error above the composer starts on the composer's text edge */
+  /* an error above the composer starts on the composer's text edge: its 8px
+     padding and the 8px before the words */
   .chat-dock > .notice {
-    padding-inline: var(--s-5);
+    padding-inline: var(--s-4);
   }
 
   /* Radius = the send button's 16px radius + the 8px around it, so the corner
@@ -618,13 +619,15 @@
       max-width var(--dur-long) var(--ease-out);
   }
 
-  /* 12px inside the 8px padding puts the text on the picker labels' edge;
-     6px above it puts the capitals as far from the top as they are from the side */
+  /* 8px inside the composer's 8px padding puts the text on the picker labels'
+     edge, as the pickers keep 8px before their words (controls.css). It was
+     12px, written for wider pickers; slimmed, they left the words 4px apart
+     and the user saw it. 6px above puts the capitals clear of the top. */
   .composer textarea {
     display: block;
     width: 100%;
     max-height: 12.5rem;
-    padding: 0.375rem var(--s-3) var(--s-2);
+    padding: 0.375rem var(--s-2) var(--s-2);
     overflow: auto;
     border: 0;
     outline: none;
