@@ -1,0 +1,144 @@
+"""The calls of the profile model in a build: one profile, one reply, asked once more when its shape is wrong.
+
+Each task first reads the notes and the figures of its profile and makes
+its request (`Planner.plan`), then asks. The tasks run `PEOPLE_PARALLEL` at
+a time (`report_engine.run_in_parallel`). A failure that each profile would have (`FATAL` of `people_words.py`) stops
+the calls: no new one starts, and the calls in flight end and are kept. Any
+other failure counts for its profile only. A cancel stops the calls too.
+"""
+
+from __future__ import annotations
+
+import threading
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import Any
+
+from recall_services import people_prompt
+from recall_services.people_inputs import READ, Planned
+from recall_services.people_reply import ProfileText, parse_reply
+from recall_services.people_words import FATAL, code_of
+from report_engine import LLMError, Usage, run_in_parallel
+from report_engine.model_info import ModelInfo
+from report_engine.ports import LLM, LLMResult
+from report_engine.pricing import call_cost_usd
+
+TRIES = 2
+BAD_REPLY = "bad_reply"
+RUN_FAILED = "run_failed"
+NOT_READ_NOW = "not_read_now"
+
+
+@dataclass(frozen=True)
+class Written:
+    """What one profile got: its text, or the code of its failure, and what its calls spent."""
+
+    planned: Planned
+    text: ProfileText | None
+    usage: Usage
+    code: str | None = None
+
+
+def _usage(info: ModelInfo, result: LLMResult) -> Usage:
+    spent = result.usage
+    return Usage(
+        input_tokens=spent.input_tokens,
+        cached_input_tokens=spent.cached_input_tokens,
+        output_tokens=spent.output_tokens,
+        cost_usd=call_cost_usd(info, spent),
+        calls=1,
+    )
+
+
+def ask(llm: LLM, info: ModelInfo, planned: Planned, mask: Callable[[str], str]) -> Written:
+    """Ask for one profile. A reply in the wrong shape is asked once more, then the profile fails."""
+    figures = planned.figures
+    assert figures is not None and figures.first_day and figures.last_day
+    usage = Usage()
+    for _ in range(TRIES):
+        try:
+            result = llm.generate(
+                list(planned.messages),
+                schema=people_prompt.PROFILE_SCHEMA,
+                max_output_tokens=people_prompt.MAX_OUTPUT_TOKENS,
+                reasoning=people_prompt.PROFILE_REASONING,
+            )
+        except LLMError as error:
+            return Written(planned, None, usage, code_of(error))
+        usage = usage.plus(_usage(info, result))
+        shaped = result.parsed if result.status == "completed" else None
+        text = parse_reply(
+            shaped, span=(figures.first_day, figures.last_day), is_group=planned.subject.is_group, mask=mask
+        )
+        if text is not None:
+            return Written(planned, text, usage)
+    return Written(planned, None, usage, BAD_REPLY)
+
+
+class Calls:
+    """The calls of one build. `stop_code` is the failure that stopped them, or "cancelled", or None."""
+
+    def __init__(
+        self, llm: LLM | None, info: ModelInfo, mask: Callable[[str], str], cancel: Any, heard: Callable[[], None]
+    ) -> None:
+        self._llm = llm
+        self._info = info
+        self._mask = mask
+        self._cancel = cancel
+        self._heard = heard
+        self._lock = threading.Lock()
+        self._fatal: str | None = None
+
+    def cancelled(self) -> bool:
+        if callable(self._cancel):
+            return bool(self._cancel())
+        return bool(getattr(self._cancel, "cancelled", False))
+
+    def stopped(self) -> bool:
+        with self._lock:
+            return self._fatal is not None or self.cancelled()
+
+    @property
+    def stop_code(self) -> str | None:
+        with self._lock:
+            if self._fatal is not None:
+                return self._fatal
+        return "cancelled" if self.cancelled() else None
+
+    def _task(self, item: Any, prepare: Callable[[Any], Planned]) -> Callable[[], Written]:
+        llm = self._llm
+        assert llm is not None, "a build with a profile to write has a model port"
+
+        def work() -> Written:
+            try:
+                planned = prepare(item)
+                written = (
+                    ask(llm, self._info, planned, self._mask)
+                    if planned.notes.state == READ
+                    else Written(planned, None, Usage(), NOT_READ_NOW)
+                )
+            except Exception:
+                with self._lock:
+                    self._fatal = self._fatal or RUN_FAILED
+                raise
+            if written.code in FATAL:
+                with self._lock:
+                    self._fatal = self._fatal or written.code
+            self._heard()
+            return written
+
+        return work
+
+    def run(
+        self, items: Sequence[Any], parallel: int, prepare: Callable[[Any], Planned]
+    ) -> tuple[tuple[Written, ...], Exception | None]:
+        """Read each profile (`prepare`, in the task) and ask for it. Gives what came back, and the first
+        error of no known kind, or None. A profile that a stop kept from starting is not in the result.
+        A profile whose notes are not all read any more is not asked for (`NOT_READ_NOW`).
+        """
+        if not items or self.cancelled():
+            return (), None
+        tasks = [self._task(item, prepare) for item in items]
+        outcomes = run_in_parallel(tasks, max_parallel=parallel, stop=self.stopped)
+        unplanned = next((outcome.error for outcome in outcomes if outcome.error is not None), None)
+        return tuple(outcome.value for outcome in outcomes if outcome.value is not None), unplanned

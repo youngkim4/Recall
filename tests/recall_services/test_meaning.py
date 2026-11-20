@@ -29,7 +29,7 @@ NO_NAMES = Names.from_records([])
 STATUS_KEYS = {"state", "segments", "model", "dimensions", "builtAt", "coveredUntil"}
 ESTIMATE_KEYS = {"segments", "newSegments", "staleSegments", "tokens", "estimatedCost", "upperBound"}
 BUILD_KEYS = {"segments", "embedded", "reused", "removed", "tokens"}
-NO_KEY = "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then build the index again."
+NO_KEY = "No API key is set. Add one in Settings > Archive > API key, then build the index again."
 
 
 

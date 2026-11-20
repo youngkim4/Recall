@@ -78,21 +78,68 @@ _IN_PLACE = {
         ),
     },
 }
-_AFTER_WORK = {
+PEOPLE = "find_people"
+_PEOPLE_START = (
+    "A question that asks who by a kind of relationship or by a story (a talking stage, a friend I lost touch "
+    "with, someone I…) starts with find_people: describe the relationship in a few words, and set kinds when the "
+    "question names one. A question that asks who by an amount (closest, most, who did I talk to) starts with "
+    "the figures, as above."
+)
+_PEOPLE_CHECK = (
+    "Before you name a candidate of find_people, check them in their own conversation: the figures "
+    f"(conversation_stats), then the story or the messages. Check at most {DIGESTS_PER_QUESTION} candidates, "
+    "the best first."
+)
+_PEOPLE_AGAIN = (
+    "For a follow-up such as \"anyone else?\", call find_people again with the description of the earlier "
+    "question, and leave out the people already named."
+)
+_PEOPLE_PROOF = (
+    "Never name a person only from what was said about them in another conversation. What the user told "
+    "someone else about a person is a lead, not proof."
+)
+_PEOPLE_KEEP = (
+    "Keep to what the question asks and to what it rules out. When it asks for something that did not work "
+    "out, do not name a relationship that did. When the user says an answer was wrong, take the correction, "
+    "leave out that person, and look again."
+)
+_PEOPLE_STORY = (
+    "A story from find_people is not a quote and not a citation: never put its words in quotation marks. "
+    "Cite the messages of the person's own conversation."
+)
+PEOPLE_RULES = (_PEOPLE_START, _PEOPLE_CHECK, _PEOPLE_AGAIN, _PEOPLE_PROOF, _PEOPLE_KEEP, _PEOPLE_STORY)
+# Each added rule goes after the base rule that ends with its anchor.
+_AFTER_WORK: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
     MEANING: (
-        "conversations. Read around a hit before you rely on it.",
-        'To find a kind of moment (an apology, a plan, good news, a fight), set match to "meaning" and '
-        "put a short description of the exchange in query, such as \"we made up after a fight\". To find "
-        'exact words, use the word search: match "all" or "any".',
+        (
+            "conversations. Read around a hit before you rely on it.",
+            (
+                'To find a kind of moment (an apology, a plan, good news, a fight), set match to "meaning" and '
+                "put a short description of the exchange in query, such as \"we made up after a fight\". To "
+                'find exact words, use the word search: match "all" or "any".',
+            ),
+        ),
+    ),
+    PEOPLE: (
+        ("messages show.", (_PEOPLE_START, _PEOPLE_CHECK, _PEOPLE_AGAIN)),  # after the steps of a pattern question
+        ("When the question is about the person, look in all of them.", (_PEOPLE_PROOF,)),
     ),
 }
-_AFTER_ANSWER = {
+_AFTER_ANSWER: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
     DIGEST: (
-        "Inside quotation marks, copy the message text exactly. Never reword a quote.",
-        "A summary from conversation_digest is not a quote: never put its words in quotation marks. "
-        "Only message text in quotation marks is a quote, and only a message reference such as [m3] is "
-        "a citation. For a claim that rests on a summary, cite the message lines of its moments. When "
-        "no message line supports it, say that it comes from the summary of that period.",
+        (
+            "Inside quotation marks, copy the message text exactly. Never reword a quote.",
+            (
+                "A summary from conversation_digest is not a quote: never put its words in quotation marks. "
+                "Only message text in quotation marks is a quote, and only a message reference such as [m3] "
+                "is a citation. For a claim that rests on a summary, cite the message lines of its moments. "
+                "When no message line supports it, say that it comes from the summary of that period.",
+            ),
+        ),
+    ),
+    PEOPLE: (
+        ("Say separately what you infer from them.", (_PEOPLE_KEEP,)),
+        ("Inside quotation marks, copy the message text exactly. Never reword a quote.", (_PEOPLE_STORY,)),
     ),
 }
 
@@ -115,15 +162,18 @@ _HOW_TO_ANSWER = (
 )
 
 
-def _with(rules: Sequence[str], added: dict[str, tuple[str, str]], offered: Collection[str]) -> list[str]:
+def _with(
+    rules: Sequence[str], added: dict[str, tuple[tuple[str, tuple[str, ...]], ...]], offered: Collection[str]
+) -> list[str]:
     """The rules of one engine: a base rule or the rule that takes its place, then each added rule after its anchor."""
     listed: list[str] = []
     for rule in rules:
         other = [swaps[rule] for name, swaps in _IN_PLACE.items() if name in offered and rule in swaps]
         listed.append(other[0] if other else rule)
-        for name, (anchor, extra) in added.items():
-            if name in offered and rule.endswith(anchor):
-                listed.append(extra)
+        for name, anchored in added.items():
+            for anchor, extras in anchored:
+                if name in offered and rule.endswith(anchor):
+                    listed.extend(extras)
     return listed
 
 
@@ -174,7 +224,7 @@ def scope_line(where: Optional[str], since: Optional[str], until: Optional[str])
 def system_prompt(
     *, now: datetime, timezone: str, summary: ArchiveSummary, scope: str, offered: Collection[str] = ()
 ) -> str:
-    """`offered` names the optional tools of this engine: MEANING, DIGEST or both."""
+    """`offered` names the optional tools of this engine: MEANING, DIGEST, PEOPLE, or none."""
     return "\n".join(
         [
             "You are Recall. You answer questions about the user's own iMessage archive. "

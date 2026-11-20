@@ -13,7 +13,6 @@ refuses that request, so without `reasoning_effort` it is not made.
 from __future__ import annotations
 
 import logging
-import os
 import time
 from typing import Any, Callable, Iterator, Optional
 
@@ -253,7 +252,10 @@ class OpenAIResponsesLLM:
         return arguments
 
     def _secret(self) -> str:
-        return (self._api_key or os.environ.get("OPENAI_API_KEY", "")).strip()
+        """The key it was given, else the key of the app: the environment, else the file .env of the data folder."""
+        from recall_services import keys  # read at call time: a key saved in the app is used with no new start
+
+        return (self._api_key or keys.api_key()).strip()
 
     def _ready_client(self) -> Any:
         if self._client is None:

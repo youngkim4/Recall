@@ -20,7 +20,7 @@ from tests.recall_services import world
 
 FLAT_TIRE = "The wheelbarrow has a flat tire"
 QUESTION = "Who said the wheelbarrow has a flat tire?"
-NO_KEY = "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then ask again."
+NO_KEY = "No API key is set. Add one in Settings > Archive > API key, then ask again."
 
 
 @pytest.fixture(scope="module")

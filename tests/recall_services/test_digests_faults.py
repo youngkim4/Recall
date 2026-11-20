@@ -58,7 +58,7 @@ def test_a_key_that_is_not_real_is_said_as_a_report_says_it(desk: Desk) -> None:
     model = failing(LLMError("x (HTTP 401)", status_code=401))
     failure = expect_failure(desk, model, "key_rejected")
     assert str(failure) == (
-        "OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, "
+        "The AI service refused the API key. Check the API key in Settings > Archive > API key, "
         "then run the report again."
     )
     assert len(model.calls) == 4

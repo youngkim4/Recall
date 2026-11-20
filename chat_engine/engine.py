@@ -16,7 +16,7 @@ from typing import Any, Callable, Generator, Iterator, Optional
 from .cancel import CancelToken
 from .digest_fit import MIN_DIGEST_TOKENS
 from .errors import ChatEngineError
-from .ports import LLM, ChatArchive, DigestSource, Labeler, MeaningSearch
+from .ports import LLM, ChatArchive, DigestSource, Labeler, MeaningSearch, PeopleSearch
 from .render import estimate_tokens
 from .scope import EVERYTHING, Scope
 from .session import ChatSession
@@ -99,15 +99,17 @@ class ChatEngine:
         *,
         meaning: Optional[MeaningSearch] = None,
         digests: Optional[DigestSource] = None,
+        people: Optional[PeopleSearch] = None,
         clock: Callable[[], datetime] = datetime.now,
     ) -> None:
-        """`meaning` and `digests` are optional. Without one, its tool is not offered."""
+        """`meaning`, `digests` and `people` are optional. Without one, its tool is not offered."""
         self._archive = archive
         self._llm = llm
         self._labeler = labeler
         self._config = config
         self._meaning = meaning
         self._digests = digests
+        self._people = people
         self._clock = clock
 
     def ask(
@@ -186,7 +188,7 @@ class ChatEngine:
             cancel=token,
             memory=Memory(
                 self._meaning, self._digests, config.digest_tokens, config.digest_usd_limit, token,
-                config.digest_parts_limit,
+                config.digest_parts_limit, people=self._people,
             ),
         )
 

@@ -3,8 +3,9 @@
 The engine reads the archive, calls a model and names people only through the
 first three interfaces below. Tests replace all three.
 
-Two more ports are optional: a search by meaning and a digest of one
-conversation. An engine that gets none of them offers no tool for them.
+Three more ports are optional: a search by meaning, a digest of one
+conversation and a search of people. An engine that gets none of them offers
+no tool for them.
 """
 
 from __future__ import annotations
@@ -342,3 +343,56 @@ class DigestSource(Protocol):
         cancel: CancelToken,
         progress: Optional[DigestProgressCallback] = None,
     ) -> DigestResult: ...
+
+
+# --- memory: people ---------------------------------------------------------
+
+PERSON_KINDS = (
+    "romantic", "talking_stage", "close_friend", "friend", "family", "work", "school",
+    "acquaintance", "service", "group", "unclear",
+)
+PERSON_STATUSES = ("ongoing", "faded", "ended", "unclear")
+
+
+class TurningPoint(TypedDict):
+    date: str  # "YYYY-MM-DD"
+    what: str
+
+
+class PersonHit(TypedDict):
+    """One person, or one group, whose profile fits a description.
+
+    figures: first_day, last_day, messages, sent, received, active_days,
+    longest_gap_days, busiest_month, wrote_first_share. Each can be missing.
+    """
+
+    key: str
+    conversations: list[str]  # conversation ids, busiest first
+    label: str
+    kind: str  # one of PERSON_KINDS
+    status: str  # one of PERSON_STATUSES
+    summary: str
+    turning_points: list[TurningPoint]
+    figures: dict[str, Any]
+    score: float  # higher is nearer
+
+
+class PeopleSearch(Protocol):
+    """Finds people by the kind of relationship and its story. Best first.
+
+    `since` and `until` keep a person whose messages overlap the days.
+    `conversations` (ids; None means all) keeps a person with at least one of
+    them, before the ranking. The engine checks the scope again. A failure
+    here does not fail the question.
+    """
+
+    def search(
+        self,
+        description: str,
+        *,
+        kinds: Optional[Sequence[str]],
+        since: Optional[str],
+        until: Optional[str],
+        limit: int,
+        conversations: Optional[Sequence[str]] = None,
+    ) -> list[PersonHit]: ...

@@ -266,7 +266,7 @@ def test_a_part_that_fails_is_counted_and_its_conversation_is_not_read_whole(des
     assert (found["periodsBuilt"], found["periodsFailed"]) == (3, 1)
 
 
-OPENAI_KEY = "OPENAI_API_KEY in the file .env in Recall's data folder"
+SETTINGS_KEY = "the API key in Settings > Archive > API key"
 
 
 @pytest.mark.parametrize(
@@ -275,18 +275,18 @@ OPENAI_KEY = "OPENAI_API_KEY in the file .env in Recall's data folder"
         (
             LLMError("x (HTTP 401)", status_code=401),
             "key_rejected",
-            f"OpenAI rejected the API key. Check {OPENAI_KEY}, then read the memory again. What was read is kept.",
+            f"The AI service refused the API key. Check {SETTINGS_KEY}, then read the memory again. What was read is kept.",
         ),
         (
             LLMError("x (HTTP 429)", status_code=429),
             "rate_limit",
-            "OpenAI is limiting requests, or the account has no credit left. Wait a moment, then read the memory "
+            "The AI service is limiting requests, or the account has no credit left. Wait a moment, then read the memory "
             "again. What was read is kept.",
         ),
         (
             LLMError("the model service failed (APIConnectionError)"),
             "offline",
-            "OpenAI could not be reached. Check the internet connection, then read the memory again. "
+            "The AI service could not be reached. Check the internet connection, then read the memory again. "
             "What was read is kept.",
         ),
     ],
@@ -310,7 +310,7 @@ def test_with_no_key_the_job_says_where_the_key_goes(desk: Desk, monkeypatch: py
         memory_prep.run(**more)
     assert told.value.code == "no_key"
     assert str(told.value) == (
-        "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then read the memory again."
+        "No API key is set. Add one in Settings > Archive > API key, then read the memory again."
     )
 
 

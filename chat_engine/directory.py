@@ -54,6 +54,7 @@ class Entry:
     digits: tuple[str, ...]
     via: str  # "phone", "email" or "short code" for a direct thread, else ""
     counted: Optional[CountRow] = None  # counts inside the days of the scope, when it has days
+    people: frozenset[str] = frozenset()  # the words of the names of people: not of a group title
 
     @property
     def total(self) -> int:
@@ -79,6 +80,8 @@ def _entry(
     if conversation.get("is_group"):
         labels.extend(labeler.sender(handle) for handle in handles[1:])
     names = frozenset(token for text in labels if not is_mask(text) for token in words(text))
+    of_people = labels[1:] if conversation.get("is_group") else labels  # a group label is a title
+    people = frozenset(token for text in of_people if not is_mask(text) for token in words(text))
     kinds = [handle_kind(handle) for handle in handles]
     numbers = [re.sub(r"\D", "", h) for h, kind in zip(handles, kinds, strict=True) if kind in ("phone", "short_code")]
     via = "" if conversation.get("is_group") else next((kind for kind in kinds if kind != "other"), "")
@@ -89,6 +92,7 @@ def _entry(
         digits=tuple(dict.fromkeys(numbers)),
         via=via.replace("_", " "),
         counted=counted,
+        people=people,
     )
 
 
@@ -158,6 +162,22 @@ class Directory:
         if not tokens:
             return []
         return [entry for entry in self.entries if all(entry.matches(token, loose_digits) for token in tokens)]
+
+    def name_words(self, question: str) -> list[tuple[str, bool]]:
+        """Every word of the question that is a name or points at a handle, with True when it names a person.
+
+        A word that only a group title holds gives False: it can be a common word ("That Is Not A Drill").
+        """
+        found: list[tuple[str, bool]] = []
+        for token in dict.fromkeys(words(question)):
+            if _is_year(token) or len(token) < _MIN_NAME_LENGTH:
+                continue
+            if token.isdigit():
+                if any(entry.matches(token, loose_digits=True) for entry in self.entries):
+                    found.append((token, True))
+            elif any(token in entry.names for entry in self.entries):
+                found.append((token, any(token in entry.people for entry in self.entries)))
+        return found
 
     def named_in(self, question: str) -> list[str]:
         """Words of the user's question that are a name or point at a handle in this directory."""

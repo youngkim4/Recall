@@ -254,12 +254,12 @@ def test_a_scope_that_names_no_conversation_of_the_archive_finds_nothing(archive
 @pytest.mark.parametrize(
     ("error", "code", "sentence"),
     [
-        (engine_errors.NoApiKeyError(), "no_key", "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then ask again."),
-        (engine_errors.KeyRejectedError(), "key_rejected", "OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, then ask again."),
-        (engine_errors.UnknownModelError(), "unknown_model", "OpenAI does not know the model gpt-6.1-sol. Choose another level in Settings."),
-        (engine_errors.RateLimitedError(), "rate_limit", "OpenAI is limiting requests. Wait a moment, then ask again."),
-        (engine_errors.RateLimitedError(retry_after=19.2), "rate_limit", "OpenAI is limiting requests. Wait 20 seconds, then ask again."),
-        (engine_errors.OfflineError(), "offline", "OpenAI could not be reached. Check the internet connection, then ask again."),
+        (engine_errors.NoApiKeyError(), "no_key", "No API key is set. Add one in Settings > Archive > API key, then ask again."),
+        (engine_errors.KeyRejectedError(), "key_rejected", "The AI service refused the API key. Check the API key in Settings > Archive > API key, then ask again."),
+        (engine_errors.UnknownModelError(), "unknown_model", "The AI service does not know the model of this level. Choose another level in Settings."),
+        (engine_errors.RateLimitedError(), "rate_limit", "The AI service is limiting requests. Wait a moment, then ask again."),
+        (engine_errors.RateLimitedError(retry_after=19.2), "rate_limit", "The AI service is limiting requests. Wait 20 seconds, then ask again."),
+        (engine_errors.OfflineError(), "offline", "The AI service could not be reached. Check the internet connection, then ask again."),
         (engine_errors.ModelTimeoutError(), "timeout", "The model took too long to answer. Ask again."),
         (engine_errors.ModelError(), "model_error", "The model call failed. Ask again."),
     ],
@@ -405,7 +405,7 @@ def test_with_no_key_no_request_is_made(archive: Archive, saved: Names, monkeypa
     monkeypatch.delenv("OPENAI_API_KEY")
     events = list(chat.stream(QUESTION, "", "gpt-6.1-sol", None, archive=archive, names=saved))
     assert events == [
-        {"type": "error", "code": "no_key", "error": "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then ask again."}
+        {"type": "error", "code": "no_key", "error": "No API key is set. Add one in Settings > Archive > API key, then ask again."}
     ]
 
 

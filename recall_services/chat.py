@@ -60,7 +60,7 @@ from chat_engine.local_answer import local_answer
 from chat_engine.ports import LLM
 from chat_engine.scope import EVERYTHING, Scope
 from chat_engine.session import ChatSession
-from recall_services import inputs, keys, memory, messages, models
+from recall_services import inputs, keys, memory, messages, models, people_port
 from recall_services.models import ChatModelConfig, ModelChoiceError
 from recall_services.names import Names
 
@@ -138,11 +138,10 @@ def _sentence(code: str, said: str, config: ChatModelConfig | None, retry_after:
     if said and said != _ENGINE_WORDS.get(code):
         return said
     provider = models.provider_name(config.provider) if config else models.SOME_PROVIDER
-    model = config.model if config else "that was asked for"
     sentences = {
-        "no_key": f"No API key is set. Add {keys.KEY_NAME} to {keys.KEY_PLACE}, {ASK_AGAIN}",
-        "key_rejected": f"{provider} rejected the API key. Check {keys.KEY_NAME} in {keys.KEY_PLACE}, {ASK_AGAIN}",
-        "unknown_model": f"{provider} does not know the model {model}. Choose another level in Settings.",
+        "no_key": f"{keys.NO_KEY}, {ASK_AGAIN}",
+        "key_rejected": f"{provider} refused the API key. {keys.CHECK_KEY}, {ASK_AGAIN}",
+        "unknown_model": f"{provider} does not know the model of this level. Choose another level in Settings.",
         "rate_limit": f"{provider} is limiting requests. {_wait(retry_after)}, {ASK_AGAIN}",
         "offline": f"{provider} could not be reached. Check the internet connection, {ASK_AGAIN}",
         "timeout": "The model took too long to answer. Ask again.",
@@ -235,6 +234,8 @@ def _events(
         )
         # the search by meaning and the digest, each None when it can not work; a test puts its own `memory.ports`
         ports = memory.ports(archive, names)
+        if "people" not in ports:  # the search of people, None when it can not work; a test can give its own
+            ports = {**ports, "people": people_port.port(archive, names)}
         engine = ChatEngine(adapter, llm_factory(config), labeler, settings, clock=clock, **ports)
         answering = engine.stream(asked.question, scope=asked.scope, session=_session(history), cancel=cancel)
     except engine_errors.ChatEngineError as error:

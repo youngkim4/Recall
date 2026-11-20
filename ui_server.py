@@ -79,12 +79,15 @@ from recall_services import chat as chat_service
 from recall_services import conversations as conversation_service
 from recall_services import day as day_service
 from recall_services import digest_job as digest_service
+from recall_services import first_run as first_run_service
+from recall_services import first_run_job
 from recall_services import frame as frame_service
-from recall_services import inputs, models, places
+from recall_services import inputs, key_store, keys, models, places
 from recall_services import meaning as meaning_service
 from recall_services import memory as memory_service
 from recall_services import memory_prep as memory_prep_service
 from recall_services import names as names_service
+from recall_services import people as people_service
 from recall_services import reports as report_service
 from recall_services import search as search_service
 from recall_services.archive_state import DEFAULT_MAX_REMOVED_SHARE, ArchiveState
@@ -179,6 +182,7 @@ def send_json(handler, status: int, payload: dict):
 
 
 LOCAL_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
+OTHER_ORIGIN = "Forbidden: only the page of this server may ask"
 
 
 def _header_hostname(value: str) -> str:
@@ -202,6 +206,17 @@ def is_local_api_request(handler) -> bool:
         return parsed.scheme == "http" and (parsed.hostname or "") in LOCAL_HOSTNAMES
     except ValueError:
         return False
+
+
+def is_own_write(handler) -> bool:
+    """A POST or a DELETE: a local request that names no origin, or the exact origin of this server.
+
+    A page of another local port can send a simple POST with no preflight. It
+    must not start a paid job or ask a question, so the port counts here.
+    """
+    return is_local_api_request(handler) and key_store.same_origin(
+        handler.headers.get("Host"), handler.headers.get("Origin")
+    )
 
 
 class BadRequest(ValueError):
@@ -615,7 +630,7 @@ def pull_into_archive(action: str, payload: dict) -> PullDone:
     raise ImportStopped(outcome.reason)
 
 
-JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge", "meaning", "digest", "memory"})
+JOB_ACTIONS = frozenset({"analyze", "export", "setup_import", "bridge", "meaning", "digest", "memory", "people", "first_run"})
 # each of these writes the archive
 IMPORT_ACTIONS = frozenset({"setup_import", "export", "bridge"})
 # this one reads the whole archive into the index for the search by meaning
@@ -634,6 +649,15 @@ IMPORT_BEFORE_MEMORY = "An import is running. Wait until it ends, then read the 
 # the memory job and a digest job read with one model and no limit of parts: side by side they pay twice
 MEMORY_BEFORE_DIGEST = "Recall is reading the memory of chat, and this conversation with it. Wait until it ends."
 DIGEST_BEFORE_MEMORY = "Recall is reading a conversation for chat. Wait until it ends, then read the memory."
+# this one writes the profiles of the people index from the memory: it reads the memory, so it waits for it
+PEOPLE_ACTIONS = frozenset({"people"})
+PEOPLE_IS_BUILT = "The people index is being built. Wait until it ends."
+IMPORT_BEFORE_PEOPLE = "An import is running. Wait until it ends, then build the people index."
+MEMORY_BEFORE_PEOPLE = "Recall is reading the memory of chat. Wait until it ends, then build the people index."
+# this one gets chat ready for a new person: the index, the memory of every conversation, the people index
+FIRST_RUN_ACTIONS = frozenset({"first_run"})
+FIRST_RUN_RUNS = "Recall is getting chat ready. Wait until it ends."
+IMPORT_BEFORE_FIRST_RUN = "An import is running. Wait until it ends, then get chat ready."
 UNFINISHED = frozenset({"queued", "running"})
 # Jobs that do not run together: the job that is asked for, the jobs that
 # hold it up, and what the reader is told.
@@ -650,6 +674,22 @@ ONE_AT_A_TIME = (
     (MEMORY_ACTIONS, IMPORT_ACTIONS, IMPORT_BEFORE_MEMORY),
     (DIGEST_ACTIONS, MEMORY_ACTIONS, MEMORY_BEFORE_DIGEST),
     (MEMORY_ACTIONS, DIGEST_ACTIONS, DIGEST_BEFORE_MEMORY),
+    # one build of the people index at a time, no import meanwhile, and the memory is read first
+    (IMPORT_ACTIONS | PEOPLE_ACTIONS, PEOPLE_ACTIONS, PEOPLE_IS_BUILT),
+    (PEOPLE_ACTIONS, IMPORT_ACTIONS, IMPORT_BEFORE_PEOPLE),
+    (PEOPLE_ACTIONS, MEMORY_ACTIONS, MEMORY_BEFORE_PEOPLE),
+    # the first run does the work of the three jobs above: it waits for each of them, an import and a digest,
+    # and each of them waits for it
+    (FIRST_RUN_ACTIONS, IMPORT_ACTIONS, IMPORT_BEFORE_FIRST_RUN),
+    (FIRST_RUN_ACTIONS, INDEX_ACTIONS, INDEX_IS_BUILT),
+    (FIRST_RUN_ACTIONS, MEMORY_ACTIONS, MEMORY_IS_READ),
+    (FIRST_RUN_ACTIONS, DIGEST_ACTIONS, DIGEST_IS_READ),
+    (FIRST_RUN_ACTIONS, PEOPLE_ACTIONS, PEOPLE_IS_BUILT),
+    (
+        IMPORT_ACTIONS | INDEX_ACTIONS | MEMORY_ACTIONS | DIGEST_ACTIONS | PEOPLE_ACTIONS | FIRST_RUN_ACTIONS,
+        FIRST_RUN_ACTIONS,
+        FIRST_RUN_RUNS,
+    ),
 )
 
 
@@ -684,6 +724,13 @@ def check_request(action, payload: dict) -> None:
     for name in ("contact", "conversation", "model", "since", "until"):
         if payload.get(name) is not None and not isinstance(payload.get(name), str):
             raise JobRefused(f"{name} must be text.", 400)
+    if action in MEMORY_ACTIONS and "minMessages" in payload:
+        fewest = payload["minMessages"]
+        if isinstance(fewest, bool) or not isinstance(fewest, int) or fewest < 1:
+            raise JobRefused("minMessages must be a whole number, 1 or more.", 400)
+    if action in FIRST_RUN_ACTIONS and not keys.api_key():
+        # every step but the index of an archive with nothing new pays a provider: no job is made with no key
+        raise JobRefused(first_run_service.NO_KEY, 409)
     if action == "setup_import":
         usable_path(payload.get("dbPath"), "the copy")
         if not isinstance(payload.get("includeContacts", True), bool):
@@ -946,6 +993,7 @@ def after_job(job_id: str, action: str, payload: dict) -> None:
     """What the server does by itself when a job has ended in the list. A fault here does not change how the job ended."""
     refresh_meaning_index(job_id, action, payload)
     refresh_memory(job_id, action, payload)
+    refresh_people(job_id, action, payload)
 
 
 WRITTEN_NOT_COUNTED = "The archive is written. Recall could not read it back to count it."
@@ -1083,18 +1131,28 @@ def read_conversation(job_id: str, payload: dict) -> dict:
         raise JobStopped(str(exc), "bad_request") from exc
 
 
-def build_meaning_index(job_id: str, payload: dict) -> dict:
-    """The `meaning` job: build the index for the search by meaning, or bring it up to date. Its lines hold counts only."""
-    _state, archive = archive_for(named_archive(payload))
+def job_teller(job_id: str):
+    """The listener of the work of a job: `progress` and `spent` go to its record, `log` to its lines."""
 
     def told(update: dict) -> None:
         if update.get("progress"):
             update_job(job_id, progress=update["progress"])
         if update.get("log"):
             append_log(job_id, update["log"])
+        if "spent" in update:
+            update_job(job_id, spent=update["spent"])
 
+    return told
+
+
+def build_meaning_index(job_id: str, payload: dict, told=None) -> dict:
+    """The `meaning` job: build the index for the search by meaning, or bring it up to date. Its lines hold counts only.
+
+    `told` gets the updates; with none they go to the job (`job_teller`).
+    """
+    _state, archive = archive_for(named_archive(payload))
     try:
-        return meaning_service.build(archive, saved_names(), None, told)
+        return meaning_service.build(archive, saved_names(), None, told or job_teller(job_id))
     except meaning_service.MeaningFailure as failure:
         raise JobStopped(str(failure), failure.code) from failure
 
@@ -1129,28 +1187,26 @@ def refresh_meaning_index(job_id: str, action: str, payload: dict) -> None:
             print(f"[meaning] the index was not brought up to date: {type(exc).__name__}", file=sys.__stderr__)
 
 
-def prepare_memory(job_id: str, payload: dict) -> dict:
+def prepare_memory(job_id: str, payload: dict, told=None, min_messages: int | None = None) -> dict:
     """The `memory` job: read the memory of chat ahead of time, four conversations at once. Its lines hold counts only.
 
     The job keeps what it spent under `spent` (`{"usd", "usage"}`), also when
-    it failed. One that completed writes the marker of its archive.
+    it failed. One that completed writes the marker of its archive, with the
+    threshold it read with. `told` gets the updates; with none they go to the
+    job. The threshold is `min_messages`, else `minMessages` of the request,
+    else `PREPARE_MIN_MESSAGES`; the first run reads every conversation (1).
     """
     _state, archive = archive_for(named_archive(payload))
-
-    def told(update: dict) -> None:
-        if update.get("progress"):
-            update_job(job_id, progress=update["progress"])
-        if update.get("log"):
-            append_log(job_id, update["log"])
-
+    told = told or job_teller(job_id)
+    fewest = memory_prep_service.least(min_messages if min_messages is not None else payload.get("minMessages"))
     try:
-        result = memory_prep_service.run(told, archive=archive, names=saved_names())
+        result = memory_prep_service.run(told, archive=archive, names=saved_names(), min_messages=fewest)
     except memory_prep_service.MemoryFailure as failure:
         usage = failure.usage or None
-        update_job(job_id, spent={"usd": float((usage or {}).get("cost_usd") or 0.0), "usage": usage})
+        told({"spent": {"usd": float((usage or {}).get("cost_usd") or 0.0), "usage": usage}})
         raise
-    update_job(job_id, spent={"usd": result["usd"], "usage": result["usage"]})
-    memory_prep_service.mark_completed(archive.path)
+    told({"spent": {"usd": result["usd"], "usage": result["usage"]}})
+    memory_prep_service.mark_completed(archive.path, fewest)
     return result
 
 
@@ -1196,7 +1252,9 @@ def refresh_memory(job_id: str, action: str, payload: dict) -> None:
     `memory_prep.completed_before`): parts that a question or a report read do
     not count. And only when the parts that are not read cost at most
     `PREPARE_AUTO_USD` (`memory_prep.worth_starting`). The first reading is
-    the choice of the reader. A fault here does not change how the import ended.
+    the choice of the reader. The job reads with the threshold of the marker
+    (1 after a first run), or `PREPARE_MIN_MESSAGES` for a marker with none.
+    A fault here does not change how the import ended.
     """
     try:
         if not changed_the_archive(job_id, action):
@@ -1204,19 +1262,175 @@ def refresh_memory(job_id: str, action: str, payload: dict) -> None:
         place = named_archive(payload)
         if not memory_prep_service.completed_before(places.archive_path_for(place)):
             return  # the reader never read the memory of this archive: the first reading is theirs
+        fewest = memory_prep_service.least(memory_prep_service.marker_threshold(places.archive_path_for(place)))
         _state, archive = archive_for(place, wait_for_import=False)
-        found = memory_prep_service.payload(archive, saved_names())
+        found = memory_prep_service.payload(archive, saved_names(), min_messages=fewest)
         if not memory_prep_service.worth_starting(found, completed_before=True):
             parts = found["partsNotRead"]
             print(f"[memory] the memory waits for the reader: {parts:,} part{'' if parts == 1 else 's'} not read", file=sys.__stderr__)
             return
         named = payload.get("messagesPath")
-        create_job("memory", {"messagesPath": named} if named else {})
+        create_job("memory", {**({"messagesPath": named} if named else {}), "minMessages": fewest})
     except JobRefused:
         pass  # an import that started meanwhile, or a reading that runs
     except Exception as exc:  # noqa: BLE001 - the import ended: nothing here is a reason to say otherwise
         with contextlib.suppress(Exception):
             print(f"[memory] the memory was not brought up to date: {type(exc).__name__}", file=sys.__stderr__)
+
+
+def build_people_index(job_id: str, payload: dict, told=None) -> dict:
+    """The `people` job: write the profiles whose inputs changed, and make them searchable. Its lines hold counts only.
+
+    The job keeps what it spent under `spent` (`{"usd", "usage"}`), also when it failed. `told` gets the
+    updates; with none they go to the job.
+    """
+    _state, archive = archive_for(named_archive(payload))
+    told = told or job_teller(job_id)
+    try:
+        result = people_service.build(archive, saved_names(), None, told)
+    except people_service.PeopleFailure as failure:
+        usage = failure.usage or None
+        told({"spent": {"usd": float((usage or {}).get("cost_usd") or 0.0), "usage": usage}})
+        raise JobStopped(str(failure), failure.code) from failure
+    told({"spent": {"usd": result["usd"], "usage": result["usage"]}})
+    return result
+
+
+# The answer of `GET /api/people` for one archive, its names, the notes and the store as they are.
+_PEOPLE_CACHE: dict = {"key": None, "value": None}
+_PEOPLE_LOCK = threading.Lock()
+
+
+def people_counts(state: ArchiveState, archive: Archive) -> dict:
+    """The counts of `GET /api/people`, kept for one key: the archive, the names, the count of parts in
+    the notes (a mark of use does not change it), the store and the model."""
+    store = people_service.store_for(archive)
+    key = (
+        archive_signature(state),
+        file_cache_signature(CONTACTS_CACHE_PATH),
+        people_service.notes_mark(),
+        store.signature(),
+        people_service.model(),
+    )
+    with _PEOPLE_LOCK:
+        if _PEOPLE_CACHE["key"] != key:
+            _PEOPLE_CACHE.update({"key": key, "value": people_service.payload(archive, saved_names(), store=store)})
+        return _PEOPLE_CACHE["value"]
+
+
+def people_answer(state: ArchiveState, archive: Archive) -> dict:
+    """The answer of `GET /api/people`: the counts (`people_counts`) and the `people` job that runs now, read fresh."""
+    found = people_counts(state, archive)
+    with JOBS_LOCK:
+        running = [job["id"] for job in JOBS.values() if job["action"] in PEOPLE_ACTIONS and job["status"] in UNFINISHED]
+    return {**found, "jobId": running[0] if running else None}
+
+
+def brings_new_memory(job_id: str, action: str) -> bool:
+    """True after a `memory` job that completed, or an import that changed the archive and left no `memory` job to run."""
+    if action in MEMORY_ACTIONS:
+        with JOBS_LOCK:
+            return (JOBS.get(job_id) or {}).get("status") == "completed"
+    if not changed_the_archive(job_id, action):
+        return False
+    with JOBS_LOCK:
+        # the memory job that the import started brings the profiles when it ends
+        return not any(job["action"] in MEMORY_ACTIONS and job["status"] in UNFINISHED for job in JOBS.values())
+
+
+def refresh_people(job_id: str, action: str, payload: dict) -> None:
+    """After a `memory` job that completed, or an import that changed the archive: one `people` job writes the profiles that changed.
+
+    The counts are worked out first (`people_counts`), so the route answers
+    at once. A job starts only when a `people` job of this archive completed
+    before, and the profiles to write or to embed cost at most
+    `PEOPLE_AUTO_USD` with every try (`people.worth_starting`). After an
+    import that started a `memory` job, the end of that job does this. A
+    fault here does not change how the job ended.
+    """
+    try:
+        if not brings_new_memory(job_id, action):
+            return
+        place = named_archive(payload)
+        state, archive = archive_for(place, wait_for_import=False)
+        found = people_counts(state, archive)
+        if not people_service.completed_before(places.archive_path_for(place)):
+            return  # the first build is the choice of the reader
+        if not people_service.worth_starting(found):
+            waiting = found["toWrite"]
+            if waiting:
+                print(f"[people] the people index waits for the reader: {waiting:,} profile{'' if waiting == 1 else 's'} to write", file=sys.__stderr__)
+            return
+        named = payload.get("messagesPath")
+        create_job("people", {"messagesPath": named} if named else {})
+    except JobRefused:
+        pass  # an import or a build that started meanwhile
+    except Exception as exc:  # noqa: BLE001 - the job ended: nothing here is a reason to say otherwise
+        with contextlib.suppress(Exception):
+            print(f"[people] the people index was not brought up to date: {type(exc).__name__}", file=sys.__stderr__)
+
+
+def get_chat_ready(job_id: str, payload: dict) -> dict:
+    """The `first_run` job: the index of meanings, the memory of every conversation and the people index, in this order.
+
+    Only the steps that are not ready are built (`first_run_counts`), each
+    with the work of its own job. A step that fails ends the job with its
+    sentence and code, and `spent` holds what all steps spent. The result
+    holds counts and money only (`recall_services/first_run_job.py`).
+    """
+    state, archive = archive_for(named_archive(payload))
+    found = first_run_counts(state, archive)
+    if not found["archive"]["holdsMessages"]:
+        raise JobStopped(first_run_service.NO_MESSAGES, "no_messages")
+    work = {
+        "meaning": lambda told: build_meaning_index(job_id, payload, told),
+        "memory": lambda told: prepare_memory(job_id, payload, told, first_run_service.MEMORY_MIN_MESSAGES),
+        "people": lambda told: build_people_index(job_id, payload, told),
+    }
+    return first_run_job.run(found["steps"], work, job_teller(job_id), archive_file=archive.path)
+
+
+# The answer of `GET /api/first-run` for one archive, its names, the notes and the stores as they are.
+_FIRST_RUN_CACHE: dict = {"key": None, "value": None}
+_FIRST_RUN_LOCK = threading.Lock()
+
+
+def first_run_counts(state: ArchiveState, archive: Archive) -> dict:
+    """The steps of `GET /api/first-run`, kept for one key: the archive, the names, the notes,
+    the people store, the build of the index of meanings and the model of the memory."""
+    notes = report_service.default_places().cache_path
+    key = (
+        archive_signature(state),
+        file_cache_signature(CONTACTS_CACHE_PATH),
+        file_cache_signature(notes),
+        file_cache_signature(notes.with_name(notes.name + "-wal")),
+        people_service.store_for(archive).signature(),
+        first_run_service.index_mark(archive.path),
+        memory_prep_service.model(),
+    )
+    with _FIRST_RUN_LOCK:
+        if _FIRST_RUN_CACHE["key"] != key:
+            _FIRST_RUN_CACHE.update({"key": key, "value": first_run_service.estimate(archive, saved_names())})
+        return _FIRST_RUN_CACHE["value"]
+
+
+def first_run_answer(messages_path: Path | None) -> dict:
+    """The answer of `GET /api/first-run`: where the key is, the steps, and the `first_run` job that runs now.
+
+    With no archive yet it says that there is nothing to get ready. It never
+    gives the key or a part of it.
+    """
+    try:
+        state, archive = archive_for(messages_path)
+        found = first_run_counts(state, archive)
+    except ArchiveNotReady as waiting:
+        if waiting.code != "no_archive":
+            raise
+        found = first_run_service.nothing()
+    key = key_store.state()
+    with JOBS_LOCK:
+        running = [job["id"] for job in JOBS.values() if job["action"] in FIRST_RUN_ACTIONS and job["status"] in UNFINISHED]
+    return {"key": {"present": key["present"], "source": key["source"]}, **found, "jobId": running[0] if running else None}
 
 
 def do_job(job_id: str, action: str, payload: dict) -> dict:
@@ -1241,6 +1455,10 @@ def do_job(job_id: str, action: str, payload: dict) -> dict:
         return read_conversation(job_id, payload)
     if action == "memory":
         return prepare_memory(job_id, payload)
+    if action == "people":
+        return build_people_index(job_id, payload)
+    if action == "first_run":
+        return get_chat_ready(job_id, payload)
     raise ValueError(f"Unknown job action: {action}")
 
 
@@ -2633,10 +2851,16 @@ class RecallHandler(BaseHTTPRequestHandler):
         with self.answering():
             self.answer_post()
 
+    def do_DELETE(self):
+        with self.answering():
+            self.answer_delete()
+
     def answer_get(self):
         parsed = urlparse(self.path)
         try:
-            if parsed.path.startswith("/api/"):
+            if parsed.path == "/api/key":
+                self.answer_key("GET")
+            elif parsed.path.startswith("/api/"):
                 if not is_local_api_request(self):
                     send_json(self, 403, {"error": "Forbidden: non-local origin"})
                     return
@@ -2663,10 +2887,12 @@ class RecallHandler(BaseHTTPRequestHandler):
     def answer_post(self):
         parsed = urlparse(self.path)
         try:
-            if not is_local_api_request(self):
-                send_json(self, 403, {"error": "Forbidden: non-local origin"})
+            if not is_own_write(self):
+                send_json(self, 403, {"error": OTHER_ORIGIN})
                 return
-            if parsed.path == "/api/jobs":
+            if parsed.path == "/api/key":
+                self.answer_key("POST")
+            elif parsed.path == "/api/jobs":
                 payload = parse_body(self)
                 if not isinstance(payload, dict):
                     send_json(self, 400, {"error": "The request must be a JSON object."})
@@ -2707,6 +2933,39 @@ class RecallHandler(BaseHTTPRequestHandler):
             send_json(self, waiting.status, waiting.body())
         except Exception:
             send_json(self, 500, server_fault(f"POST {parsed.path}"))
+
+    def answer_delete(self):
+        parsed = urlparse(self.path)
+        try:
+            if not is_own_write(self):
+                send_json(self, 403, {"error": OTHER_ORIGIN})
+            elif parsed.path == "/api/key":
+                self.answer_key("DELETE")
+            else:
+                send_json(self, 404, {"error": "Not found"})
+        except Exception:
+            send_json(self, 500, server_fault(f"DELETE {parsed.path}"))
+
+    def answer_key(self, method: str) -> None:
+        """`/api/key`: whether a key is set and where, save one, remove it (`recall_services/key_store.py`).
+
+        Only the page of this server, or a request with no origin (the Mac app,
+        curl), may ask: not a page of another local port. No answer holds the key.
+        """
+        if not is_own_write(self):
+            send_json(self, 403, {"error": OTHER_ORIGIN})
+            return
+        try:
+            if method == "POST":
+                answer = key_store.save(self.body_object().get("key"))
+            elif method == "DELETE":
+                answer = key_store.remove()
+            else:
+                answer = key_store.state()
+        except key_store.KeyRefused as refused:
+            send_json(self, refused.status, {"error": str(refused)})
+            return
+        send_json(self, 200, answer)
 
     def body_object(self) -> dict:
         """The body of a request as a record. Any other JSON value is refused."""
@@ -2842,6 +3101,13 @@ class RecallHandler(BaseHTTPRequestHandler):
             # the memory of chat: what is read, and what reading the rest would cost now
             state, archive = archive_for(named_archive(query))
             send_json(self, 200, memory_answer(state, archive))
+        elif parsed.path == "/api/people":
+            # the people index: what is built, and what writing the rest would cost now
+            state, archive = archive_for(named_archive(query))
+            send_json(self, 200, people_answer(state, archive))
+        elif parsed.path == "/api/first-run":
+            # what getting chat ready costs a new person, and what is ready
+            send_json(self, 200, first_run_answer(named_archive(query)))
         elif parsed.path == "/api/day":
             _state, archive = archive_for(named_archive(query))
             try:

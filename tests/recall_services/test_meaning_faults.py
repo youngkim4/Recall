@@ -46,23 +46,23 @@ HANDLE_PARTS = (MINA, THEO, "2025550143", "theo@", "example.com")
         (
             EmbeddingKeyError("x", status_code=401),
             "key_rejected",
-            "OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, "
+            "The AI service refused the API key. Check the API key in Settings > Archive > API key, "
             "then build the index again.",
         ),
         (
             EmbeddingRateLimited("x", retry_after_s=900.0, status_code=429),
             "rate_limit",
-            "OpenAI is limiting requests, or the account has no credit left. Wait a moment, then build the index again.",
+            "The AI service is limiting requests, or the account has no credit left. Wait a moment, then build the index again.",
         ),
         (
             EmbeddingServiceError("x", status_code=429, code="insufficient_quota"),
             "rate_limit",
-            "OpenAI is limiting requests, or the account has no credit left. Wait a moment, then build the index again.",
+            "The AI service is limiting requests, or the account has no credit left. Wait a moment, then build the index again.",
         ),
         (
             EmbeddingNetworkError("x"),
             "offline",
-            "OpenAI could not be reached. Check the internet connection, then build the index again.",
+            "The AI service could not be reached. Check the internet connection, then build the index again.",
         ),
         (
             EmbeddingServiceError("x", status_code=500),

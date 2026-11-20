@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from .ports import ToolSpec
-from .prompt import DIGEST
+from .ports import PERSON_KINDS, ToolSpec
+from .prompt import DIGEST, PEOPLE
 from .tool_figures import GROUPS, LIST_LIMIT_MAX
 from .tool_limits import DIGESTS_PER_QUESTION, SEARCH_LIMIT_MAX
+from .tool_people import PEOPLE_LIMIT_DEFAULT, PEOPLE_LIMIT_MAX
 from .tool_search import READ_RADIUS_MAX
 
 _DAY = "A day as YYYY-MM-DD in local time. The day itself is included."
@@ -107,6 +108,35 @@ DIGEST_SPEC = ToolSpec(
     ),
 )
 
+FIND_PEOPLE_DESCRIPTION = (
+    "Find people by the kind of relationship and its story: a talking stage that did not work out, a friend I "
+    "lost touch with, a coworker who became a friend. Gives each person's conversations (aliases), the kind, "
+    "the status, the span and the counts, and a short story. Confirm a person in their own conversation before "
+    "you name them."
+)
+FIND_PEOPLE_SPEC = ToolSpec(
+    PEOPLE,
+    FIND_PEOPLE_DESCRIPTION,
+    _schema(
+        {
+            "description": {
+                "type": "string",
+                "description": "What the relationship was and how it went, in a few words, such as "
+                '"a talking stage that faded" or "a friend I lost touch with".',
+            },
+            "kinds": _nullable(
+                "array",
+                "Only people of these kinds. Null means every kind. talking_stage: romantic interest on at least "
+                "one side that did not become a relationship. romantic: a relationship.",
+                items={"type": "string", "enum": list(PERSON_KINDS)},
+            ),
+            "since": _nullable("string", f"{_DAY} A person counts when their messages overlap the days."),
+            "until": _nullable("string", _DAY),
+            "limit": _nullable("integer", f"People to show, 1 to {PEOPLE_LIMIT_MAX}. Default {PEOPLE_LIMIT_DEFAULT}."),
+        }
+    ),
+)
+
 _OTHER_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "read_around",
@@ -172,10 +202,11 @@ _OTHER_SPECS: tuple[ToolSpec, ...] = (
 )
 
 
-def tool_specs(*, meaning: bool = False, digest: bool = False) -> tuple[ToolSpec, ...]:
-    """The tools of one engine. `meaning` and `digest` say which optional ports it has."""
+def tool_specs(*, meaning: bool = False, digest: bool = False, people: bool = False) -> tuple[ToolSpec, ...]:
+    """The tools of one engine. `meaning`, `digest` and `people` say which optional ports it has."""
     specs = (_search_spec(meaning), *_OTHER_SPECS)
-    return (*specs, DIGEST_SPEC) if digest else specs
+    with_digest = (*specs, DIGEST_SPEC) if digest else specs
+    return (*with_digest, FIND_PEOPLE_SPEC) if people else with_digest
 
 
 TOOL_SPECS: tuple[ToolSpec, ...] = tool_specs()

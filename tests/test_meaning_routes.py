@@ -46,7 +46,7 @@ BUILD_KEYS = {"segments", "embedded", "reused", "removed", "tokens"}
 IMPORTS = ["setup_import", "export", "bridge"]
 INDEX_IS_BUILT = "The index for the search by meaning is being built. Wait until it ends."
 IMPORT_FIRST = "An import is running. Wait until it ends, then build the index."
-NO_KEY = "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then build the index again."
+NO_KEY = "No API key is set. Add one in Settings > Archive > API key, then build the index again."
 HANDLE_PARTS = (PERSON, "5550190001", "555019")
 
 
@@ -214,7 +214,7 @@ def test_a_key_that_the_provider_refuses_fails_the_job_with_one_sentence(archive
     job = build(archive_file)
     assert (job["status"], job["code"]) == ("failed", "key_rejected")
     assert job["error"] == (
-        "OpenAI rejected the API key. Check OPENAI_API_KEY in the file .env in Recall's data folder, "
+        "The AI service refused the API key. Check the API key in Settings > Archive > API key, "
         "then build the index again."
     )
     assert MARK not in said(job)

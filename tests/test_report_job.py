@@ -19,7 +19,7 @@ from tests.report_engine.synth import MINA
 
 MODEL = report_world.MODEL
 SAVED_NAME = report_world.MINA_CONTACT["name"]
-NO_KEY = "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then run the report again."
+NO_KEY = "No API key is set. Add one in Settings > Archive > API key, then run the report again."
 RESULT_KEYS = {
     "reportPath", "eventsPath", "htmlPath", "jsonPath", "reportId", "status", "warnings", "shownPlain", "usage",
     "analysis", "reports",

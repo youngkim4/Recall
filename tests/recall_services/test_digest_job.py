@@ -98,23 +98,23 @@ def failing(error: Exception) -> FakeLLM:
     return FakeLLM(responder)
 
 
-OPENAI_KEY = "OPENAI_API_KEY in the file .env in Recall's data folder"
+SETTINGS_KEY = "the API key in Settings > Archive > API key"
 
 
 @pytest.mark.parametrize(
     ("error", "code", "sentence"),
     [
-        (LLMError("x (HTTP 401)", status_code=401), "key_rejected", f"OpenAI rejected the API key. Check {OPENAI_KEY}, then ask again."),
-        (LLMError("x (HTTP 404)", status_code=404), "unknown_model", "OpenAI does not know the model gpt-6.1-sol. The conversation was not read."),
+        (LLMError("x (HTTP 401)", status_code=401), "key_rejected", f"The AI service refused the API key. Check {SETTINGS_KEY}, then ask again."),
+        (LLMError("x (HTTP 404)", status_code=404), "unknown_model", "The AI service does not know the model that reads conversations. The conversation was not read."),
         (
             LLMError("x (HTTP 429)", status_code=429),
             "rate_limit",
-            "OpenAI is limiting requests, or the account has no credit left. Wait a moment, then ask again.",
+            "The AI service is limiting requests, or the account has no credit left. Wait a moment, then ask again.",
         ),
         (
             LLMError("the model service failed (APIConnectionError)"),
             "offline",
-            "OpenAI could not be reached. Check the internet connection, then ask again.",
+            "The AI service could not be reached. Check the internet connection, then ask again.",
         ),
         (LLMError("the model service failed (APITimeoutError)"), "timeout", "The model took too long to answer. Ask again."),
         (LLMError("x (HTTP 500)", status_code=500), "model_error", "The model could not read the conversation. Ask again."),
@@ -147,7 +147,7 @@ def test_with_no_key_the_job_says_where_the_key_goes(desk: Desk, monkeypatch: py
         digest_job.run(MINA, **more)
     assert (told.value.code, str(told.value)) == (
         "no_key",
-        "No API key is set. Add OPENAI_API_KEY to the file .env in Recall's data folder, then ask again.",
+        "No API key is set. Add one in Settings > Archive > API key, then ask again.",
     )
 
 
